@@ -9,12 +9,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
+import threading
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.service_control import atomic_write_bytes_file
 from llm_loop.runtime.upgrade_preflight import candidate_preflight
+from llm_loop.timekeeping import system_local_now
 
 SCHEMA = "lfl.upgrade.quarantine/v1"
 _FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
@@ -188,3 +192,363 @@ def inspect_stage(*, home: Path, stage_id: str, abort: bool) -> tuple[int, dict[
         reason = str(exc) if isinstance(exc, StageRejectedError) else "stage_io_failed"
         return 1, {"schema": SCHEMA, "valid": False, "aborted": False,
                    "reason": reason}
+
+
+# ── 升级事务 journal（DESIGN-20261107 §5.6/§5.7）与 supervisor 单实例（§3.3.1）──
+# journal 是事务的真值：目录 0700、文件 0600、原子写 + fsync；状态推进采用
+# expected-state CAS；同一时刻只允许一个活动事务。本段不执行任何生产切换——
+# 它只持久化与仲裁事务事实。
+
+TX_SCHEMA = "lfl.upgrade.transaction/v1"
+
+#: §5.6 状态机：S0 observed → … → S11 committed（顺序即列表序）。
+TX_STATES: tuple[str, ...] = (
+    "observed",
+    "candidate_resolved",
+    "source_and_digest_verified",
+    "staged_release_built",
+    "candidate_smoke_passed",
+    "snapshot_verified",
+    "services_confirmed_idle",
+    "services_stopped",
+    "active_pointer_switched",
+    "services_started",
+    "health_and_identity_verified",
+    "committed",
+)
+#: 终态（成功 committed 之外，任一失败进入其中之一，绝不把中间态报成功）。
+TX_TERMINAL_STATES: tuple[str, ...] = ("committed", "aborted_before_cutover", "rolled_back")
+
+_VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
+_TX_ID_RE = re.compile(r"[0-9a-f]{24}\Z")
+
+# 审查 P2-2：单进程内 create/advance/handover 的串行化（CAS 读写与单活动
+# 槽检查同锁）；跨进程由 supervisor.lock（flock）承担，§5.7 事务锁在
+# Deepin 旁路阶段扩展。
+_TX_LOCK = threading.Lock()
+
+_JOURNAL_FIELDS = frozenset({
+    "schema", "transaction_id", "idempotency_key", "state",
+    "old_version", "candidate_version", "wheel_sha256",
+    "expected_generation", "target_generation", "created_at", "updated_at",
+    "failure_reason", "handover",
+})
+
+
+class TransactionError(Exception):
+    """有界 reason（transaction_already_active / transaction_state_conflict /
+    handover_cas_conflict / unknown_transaction / unsafe_transaction_home）。"""
+
+
+def _tx_root(home: Path, *, create: bool = False) -> Path:
+    home = home.expanduser()
+    if ".." in home.parts or home.is_symlink():
+        raise TransactionError("unsafe_transaction_home")
+    root = home / "upgrade-transactions"
+    if root.is_symlink():
+        raise TransactionError("unsafe_transaction_home")
+    if not root.exists():
+        if not create:
+            raise TransactionError("unknown_transaction")
+        root.mkdir(mode=0o700, parents=True)
+    if not _private_directory(root):
+        raise TransactionError("unsafe_transaction_home")
+    return root
+
+
+def _atomic_write_journal(path: Path, payload: dict[str, Any]) -> None:
+    # P2-2（审查 b7691f4e）：真原子写——复用 service_control 的
+    # atomic_write_bytes_file（tmp+fsync+rename+目录 fsync），失败时旧 journal
+    # 字节完整保留；不再 O_TRUNC 原地覆盖（半写窗口不可接受）。
+    data = (json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n").encode()
+    try:
+        atomic_write_bytes_file(path, data, mode=0o600)
+    except OSError as exc:
+        raise TransactionError("journal_write_failed") from exc
+
+
+def _active_transactions(root: Path) -> list[str]:
+    active: list[str] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir() or entry.is_symlink() or entry.name == "supervisor.lock":
+            continue
+        try:
+            journal = _read_journal(entry)
+        except TransactionError:
+            # 无法解析的目录不是"可证明空闲"——按活动计（fail-closed）。
+            active.append(entry.name)
+            continue
+        if journal.get("state") not in TX_TERMINAL_STATES:
+            active.append(entry.name)
+    return active
+
+
+def _read_journal(tx_dir: Path) -> dict[str, Any]:
+    journal = tx_dir / "journal.json"
+    if journal.is_symlink() or not journal.is_file():
+        raise TransactionError("unknown_transaction")
+    try:
+        raw = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise TransactionError("unknown_transaction") from exc
+    if (
+        not isinstance(raw, dict)
+        or raw.get("schema") != TX_SCHEMA
+        or raw.get("state") not in TX_STATES + TX_TERMINAL_STATES
+        or not _TX_ID_RE.fullmatch(str(raw.get("transaction_id") or ""))
+        or tx_dir.name != raw.get("transaction_id")
+    ):
+        raise TransactionError("unknown_transaction")
+    return raw
+
+
+def create_transaction(
+    home: Path,
+    *,
+    idempotency_key: str,
+    old_version: str | None,
+    candidate_version: str,
+    wheel_sha256: str,
+    expected_generation: int,
+    target_generation: int,
+) -> dict[str, Any]:
+    """创建 S0 observed 事务 journal；已存在活动事务即拒绝（单活动槽）。
+
+    参数校验无锁（纯函数式拒绝）；磁盘单活动槽检查与 journal 写入在
+    ``_TX_LOCK`` 内串行（审查 P2-2），防止并发双创建绕过单槽检查。
+    """
+    if not idempotency_key.strip():
+        raise TransactionError("invalid_idempotency_key")
+    if not _VERSION_RE.fullmatch(candidate_version):
+        raise TransactionError("invalid_candidate_version")
+    if old_version is not None and not _VERSION_RE.fullmatch(old_version):
+        raise TransactionError("invalid_old_version")
+    if not re.fullmatch(r"[0-9a-f]{64}", wheel_sha256):
+        raise TransactionError("invalid_wheel_sha256")
+    if expected_generation < 0 or target_generation != expected_generation + 1:
+        raise TransactionError("invalid_generation_pair")
+    with _TX_LOCK:
+        return _create_transaction_locked(
+            home,
+            idempotency_key=idempotency_key,
+            old_version=old_version,
+            candidate_version=candidate_version,
+            wheel_sha256=wheel_sha256,
+            expected_generation=expected_generation,
+            target_generation=target_generation,
+        )
+
+
+def _create_transaction_locked(
+    home: Path,
+    *,
+    idempotency_key: str,
+    old_version: str | None,
+    candidate_version: str,
+    wheel_sha256: str,
+    expected_generation: int,
+    target_generation: int,
+) -> dict[str, Any]:
+    root = _tx_root(home, create=True)
+    active = _active_transactions(root)
+    if active:
+        raise TransactionError(
+            f"transaction_already_active: {active[0]}"
+        )
+    tx_id = secrets.token_hex(12)
+    tx_dir = root / tx_id
+    tx_dir.mkdir(mode=0o700)
+    now = system_local_now().isoformat(timespec="seconds")
+    payload = {
+        "schema": TX_SCHEMA,
+        "transaction_id": tx_id,
+        "idempotency_key": idempotency_key,
+        "state": "observed",
+        "old_version": old_version,
+        "candidate_version": candidate_version,
+        "wheel_sha256": wheel_sha256,
+        "expected_generation": expected_generation,
+        "target_generation": target_generation,
+        "created_at": now,
+        "updated_at": now,
+        "failure_reason": None,
+        "handover": None,
+    }
+    _atomic_write_journal(tx_dir / "journal.json", payload)
+    return payload
+
+
+def read_transaction(home: Path, transaction_id: str) -> dict[str, Any]:
+    tx_id = _TX_ID_RE.fullmatch(transaction_id or "")
+    if tx_id is None:
+        raise TransactionError("unknown_transaction")
+    return _read_journal(_tx_root(home) / transaction_id)
+
+
+def advance_transaction(
+    home: Path,
+    transaction_id: str,
+    *,
+    from_state: str,
+    to_state: str,
+    failure_reason: str | None = None,
+    **extra_fields: Any,
+) -> dict[str, Any]:
+    """expected-state CAS 推进；``from_state == to_state`` 幂等重放。
+
+    任何失败态（aborted_before_cutover / rolled_back）必须携带
+    ``failure_reason``，中间态不得缺失或伪造成功。写前读与写盘在
+    ``_TX_LOCK`` 内串行（审查 P2-2），防并发推进交叉覆盖。
+    """
+    probe = _read_journal(_tx_root(home) / transaction_id)
+    current_probe = probe["state"]
+    if to_state in ("aborted_before_cutover", "rolled_back") and not failure_reason:
+        raise TransactionError("terminal_failure_requires_reason")
+    if current_probe != from_state:
+        raise TransactionError(
+            f"transaction_state_conflict: expected={from_state} actual={current_probe}"
+        )
+    if from_state == to_state:
+        # 幂等重放：同状态同事实，不重复推进。
+        return probe
+    with _TX_LOCK:
+        return _advance_transaction_locked(
+            home, transaction_id, from_state=from_state, to_state=to_state,
+            failure_reason=failure_reason, **extra_fields,
+        )
+
+
+def _advance_transaction_locked(
+    home: Path,
+    transaction_id: str,
+    *,
+    from_state: str,
+    to_state: str,
+    failure_reason: str | None,
+    **extra_fields: Any,
+) -> dict[str, Any]:
+    tx_dir = _tx_root(home) / transaction_id
+    payload = _read_journal(tx_dir)
+    current = payload["state"]
+    if current != from_state:
+        raise TransactionError(
+            f"transaction_state_conflict: expected={from_state} actual={current}"
+        )
+    if from_state == to_state:
+        # 幂等重放：同状态同事实，不重复推进。
+        return payload
+    payload["state"] = to_state
+    payload["updated_at"] = system_local_now().isoformat(timespec="seconds")
+    if failure_reason is not None:
+        payload["failure_reason"] = failure_reason
+    payload.update(extra_fields)
+    _atomic_write_journal(tx_dir / "journal.json", payload)
+    return payload
+
+
+class SupervisorLock:
+    """§3.3.1 单实例锁：``upgrade-transactions/supervisor.lock``（0600 + flock）。
+
+    拿不到锁的实例必须直接退出并回报 ``supervisor_conflict``，不改任何状态；
+    本类只提供 acquire/release 与 conflict 事实，不猜测谁是权威实例。
+    """
+
+    def __init__(self, home: Path) -> None:
+        self._root = _tx_root(home, create=True)
+        self._path = self._root / "supervisor.lock"
+        self._fd: int | None = None
+
+    def acquire(self) -> bool:
+        import fcntl
+
+        if self._fd is not None:
+            return True
+        fd = os.open(self._path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        self._fd = fd
+        return True
+
+    @property
+    def conflict_reason(self) -> str:
+        return "supervisor_conflict"
+
+    def release(self) -> None:
+        import fcntl
+
+        if self._fd is None:
+            return
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._fd)
+            self._fd = None
+
+
+def handover_mark_new_ready(home: Path, transaction_id: str, *, generation: int) -> dict[str, Any]:
+    """§3.3.1 步骤 1：新 supervisor 通过 self-check 后回报 ready(generation)。
+
+    只记录事实；旧实例是否 drain、CAS 是否执行由 :func:`handover_complete_cas`
+    承担。重复回报同一 generation 幂等。
+    """
+    tx_dir = _tx_root(home) / transaction_id
+    payload = _read_journal(tx_dir)
+    handover = payload.get("handover") or {}
+    if handover.get("phase") in ("ready", "drain", "settled"):
+        if handover.get("new_ready_generation") == generation:
+            return payload
+        raise TransactionError("handover_ready_conflict")
+    payload["handover"] = {
+        "phase": "ready",
+        "old_generation": payload.get("target_generation"),
+        "new_ready_generation": generation,
+        "recorded_at": system_local_now().isoformat(timespec="seconds"),
+    }
+    payload["updated_at"] = payload["handover"]["recorded_at"]
+    _atomic_write_journal(tx_dir / "journal.json", payload)
+    return payload
+
+
+def handover_complete_cas(
+    home: Path,
+    transaction_id: str,
+    *,
+    expected_generation: int,
+    authority_pid: int,
+    authority_start_time: str,
+) -> dict[str, Any]:
+    """§3.3.1 步骤 3：``CAS expected_generation=N`` 交接 active_generation。
+
+    CAS 失败即把 handover 置 ``rollback_pending``（不标 settled）并抛
+    ``handover_cas_conflict``——旧实例继续服务，事务进入显式回滚待办。
+    """
+    tx_dir = _tx_root(home) / transaction_id
+    payload = _read_journal(tx_dir)
+    handover = payload.get("handover") or {}
+    ready_generation = int(handover.get("new_ready_generation") or 0)
+    if handover.get("phase") not in ("ready", "drain"):
+        raise TransactionError("handover_not_ready")
+    if expected_generation != ready_generation:
+        payload["handover"] = {**handover, "phase": "rollback_pending"}
+        payload["failure_reason"] = "handover_cas_conflict"
+        payload["updated_at"] = system_local_now().isoformat(timespec="seconds")
+        _atomic_write_journal(tx_dir / "journal.json", payload)
+        raise TransactionError(
+            f"handover_cas_conflict: expected={expected_generation} ready={ready_generation}"
+        )
+    payload["handover"] = {
+        **handover,
+        "phase": "settled",
+        "cas": "ok",
+        "authority_pid": authority_pid,
+        "authority_start_time": authority_start_time,
+        "settled_at": system_local_now().isoformat(timespec="seconds"),
+    }
+    payload["updated_at"] = payload["handover"]["settled_at"]
+    _atomic_write_journal(tx_dir / "journal.json", payload)
+    return payload
