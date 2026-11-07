@@ -13,8 +13,8 @@ from llm_loop.peer.models import (
     NodeRecord,
     TaskRecord,
     iso,
+    now_local,
     parse_ts,
-    utcnow,
 )
 
 __all__ = [
@@ -28,5 +28,5 @@ __all__ = [
     "TaskRecord",
     "iso",
     "parse_ts",
-    "utcnow",
+    "now_local",
 ]

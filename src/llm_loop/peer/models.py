@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from llm_loop.timekeeping import system_local_now
+
 SCHEMA = "lfl.peer.v1"
 
 NODE_STATES: tuple[str, ...] = ("paired", "revoked")
@@ -16,12 +18,16 @@ GRANT_STATES: tuple[str, ...] = ("active", "expired", "exhausted", "revoked")
 IDEMPOTENCY_CLASSES: tuple[str, ...] = ("idempotent", "non_idempotent")
 
 
-def utcnow() -> datetime:
-    return datetime.now(UTC)
+def now_local() -> datetime:
+    """宿主本地墙钟（RULE-AI-26）：peer 记录的时间戳一律带本地时区偏移。"""
+    return system_local_now()
 
 
 def iso(ts: datetime) -> str:
-    return ts.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    """序列化为宿主本地时区 ISO-8601；naive 时间一律拒绝（不允许无时区标注）。"""
+    if ts.tzinfo is None:
+        raise ValueError("naive datetime 不允许序列化")
+    return ts.astimezone().isoformat(timespec="seconds")
 
 
 def parse_ts(raw: str) -> datetime:

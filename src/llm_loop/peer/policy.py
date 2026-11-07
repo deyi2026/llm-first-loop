@@ -15,7 +15,7 @@ from typing import Any
 
 from .errors import PeerError
 from .kinds import KindSpec, get_kind
-from .models import GrantRecord, iso, parse_ts, utcnow
+from .models import GrantRecord, iso, now_local, parse_ts
 
 DEFAULT_MAX_READ_BYTES = 1_048_576
 MAX_LIST_DEPTH = 3
@@ -55,7 +55,7 @@ def require_grant_active(
         raise PeerError("grant_revoked", grant.grant_id)
     if not grant.expires_at or int(grant.max_tasks_total) <= 0:
         raise PeerError("grant_unbounded", grant.grant_id)
-    moment = now or utcnow()
+    moment = now or now_local()
     try:
         expires = parse_ts(grant.expires_at)
     except ValueError:

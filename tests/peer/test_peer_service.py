@@ -10,7 +10,7 @@ import pytest
 from llm_loop.peer.admission import AdmissionStore
 from llm_loop.peer.artifacts import ArtifactStore
 from llm_loop.peer.errors import PeerError
-from llm_loop.peer.models import GrantRecord, iso, utcnow
+from llm_loop.peer.models import GrantRecord, iso, now_local
 from llm_loop.peer.service import PeerService
 from llm_loop.peer.store import PeerStore
 
@@ -36,8 +36,8 @@ def make_grant(allowed: Path, **overrides) -> GrantRecord:
         grant_id="gr_ABCDEFGH1234",
         node_id="deepin-01",
         issued_by={"ingress": "feishu", "human": "lfl"},
-        issued_at=iso(utcnow()),
-        expires_at=iso(utcnow() + timedelta(hours=1)),
+        issued_at=iso(now_local()),
+        expires_at=iso(now_local() + timedelta(hours=1)),
         state="active",
         allowed_kinds=("fs.read", "fs.list"),
         allowed_paths=(str(allowed),),

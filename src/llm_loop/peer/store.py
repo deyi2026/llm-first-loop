@@ -26,7 +26,7 @@ from llm_loop.peer.models import (
     NodeRecord,
     TaskRecord,
     iso,
-    utcnow,
+    now_local,
 )
 from llm_loop.peer.state import TERMINAL_STATES, can_quarantine, require_transition
 
@@ -35,7 +35,7 @@ _DOC_NAMES = ("nodes", "grants", "tasks")
 
 
 def _now_iso() -> str:
-    return iso(utcnow())
+    return iso(now_local())
 
 
 class PeerStore:

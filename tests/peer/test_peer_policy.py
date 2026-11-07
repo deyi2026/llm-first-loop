@@ -7,7 +7,7 @@ import pytest
 
 from llm_loop.peer.errors import PeerError
 from llm_loop.peer.kinds import get_kind
-from llm_loop.peer.models import GrantRecord, iso, utcnow
+from llm_loop.peer.models import GrantRecord, iso, now_local
 from llm_loop.peer.policy import (
     evaluate,
     is_sensitive_path,
@@ -24,8 +24,8 @@ def grant(**overrides) -> GrantRecord:
         grant_id="grant-1",
         node_id="deepin-01",
         issued_by={"ingress": "feishu", "human": "lfl"},
-        issued_at=iso(utcnow()),
-        expires_at=iso(utcnow() + timedelta(hours=1)),
+        issued_at=iso(now_local()),
+        expires_at=iso(now_local() + timedelta(hours=1)),
         state="active",
         allowed_kinds=("fs.read", "fs.list"),
         allowed_paths=("/srv/allowed",),
@@ -57,14 +57,14 @@ def test_unknown_kind_denied():
 
 
 def test_revoked_beats_expired():
-    g = grant(state="revoked", expires_at=iso(utcnow() - timedelta(hours=1)))
+    g = grant(state="revoked", expires_at=iso(now_local() - timedelta(hours=1)))
     with pytest.raises(PeerError) as err:
         evaluate(kind="fs.read", params={"path": "/srv/allowed/a"}, grant=g)
     assert err.value.reason_code == "grant_revoked"
 
 
 def test_expired_denied():
-    g = grant(expires_at=iso(utcnow() - timedelta(seconds=1)))
+    g = grant(expires_at=iso(now_local() - timedelta(seconds=1)))
     with pytest.raises(PeerError) as err:
         evaluate(kind="fs.read", params={"path": "/srv/allowed/a"}, grant=g)
     assert err.value.reason_code == "grant_expired"

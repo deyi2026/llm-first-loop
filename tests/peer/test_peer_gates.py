@@ -15,7 +15,7 @@ import pytest
 from llm_loop.peer.admission import AdmissionStore
 from llm_loop.peer.artifacts import ArtifactStore
 from llm_loop.peer.kinds import EXECUTABLE_KINDS, manifest_kinds
-from llm_loop.peer.models import GrantRecord, TaskRecord, iso, utcnow
+from llm_loop.peer.models import GrantRecord, TaskRecord, iso, now_local
 from llm_loop.peer.service import PeerService
 from llm_loop.peer.store import PeerStore
 
@@ -27,8 +27,8 @@ def _grant(allowed: Path, **overrides) -> GrantRecord:
         grant_id="gr_GATES000001",
         node_id="deepin-01",
         issued_by={"ingress": "feishu", "human": "lfl"},
-        issued_at=iso(utcnow()),
-        expires_at=iso(utcnow() + timedelta(hours=1)),
+        issued_at=iso(now_local()),
+        expires_at=iso(now_local() + timedelta(hours=1)),
         state="active",
         allowed_kinds=("fs.read", "fs.list"),
         allowed_paths=(str(allowed),),
@@ -67,7 +67,7 @@ def _payload(allowed: Path, effect_id: str = "eff_gates0001", **params) -> dict:
 
 
 def _task(state: str, *, kind="fs.read", idem="idempotent", supervised=False) -> TaskRecord:
-    now = iso(utcnow())
+    now = iso(now_local())
     return TaskRecord(
         task_id=f"task_{state}_{kind.replace('.', '_')}",
         effect_id=f"eff_{state}_{kind.replace('.', '_')}",
@@ -304,7 +304,7 @@ def test_missing_grant_still_reports_not_found(tmp_path):
 
 # ---- 产物篡改隔离：唯一允许改写终局的边 ------------------------------------
 def _succeeded_task(ref: str) -> TaskRecord:
-    now = iso(utcnow())
+    now = iso(now_local())
     return TaskRecord(
         task_id="task_quarantine_1",
         effect_id="eff_quarantine_1",

@@ -33,7 +33,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from .errors import PeerError
-from .models import iso, parse_ts, utcnow
+from .models import iso, now_local, parse_ts
 
 SCHEMA_VERSION = "lfl.peer.v1"
 KEY_ALG = "ed25519"
@@ -193,7 +193,7 @@ def build_offer(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     _require_node_id(node_id)
-    issued = now or utcnow()
+    issued = now or now_local()
     return {
         "schema": SCHEMA_VERSION,
         "node_id": node_id,
@@ -231,7 +231,7 @@ def verify_offer(
         raise PeerError("pair_fingerprint_mismatch", "does not match human-verified fingerprint")
     if not _NONCE_RE.match(str(offer["nonce"])):
         raise PeerError("params_schema_invalid", "malformed nonce")
-    moment = now or utcnow()
+    moment = now or now_local()
     try:
         expires = parse_ts(str(offer["expires_at"]))
     except ValueError:
