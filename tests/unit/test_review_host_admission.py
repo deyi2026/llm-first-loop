@@ -3591,3 +3591,135 @@ def test_target_tuple_shape_is_pinned(tmp_path: Path) -> None:
     assert isinstance(push_extra, dict)
     assert isinstance(sections, list)
     assert set(push_extra) >= {"src_commit", "push_content_fingerprint"}
+
+
+# ── EVO-20261106-141b29b9: PASS 资格跨 run 失效（锚点摇摆 + 模糊 deny）──
+
+
+def _repo_with_origin(tmp_path: Path) -> tuple[Path, str]:
+    """带 origin（假 URL）的仓库 + HEAD sha——origin 存在才能走
+    _full_test_review_base 的远端锚解析分支（网络由 _push_base_commit mock）。"""
+    repo = _repo(tmp_path)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    return repo, head
+
+
+def test_full_test_anchor_transient_failure_is_explicit_not_silent_legacy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """锚点解析的暂时性失败（ls-remote 网络抖动）不得静默降级 legacy 锚。
+
+    生产实测（2026-11-06/07）：start 与消费两次独立解析锚点，任一次网络
+    失败被静默换成 legacy 锚 → 材料 sha 错位 → 模糊通用 deny（重算一致也
+    无法解释）。暂时性失败必须显式 fail-closed（网络恢复后重试即成功），
+    结构性 legacy（无 remote/detached HEAD，两次解析恒一致）保持不变。"""
+    repo, head = _repo_with_origin(tmp_path)
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
+    assert rha._full_test_review_base(str(repo)) == (head, "")
+
+    def _network_boom(*a, **k):
+        raise ValueError("push_base_unresolvable_fail_closed")
+
+    monkeypatch.setattr(rha, "_push_base_commit", _network_boom)
+    # 修复前：静默 ("", "") 降级（断言红）；修复后：显式 ValueError
+    with pytest.raises(ValueError):
+        rha._full_test_review_base(str(repo))
+
+
+def test_full_test_anchor_transient_failure_keeps_qualification_recoverable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """PASS 资格在网络抖动窗口内必须可恢复：抖动期 deny 必须指明锚点原因，
+    网络恢复（远端未动）后同一资格可消费——不因静默换锚永久错位。"""
+    repo, head = _repo_with_origin(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", str(issued["child_id"]))["qualification"] == "PASS"
+
+    def _network_boom(*a, **k):
+        raise ValueError("push_base_unresolvable_fail_closed")
+
+    monkeypatch.setattr(rha, "_push_base_commit", _network_boom)
+    d = host.check_shell("author-1", "pytest -q", str(repo))
+    assert not d.allowed
+    # 修复前：模糊通用 deny（红：reason 无锚点语义）
+    assert "anchor" in d.reason.lower(), f"deny 应指明锚点不可解析: {d.reason}"
+
+    # 网络恢复（远端未动）→ 同一资格可消费（抖动期未被静默换锚消费掉）
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_generic_deny_names_the_mismatch_dimension(tmp_path: Path) -> None:
+    """通用 deny 必须指名失配维度（无资格/parent/target/sha），不再只有
+    一句模糊文本——EVO-20261106-141b29b9 实测 deny 无法定位根因。"""
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", str(issued["child_id"]))["qualification"] == "PASS"
+
+    # parent 维度失配：deny 指名 parent 不匹配（修复前红：通用文本无维度）
+    d = host.check_shell("other-author", "pytest -q", str(repo))
+    assert not d.allowed
+    assert "parent" in d.reason.lower(), f"deny 应指名 parent 维度: {d.reason}"
+
+    # 无任何待消费资格：deny 指名"无待消费资格"（修复前红）
+    host2 = HostReviewAdmission()
+    d2 = host2.check_shell("author-1", "pytest -q", str(repo))
+    assert not d2.allowed
+    assert ("no_pending" in d2.reason.lower()) or ("无待消费" in d2.reason), (
+        f"deny 应指名无待消费资格: {d2.reason}"
+    )
+
+
+def test_full_test_remote_really_moved_keeps_drift_denial(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """远端锚点真实移动（非网络抖动）时消费必须保持拒绝——锚点修复只消除
+    暂时性解析失败的静默换锚，不弱化 drift 语义（EVO-20261102 注释的
+    重解析防漂移设计保持不变）。"""
+    repo, head = _repo_with_origin(tmp_path)
+    other = subprocess.run(
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "remote-moved"],
+        capture_output=True, check=True, text=True,
+    )
+    assert other.returncode == 0
+    moved = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    assert moved != head
+
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", str(issued["child_id"]))["qualification"] == "PASS"
+
+    # 消费时远端已前移（base=moved ≠ 审查锚 head）→ 材料指纹变化 → 拒绝
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (moved, False))
+    d = host.check_shell("author-1", "pytest -q", str(repo))
+    assert not d.allowed, "远端锚点真实移动后旧 PASS 不得再消费（drift 语义保持）"
+    assert ("sha_mismatch" in d.reason) or ("sha" in d.reason.lower()), (
+        f"deny 应指名 sha 维度: {d.reason}"
+    )

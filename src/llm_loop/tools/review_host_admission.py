@@ -2091,11 +2091,18 @@ def _full_test_review_base(workdir: str) -> tuple[str, str]:
     try:
         base, first_push = _push_base_commit(repo, remote, dst_ref)
         _git(repo, "cat-file", "-e", base + "^{commit}")
-    except (ValueError, OSError, subprocess.TimeoutExpired):
-        # Remote facts unavailable or anchor not in this clone: keep the
-        # legacy anchor; the empty-material refusal still catches the
-        # HEAD-at-destination-tip empty-shell case with a diagnosable error.
-        return "", ""
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        # EVO-20261106-141b29b9: 暂时性解析失败（ls-remote 网络抖动 / 锚不在
+        # 本地 clone）不得静默降级 legacy 锚——start 与消费两次独立解析锚点，
+        # 任一次失败被换成 legacy 锚就会让材料 sha 错位，产生无法定位的模糊
+        # 通用 deny（2026-11-06/07 生产实测：重算逐位一致仍被拒、只能靠
+        # "PASS 后同轮消费"规避）。显式 fail-closed：网络恢复或 git fetch 后
+        # 重试同一目标即成功。结构性 legacy（无 remote / detached HEAD——
+        # 两次解析恒一致）仍走上方 return "", ""，行为不变。
+        raise ValueError(
+            "full_test_anchor_unresolved_fail_closed: 审查锚点（远端推送基）"
+            f"暂时不可解析（{exc}）；稍后重试同一目标，或先 git fetch 再试"
+        ) from exc
     return base, (dst_ref if first_push else "")
 
 
@@ -4389,6 +4396,62 @@ class HostReviewAdmission:
             str(derived["candidate_sha256"]), scope_paths=(), content_fingerprint="",
         )
 
+    def _diagnose_no_pending(self, parent: str, kind: str) -> str:
+        """EVO-20261106-141b29b9: 「无待消费资格」的 deny 诊断——指名维度.
+
+        scopes 为空时唯一能拿到的事实是 records 里的行：用它们区分
+        「本会话无任何记录 / kind 匹配但属于其他父会话 / 有记录但未签发
+        或已消费」，替代一句无法定位的通用文本。前缀截断防泄露完整 id。
+        """
+        rows = list(self._records.values())
+        if not rows:
+            return "no_pending_qualification: 本会话无任何审查记录——先 review_admission(action=start) 发起独立审查"
+        kind_rows = [r for r in rows if r.kind == kind]
+        if not kind_rows:
+            kinds = sorted({r.kind for r in rows})
+            return (
+                "no_pending_qualification: 无 kind="
+                f"{kind} 的待消费资格（现存记录 kind: {','.join(kinds) or '无'}）"
+            )
+        parent_rows = [r for r in kind_rows if r.parent == parent]
+        if not parent_rows:
+            others = sorted({r.parent[:8] for r in kind_rows if r.parent})
+            return (
+                "parent_mismatch: kind 匹配的待消费资格属于其他父会话"
+                f"（{','.join(others) or '?'}…）——PASS 资格不跨会话，"
+                "跨 run 消费须由发起会话自身执行"
+            )
+        states = sorted({f"granted={int(r.granted)},consumed={int(r.consumed)},state={r.state}" for r in parent_rows})
+        return (
+            "no_pending_qualification: 本会话存在同 kind 记录但无可消费资格"
+            f"（{'; '.join(states)}）——未签发需先 poll 到 PASS，已消费需重新审查"
+        )
+
+    @staticmethod
+    def _diagnose_mismatch(parent: str, kind: str, target: str, sha: str, records) -> str:
+        """EVO-20261106-141b29b9: 「资格在但不匹配」的 deny 诊断——指名维度.
+
+        走到这里意味着 _pending_scopes 非空（parent+kind+granted+未消费的行
+        存在）而 _consume 未命中：失配只可能在 target（command/workdir 变化）
+        或 sha（产物内容/审查锚点变化）。逐维对比给出前缀，可直接定位。
+        """
+        for row in records.values():
+            if row.parent != parent or row.kind != kind or not row.granted or row.consumed:
+                continue
+            if row.target != target:
+                return (
+                    "target_mismatch: 已签发资格授权的目标是 "
+                    f"{row.target[:60]}…，当前命令解析为 {target[:60]}…"
+                    "（command/workdir 与审查时不一致，需按当前目标重新审查）"
+                )
+            if row.sha != sha:
+                return (
+                    "sha_mismatch: 已签发资格冻结产物 "
+                    f"{row.sha[:12]}，当前重算 {sha[:12]}"
+                    "（产物内容或审查锚点已变化，需按当前产物重新审查）"
+                )
+        return "no_pending_qualification: 无覆盖当前 (parent, kind, target, sha) 的待消费资格"
+
     def check_shell(self, parent: str, command: str, workdir: str) -> AdmissionDecision:
         kind = classify_host_shell(command)
         if kind is None:
@@ -4407,8 +4470,10 @@ class HostReviewAdmission:
                 derived_decision = self._derived_full_test_decision(parent, workdir, command)
                 if derived_decision is not None:
                     return derived_decision
+            # EVO-20261106-141b29b9: 指名失配维度（无记录/parent/未签发/已消费）
             return self._deny(
-                "不存在覆盖当前产物、目标及父会话的有效独立审查资格", hint=hint
+                "不存在覆盖当前产物、目标及父会话的有效独立审查资格",
+                hint=(hint + "\n" if hint else "") + self._diagnose_no_pending(parent, kind),
             )
         binding_error = ""
         drift_error = ""
@@ -4456,8 +4521,12 @@ class HostReviewAdmission:
             return self._deny(binding_error, hint=hint)
         if drift_error:
             return self._deny(drift_error, hint=hint)
+        # EVO-20261106-141b29b9: 资格在但 _consume 未命中——失配只可能在
+        # target（command/workdir 变化）或 sha（产物/锚点变化），逐维指名。
         return self._deny(
-            "不存在覆盖当前产物、目标及父会话的有效独立审查资格", hint=hint
+            "不存在覆盖当前产物、目标及父会话的有效独立审查资格",
+            hint=(hint + "\n" if hint else "")
+            + self._diagnose_mismatch(parent, kind, target, sha, self._records),
         )
 
     def _pending_scopes(
