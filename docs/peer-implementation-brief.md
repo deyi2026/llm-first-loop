@@ -101,10 +101,12 @@ secret 当 HMAC key 用）。
 1. ~~T3 auth/pair/manifest~~ / ~~T4 闸2-3 + artifact + 只读执行器~~ / ~~编排层 + HTTP 面 + live 冒烟~~（已完成）。
 2. ~~T5 客户端工具 + 挂载主 app~~（已完成，见上节）。
 3. ~~T7 deepin runbook~~（已完成：`docs/playbooks/PEER-P0-session-takeover-runbook.md`，未实测已标注）。
-4. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）；`peer_fetch.to_path` 已接
-   `current_write_scope`，但写类工具面尚未开放。
-5. T6：T1–T10/U1–U10 应拦输入实测（**必须真实网络/独立进程**，不能只用 TestClient 证明）
-   + 全量 pytest + RULE-AI-28 独立审查 → T8 lane 合并。
+4. ~~T6 T1–T10/U1–U10 应拦实测~~（完成：`scripts/peer_acceptance.py` 真进程/真端口/真 HMAC，
+   29 条 = PASS 25 / N/A 4 / FAIL 0，结果与 8 条实测缺陷见
+   `docs/PEER-P0-T6-acceptance-20261108.md`；U4/U7/U9b/U8b 与 U5 的副作用前提**未覆盖**）。
+5. T8 lane 合并审查 → 入 main。
+6. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）；`peer_fetch.to_path` 已接
+   `current_write_scope`，但写类工具面尚未开放。落地后 **U5（部分副作用）与 U7（类型注入）必须重测**。
 
 ## 运行时限制（实测）
 子代理上下文预检在 `tokens_in≈180k` 时直接失败且无 `search_archive` 兜底。委派时只给 ≤3 个小文件、

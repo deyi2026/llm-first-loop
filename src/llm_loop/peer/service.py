@@ -12,13 +12,16 @@
 已知边界：
 - 首切片同步执行（只读 kind 毫秒级）；HTTP 层不得据此假定可阻塞等待大任务。
 - 额度在准入后、动作前消耗；执行崩溃不回滚额度（宁可少用，不可超用）。
-- 未实现 ``blocked``（人工确认）与 ``unknown_outcome`` 的自动判定，留给后续切片。
+- 未实现 ``blocked``（人工确认）状态的生产者，故 ``blocked_timeout`` 回收器留给后续切片。
+- 审计写失败一律 ``audit_unavailable`` 拒绝：宁可拒绝执行，不可无审计地执行。
+- 中断恢复只做状态收敛（``failed/crashed`` 或 ``unknown_outcome``），绝不自动重跑。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import uuid
 from typing import Any
 
@@ -66,7 +69,7 @@ class PeerService:
         display_name: str | None = None,
         display_protocol: str = "none",
         role: str = "executor",
-        health: str = "ok",
+        health: str | None = None,
         max_concurrency: int = 1,
         audit_watermark_pct: int = 90,
         enabled_kinds: set[str] | None = None,
@@ -80,11 +83,29 @@ class PeerService:
         self._display_name = display_name
         self._display_protocol = display_protocol
         self._role = role
-        self._health = health
+        self._health_override = health
         self._max_concurrency = int(max_concurrency)
-        self._audit_watermark_pct = int(audit_watermark_pct)
+        # 水位只有一处真值：manifest 播报值和 health() 判定必须同源，否则
+        # "播报 50 却按 1 判" 就是对端按错阈值排期的隐患。
+        self._audit_watermark_pct = max(50, min(99, int(audit_watermark_pct)))
         self._enabled_kinds = enabled_kinds
         self._clock = clock
+
+    # ---- 健康 --------------------------------------------------------------
+    def health(self) -> str:
+        """``ok`` / ``degraded``：显式覆盖优先，否则按 data 分区水位判定。
+
+        判定失败按 ``degraded``（fail-closed：读不出磁盘状态就不宣称健康）。
+        degraded 时 manifest 照实播报，且拒绝新任务（``executor_unhealthy``）。
+        """
+        if self._health_override is not None:
+            return self._health_override
+        try:
+            usage = shutil.disk_usage(self._store.root)
+        except OSError:
+            return "degraded"
+        pct = int(usage.used * 100 / max(1, usage.total))
+        return "degraded" if pct >= self._audit_watermark_pct else "ok"
 
     # ---- manifest ---------------------------------------------------------
     def manifest(self) -> dict[str, Any]:
@@ -94,7 +115,7 @@ class PeerService:
             "peer_api": PEER_API,
             "node_id": self._node_id,
             "role": self._role,
-            "health": self._health,
+            "health": self.health(),
             "display_protocol": self._display_protocol,
             "desktop": {
                 "screenshot": False,
@@ -166,6 +187,10 @@ class PeerService:
             grant = self._select_grant()
         except PeerError as exc:
             return self._deny(task, None, exc)
+        if self.health() == "degraded":
+            return self._deny(
+                task, grant, PeerError("executor_unhealthy", "executor health=degraded")
+            )
         running = self._running_count()
         try:
             evaluate(
@@ -180,19 +205,23 @@ class PeerService:
             return self._deny(task, grant, exc)
 
         self._store.put_task(task)
-        admission = self._admissions.write(
-            AdmissionRecord(
-                admission_id=f"adm_{uuid.uuid4().hex[:16]}",
-                task_id=task.task_id,
-                node_id=self._node_id,
-                kind=task.kind,
-                effect_id=task.effect_id,
-                verdict="admitted",
-                decided_at=now,
-                params_digest=digest,
-                grant_id=grant.grant_id,
+        try:
+            admission = self._write_admission(
+                AdmissionRecord(
+                    admission_id=f"adm_{uuid.uuid4().hex[:16]}",
+                    task_id=task.task_id,
+                    node_id=self._node_id,
+                    kind=task.kind,
+                    effect_id=task.effect_id,
+                    verdict="admitted",
+                    decided_at=now,
+                    params_digest=digest,
+                    grant_id=grant.grant_id,
+                )
             )
-        )
+        except PeerError as exc:
+            # 审计不可用：动作尚未开始 → 按拒绝收敛，不消耗额度、不执行任何工具
+            return self._deny(task, grant, exc, write_audit=False, persist=False)
         task = task.with_updates(admission_id=admission.admission_id, grant_id=grant.grant_id)
         try:
             self._store.consume_grant(grant.grant_id, expected_tasks_used=grant.tasks_used)
@@ -205,31 +234,55 @@ class PeerService:
         task = self._transition(task, "running")
         return self.receipt(self._execute(task))
 
-    def _deny(self, task: TaskRecord, grant: GrantRecord | None, exc: PeerError) -> dict[str, Any]:
-        self._store.put_task(task)
-        self._admissions.write(
-            AdmissionRecord(
-                admission_id=f"adm_{uuid.uuid4().hex[:16]}",
-                task_id=task.task_id,
-                node_id=self._node_id,
-                kind=task.kind,
-                effect_id=task.effect_id,
-                verdict="denied",
-                decided_at=iso(self._clock()),
-                params_digest=task.params_digest or "",
-                grant_id=grant.grant_id if grant else None,
-                reason_code=exc.reason_code,
-            )
-        )
+    def _deny(
+        self,
+        task: TaskRecord,
+        grant: GrantRecord | None,
+        exc: PeerError,
+        *,
+        write_audit: bool = True,
+        persist: bool = True,
+    ) -> dict[str, Any]:
+        if persist:
+            self._store.put_task(task)
+        if write_audit:
+            try:
+                self._write_admission(
+                    AdmissionRecord(
+                        admission_id=f"adm_{uuid.uuid4().hex[:16]}",
+                        task_id=task.task_id,
+                        node_id=self._node_id,
+                        kind=task.kind,
+                        effect_id=task.effect_id,
+                        verdict="denied",
+                        decided_at=iso(self._clock()),
+                        params_digest=task.params_digest or "",
+                        grant_id=grant.grant_id if grant else None,
+                        reason_code=exc.reason_code,
+                    )
+                )
+            except PeerError as audit_exc:
+                # 审计不可用优先于原拒绝原因：没有审计记录就说不清"为什么拒了"
+                exc = audit_exc
         denied = self._transition(task, "denied", reason_code=exc.reason_code)
         return self.receipt(denied)
+
+    def _write_admission(self, record: AdmissionRecord) -> AdmissionRecord:
+        """审计落盘失败 → ``audit_unavailable``（不是 500，也不是静默放行）。"""
+        try:
+            return self._admissions.write(record)
+        except OSError as exc:
+            raise PeerError("audit_unavailable", f"admission write failed: {exc}") from exc
 
     def _execute(self, task: TaskRecord) -> TaskRecord:
         grant = self._store.get_grant(task.grant_id) if task.grant_id else None
         allowed_paths = tuple(grant.allowed_paths) if grant else ()
         try:
             outcome: ExecOutcome = self._executor.run(
-                kind=task.kind, params=task.params, allowed_paths=allowed_paths
+                kind=task.kind,
+                params=task.params,
+                allowed_paths=allowed_paths,
+                display_protocol=self._display_protocol,
             )
         except PeerError as exc:
             return self._transition(task, "failed", reason_code=exc.reason_code)
@@ -259,6 +312,31 @@ class PeerService:
     def read_artifact(self, ref: str) -> bytes:
         return self._artifacts.read(ref)
 
+    def quarantine_artifact(self, ref: str) -> list[TaskRecord]:
+        """产物被篡改 → 引用过它的 ``succeeded`` 任务转 ``failed``。
+
+        fail-closed：内容寻址的 ref 与盘上字节不符，说明这份产物不可信；把它
+        当成功继续交付等于对外担保了被改过的字节。只收敛本节点任务，不跨节点。
+        """
+        moved: list[TaskRecord] = []
+        for task in self._store.list_tasks(node_id=self._node_id, state="succeeded", limit=10_000):
+            result = task.result or {}
+            refs = [
+                item.get("ref")
+                for item in (result.get("artifacts", []) if isinstance(result, dict) else [])
+                if isinstance(item, dict)
+            ]
+            if ref in refs:
+                moved.append(
+                    self._transition(
+                        task,
+                        "failed",
+                        allow_terminal_rewrite=True,
+                        reason_code="artifact_digest_mismatch",
+                    )
+                )
+        return moved
+
     def artifact_visible_to(self, node_id: str, ref: str) -> bool:
         """只有本请求方任务的回执引用过的 ref 才可见（防按 digest 拉别人产物）。"""
         for task in self._store.list_tasks(limit=10_000):
@@ -279,7 +357,7 @@ class PeerService:
             "state": task.state,
             "idempotency_class": task.idempotency_class,
             "attempt": max(1, int(task.attempt)),
-            "executor": {"node_id": self._node_id, "health": self._health},
+            "executor": {"node_id": self._node_id, "health": self.health()},
             "observed_at": iso(self._clock()),
         }
         for key in ("admission_id", "grant_id", "reason_code", "blocked_reason", "result"):
@@ -293,15 +371,40 @@ class PeerService:
         return receipt
 
     # ---- 内部 --------------------------------------------------------------
-    def _transition(self, task: TaskRecord, state: str, **changes: Any) -> TaskRecord:
+    def _transition(
+        self, task: TaskRecord, state: str, *, allow_terminal_rewrite: bool = False, **changes: Any
+    ) -> TaskRecord:
         updated = task.with_updates(state=state, updated_at=iso(self._clock()), **changes)
-        return self._store.put_task(updated, expected_state=task.state)
+        return self._store.put_task(
+            updated, expected_state=task.state, allow_terminal_rewrite=allow_terminal_rewrite
+        )
 
     def _running_count(self) -> int:
         total = 0
         for state in ("admitted", "queued", "running"):
             total += len(self._store.list_tasks(node_id=self._node_id, state=state, limit=10_000))
         return total
+
+    # ---- 中断恢复 ----------------------------------------------------------
+    def recover_interrupted(self) -> list[TaskRecord]:
+        """重启恢复：把上次进程留下的中间态收敛到可解释状态，**绝不自动重跑**。
+
+        - ``admitted`` / ``queued``：动作尚未开始（``_execute`` 只在 ``running`` 之后调用），
+          收敛为 ``failed/crashed``，额度不回滚。
+        - ``running``：幂等只读 kind → ``failed/crashed``；非幂等 → ``unknown_outcome``
+          （可能已产生部分副作用，既不能声称失败，也不能声称成功）。
+
+        返回被改写的任务，供启动日志与验收脚本核对。调用方为进程启动路径
+        （``scripts/peer_serve.py`` / ``web`` 挂载），不在请求路径上。
+        """
+        recovered: list[TaskRecord] = []
+        for state in ("admitted", "queued", "running"):
+            for task in self._store.list_tasks(node_id=self._node_id, state=state, limit=10_000):
+                if state == "running" and task.idempotency_class != "idempotent":
+                    recovered.append(self._transition(task, "unknown_outcome", reason_code="crashed"))
+                else:
+                    recovered.append(self._transition(task, "failed", reason_code="crashed"))
+        return recovered
 
     def _select_grant(self) -> GrantRecord:
         grants = self._store.list_grants(self._node_id)
@@ -313,6 +416,10 @@ class PeerService:
             if g.state in ("active", "exhausted") and not g.revoked_at and g.expires_at
         ]
         if not usable:
+            # "从没有过租约" 与 "租约被撤" 对控制端是两种动作：后者要停止重试并告警。
+            revoked = [g for g in grants if g.revoked_at or g.state == "revoked"]
+            if revoked:
+                raise PeerError("grant_revoked", f"grant revoked for {self._node_id}")
             raise PeerError("grant_not_found", f"no active grant for {self._node_id}")
         usable.sort(key=lambda g: g.expires_at)
         return usable[0]

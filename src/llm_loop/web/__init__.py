@@ -109,7 +109,16 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
     authenticator = PeerAuthenticator(secret_for=_secret_for)
     install_peer_error_handler(app)
     app.include_router(build_peer_router(service=service, authenticator=authenticator))
-    logger.info("peer routes mounted: node_id=%s data_dir=%s kinds=%d", node_id, data_dir, len(enabled_kinds))
+    # 进程启动即收敛上一次中断留下的中间态（不自动重跑）：主 app 与独立 peer_serve
+    # 共用同一 data_dir，谁先起来谁负责收敛，避免中间态永久悬挂。
+    recovered = service.recover_interrupted()
+    logger.info(
+        "peer routes mounted: node_id=%s data_dir=%s kinds=%d recovered=%d",
+        node_id,
+        data_dir,
+        len(enabled_kinds),
+        len(recovered),
+    )
 
 
 def _effective_request_origin(scope) -> str:

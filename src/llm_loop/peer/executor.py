@@ -7,6 +7,9 @@
 - 产物不内联：内容一律进 ArtifactStore，回执只带 ``artifact://v1/<sha256>``。
 - 未实现的 kind 明确拒绝（``policy_task_kind_not_allowed`` + detail ``handler_missing``），
   不假装成功、不返回空结果。
+- ``desktop.*`` 先判显示协议：非 X11（Wayland/none）一律 ``unsupported_display_protocol``。
+  理由：X11 采集与注入依赖 Xlib，Wayland 下不存在等价语义，"试一下再看"会把
+  "协议不支持"伪装成"执行失败"，控制端无法据此决定是否改派。
 
 首切片未实现（下一轮）：``fs.write`` / ``shell.exec`` / ``desktop.*``（需要闸4 写侧
 或 X11 采集，属有人在场路径）。
@@ -44,9 +47,15 @@ class Executor:
         kind: str,
         params: dict[str, Any],
         allowed_paths: tuple[str, ...],
+        display_protocol: str = "none",
     ) -> ExecOutcome:
         handler = getattr(self, "_run_" + kind.replace(".", "_"), None)
         if handler is None:
+            if kind.startswith("desktop.") and display_protocol != "x11":
+                raise PeerError(
+                    "unsupported_display_protocol",
+                    f"{kind} requires x11,这一端是 {display_protocol!r}",
+                )
             raise PeerError("policy_task_kind_not_allowed", f"handler_missing:{kind}")
         return handler(params=params, allowed_paths=allowed_paths)
 
