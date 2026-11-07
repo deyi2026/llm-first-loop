@@ -75,6 +75,7 @@ class PeerService:
         self._store = store
         self._admissions = admissions
         self._executor = Executor(artifacts=artifacts, node_id=node_id)
+        self._artifacts = artifacts
         self._node_id = node_id
         self._display_name = display_name
         self._display_protocol = display_protocol
@@ -238,6 +239,22 @@ class PeerService:
         if outcome.artifacts:
             result["artifacts"] = list(outcome.artifacts)
         return self._transition(task, "succeeded", result=result)
+
+    # ---- 查询/产物（HTTP 面用） -------------------------------------------
+    def get_task(self, task_id: str) -> TaskRecord | None:
+        return self._store.get_task(task_id)
+
+    def read_artifact(self, ref: str) -> bytes:
+        return self._artifacts.read(ref)
+
+    def artifact_visible_to(self, node_id: str, ref: str) -> bool:
+        """只有本节点任务的回执引用过的 ref 才可见（防按 digest 拉别人产物）。"""
+        for task in self._store.list_tasks(node_id=node_id, limit=10_000):
+            result = task.result or {}
+            for artifact in result.get("artifacts", []) if isinstance(result, dict) else []:
+                if artifact.get("ref") == ref:
+                    return True
+        return False
 
     # ---- 回执 --------------------------------------------------------------
     def receipt(self, task: TaskRecord) -> dict[str, Any]:
