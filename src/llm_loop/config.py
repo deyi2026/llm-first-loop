@@ -1150,7 +1150,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         fleet_project_id=env_values.get("LFL_FLEET_PROJECT_ID", "").strip(),
         fleet_state_dir=env_values.get("LFL_FLEET_STATE_DIR", "").strip(),
         fleet_repo_head=env_values.get("LFL_FLEET_REPO_HEAD", "").strip(),
-        # peer 通道（DESIGN-20261107）：缺省全关；显式 LFL_PEER_ENABLED=1 才挂路由+注册四工具
         peer_enabled=env_bool("LFL_PEER_ENABLED", False),
         peer_node_id=env_values.get("LFL_PEER_NODE_ID", "").strip(),
         peer_display_name=env_values.get("LFL_PEER_DISPLAY_NAME", "").strip(),
