@@ -9,11 +9,22 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from llm_loop.peer.errors import PeerError
 from llm_loop.peer.models import AdmissionRecord
 
 _SAFE = "abcdefghijklmnopqrstuvwxyz0123456789-_."
+
+
+def _record(raw: Any) -> AdmissionRecord:
+    """结构非法的记录 fail-closed：不猜、不补默认值，也不把原始异常抛到 HTTP 层。"""
+    try:
+        return AdmissionRecord.from_dict(raw)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PeerError(
+            "executor_internal_error", f"admission 记录结构非法: {type(exc).__name__}"
+        ) from exc
 
 
 class AdmissionStore:
@@ -24,7 +35,7 @@ class AdmissionStore:
 
     def _path(self, task_id: str) -> Path:
         if not task_id or len(task_id) > 128 or any(ch not in _SAFE for ch in task_id):
-            raise ValueError(f"非法 task_id: {task_id!r}")
+            raise PeerError("params_schema_invalid", "非法 task_id")
         return self.dir / f"{task_id}.json"
 
     def write(self, record: AdmissionRecord) -> AdmissionRecord:
@@ -38,7 +49,12 @@ class AdmissionStore:
                 return existing
             raise PeerError("idempotency_conflict", f"admission 已存在: {record.task_id}") from None
         try:
-            os.write(fd, payload)
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise PeerError("executor_internal_error", "admission 写入未完成")
+                view = view[written:]
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -50,8 +66,10 @@ class AdmissionStore:
         except FileNotFoundError:
             return None
         except (OSError, json.JSONDecodeError) as exc:
-            raise PeerError("executor_internal_error", f"admission 不可读: {exc}") from exc
-        return AdmissionRecord.from_dict(raw)
+            raise PeerError(
+                "executor_internal_error", f"admission 不可读: {type(exc).__name__}"
+            ) from exc
+        return _record(raw)
 
     def count_admitted(self) -> int:
         """已准入次数（≈ 执行尝试次数，单调不减）。
@@ -75,7 +93,9 @@ class AdmissionStore:
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
-                raise PeerError("executor_internal_error", f"admission 不可读: {exc}") from exc
+                raise PeerError(
+                    "executor_internal_error", f"admission 不可读: {type(exc).__name__}"
+                ) from exc
             if raw.get("admission_id") == admission_id:
-                return AdmissionRecord.from_dict(raw)
+                return _record(raw)
         return None
