@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import stat
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -680,3 +681,734 @@ def test_outer_experiences_directory_contains_data_and_config_only_once(
     assert raw["aliases"]["config"] == {"under": "experiences", "relative": ".env"}
     assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 0
     capsys.readouterr()
+
+
+# ── DESIGN-20261107 §4.1/§4.2：三服务 systemd user units 与 lfl-service launcher ──
+
+
+def _render_unit(service: str, lfl_home: Path, home: Path) -> str:
+    from llm_loop.runtime.installation import render_unit_text
+    return render_unit_text(service, lfl_home, home=home)
+
+
+def test_unit_default_root_uses_h_macro_in_three_consistent_places(tmp_path: Path) -> None:
+    root = tmp_path / ".local/share/lfl"
+    for svc in ("web", "feishu", "learning"):
+        text = _render_unit(svc, root, home=tmp_path)
+        assert "WorkingDirectory=%h/.local/share/lfl\n" in text
+        assert "Environment=LFL_HOME=%h/.local/share/lfl\n" in text
+        assert f"ExecStart=%h/.local/share/lfl/bin/lfl-service {svc}\n" in text
+        # 默认根不得把绝对路径写死进 unit（%h 由 user manager 展开）。
+        assert str(root) not in text
+        assert "~" not in text
+        # 版本目录不进 unit：版本唯一真值是 .LFL-active-version（§4.2）。
+        assert "LFL-0." not in text and "releases/LFL-" not in text
+
+
+def test_unit_custom_root_writes_absolute_paths_three_consistent_places(tmp_path: Path) -> None:
+    root = tmp_path / "opt" / "lfl-root"
+    text = _render_unit("web", root, home=tmp_path / "userhome")
+    assert f"WorkingDirectory={root}\n" in text
+    assert f"Environment=LFL_HOME={root}\n" in text
+    assert f"ExecStart={root}/bin/lfl-service web\n" in text
+    assert "%h" not in text and "~" not in text
+
+
+def test_unit_hardening_and_unified_data_dir(tmp_path: Path) -> None:
+    text = _render_unit("web", tmp_path / ".local/share/lfl", home=tmp_path)
+    assert "Restart=always\n" in text
+    assert "RestartSec=5s\n" in text
+    assert "WantedBy=default.target" in text
+    assert "StartLimitIntervalSec=60" in text and "StartLimitBurst=5" in text
+    assert "KillMode=control-group" in text
+    assert "Environment=DATA_DIR=%h/.local/share/lfl/data\n" in text
+    assert "Environment=LFL_DATA_DIR=%h/.local/share/lfl/data\n" in text
+    assert "Environment=LFL_ENV_FILE=%h/.local/share/lfl/.env\n" in text
+    assert "Environment=PYTHONUNBUFFERED=1\n" in text
+
+
+def test_unit_descriptions_per_service(tmp_path: Path) -> None:
+    expect = {
+        "web": "LFL Web service",
+        "feishu": "LFL Feishu service",
+        "learning": "LFL Learning service",
+    }
+    for svc, desc in expect.items():
+        assert f"Description={desc}\n" in _render_unit(svc, tmp_path / ".local/share/lfl", home=tmp_path)
+
+
+def test_validate_install_root_for_units_accepts_normal_and_rejects_unsafe(
+    tmp_path: Path,
+) -> None:
+    from llm_loop.runtime.installation import validate_install_root_for_units
+    ok = tmp_path / "share" / "lfl"
+    validate_install_root_for_units(ok)  # 不存在也可先做形态校验
+    link = tmp_path / "linkroot"
+    link.symlink_to(tmp_path / "share" / "lfl", target_is_directory=True)
+    bad_roots = [
+        link,                       # symlink
+        Path("/"), Path("/usr"), Path("/etc"), Path("/var"), Path("/home"),
+        Path("/a/../b"),            # 含 ..
+        Path("/has space/lfl"),     # 空格
+        Path("/ctrl\x01lfl"),       # 控制字符
+        Path("relative/lfl"),       # 非绝对
+    ]
+    for bad in bad_roots:
+        with pytest.raises(ValueError):
+            validate_install_root_for_units(bad)
+
+
+def test_lfl_service_launcher_guards_and_exec_semantics(tmp_path: Path) -> None:
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+    root = tmp_path / "lfl-home"
+    text = render_lfl_service_launcher(root)
+    assert text.startswith("#!/bin/sh")
+    # 唯一版本真值是 .LFL-active-version；拒绝 symlink 指针。
+    assert ".LFL-active-version" in text
+    assert "-L " in text or "readlink" in text or "symlink" in text
+    # 不完整 release（.installer-incomplete 存在）必须拒绝启动。
+    assert ".installer-incomplete" in text
+    # wheel 完整性复核（.installer-wheel.sha256）。
+    assert ".installer-wheel.sha256" in text
+    # exec 保留 systemd MainPID/cgroup 语义（exec 位于各 case 分支内）。
+    assert 'exec "$APP/venv/bin/lfl" start' in text
+    # feishu / learning 启动命令（§4.2）。
+    assert '"$APP/venv/bin/python" -m llm_loop.runtime.launch feishu' in text
+    assert '"$APP/venv/bin/python" -m llm_loop.runtime.launch learning' in text
+    # launcher 绑定本安装根，拒绝其它 LFL_HOME 复用（与 install_linux.sh 惯例一致）。
+    assert str(root) in text
+
+
+def test_install_units_verifies_then_enables_and_writes_receipt(tmp_path: Path) -> None:
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+    root.mkdir(parents=True)
+    unit_dir = tmp_path / "user" / ".config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def fake_runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        calls.append(list(argv))
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    receipt = installation.install_service_units(
+        root, unit_dir=unit_dir, home=tmp_path / "user", runner=fake_runner
+    )
+    expected_units = ("lfl.service", "lfl-feishu.service", "lfl-learning.service")
+    for name in expected_units:
+        target = unit_dir / name
+        assert target.is_file()
+        assert len(receipt["units"][name]["sha256"]) == 64
+    launcher = root / "bin" / "lfl-service"
+    assert launcher.is_file()
+    assert receipt["launcher"] == str(launcher)
+    flat = [" ".join(c) for c in calls]
+    # 生成后 systemd-analyze --user verify 每个单元。
+    verify_calls = [f for f in flat if "systemd-analyze" in f and "verify" in f]
+    assert len(verify_calls) >= 3
+    # verify 全过后 daemon-reload，然后逐单元 enable --now。
+    first_verify = flat.index(verify_calls[0])
+    reload_idx = flat.index("systemctl --user daemon-reload")
+    assert all(flat.index(v) < reload_idx for v in verify_calls)
+    assert first_verify < reload_idx
+    for name in expected_units:
+        assert f"systemctl --user enable --now {name}" in flat
+    # 单元内容变化才 try-restart：首次安装不做 try-restart。
+    assert not any("try-restart" in f for f in flat)
+
+
+def test_install_units_verify_failure_is_fail_closed(tmp_path: Path) -> None:
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+    root.mkdir(parents=True)
+    unit_dir = tmp_path / "user" / ".config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    post_verify: list[list[str]] = []
+
+    def fake_runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        if "verify" in argv:
+            return _sp.CompletedProcess(argv, 1, "", "unit is invalid")
+        post_verify.append(list(argv))
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    with pytest.raises(installation.UnitInstallError):
+        installation.install_service_units(
+            root, unit_dir=unit_dir, home=tmp_path / "user", runner=fake_runner
+        )
+    # verify 失败后不得 daemon-reload / enable / try-restart。
+    flat = [" ".join(c) for c in post_verify]
+    assert not any("daemon-reload" in f or "enable" in f or "try-restart" in f for f in flat)
+
+
+def test_install_units_changed_unit_triggers_reload_and_try_restart(tmp_path: Path) -> None:
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+    root.mkdir(parents=True)
+    unit_dir = tmp_path / "user" / ".config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    # 预置一个内容不同的旧 unit，模拟重装变化。
+    (unit_dir / "lfl.service").write_text("# old unit text\n", encoding="utf-8")
+    flat: list[str] = []
+
+    def fake_runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        flat.append(" ".join(argv))
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    installation.install_service_units(
+        root, unit_dir=unit_dir, home=tmp_path / "user", runner=fake_runner
+    )
+    # 内容变化的单元：daemon-reload 后 try-restart 恰好作用于该单元。
+    assert "systemctl --user try-restart lfl.service" in flat
+    assert flat.index("systemctl --user try-restart lfl.service") > flat.index(
+        "systemctl --user daemon-reload"
+    )
+    flat.clear()
+
+    # 第二次安装相同内容：不再 try-restart。
+    installation.install_service_units(
+        root, unit_dir=unit_dir, home=tmp_path / "user", runner=fake_runner
+    )
+    assert not any("try-restart" in f for f in flat)
+
+
+# ── 父会话实现自检（2026-11-07）对应的加固契约 ─────────────────────────────
+
+
+def _probe_runner(saw: dict[str, object], checks: dict[str, object]):
+    """记录调用的同时，在指定 systemctl 阶段执行磁盘事实断言。"""
+    import subprocess as _sp
+
+    def runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        joined = " ".join(argv)
+        for phase, predicate in checks.items():
+            if phase in joined and phase not in saw:
+                saw[phase] = predicate()
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    return runner
+
+
+def test_launcher_exists_before_enable_and_units_verified_first(tmp_path: Path) -> None:
+    """enable --now 触发前 launcher 必须已可执行（否则 ExecStart 起不来）。"""
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+    unit_dir = tmp_path / "user/.config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    saw: dict[str, object] = {}
+
+    def runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        joined = " ".join(argv)
+        if "enable" in joined and "enable" not in saw:
+            saw["enable"] = (root / "bin" / "lfl-service").is_file()
+        if "verify" in joined and "verify" not in saw:
+            saw["verify"] = (root / "bin" / "lfl-service").is_file()
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    installation.install_service_units(
+        root, unit_dir=unit_dir, home=tmp_path / "user", runner=runner
+    )
+    assert saw["verify"] is True
+    assert saw["enable"] is True
+
+
+def test_daemon_reload_failure_restores_units_and_raises(tmp_path: Path) -> None:
+    """daemon-reload 失败：恢复原 unit 内容与 mode，抛 UnitInstallError。"""
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+    unit_dir = tmp_path / "user/.config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    old = unit_dir / "lfl.service"
+    old.write_text("# previous unit text\n", encoding="utf-8")
+    old.chmod(0o640)
+
+    def runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        if "daemon-reload" in argv:
+            return _sp.CompletedProcess(argv, 1, "", "reload refused")
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    with pytest.raises(installation.UnitInstallError):
+        installation.install_service_units(
+            root, unit_dir=unit_dir, home=tmp_path / "user", runner=runner
+        )
+    assert old.read_text(encoding="utf-8") == "# previous unit text\n"
+    assert (old.stat().st_mode & 0o777) == 0o640
+
+
+def test_enable_failure_yields_partial_receipt_not_success(tmp_path: Path) -> None:
+    """enable 失败：unit 文件保留（可人工恢复），receipt 报 partial_failed。"""
+    import json as _json
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+    unit_dir = tmp_path / "user/.config/systemd/user"
+    unit_dir.mkdir(parents=True)
+
+    def runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        if "enable" in argv and "lfl-feishu.service" in argv:
+            return _sp.CompletedProcess(argv, 1, "", "enable failed")
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    receipt = installation.install_service_units(
+        root, unit_dir=unit_dir, home=tmp_path / "user", runner=runner
+    )
+    assert receipt["status"] == "partial_failed"
+    assert (unit_dir / "lfl-feishu.service").is_file()  # 保留供人工恢复
+    assert (root / "bin" / "lfl-service").is_file()
+    failures = _json.loads(_json.dumps(receipt["failures"]))
+    assert any(f["step"] == "enable" and f["unit"] == "lfl-feishu.service" for f in failures)
+
+
+def test_data_dir_conflict_is_fail_closed(tmp_path: Path) -> None:
+    """显式注入的 DATA_DIR 与 LFL_DATA_DIR 不一致：拒绝安装 unit。
+
+    env 由调用方显式注入（one-way ratchet 后 install 侧不直取进程环境）；
+    服务进程层的冲突由 lfl-service launcher 运行时门守护（§2.4 判定层）。
+    """
+    import subprocess as _sp
+
+    from llm_loop.runtime import installation
+    root = tmp_path / "lfl-home"
+
+    def runner(argv: list[str], **_: object) -> _sp.CompletedProcess:
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    with pytest.raises(installation.UnitInstallError):
+        installation.install_service_units(
+            root, unit_dir=tmp_path / "units", home=tmp_path / "user", runner=runner,
+            env={"DATA_DIR": str(tmp_path / "a"), "LFL_DATA_DIR": str(tmp_path / "b")},
+        )
+    assert not (tmp_path / "units" / "lfl.service").exists()
+
+
+def test_validate_install_root_rejects_symlinked_ancestor(tmp_path: Path) -> None:
+    """路径任一父组件为 symlink 即拒绝（不只检查最后一段）。"""
+    from llm_loop.runtime.installation import validate_install_root_for_units
+    real = tmp_path / "realroot" / "lfl"
+    real.mkdir(parents=True)
+    link_dir = tmp_path / "linked"
+    link_dir.symlink_to(tmp_path / "realroot", target_is_directory=True)
+    with pytest.raises(ValueError):
+        validate_install_root_for_units(link_dir / "lfl")
+
+
+def test_recovery_unit_is_single_oneshot_gate_before_services(tmp_path: Path) -> None:
+    """§4.4：lfl-recovery.service 是 oneshot 门；业务单元 Wants+After 它。"""
+    from llm_loop.runtime import installation
+    root = tmp_path / ".local/share/lfl"
+    home = tmp_path
+    recovery = installation.render_recovery_unit_text("recovery", root, home=home)
+    assert "Type=oneshot" in recovery
+    assert "RemainAfterExit=yes" in recovery
+    assert "Restart=no" in recovery
+    assert "TimeoutStartSec=120" in recovery
+    assert "Before=lfl.service lfl-feishu.service lfl-learning.service" in recovery
+    assert "ExecStart=%h/.local/share/lfl/bin/lfl-recovery" in recovery
+    for svc in ("web", "feishu", "learning"):
+        text = installation.render_unit_text(svc, root, home=home)
+        assert "Wants=lfl-recovery.service" in text
+        assert "After=lfl-recovery.service" in text
+
+
+def test_lfl_service_launcher_requires_recovery_ok_marker(tmp_path: Path) -> None:
+    """launcher 前置判定：recovery-ok 标记缺失即 fail-closed（recovery_incomplete）。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+    text = render_lfl_service_launcher(tmp_path / "lfl-home")
+    assert "recovery-ok" in text
+    assert "recovery_incomplete" in text
+
+
+def test_lfl_recovery_launcher_writes_marker_when_no_pending_journal(tmp_path: Path) -> None:
+    """recovery 启动器：无未完成事务 → 写 recovery-ok 放行；幂等。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+    text = render_lfl_recovery_launcher(tmp_path / "lfl-home")
+    assert text.startswith("#!/bin/sh")
+    assert "recovery-ok" in text
+    assert "upgrade-transactions" in text  # 未完成事务检查（无 → 放行写标记）
+    # 标记内容含判定摘要（journal_id/decision/ts）。
+    assert "decision=" in text or "journal_id" in text
+
+
+def test_scripts_systemd_samples_match_renderers() -> None:
+    """scripts/systemd 参考样本与渲染器输出逐字节一致（防双真值漂移）。"""
+    from llm_loop.runtime import installation
+    repo = Path(__file__).resolve().parents[2]
+    samples_dir = repo / "scripts" / "systemd"
+    home = Path.home()
+    root = home / ".local/share/lfl"
+    for svc, name in installation._MANAGED_UNIT_NAMES.items():
+        sample = (samples_dir / name).read_text(encoding="utf-8")
+        assert sample == installation.render_unit_text(svc, root, home=home), name
+    recovery = (samples_dir / "lfl-recovery.service").read_text(encoding="utf-8")
+    assert recovery == installation.render_recovery_unit_text("recovery", root, home=home)
+
+
+def test_launcher_gates_order_recovery_marker_before_checksum_before_exec(
+    tmp_path: Path,
+) -> None:
+    """launcher 文本中 recovery-ok 门先于 wheel 校验、校验先于 exec。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+    text = render_lfl_service_launcher(tmp_path / "lfl-home")
+    marker_idx = text.index("recovery-ok")
+    checksum_idx = text.index("sha256sum --check")
+    exec_idx = text.index('exec "$APP')
+    assert marker_idx < checksum_idx < exec_idx
+
+
+# ── P1-3（审查 b7691f4e）：recovery launcher 精确 JSON state 提取（真实 shell gate）──
+
+
+def _run_launcher(
+    script_text: str, run_dir: Path, args: list[str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    import subprocess
+
+    script = run_dir / "gate-under-test.sh"
+    script.write_text(script_text, encoding="utf-8")
+    script.chmod(0o755)
+    return subprocess.run(
+        ["/bin/sh", str(script), *(args or [])], capture_output=True, text=True, timeout=30
+    )
+
+
+def _fake_lfl_home(tmp_path: Path) -> Path:
+    root = tmp_path / "lfl-home"
+    root.mkdir(parents=True)
+    (root / ".LFL-active-version").write_text("0.6.40\n", encoding="utf-8")
+    return root
+
+
+def test_recovery_gate_real_shell_accepts_only_true_terminal_states(
+    tmp_path: Path,
+) -> None:
+    """真实执行 recovery gate：三个真实终态放行；settled / observed+handover.phase=settled / 损坏 JSON 一律 fail-closed。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    def make_case(name: str, journal_payload: dict | None) -> tuple[Path, subprocess.CompletedProcess[str]]:
+        case = tmp_path / name
+        root = _fake_lfl_home(case)
+        tx = root / "upgrade-transactions" / "tx0000000000000000000000ff"
+        tx.mkdir(parents=True)
+        if journal_payload is not None:
+            (tx / "journal.json").write_text(
+                json.dumps(journal_payload), encoding="utf-8"
+            )
+        result = _run_launcher(render_lfl_recovery_launcher(root), case)
+        return root, result
+
+    # 三个真实终态（upgrade_stage.TX_TERMINAL_STATES）→ 放行并写标记。
+    for state in ("committed", "aborted_before_cutover", "rolled_back"):
+        root, result = make_case(f"ok-{state}", {"state": state})
+        assert result.returncode == 0, (state, result.stderr)
+        assert (root / "state" / "recovery-ok").is_file()
+    # settled 不是终态（审查 P1-3：禁止整行子串匹配放行 state=settled）。
+    root, result = make_case("state-settled", {"state": "settled"})
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+    assert not (root / "state" / "recovery-ok").exists()
+    # state=observed 且 handover.phase=settled：可 fail-open 的可达状态。
+    root, result = make_case(
+        "observed-handover-settled",
+        {"state": "observed", "handover": {"phase": "settled"}},
+    )
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+    assert not (root / "state" / "recovery-ok").exists()
+    # 损坏 JSON（含 "committed" 字样的垃圾文本）→ fail-closed。
+    case = tmp_path / "garbage"
+    root = _fake_lfl_home(case)
+    tx = root / "upgrade-transactions" / "tx0000000000000000000000ef"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text('{"state": "committed-garbage"', encoding="utf-8")
+    result = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert result.returncode != 0
+    assert not (root / "state" / "recovery-ok").exists()
+
+
+def test_service_launcher_real_shell_blocks_without_recovery_ok(
+    tmp_path: Path,
+) -> None:
+    """真实执行 lfl-service gate：recovery-ok 缺失 → exit 1 且输出 recovery_incomplete。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    case = tmp_path / "svc-gate"
+    root = _fake_lfl_home(case)
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+    # 绑定正确的 marker（Stage 3-C 语义）放行 recovery 门；无 release 目录
+    # → 仍拒绝，但拒绝原因必须是 release 缺失而非 recovery 门。
+    (root / "state").mkdir()
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n"
+        "active_version=0.6.40\ntx_fingerprint=none\nts=2026-11-07T00:00:00Z\n",
+        encoding="utf-8",
+    )
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    # 无 release 目录 → 仍拒绝，但拒绝原因必须是 release 缺失而非 recovery 门。
+    assert result.returncode != 0
+    assert "recovery_incomplete" not in result.stderr
+
+
+def test_recovery_launcher_terminal_states_match_python_single_source(
+    tmp_path: Path,
+) -> None:
+    """launcher 的终态清单与 upgrade_stage.TX_TERMINAL_STATES 单一真值一致。
+
+    未来 Python 侧新增/改名终态时，此测试强制同步 shell launcher，
+    防止双源漂移造成 fail-open（审查 b7691f4e P1-3 的结构性防线）。
+    """
+    import re
+
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+    from llm_loop.runtime.upgrade_stage import TX_TERMINAL_STATES
+
+    text = render_lfl_recovery_launcher(tmp_path / "lfl-home")
+    match = re.search(
+        r"case \"\$state_value\" in\n\s+([a-z_|\n ]+)\) : ;;", text
+    )
+    assert match is not None, "terminal-state case clause not found in launcher"
+    shell_states = {s.strip() for s in re.split(r"[|\n]", match.group(1)) if s.strip()}
+    assert shell_states == set(TX_TERMINAL_STATES)
+
+
+# ── Stage 3-C（2026-11-07）：recovery fail-open 最小修复的 RED→GREEN 契约 ──
+# 背景矩阵（OrbStack Ubuntu22.04 真实 shell，7 组=5 fail-open+2 正确）：
+#   ①no marker+observed→拒(对) ②stale marker+observed→放行(错) ③stale+settled非终态→放行(错)
+#   ④stale+损坏JSON→放行(错) ⑤no marker+孤儿tx缺journal→放行+写marker(错)
+#   ⑥no marker+TX_DIR symlink→放行+写marker(错) ⑦no marker+committed→放行(对)
+
+
+def _stale_marker(root: Path) -> None:
+    """构造一个'看起来合法'的旧 recovery-ok（绕过存在性检查的最强对手输入）。"""
+    (root / "state").mkdir(exist_ok=True)
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n"
+        "active_version=0.6.40\ntx_fingerprint=none\nts=2026-11-07T00:00:00Z\n",
+        encoding="utf-8",
+    )
+
+
+def test_recovery_gate_stale_marker_does_not_bypass_journal_check(tmp_path: Path) -> None:
+    """矩阵②③④：stale marker 存在时 recovery 仍必须真实核对 journal。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    for name, payload in (
+        ("observed", {"state": "observed"}),
+        ("settled-nonterminal", {"state": "settled"}),
+        ("corrupt", None),  # 损坏 JSON 由下方单独写入
+    ):
+        case = tmp_path / name
+        root = _fake_lfl_home(case)
+        tx = root / "upgrade-transactions" / "tx0000000000000000000000aa"
+        tx.mkdir(parents=True)
+        if payload is None:
+            (tx / "journal.json").write_text('{"state": "committed', encoding="utf-8")
+        else:
+            (tx / "journal.json").write_text(json.dumps(payload), encoding="utf-8")
+        _stale_marker(root)
+        result = _run_launcher(render_lfl_recovery_launcher(root), case)
+        assert result.returncode != 0, (name, result.stderr)
+        assert "recovery_incomplete" in result.stderr
+
+
+def test_recovery_gate_reruns_full_validation_when_marker_present(tmp_path: Path) -> None:
+    """marker 合法写入后 journal 被篡改为非终态：重跑 recovery 必须再 fail。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    case = tmp_path / "tamper"
+    root = _fake_lfl_home(case)
+    tx = root / "upgrade-transactions" / "tx0000000000000000000000bb"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text(json.dumps({"state": "committed"}), encoding="utf-8")
+    first = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert first.returncode == 0, first.stderr
+    assert (root / "state" / "recovery-ok").is_file()
+    # 篡改：终态 → 非终态。recovery 不允许凭既有 marker 短路放行。
+    (tx / "journal.json").write_text(json.dumps({"state": "observed"}), encoding="utf-8")
+    second = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert second.returncode != 0, second.stderr
+    assert "recovery_incomplete" in second.stderr
+
+
+def test_recovery_gate_orphan_tx_dir_without_journal_fails_closed(tmp_path: Path) -> None:
+    """矩阵⑤：tx 子目录存在但 journal.json 缺失 → fail-closed，不写 marker。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    case = tmp_path / "orphan"
+    root = _fake_lfl_home(case)
+    (root / "upgrade-transactions" / "tx0000000000000000000000cc").mkdir(parents=True)
+    result = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert result.returncode != 0, result.stderr
+    assert not (root / "state" / "recovery-ok").exists()
+
+
+def test_recovery_gate_txdir_symlink_fails_closed(tmp_path: Path) -> None:
+    """矩阵⑥：upgrade-transactions 是 symlink → fail-closed（无论 marker）。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    real_tx = tmp_path / "real-tx"
+    real_tx.mkdir()
+    (real_tx / "tx0000000000000000000000dd").mkdir()
+    (real_tx / "tx0000000000000000000000dd" / "journal.json").write_text(
+        '{"state": "observed"}', encoding="utf-8"
+    )
+    for with_marker in (False, True):
+        case = tmp_path / f"symlink-mk{int(with_marker)}"
+        root = _fake_lfl_home(case)
+        (root / "upgrade-transactions").symlink_to(real_tx, target_is_directory=True)
+        if with_marker:
+            _stale_marker(root)
+        result = _run_launcher(render_lfl_recovery_launcher(root), case)
+        assert result.returncode != 0, (with_marker, result.stderr)
+        # fail-closed：不新写 marker。预置的 stale marker 由 service 侧绑定
+        # 核对兜底拒绝（recovery 不做删除等破坏性动作）。
+        if not with_marker:
+            assert not (root / "state" / "recovery-ok").exists()
+
+
+def test_recovery_marker_written_with_binding_fields(tmp_path: Path) -> None:
+    """放行 marker 必须绑定 active_version 与 tx_fingerprint（供 service 侧核对）。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    case = tmp_path / "binding"
+    root = _fake_lfl_home(case)  # active=0.6.40，无事务目录
+    result = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert result.returncode == 0, result.stderr
+    marker = (root / "state" / "recovery-ok").read_text(encoding="utf-8")
+    assert "active_version=0.6.40" in marker
+    assert "tx_fingerprint=none" in marker
+
+
+def test_service_launcher_stale_marker_with_pending_journal_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """矩阵②的 service 面：marker 存在但存在未完成事务 → 拒绝启动。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    case = tmp_path / "svc-stale"
+    root = _fake_lfl_home(case)
+    tx = root / "upgrade-transactions" / "tx0000000000000000000000ee"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text(json.dumps({"state": "observed"}), encoding="utf-8")
+    _stale_marker(root)
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0, result.stderr
+    assert "recovery_incomplete" in result.stderr
+
+
+def test_service_launcher_marker_must_bind_current_state(tmp_path: Path) -> None:
+    """marker 的 active_version / tx_fingerprint 必须与当前磁盘一致。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    # active_version 不一致（marker 记 0.6.39，指针是 0.6.40；无事务→指纹 none）。
+    case = tmp_path / "svc-bind-av"
+    root = _fake_lfl_home(case)
+    (root / "state").mkdir()
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n"
+        "active_version=0.6.39\ntx_fingerprint=none\nts=2026-11-07T00:00:00Z\n",
+        encoding="utf-8",
+    )
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+
+    # tx_fingerprint 不一致（磁盘出现新事务目录，marker 仍记 none）。
+    import json
+
+    case2 = tmp_path / "svc-bind-fp"
+    root2 = _fake_lfl_home(case2)
+    tx = root2 / "upgrade-transactions" / "tx0000000000000000000000fa"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text(json.dumps({"state": "observed"}), encoding="utf-8")
+    _stale_marker(root2)
+    result2 = _run_launcher(render_lfl_service_launcher(root2), case2, args=["web"])
+    assert result2.returncode != 0
+    assert "recovery_incomplete" in result2.stderr
+
+
+def test_service_launcher_marker_without_binding_fields_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """无绑定字段的 marker（Stage2 旧格式/手工伪造）不得凭存在放行。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    case = tmp_path / "svc-unbound"
+    root = _fake_lfl_home(case)
+    (root / "state").mkdir()
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+    )
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+
+
+def test_create_transaction_invalidates_recovery_marker(tmp_path: Path) -> None:
+    """设计 §4.4：新事务创建前旧 recovery-ok 必须失效（升级侧接线）。"""
+    from llm_loop.runtime import upgrade_stage
+
+    home = tmp_path / "home"
+    (home / "state").mkdir(parents=True)
+    (home / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+    )
+    payload = upgrade_stage.create_transaction(
+        home,
+        idempotency_key="stage3c-red",
+        old_version="0.6.40",
+        candidate_version="0.6.41",
+        wheel_sha256="a" * 64,
+        expected_generation=1,
+        target_generation=2,
+    )
+    assert payload["state"] == "observed"
+    assert not (home / "state" / "recovery-ok").exists()
+
+
+def test_advance_transaction_invalidates_recovery_marker(tmp_path: Path) -> None:
+    """事务推进同样使旧判定失效：任何可达时序不残留有效旧标记。"""
+    from llm_loop.runtime import upgrade_stage
+
+    home = tmp_path / "home"
+    payload = upgrade_stage.create_transaction(
+        home,
+        idempotency_key="stage3c-red-adv",
+        old_version="0.6.40",
+        candidate_version="0.6.41",
+        wheel_sha256="a" * 64,
+        expected_generation=1,
+        target_generation=2,
+    )
+    # 模拟事务推进间隙被写入的 marker（例如 recovery 在 commit 前一瞬放行）。
+    (home / "state").mkdir(parents=True, exist_ok=True)
+    (home / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+    )
+    advanced = upgrade_stage.advance_transaction(
+        home,
+        payload["transaction_id"],
+        from_state="observed",
+        to_state="candidate_resolved",
+    )
+    assert advanced["state"] == "candidate_resolved"
+    assert not (home / "state" / "recovery-ok").exists()

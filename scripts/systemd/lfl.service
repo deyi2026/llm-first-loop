@@ -1,0 +1,24 @@
+[Unit]
+Description=LFL Web service
+Wants=lfl-recovery.service
+After=lfl-recovery.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/lfl
+Environment=LFL_HOME=%h/.local/share/lfl
+Environment=DATA_DIR=%h/.local/share/lfl/data
+Environment=LFL_DATA_DIR=%h/.local/share/lfl/data
+Environment=LFL_ENV_FILE=%h/.local/share/lfl/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/share/lfl/bin/lfl-service web
+Restart=always
+RestartSec=5s
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=45s
+
+[Install]
+WantedBy=default.target

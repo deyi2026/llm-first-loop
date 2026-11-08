@@ -569,3 +569,74 @@ def test_github_ci_runs_linux_installer_on_native_x86_64_and_aarch64() -> None:
     assert "getconf GNU_LIBC_VERSION | grep -q '^glibc '" in linux_job
     assert "python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json" in linux_job
     assert "name: linux-installer-smoke-${{ matrix.arch }}" in linux_job
+
+
+def test_httpx_socks_extra_is_declared_and_locked() -> None:
+    """Deepin socks5 代理冷启动事故回归（2026-11-08）：wheel 必须随包携带 socksio。
+
+    根因：用户级 systemd 环境携带 ``all_proxy=socks5://127.0.0.1:7890`` 时，
+    ``httpx.Client(trust_env=True)`` 初始化需要 socksio；wheel 0.6.40 未携带
+    导致 ImportError、Web 冷启动失败。正式修复是把依赖声明为
+    ``httpx[socks]>=0.27``——安装器 ``uv pip install <wheel>`` 按 wheel
+    METADATA 的 ``Requires-Dist`` 解析 extras，从而装上 socksio。
+    红线：不改全局 trust_env、不禁用代理、不加永久 systemd UnsetEnvironment。
+    """
+    import re
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"httpx[socks]>=0.27"' in pyproject, (
+        "dependency must declare the socks extra so socksio ships in the wheel graph"
+    )
+    lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    assert re.search(r'^name = "socksio"$', lock, re.MULTILINE), (
+        "uv.lock must pin socksio (the httpx socks extra implementation)"
+    )
+    # 锁的项目 requires-dist 段必须精确携带 extras + 原下限（不漂移）。
+    assert '{ name = "httpx", extras = ["socks"], specifier = ">=0.27" }' in lock, (
+        "the locked project requires-dist edge must carry the socks extra with the >=0.27 floor"
+    )
+
+
+def test_built_wheel_metadata_requires_socks_extra(tmp_path: Path) -> None:
+    """真实构建管线下 wheel METADATA 必须声明 httpx[socks] 且版本与 pyproject 一致。
+
+    这是安装链的单一权威证据：``install_linux.sh`` 的
+    ``uv pip install <wheel>`` 按 METADATA 的 Requires-Dist 解析 extras；
+    若构建产物丢了 ``[socks]``，Deepin socks5 代理冷启动事故将复发。
+    Version 一致性防的是"发布候选 bump 后忘改 uv.lock / 构建出旧版本 wheel
+    混淆现有 release"（2026-11-08 版本纪律：不能用同版本号 wheel 覆盖生产
+    release，否则无法安全安装/回滚）。构建输出到 tmp_path，不触碰 dist/。
+    """
+    import email
+    import tomllib
+    import zipfile
+
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        project_version = tomllib.load(handle)["project"]["version"]
+
+    completed = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    wheels = sorted(tmp_path.glob("llm_first_loop-*.whl"))
+    assert len(wheels) == 1, f"expected exactly one built wheel, got {wheels}"
+    # wheel 文件名内嵌版本必须就是项目版本（安装器按
+    # llm_first_loop-<version>-py3-none-any.whl 定位资产）。
+    assert wheels[0].name == f"llm_first_loop-{project_version}-py3-none-any.whl", (
+        f"built wheel filename {wheels[0].name} does not match pyproject "
+        f"version {project_version}"
+    )
+    with zipfile.ZipFile(wheels[0]) as archive:
+        names = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+        assert len(names) == 1
+        metadata = email.message_from_bytes(archive.read(names[0]))
+    assert metadata.get("Name") == "llm-first-loop"
+    assert metadata.get("Version") == project_version, (
+        f"built wheel METADATA Version {metadata.get('Version')!r} does not "
+        f"match pyproject project version {project_version!r}"
+    )
+    requires = metadata.get_all("Requires-Dist") or []
+    assert "httpx[socks]>=0.27" in requires, (
+        "built wheel METADATA must carry the socks extra requirement"
+    )

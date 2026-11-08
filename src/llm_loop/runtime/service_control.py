@@ -57,6 +57,28 @@ from llm_loop.runtime.webui_provenance import verify_webui_source_binding
 from llm_loop.timekeeping import system_local_now
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
+# DESIGN-20261107 §3.2（v0.2）：v2 显式声明 artifact_kind（source_checkout |
+# wheel_release）。wheel 身份 = version + wheel_sha256 + release_dir + package
+# manifest，绝不伪造 git_head；source 语义与 v1 完全一致（原逻辑保留）。
+_DEPLOYMENT_SCHEMA_V2 = "lfl.managed-service-deployment/v2"
+_ARTIFACT_KIND_SOURCE = "source_checkout"
+_ARTIFACT_KIND_WHEEL = "wheel_release"
+_DEPLOYMENT_V2_FIELDS = frozenset(
+    {
+        "schema",
+        "artifact_kind",
+        "deployment_id",
+        "generation",
+        "git_head",
+        "code_root",
+        "runtime_root",
+        "data_dir",
+        "webui_artifact_sha256",
+        "version",
+        "wheel_sha256",
+        "release_dir",
+    }
+)
 
 logger = logging.getLogger(__name__)
 _ACTION_SCHEMA = "service-control-action/v1"
@@ -444,42 +466,185 @@ class ManagedServiceDeployment:
     code_root: str
     runtime_root: str
     webui_artifact_sha256: str
+    # DESIGN-20261107 §3.2（v0.2）：v2 双部署身份。默认值保证 v1 构造/等值/
+    # 序列化完全不变；wheel 字段仅在 artifact_kind=wheel_release 时非空。
+    artifact_kind: str = _ARTIFACT_KIND_SOURCE
+    data_dir: str = ""
+    version: str = ""
+    wheel_sha256: str = ""
+    release_dir: str = ""
 
     def __post_init__(self) -> None:
-        if self.schema != _DEPLOYMENT_SCHEMA:
+        if self.schema not in (_DEPLOYMENT_SCHEMA, _DEPLOYMENT_SCHEMA_V2):
             raise ValueError(f"unsupported deployment schema: {self.schema!r}")
         if not self.deployment_id.strip():
             raise ValueError("deployment_id must be non-empty")
         if not isinstance(self.generation, int) or self.generation < 1:
             raise ValueError("generation must be a positive integer")
-        if not re.fullmatch(r"[0-9a-f]{40}", self.git_head):
-            raise ValueError("git_head must be an exact 40-char lowercase SHA")
-        for label, raw in (("code_root", self.code_root), ("runtime_root", self.runtime_root)):
-            path = Path(raw).expanduser()
-            if not path.is_absolute():
-                raise ValueError(f"{label} must be absolute")
+        if self.schema == _DEPLOYMENT_SCHEMA:
+            # v1：source checkout 单形态（既有磁盘状态零回归）。
+            if self.artifact_kind != _ARTIFACT_KIND_SOURCE:
+                raise ValueError("v1 deployment is implicitly source_checkout")
+            self._validate_source_identity(require_data_dir=False)
+            if self.version or self.wheel_sha256 or self.release_dir:
+                raise ValueError("v1 deployment must not carry wheel identity fields")
+            return
+        # v2：双 artifact_kind。
+        if self.artifact_kind == _ARTIFACT_KIND_SOURCE:
+            self._validate_source_identity(require_data_dir=True)
+            if self.version or self.wheel_sha256 or self.release_dir:
+                raise ValueError("source_checkout must not carry wheel identity fields")
+        elif self.artifact_kind == _ARTIFACT_KIND_WHEEL:
+            if self.git_head.strip():
+                raise ValueError(
+                    "wheel_release must not fabricate git_head; identity is "
+                    "version + wheel_sha256 + release_dir"
+                )
+            if self.code_root.strip():
+                raise ValueError("wheel_release has no source code_root")
+            if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.version):
+                raise ValueError(
+                    f"wheel_release version must be MAJOR.MINOR.PATCH: {self.version!r}"
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", self.wheel_sha256):
+                raise ValueError("wheel_sha256 must be sha256 hex")
+            for label, raw in (
+                ("release_dir", self.release_dir),
+                ("runtime_root", self.runtime_root),
+                ("data_dir", self.data_dir),
+            ):
+                path = Path(raw).expanduser()
+                if not path.is_absolute():
+                    raise ValueError(f"{label} must be absolute")
+        else:
+            raise ValueError(
+                f"unknown artifact_kind: {self.artifact_kind!r} "
+                f"(expected source_checkout|wheel_release)"
+            )
         if not re.fullmatch(r"[0-9a-f]{64}", self.webui_artifact_sha256):
             raise ValueError("webui_artifact_sha256 must be sha256 hex")
 
+    def _validate_source_identity(self, *, require_data_dir: bool) -> None:
+        if not re.fullmatch(r"[0-9a-f]{40}", self.git_head):
+            raise ValueError("git_head must be an exact 40-char lowercase SHA")
+        for label, raw in (
+            [("code_root", self.code_root), ("runtime_root", self.runtime_root)]
+            + ([("data_dir", self.data_dir)] if require_data_dir else [])
+        ):
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                raise ValueError(f"{label} must be absolute")
+
     def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+        if self.schema == _DEPLOYMENT_SCHEMA:
+            # v1 序列化保持既有 7 字段（磁盘状态与既有回执零回归）。
+            return {
+                "schema": self.schema,
+                "deployment_id": self.deployment_id,
+                "generation": self.generation,
+                "git_head": self.git_head,
+                "code_root": self.code_root,
+                "runtime_root": self.runtime_root,
+                "webui_artifact_sha256": self.webui_artifact_sha256,
+            }
+        if self.artifact_kind == _ARTIFACT_KIND_WHEEL:
+            return {
+                "schema": self.schema,
+                "artifact_kind": self.artifact_kind,
+                "deployment_id": self.deployment_id,
+                "generation": self.generation,
+                "version": self.version,
+                "wheel_sha256": self.wheel_sha256,
+                "release_dir": self.release_dir,
+                "runtime_root": self.runtime_root,
+                "data_dir": self.data_dir,
+                "webui_artifact_sha256": self.webui_artifact_sha256,
+            }
+        return {
+            "schema": self.schema,
+            "artifact_kind": self.artifact_kind,
+            "deployment_id": self.deployment_id,
+            "generation": self.generation,
+            "git_head": self.git_head,
+            "code_root": self.code_root,
+            "runtime_root": self.runtime_root,
+            "data_dir": self.data_dir,
+            "webui_artifact_sha256": self.webui_artifact_sha256,
+        }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ManagedServiceDeployment:
+        schema = str(raw.get("schema", ""))
+        if schema not in (_DEPLOYMENT_SCHEMA, _DEPLOYMENT_SCHEMA_V2):
+            raise ValueError(f"unsupported deployment schema: {schema!r}")
         keys = frozenset(raw)
-        unknown = sorted(keys - _DEPLOYMENT_FIELDS)
-        missing = sorted(_DEPLOYMENT_FIELDS - keys)
+        if schema == _DEPLOYMENT_SCHEMA:
+            allowed, required = _DEPLOYMENT_FIELDS, _DEPLOYMENT_FIELDS
+        else:
+            artifact_kind_probe = str(raw.get("artifact_kind", ""))
+            allowed = _DEPLOYMENT_V2_FIELDS
+            # wheel 与 source 各自的身份字段互斥：另一方键缺席按空解析，
+            # 出现即拒绝（防混用/防伪造）。
+            if artifact_kind_probe == _ARTIFACT_KIND_WHEEL:
+                required = _DEPLOYMENT_V2_FIELDS - {"git_head", "code_root"}
+            else:
+                required = _DEPLOYMENT_V2_FIELDS - {
+                    "version", "wheel_sha256", "release_dir",
+                }
+        unknown = sorted(keys - allowed)
+        missing = sorted(required - keys)
         if unknown:
             raise ValueError(f"deployment unknown fields: {unknown}")
         if missing:
             raise ValueError(f"deployment missing fields: {missing}")
+        if schema == _DEPLOYMENT_SCHEMA:
+            return cls(
+                schema=schema,
+                deployment_id=str(raw["deployment_id"]),
+                generation=int(raw["generation"]),
+                git_head=str(raw["git_head"]),
+                code_root=str(raw["code_root"]),
+                runtime_root=str(raw["runtime_root"]),
+                webui_artifact_sha256=str(raw["webui_artifact_sha256"]),
+            )
+        artifact_kind = str(raw.get("artifact_kind", ""))
+        if artifact_kind == _ARTIFACT_KIND_WHEEL:
+            if str(raw.get("git_head", "") or "").strip():
+                raise ValueError(
+                    "wheel_release must not carry git_head (fabricated identity)"
+                )
+            if str(raw.get("code_root", "") or "").strip():
+                raise ValueError("wheel_release must not carry code_root")
+            return cls(
+                schema=schema,
+                artifact_kind=artifact_kind,
+                deployment_id=str(raw["deployment_id"]),
+                generation=int(raw["generation"]),
+                git_head="",
+                code_root="",
+                runtime_root=str(raw["runtime_root"]),
+                data_dir=str(raw["data_dir"]),
+                webui_artifact_sha256=str(raw["webui_artifact_sha256"]),
+                version=str(raw["version"]),
+                wheel_sha256=str(raw["wheel_sha256"]),
+                release_dir=str(raw["release_dir"]),
+            )
+        for banned, message in (
+            ("version", "source_checkout must not carry wheel version"),
+            ("wheel_sha256", "source_checkout must not carry wheel_sha256"),
+            ("release_dir", "source_checkout must not carry release_dir"),
+        ):
+            if str(raw.get(banned, "") or "").strip():
+                raise ValueError(message)
         return cls(
-            schema=str(raw["schema"]),
+            schema=schema,
+            artifact_kind=artifact_kind,
             deployment_id=str(raw["deployment_id"]),
             generation=int(raw["generation"]),
             git_head=str(raw["git_head"]),
             code_root=str(raw["code_root"]),
             runtime_root=str(raw["runtime_root"]),
+            data_dir=str(raw["data_dir"]),
             webui_artifact_sha256=str(raw["webui_artifact_sha256"]),
         )
 
@@ -814,7 +979,7 @@ def _durable_detail(store: ManagedServiceDeploymentStore, detail: str) -> tuple[
 
 
 class BindingProblemKind:
-    """封闭枚举：binding 核验的 8 类问题（字面值即持久化/断言口径）。"""
+    """封闭枚举：source binding 核验的 8 类问题（字面值即持久化/断言口径）。"""
 
     CODE_ROOT_MISMATCH = "code_root_mismatch"
     RUNTIME_ROOT_MISMATCH = "runtime_root_mismatch"
@@ -835,6 +1000,28 @@ class BindingProblemKind:
             GIT_STATUS_UNAVAILABLE,
             WEBUI_ARTIFACT_UNAVAILABLE,
             WEBUI_ARTIFACT_MISMATCH,
+        }
+    )
+
+
+class WheelBindingProblemKind:
+    """wheel_release 绑定核验类别（DESIGN-20261107 §3.2）。
+
+    与 source 的 :class:`BindingProblemKind` 8 类是**并列的两个域**（双部署
+    身份互不混用）：source 枚举保持封闭 8 类契约不变；wheel 三类只出现在
+    wheel deployment 的绑定核验里。RUNTIME_ROOT_MISMATCH / WEBUI_* 直接
+    复用 source 域字面值（同一物理事实，同一类别）。
+    """
+
+    WHEEL_RELEASE_MISSING = "wheel_release_missing"
+    WHEEL_SHA256_MISMATCH = "wheel_sha256_mismatch"
+    ACTIVE_POINTER_MISMATCH = "active_pointer_mismatch"
+
+    ALL = frozenset(
+        {
+            WHEEL_RELEASE_MISSING,
+            WHEEL_SHA256_MISMATCH,
+            ACTIVE_POINTER_MISMATCH,
         }
     )
 
@@ -934,6 +1121,26 @@ _NEXT_STEP_BY_KIND: Mapping[str, NextStep] = {
         exit_action="",
         argv_hint="",
         note="git status 不可用，非 service_control 可修复，无预设下一步",
+    ),
+    # DESIGN-20261107 §3.2：wheel_release 三类（独立于 source 8 类封闭枚举）。
+    # 修复路径是重跑官方安装器（release 完整性由安装器产物保证），不是 git 操作。
+    WheelBindingProblemKind.WHEEL_RELEASE_MISSING: NextStep(
+        problem_kind=WheelBindingProblemKind.WHEEL_RELEASE_MISSING,
+        exit_action="",
+        argv_hint="--lfl-home <LFL_HOME>",
+        note="release 目录或 wheel 文件缺失：重跑官方 Linux 安装器修复该版本，程序不自动重装",
+    ),
+    WheelBindingProblemKind.WHEEL_SHA256_MISMATCH: NextStep(
+        problem_kind=WheelBindingProblemKind.WHEEL_SHA256_MISMATCH,
+        exit_action="",
+        argv_hint="--lfl-home <LFL_HOME>",
+        note="release wheel 字节与清单不符：重跑官方 Linux 安装器（拒绝不同字节覆盖属预期防篡改）",
+    ),
+    WheelBindingProblemKind.ACTIVE_POINTER_MISMATCH: NextStep(
+        problem_kind=WheelBindingProblemKind.ACTIVE_POINTER_MISMATCH,
+        exit_action="",
+        argv_hint="--lfl-home <LFL_HOME>",
+        note="活动指针与 desired 版本不一致：确认目标版本后经安装器/回滚入口切换，程序不猜指针",
     ),
     NEXT_STEP_KIND_GENERATION_CONFLICT: NextStep(
         problem_kind=NEXT_STEP_KIND_GENERATION_CONFLICT,
@@ -1443,6 +1650,13 @@ def _kill_signal_is_probe(tokens: list[str]) -> bool:
     return False
 
 
+def _deployment_kind(deployment: Any) -> str:
+    """artifact_kind 的容错读取：真实 dataclass 恒有该字段；测试侧以
+    SimpleNamespace 构造的 v1 假对象无字段——按未声明（source）处理，
+    不让观测代码因属性缺失崩溃（R9 红数对账 2026-11-07）。"""
+    return str(getattr(deployment, "artifact_kind", "") or "") or _ARTIFACT_KIND_SOURCE
+
+
 def _pid_alive(pid: int) -> bool:
     """Signal-0 liveness probe (observation only; never mutates the process)."""
     if pid <= 0:
@@ -1455,6 +1669,15 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _manifest_release_version(raw: Mapping[str, Any]) -> str:
+    """§3.2 wheel 身份比对键的单一实现源：manifest build_identity.release_version.
+
+    compose_service_identity_view 与 _verify_restart_targets 的 wheel 分支
+    都从这里取值（审查 b7691f4e P1-1：不再依赖 live dict 的隐式中转键）。
+    """
+    return str((raw.get("build_identity") or {}).get("release_version") or "")
 
 
 def latest_succeeded_actions(
@@ -2192,6 +2415,99 @@ def _receipt_stable_view(
     return stable
 
 
+def _live_service_identity(
+    service: str,
+    manifest_path: Path,
+    deployment: ManagedServiceDeployment | None,
+) -> dict[str, Any]:
+    """单服务 live 身份事实（自 ``compose_service_identity_view`` 原样抽出）。
+
+    职责：manifest 读取（pid/started_at/git_head/build/release_version 等）
+    → web 端口兜底（manifest pid 死但端口有监听者时以端口为准）→
+    desired 代次到达性推断（wheel 比对 release_version、source 比对
+    git_head；推断显式标注 inferred，并列原始证据）。
+    """
+    live: dict[str, Any] = {"manifest_present": manifest_path.is_file()}
+    if live["manifest_present"]:
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            pid = int(raw.get("pid") or 0)
+            live.update(
+                {
+                    "pid": pid or None,
+                    "pid_alive": _pid_alive(pid),
+                    "started_at": raw.get("started_at"),
+                    "git_head": raw.get("git_head"),
+                    "build": raw.get("build_identity") or {},
+                    # P1-1（审查 b7691f4e）：wheel 比对键的扁平镜像，
+                    # 与 _verify_restart_targets 同源于 _manifest_release_version。
+                    "release_version": _manifest_release_version(raw),
+                    "model_ref": raw.get("model_ref"),
+                    "provider_id": raw.get("provider_id"),
+                    "config_hash": raw.get("config_hash"),
+                    "semantic_scopes": raw.get("semantic_scopes") or {},
+                    "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
+                }
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            live["manifest_error"] = True
+    # 2026-09-24 13:08 端口兜底：manifest pid 死但端口有 llm_loop 监听者 →
+    # 以端口监听者为准（pid_source=port_listener），manifest 原值降级为
+    # manifest_pid 保留展示。只修 web（feishu/learning 无统一端口口径），
+    # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
+    # 不引入常态双探针抖动。
+    if (
+        service == "web"
+        and live.get("pid")
+        and not live.get("pid_alive")
+        and not live.get("manifest_error")
+    ):
+        port_pid = _web_port_listener_pid()
+        if port_pid is not None:
+            live["manifest_pid"] = live.get("pid")
+            live["manifest_pid_alive"] = False
+            live["pid"] = port_pid
+            live["pid_alive"] = True
+            live["pid_source"] = "port_listener"
+    if deployment is not None and not live.get("manifest_error"):
+        # L8: live 代探测——runtime manifest 不携带 generation，只能用
+        # 身份键与 desired 的相等性**推断**"live 是否已达到期望代"。
+        # 这是推断而非身份事实：显式标注 inferred 并并列原始证据（pid/
+        # manifest/head/started_at），由模型自行判断，不以推断冒充身份。
+        # DESIGN-20261107 §3.2：wheel deployment 没有 git_head——比对键
+        # 是 manifest build_identity.release_version == desired.version；
+        # source checkout（v1/v2）仍比对精确 git_head。
+        if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+            live_release = str(live.get("release_version") or "")
+            identity_matches = bool(live_release) and live_release == deployment.version
+            desired_evidence: dict[str, Any] = {
+                "artifact_kind": _ARTIFACT_KIND_WHEEL,
+                "desired_version": deployment.version,
+                "live_release_version": live_release,
+            }
+        else:
+            identity_matches = str(live.get("git_head") or "") == deployment.git_head
+            desired_evidence = {
+                "artifact_kind": _ARTIFACT_KIND_SOURCE,
+                "desired_git_head": deployment.git_head,
+            }
+        live["matches_desired_generation"] = bool(live.get("pid_alive")) and identity_matches
+        # design 2.2.2.6: live 代次只是推断事实，显式标注 inferred。
+        live["inferred"] = True
+        live["matches_desired_generation_inferred"] = True
+        live["matches_desired_generation_evidence"] = {
+            "pid": live.get("pid"),
+            "pid_alive": live.get("pid_alive"),
+            "git_head": live.get("git_head"),
+            "started_at": live.get("started_at"),
+            # 只暴露文件名，不落绝对私有路径到模型可读产物（spec 4.3-3）。
+            "manifest": manifest_path.name,
+            "manifest_present": bool(live.get("manifest_present")),
+            **desired_evidence,
+        }
+    return live
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -2209,66 +2525,7 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
     services: dict[str, Any] = {}
     for service in _MANAGED_SERVICES:
         manifest_path = store.runtime_dir / f"runtime_manifest.{service}.json"
-        live: dict[str, Any] = {"manifest_present": manifest_path.is_file()}
-        if live["manifest_present"]:
-            try:
-                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-                pid = int(raw.get("pid") or 0)
-                live.update(
-                    {
-                        "pid": pid or None,
-                        "pid_alive": _pid_alive(pid),
-                        "started_at": raw.get("started_at"),
-                        "git_head": raw.get("git_head"),
-                        "build": raw.get("build_identity") or {},
-                        "model_ref": raw.get("model_ref"),
-                        "provider_id": raw.get("provider_id"),
-                        "config_hash": raw.get("config_hash"),
-                        "semantic_scopes": raw.get("semantic_scopes") or {},
-                        "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
-                    }
-                )
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                live["manifest_error"] = True
-        # 2026-09-24 13:08 端口兜底：manifest pid 死但端口有 llm_loop 监听者 →
-        # 以端口监听者为准（pid_source=port_listener），manifest 原值降级为
-        # manifest_pid 保留展示。只修 web（feishu/learning 无统一端口口径），
-        # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
-        # 不引入常态双探针抖动。
-        if (
-            service == "web"
-            and live.get("pid")
-            and not live.get("pid_alive")
-            and not live.get("manifest_error")
-        ):
-            port_pid = _web_port_listener_pid()
-            if port_pid is not None:
-                live["manifest_pid"] = live.get("pid")
-                live["manifest_pid_alive"] = False
-                live["pid"] = port_pid
-                live["pid_alive"] = True
-                live["pid_source"] = "port_listener"
-        if deployment is not None and not live.get("manifest_error"):
-            # L8: live 代探测——runtime manifest 不携带 generation，只能用
-            # git_head 与 desired 的相等性**推断**"live 是否已达到期望代"。
-            # 这是推断而非身份事实：显式标注 inferred 并并列原始证据（pid/
-            # manifest/head/started_at），由模型自行判断，不以推断冒充身份。
-            live["matches_desired_generation"] = bool(live.get("pid_alive")) and (
-                str(live.get("git_head") or "") == deployment.git_head
-            )
-            # design 2.2.2.6: live 代次只是推断事实，显式标注 inferred。
-            live["inferred"] = True
-            live["matches_desired_generation_inferred"] = True
-            live["matches_desired_generation_evidence"] = {
-                "pid": live.get("pid"),
-                "pid_alive": live.get("pid_alive"),
-                "git_head": live.get("git_head"),
-                "started_at": live.get("started_at"),
-                # 只暴露文件名，不落绝对私有路径到模型可读产物（spec 4.3-3）。
-                "manifest": manifest_path.name,
-                "manifest_present": bool(live.get("manifest_present")),
-                "desired_git_head": deployment.git_head,
-            }
+        live = _live_service_identity(service, manifest_path, deployment)
         stable = _receipt_stable_view(succeeded, service, deployment, live)
         # 最近一次**核验**（可能来自整单判 failed 的复合动作分支证据）。与 stable
         # 并列而不是替换：stable 是 durable 回执事实，verify 是动作证据事实。
@@ -2304,13 +2561,24 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
         else:
             if live.get("pid") and not live.get("pid_alive"):
                 reasons.append("live_pid_not_running")
-            live_head = str(live.get("git_head") or "")
-            if not live_head:
-                reasons.append("live_git_head_missing")
-            elif live_head != deployment.git_head:
-                reasons.append(
-                    f"live_git_head_mismatch live={live_head} desired={deployment.git_head}"
-                )
+            if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+                # §3.2：wheel 身份没有 git_head——比对 release_version（单一实现源）。
+                live_release = str(live.get("release_version") or "")
+                if not live_release:
+                    reasons.append("live_release_version_missing")
+                elif live_release != deployment.version:
+                    reasons.append(
+                        f"live_release_version_mismatch "
+                        f"live={live_release} desired={deployment.version}"
+                    )
+            else:
+                live_head = str(live.get("git_head") or "")
+                if not live_head:
+                    reasons.append("live_git_head_missing")
+                elif live_head != deployment.git_head:
+                    reasons.append(
+                        f"live_git_head_mismatch live={live_head} desired={deployment.git_head}"
+                    )
         services[service] = {
             "live": live,
             "stable": stable,
@@ -3904,10 +4172,22 @@ def _verify_restart_targets(
             problems: list[str] = []
             if not _pid_alive(pid):
                 problems.append(f"pid_dead:{pid or 0}")
-            if not head:
-                problems.append("git_head_missing")
-            elif deployment is not None and head != deployment.git_head:
-                problems.append("git_head_mismatch")
+            if deployment is not None and _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+                # §3.2：wheel 验收比对 manifest build_identity.release_version
+                # （单一实现源 _manifest_release_version，与 compose 视图同键）。
+                live_release = _manifest_release_version(raw)
+                if not live_release:
+                    problems.append("release_version_missing")
+                elif live_release != deployment.version:
+                    problems.append(
+                        f"release_version_mismatch live={live_release} "
+                        f"desired={deployment.version}"
+                    )
+            else:
+                if not head:
+                    problems.append("git_head_missing")
+                elif deployment is not None and head != deployment.git_head:
+                    problems.append("git_head_mismatch")
             started = _parse_iso(raw.get("started_at"))
             if (
                 started is not None
@@ -4387,7 +4667,16 @@ def _read_log_tail(path: Path, limit: int) -> str:
 
 
 def _restart_identity(desired: ManagedServiceDeployment) -> str:
-    """回执身份串：desired 快照的 generation 与 git_head 两个坐标。"""
+    """回执身份串：desired 快照的 generation 与身份坐标（§3.2）。
+
+    source checkout 两个坐标仍是 generation + git_head（文本逐字不变）；
+    wheel_release 输出 key=wheel:version@sha12（无 git_head 可言，不伪造）。
+    """
+    if desired.artifact_kind == _ARTIFACT_KIND_WHEEL:
+        return (
+            f"identity generation={desired.generation} "
+            f"key={deployment_identity_key(desired)}"
+        )
     return f"identity generation={desired.generation} git_head={desired.git_head}"
 
 
@@ -4420,32 +4709,82 @@ def _tree_sha256(root: Path) -> str:
     return h.hexdigest()
 
 
-def _binding_problems_structured(
-    deployment: ManagedServiceDeployment,
-    *,
-    code_root: str | Path,
-    runtime_root: str | Path,
-    verify_webui: bool = True,
-) -> list[BindingProblem]:
-    """svc_deploy I1: 8 类 binding 判定的结构化事实源。
+def _wheel_release_webui_dist(release: Path) -> Path | None:
+    """release venv site-packages 内的 WebUI dist 树（pythonX.Y 不写死）。"""
+    for candidate in sorted(
+        (release / "venv" / "lib").glob("python*/site-packages/llm_loop/webui/dist")
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
 
-    判定顺序、条件与 git 子进程调用（次数与超时）与既有
-    ``verify_deployment_binding`` **完全一致**，只是把"文本 append"提升为
-    "（类别 + 原文 + 取值）append"，使下一步提示由结构化类别派生，而不是读
-    文本猜语义（对齐 Q5）。
+
+def _wheel_webui_binding_problems(
+    deployment: ManagedServiceDeployment, release: Path
+) -> list[BindingProblem]:
+    """wheel release 的 WebUI 资产绑定核验段（自 ``_wheel_binding_problems`` 原样抽出）。
+
+    dist 树缺失/不可读 → WEBUI_ARTIFACT_UNAVAILABLE；树摘要与 desired
+    webui_artifact_sha256 不等 → WEBUI_ARTIFACT_MISMATCH。
     """
-    code = Path(code_root).expanduser().resolve()
-    runtime = Path(runtime_root).expanduser().resolve()
     problems: list[BindingProblem] = []
-    if str(code) != deployment.code_root:
+    dist = _wheel_release_webui_dist(release)
+    if dist is None:
         problems.append(
             BindingProblem(
-                kind=BindingProblemKind.CODE_ROOT_MISMATCH,
-                text=f"code_root mismatch desired={deployment.code_root} actual={code}",
-                desired=deployment.code_root,
-                actual=str(code),
+                kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
+                text="webui artifact unavailable: wheel release has no webui dist tree",
+                desired="",
+                actual="",
             )
         )
+        return problems
+    try:
+        artifact = _tree_sha256(dist)
+    except (OSError, ValueError):
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
+                text="webui artifact unavailable: dist tree unreadable or empty",
+                desired="",
+                actual="",
+            )
+        )
+        return problems
+    if artifact != deployment.webui_artifact_sha256:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+                text=(
+                    f"webui_artifact_mismatch desired="
+                    f"{deployment.webui_artifact_sha256[:12]} "
+                    f"actual={artifact[:12]}"
+                ),
+                desired=deployment.webui_artifact_sha256,
+                actual=artifact,
+            )
+        )
+    return problems
+
+
+def _wheel_binding_problems(
+    deployment: ManagedServiceDeployment,
+    *,
+    runtime: Path,
+    verify_webui: bool,
+) -> list[BindingProblem]:
+    """wheel_release 绑定核验（DESIGN-20261107 §3.2/§2.3）。
+
+    判定（与 source 的 git 绑定核验并列、互不混用）：
+    1. runtime_root 一致（复用 RUNTIME_ROOT_MISMATCH）。
+    2. release 目录存在且路径不自漂移（WHEEL_RELEASE_MISSING）。
+    3. ``.LFL-active-version`` 指针 == desired.version（ACTIVE_POINTER_MISMATCH）。
+    4. release wheel 实际字节 sha256 == desired.wheel_sha256
+       （WHEEL_SHA256_MISMATCH；wheel 文件缺失归 WHEEL_RELEASE_MISSING）。
+    5. verify_webui 时 site-packages 内 WebUI dist 树摘要一致
+       （WEBUI_ARTIFACT_UNAVAILABLE / WEBUI_ARTIFACT_MISMATCH）。
+    """
+    problems: list[BindingProblem] = []
     if str(runtime) != deployment.runtime_root:
         problems.append(
             BindingProblem(
@@ -4455,6 +4794,78 @@ def _binding_problems_structured(
                 actual=str(runtime),
             )
         )
+    release = Path(deployment.release_dir).expanduser()
+    release_resolved = release.resolve()
+    if (
+        str(release_resolved) != str(release)
+        or release.is_symlink()
+        or not release.is_dir()
+    ):
+        problems.append(
+            BindingProblem(
+                kind=WheelBindingProblemKind.WHEEL_RELEASE_MISSING,
+                text=f"wheel release directory missing or unsafe: {release.name}",
+                desired=str(release),
+                actual=str(release_resolved),
+            )
+        )
+        return problems
+    active = runtime / ".LFL-active-version"
+    try:
+        pointer = active.read_text(encoding="ascii").strip()
+    except OSError:
+        pointer = ""
+    if pointer != deployment.version:
+        problems.append(
+            BindingProblem(
+                kind=WheelBindingProblemKind.ACTIVE_POINTER_MISMATCH,
+                text=(
+                    f"active_pointer_mismatch desired={deployment.version} "
+                    f"actual={pointer or 'missing'}"
+                ),
+                desired=deployment.version,
+                actual=pointer or "missing",
+            )
+        )
+    wheel_name = f"llm_first_loop-{deployment.version}-py3-none-any.whl"
+    wheel_file = release / wheel_name
+    if wheel_file.is_symlink() or not wheel_file.is_file():
+        problems.append(
+            BindingProblem(
+                kind=WheelBindingProblemKind.WHEEL_RELEASE_MISSING,
+                text=f"wheel file missing from release: {wheel_name}",
+                desired=wheel_name,
+                actual="missing",
+            )
+        )
+    else:
+        actual_sha = hashlib.sha256(wheel_file.read_bytes()).hexdigest()
+        if actual_sha != deployment.wheel_sha256:
+            problems.append(
+                BindingProblem(
+                    kind=WheelBindingProblemKind.WHEEL_SHA256_MISMATCH,
+                    text=(
+                        f"wheel_sha256_mismatch desired={deployment.wheel_sha256[:12]} "
+                        f"actual={actual_sha[:12]}"
+                    ),
+                    desired=deployment.wheel_sha256,
+                    actual=actual_sha,
+                )
+            )
+    if verify_webui:
+        problems.extend(_wheel_webui_binding_problems(deployment, release))
+    return problems
+
+
+def _git_head_binding_problems(
+    code: Path, deployment: ManagedServiceDeployment
+) -> list[BindingProblem]:
+    """git HEAD 绑定核验段（自 ``_binding_problems_structured`` 原样抽出）。
+
+    判定与 git 子进程调用（次数/超时）保持不变：HEAD 不可得记
+    GIT_HEAD_UNAVAILABLE；可得但不等记 GIT_HEAD_MISMATCH。
+    """
+    problems: list[BindingProblem] = []
     try:
         head = subprocess.run(
             ["git", "-C", str(code), "rev-parse", "HEAD"],
@@ -4480,6 +4891,52 @@ def _binding_problems_structured(
                 actual=head,
             )
         )
+    return problems
+
+
+def _binding_problems_structured(
+    deployment: ManagedServiceDeployment,
+    *,
+    code_root: str | Path,
+    runtime_root: str | Path,
+    verify_webui: bool = True,
+) -> list[BindingProblem]:
+    """svc_deploy I1: 8 类 binding 判定的结构化事实源。
+
+    判定顺序、条件与 git 子进程调用（次数与超时）与既有
+    ``verify_deployment_binding`` **完全一致**，只是把"文本 append"提升为
+    "（类别 + 原文 + 取值）append"，使下一步提示由结构化类别派生，而不是读
+    文本猜语义（对齐 Q5）。
+    """
+    code = Path(code_root).expanduser().resolve()
+    runtime = Path(runtime_root).expanduser().resolve()
+    problems: list[BindingProblem] = []
+    if deployment.artifact_kind == _ARTIFACT_KIND_WHEEL:
+        # DESIGN-20261107 §3.2：wheel_release 绑定核验不跑 git、不读
+        # code_root——身份键是 release 完整性（wheel 字节 sha256）、活动指针
+        # 与 WebUI 资产树。任一失配即问题，绝不静默通过。
+        return _wheel_binding_problems(
+            deployment, runtime=runtime, verify_webui=verify_webui
+        )
+    if str(code) != deployment.code_root:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.CODE_ROOT_MISMATCH,
+                text=f"code_root mismatch desired={deployment.code_root} actual={code}",
+                desired=deployment.code_root,
+                actual=str(code),
+            )
+        )
+    if str(runtime) != deployment.runtime_root:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.RUNTIME_ROOT_MISMATCH,
+                text=f"runtime_root mismatch desired={deployment.runtime_root} actual={runtime}",
+                desired=deployment.runtime_root,
+                actual=str(runtime),
+            )
+        )
+    problems.extend(_git_head_binding_problems(code, deployment))
     try:
         dirty = subprocess.run(
             ["git", "-C", str(code), "status", "--porcelain", "--untracked-files=no"],
@@ -4749,6 +5206,126 @@ def build_deployment(
 
 def _default_data_dir(runtime_root: Path) -> Path:
     return runtime_root / "data"
+
+
+def atomic_write_bytes_file(target: Path, payload: bytes, *, mode: int | None = None) -> None:
+    """tmp + fsync + os.replace + 目录 fsync 的通用原子写（durability 归属
+    service_control_state surface；供跨模块写盘方复用，避免散落未登记原语）。"""
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        if mode is not None:
+            # 审查 P2-3：fd 生命周期内 fchmod（元数据与内容同一 fsync 域），
+            # 与既有 pointer 写入器同构，不做 replace 后的路径 chmod。
+            os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, target)
+    dir_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def atomic_write_text_file(target: Path, text: str, *, mode: int | None = None) -> None:
+    """``atomic_write_bytes_file`` 的 UTF-8 文本便捷封装。"""
+    atomic_write_bytes_file(target, text.encode("utf-8"), mode=mode)
+
+
+def deployment_identity_key(deployment: ManagedServiceDeployment) -> str:
+    """统一部署身份键（DESIGN-20261107 §3.2）。
+
+    source checkout（v1/v2）→ 精确 git_head；wheel release →
+    ``wheel:<version>@<sha256[:12]>``。两种形态永不碰撞；status/verify/receipt
+    的身份比对一律经由本函数，不直接读 ``git_head``（wheel 身份没有它）。
+    """
+    if deployment.artifact_kind == _ARTIFACT_KIND_WHEEL:
+        return f"wheel:{deployment.version}@{deployment.wheel_sha256[:12]}"
+    return deployment.git_head
+
+
+def build_wheel_deployment(
+    lfl_home: str | Path,
+    *,
+    data_dir: str | Path | None = None,
+    webui_artifact_sha256: str,
+    generation: int,
+    deployment_id: str | None = None,
+) -> ManagedServiceDeployment:
+    """从 LFL_HOME wheel release 布局读取**真实身份**构建 v2 wheel deployment。
+
+    身份全部来自安装器产物（DESIGN-20261107 §3.2/§2.1）：
+    - ``.LFL-active-version`` 指针（唯一版本真值，格式严格校验）；
+    - ``releases/LFL-<version>/.installer-wheel.sha256`` 清单（恰好一行、
+      文件名即当前 release 的 wheel 名、摘要与实际字节一致）；
+    - ``runtime_root = LFL_HOME``、``release_dir``、``data_dir`` 绝对路径。
+
+    指针/清单/字节任一不完整即 ValueError（fail-closed，不猜测、不伪造
+    git_head）。不运行 git、不要求源码仓库。
+    """
+    home = Path(str(lfl_home)).expanduser().resolve()
+    if not home.is_dir():
+        raise ValueError(f"LFL_HOME does not exist: {home}")
+    active = home / ".LFL-active-version"
+    if active.is_symlink() or not active.is_file():
+        raise ValueError("active-version pointer missing or unsafe")
+    version = active.read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError(f"active-version pointer is invalid: {version!r}")
+    release_dir = home / "releases" / f"LFL-{version}"
+    if release_dir.is_symlink() or not release_dir.is_dir():
+        raise ValueError(f"release directory missing or unsafe: {release_dir}")
+    if (release_dir / ".installer-incomplete").exists():
+        raise ValueError(f"release {version} is marked incomplete; refusing identity")
+    manifest = release_dir / ".installer-wheel.sha256"
+    if manifest.is_symlink() or not manifest.is_file():
+        raise ValueError(f"release {version} lacks its wheel integrity record")
+    lines = [
+        line
+        for line in manifest.read_text(encoding="ascii").splitlines()
+        if line.strip()
+    ]
+    wheel_name = f"llm_first_loop-{version}-py3-none-any.whl"
+    if len(lines) != 1:
+        raise ValueError("wheel manifest must list exactly one file")
+    parts = lines[0].split()
+    if len(parts) != 2 or parts[1] != wheel_name:
+        raise ValueError(f"wheel manifest names an unexpected file: {lines[0]!r}")
+    recorded_sha = parts[0].lower()
+    wheel_file = release_dir / wheel_name
+    if wheel_file.is_symlink() or not wheel_file.is_file():
+        raise ValueError(f"release wheel file missing: {wheel_name}")
+    actual_sha = hashlib.sha256(wheel_file.read_bytes()).hexdigest()
+    if actual_sha != recorded_sha:
+        raise ValueError(
+            f"release {version} wheel checksum mismatch "
+            f"(recorded={recorded_sha[:12]} actual={actual_sha[:12]})"
+        )
+    resolved_data = (
+        Path(str(data_dir)).expanduser().resolve()
+        if data_dir is not None
+        else (home / "data").resolve()
+    )
+    return ManagedServiceDeployment(
+        schema=_DEPLOYMENT_SCHEMA_V2,
+        artifact_kind=_ARTIFACT_KIND_WHEEL,
+        deployment_id=deployment_id or f"deploy-{uuid.uuid4().hex}",
+        generation=generation,
+        git_head="",
+        code_root="",
+        runtime_root=str(home),
+        data_dir=str(resolved_data),
+        webui_artifact_sha256=webui_artifact_sha256,
+        version=version,
+        wheel_sha256=actual_sha,
+        release_dir=str(release_dir),
+    )
 
 
 def _missing_webui_artifacts(code_root: str | Path) -> list[str]:

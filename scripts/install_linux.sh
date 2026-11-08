@@ -472,6 +472,26 @@ PY
   fi
 }
 
+install_system_units() {
+  # DESIGN-20261107 §4.1/§4.2（v0.2）：三服务 systemd user units 与稳定启动器
+  # LFL_HOME/bin/lfl-service。systemd --user 不可用时跳过 units（不视为安装失败）；
+  # 生成后由 Python 侧 systemd-analyze --user verify 校验，失败即 fail-closed。
+  local output
+  command -v systemctl >/dev/null 2>&1 || {
+    printf 'LFL installer: systemctl not found; skipping systemd user units.\n'
+    return 0
+  }
+  systemctl --user show-environment >/dev/null 2>&1 || {
+    printf 'LFL installer: systemd --user manager unavailable; skipping user units.\n'
+    return 0
+  }
+  output="$(env LFL_HOME="$ROOT" PYTHONNOUSERSITE=1 \
+    "$RELEASE_DIR/venv/bin/python" -m llm_loop.runtime.installation \
+    install-units --lfl-home "$ROOT" --home "$HOME" 2>&1)" \
+    || die "systemd user unit installation failed: $output"
+  printf '%s\n' "$output"
+}
+
 if [[ "$MODE" == "candidate" ]]; then
   [[ -f "$CANDIDATE" && ! -L "$CANDIDATE" ]] || die "candidate must be a regular non-symlink wheel file"
   CANDIDATE="$(python3 - "$CANDIDATE" <<'PY'
@@ -678,6 +698,13 @@ POINTER_TRANSACTION_STARTED="0"
 
 LAUNCHER_CREATED="0"
 LEGACY_BACKUP_CREATED="0"
+
+# 三服务 systemd user units 是安装的最后一步：此刻 active 指针已切换且
+# post-switch 验证通过（上方 write_pointer + verify_release_dir 已 commit）、
+# ~/.local/bin/lfl 启动器已就位。enable --now 会启动服务，必须让 unit
+# 解析到刚验证过的新 release（DESIGN-20261107 §4.1/§4.2）。
+install_system_units
+
 if [[ "$CURRENT_VERSION" == "$RELEASE_VERSION" ]]; then
   printf 'LFL %s is already installed and active; integrity checks passed.\n' "$RELEASE_VERSION"
 else

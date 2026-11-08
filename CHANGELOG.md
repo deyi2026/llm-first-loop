@@ -2,6 +2,12 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.41 — SOCKS 代理冷启动修复与发行版本号续位（2026-11-08）
+
+- **SOCKS 代理冷启动修复**：用户级 systemd 环境携带 `all_proxy=socks5://…` 时，`httpx.Client(trust_env=True)` 初始化需要 `socksio`，wheel 0.6.40 未携带导致 Web 冷启动 ImportError（2026-11-08 Deepin 生产事故；临时以 runtime drop-in `UnsetEnvironment` 恢复）。正式修复将依赖声明改为 `httpx[socks]>=0.27`（uv.lock 新增 `socksio==1.0.0`，其余依赖零漂移），不动 `trust_env`/代理配置/生产 systemd。隔离 venv 端到端验证 5/5：安装器同款安装后 socksio 可导入、socks5 代理环境下 Client 初始化成功、负控制复现根因。
+- **发行版本号续位**：Deepin 活动 release 为 0.6.40，同号 wheel 覆盖会破坏安装/回滚安全性，候选版本号 bump 至 0.6.41；Python 包 / Web SERVICE_VERSION / 双语 README / CHANGELOG 版本面同步（由版本一致性测试约束）。`tests/unit/test_linux_installer_scripts.py` 新增 wheel METADATA `Version` 与 pyproject 一致断言与 `Requires-Dist: httpx[socks]>=0.27` 声明/锁契约回归。
+- **生产部署边界**：正式 wheel 安装属独立维护操作，须另行授权窗口执行；临时 runtime drop-in 保留至正式 wheel 安装并健康验证成功后方可移除；回滚走 `bash install_linux.sh --rollback` 指回上一保留 release。
+
 ## v0.6.40 — 提权审批复审修复、发行版本面统一与累积维护（2026-11-07）
 
 - **推送隐私闸（规则5）**：`scripts/git_security_scan.sh` 新增内网/身份隐私规则（私网 IPv4、`user@host`、主机名形态；当前用户名/主机名运行时注入并做 POSIX ERE 转义），**不继承 `experiences/` 等知识档案的路径粒度豁免**——知识档案入库前必须完成脱敏。`--range BASE HEAD` 为**逐提交**扫描（rev-list + diff-tree 逐 blob；净 diff 会漏"中间提交引入后被删除"的泄露——该泄露仍随历史推送，独立审查 P1 指出后已修）；新增 `--commit SHA` 全树模式（首推/CI 初始 push 场景，防退化空过）；`.githooks/pre-push` 锚定钩子自身路径定位扫描脚本，首推扫待推提交全树而非当前工作区；CI `privacy-scan` 在 `before` 不可解析时降级为 `--commit`。`docs/ai_rules.md` 规则二十八增补第 4 条（push 前机械扫描回执义务）。新增 `tests/test_privacy_gate.py`（10 用例：staged 三形态拦截/放行、**中间提交逃逸回归**、`--range` 净放行、`--commit` 双向、ERE 转义、白名单子串、pre-push 集成）。背景：2026-10-29 知识卡携带内网 IP+用户名+免密 SSH 描述推上公开仓（暴露约 10 分钟，重写历史修复）；macOS BSD grep 与 Linux GNU grep 双端模式验证无假阳性。修复过程中一并修正扫描脚本 `main` 未透传位置参数的旧缺陷。
