@@ -9,6 +9,13 @@
 - 分支 `feat/peer-channel-20261107` / lane-bf158530。
 
 ## 已落地（commit）
+
+> **SHA 时点说明（2026-11-08T13:00 补）**：本文件及 `docs/PEER-P0-T6-acceptance-20261108.md`、
+> `docs/playbooks/PEER-P0-session-takeover-runbook.md` 中的提交短 SHA 均为 **rebase 之前**的时点值
+> （rebase 前分支 tip = `425d4107a`）。为把 lane 的 base 从 `ee339e74d` 前移到 `cc8b0bc6c`，本分支
+> 已于 2026-11-08 12:57 全量 rebase（22 提交），**所有 SHA 已重写**，上述短 SHA 在主线上不可解析。
+> 查对应提交请按主题行（`git log --oneline`）匹配；patch 内容 rebase 前后逐字相同（已核 sha256 相等）。
+
 - `0656d92a5` 设计 v3 + schemas + verify 脚本
 - `f722f51be` models/errors/state（36 个封闭 reason_code）
 - `3fe488d21` kinds 注册表 + 契约不变量测试
