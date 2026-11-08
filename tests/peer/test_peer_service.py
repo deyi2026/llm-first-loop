@@ -332,3 +332,39 @@ def test_select_grant_prefers_active_over_retained_exhausted(env):
     store.revoke_grant("gr_NEWERLEASE2", by="test")
     only_exhausted = service._select_grant()
     assert only_exhausted.grant_id == "gr_OLDERLEASE1"
+
+
+def test_submit_rejects_kind_not_enabled_and_uppercase_effect(env):
+    """独立审查第 6 轮 P1-1/P1-2（2026-11-08）：
+
+    - enabled_kinds 是服务端准入边界（不只是 manifest 广播过滤）——提交
+      未启用 kind 必须闸前拒绝 policy_task_kind_not_allowed。
+    - effect_id 字符集在入口收紧到与磁盘 _safe_name 一致——schema 合法
+      的大写/冒号不得撞 ValueError→500，而是可解释拒绝。
+    """
+    service, store, allowed, _ = env
+    store.issue_grant(make_grant(allowed))
+    # P1-1：enabled_kinds 只开 fs.read；提交 fs.list（default_enabled 但被
+    # 显式收敛）必须被拒
+    from llm_loop.peer.service import PeerService
+    narrow = PeerService(
+        store=store,
+        admissions=service._admissions,
+        artifacts=service._artifacts,
+        node_id="deepin-01",
+        enabled_kinds={"fs.read"},
+    )
+    bad_kind = submit_payload(allowed, effect_id="eff_lower0001", kind="fs.list", path=str(allowed))
+    with pytest.raises(PeerError) as err1:
+        narrow.submit(bad_kind)
+    assert err1.value.reason_code == "policy_task_kind_not_allowed"
+    # P1-2：大写/冒号 effect_id（schema 合法）→ 入口拒绝而非 500
+    with pytest.raises(PeerError) as err2:
+        service.submit(submit_payload(allowed, effect_id="EFFECT:BAD:1", path=str(allowed)))
+    assert err2.value.reason_code == "params_schema_invalid"
+    # 正常小写仍通过形状校验
+    shape_ok = service._validate_submit(
+        submit_payload(allowed, effect_id="eff_lower0002", path=str(allowed)),
+        enabled_kinds={"fs.read"},
+    )
+    assert shape_ok["effect_id"] == "eff_lower0002"

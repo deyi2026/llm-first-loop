@@ -129,7 +129,13 @@ class PeerService:
 
     # ---- 提交 --------------------------------------------------------------
     def submit(self, payload: dict[str, Any], *, requested_by: str | None = None) -> dict[str, Any]:
-        shape = self._validate_submit(payload)
+        from llm_loop.peer.kinds import KINDS
+
+        # None=按注册表 default_enabled（与 manifest 广播口径一致），非"不限制"。
+        enabled = self._enabled_kinds
+        if enabled is None:
+            enabled = {k for k, spec in KINDS.items() if spec.default_enabled}
+        shape = self._validate_submit(payload, enabled_kinds=enabled)
         digest = params_digest(shape["kind"], shape["params"])
 
         replay = self._store.find_task_by_effect(self._node_id, shape["effect_id"])
@@ -369,7 +375,7 @@ class PeerService:
             return None
 
     @staticmethod
-    def _validate_submit(payload: dict[str, Any]) -> dict[str, Any]:
+    def _validate_submit(payload: dict[str, Any], *, enabled_kinds: frozenset[str] | set[str] | None = None) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise PeerError("params_schema_invalid", "payload must be an object")
         extra = sorted(set(payload) - _SUBMIT_FIELDS)
@@ -381,10 +387,22 @@ class PeerService:
         if payload["schema"] != "lfl.peer.v1":
             raise PeerError("params_schema_invalid", "schema mismatch")
         effect_id = payload["effect_id"]
-        if not isinstance(effect_id, str) or not 8 <= len(effect_id) <= 128:
-            raise PeerError("params_schema_invalid", "bad effect_id")
+        # 独立审查第 6 轮 P1-2（2026-11-08）：schema 允许 A-Z 与 ':'，但落盘
+        # _safe_name 只收 [a-z0-9-_.]——合法输入会撞未处理 ValueError→500。
+        # 服务端在入口收紧到与磁盘一致的字符集（fail-closed 拒绝，回执可解释）。
+        effect_id_re = __import__("re").compile(r"^[a-z0-9][a-z0-9._-]{7,127}$")
+        if not isinstance(effect_id, str) or not 8 <= len(effect_id) <= 128 or not effect_id_re.fullmatch(effect_id):
+            raise PeerError(
+                "params_schema_invalid",
+                "bad effect_id（须为 ^[a-z0-9][a-z0-9._-]{7,127}$，与磁盘键字符集一致）",
+            )
         if not isinstance(payload["kind"], str) or get_kind(payload["kind"]) is None:
             raise PeerError("policy_task_kind_not_allowed", str(payload.get("kind")))
+        # 独立审查第 6 轮 P1-1（2026-11-08）：enabled_kinds 不只过滤 manifest
+        # 广播，也是服务端准入边界——提交未启用的 kind 必须在闸前拒绝，
+        # 而不是广告关了、执行照收。
+        if enabled_kinds is not None and str(payload["kind"]) not in enabled_kinds:
+            raise PeerError("policy_task_kind_not_allowed", f"kind not enabled: {payload['kind']}")
         params = payload["params"]
         if not isinstance(params, dict) or len(params) > 32:
             raise PeerError("params_schema_invalid", "params must be an object with <=32 keys")
