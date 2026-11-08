@@ -15,6 +15,9 @@ SCHEMA = "lfl.peer.v1"
 
 NODE_STATES: tuple[str, ...] = ("paired", "revoked")
 GRANT_STATES: tuple[str, ...] = ("active", "expired", "exhausted", "revoked")
+# 占并发名额的状态：终局前都算。submitted 也必须计入——它正是"已登记、尚未裁决"的窗口，
+# 排除它就等于给并发上限的读-判-写留出一道可同时通过的缝。
+SLOT_STATES: tuple[str, ...] = ("submitted", "admitted", "queued", "running")
 IDEMPOTENCY_CLASSES: tuple[str, ...] = ("idempotent", "non_idempotent")
 
 

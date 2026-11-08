@@ -41,6 +41,8 @@ from .write_gate import require_write_target
 
 MAX_LIST_ENTRIES = 500
 MAX_WRITE_BYTES = 1_048_576
+# 1 MiB 正文的 base64 编码上界：先按编码长度设界，再解码（避免先吃满内存才拒）。
+MAX_WRITE_B64_CHARS = 4 * ((MAX_WRITE_BYTES + 2) // 3)
 
 
 @dataclass(frozen=True)
@@ -116,7 +118,11 @@ class Executor:
         # 顺序固定：闸4（本机写域/链接/封条/敏感）→ 闸3 复核 → 内容解析 → 原子落盘。
         # 闸3 在准入侧已判过 grant allowlist，这里复核是因为执行器可被单独调用；
         # 两道闸各自独立拒绝，不互相替代。
-        target = require_write_target(params["path"], write_root=self._write_root)
+        raw_path = params.get("path")
+        if not isinstance(raw_path, str) or not raw_path:
+            # 缺 path 键不再以 KeyError 冒到路由层（500/不可判定）；按参数错误 fail-closed。
+            raise PeerError("params_schema_invalid", "path must be a non-empty string")
+        target = require_write_target(raw_path, write_root=self._write_root)
         require_path_allowed(target, allowed_paths)
 
         payload = self._write_payload(params)
@@ -146,10 +152,20 @@ class Executor:
     def _write_payload(self, params: dict[str, Any]) -> bytes:
         """内容源二选一由闸3 ``validate_params`` 保证；这里只解，不再兜底。"""
         if "content_b64" in params:
+            encoded = params["content_b64"]
+            # 先按编码长度设界再解码：否则超长 base64 会先把内存吃满，再被 1 MiB 上限拒。
+            if not isinstance(encoded, str) or len(encoded) > MAX_WRITE_B64_CHARS:
+                raise PeerError(
+                    "params_schema_invalid",
+                    f"content_b64 must be a string of at most {MAX_WRITE_B64_CHARS} chars",
+                )
             try:
-                return base64.b64decode(params["content_b64"], validate=True)
+                payload = base64.b64decode(encoded, validate=True)
             except (binascii.Error, ValueError):
                 raise PeerError("params_schema_invalid", "content_b64 is not valid base64") from None
+            if len(payload) > MAX_WRITE_BYTES:
+                raise PeerError("params_schema_invalid", f"content exceeds {MAX_WRITE_BYTES} bytes")
+            return payload
         return self._artifacts.read(params["artifact_ref"])
 
     @staticmethod
@@ -165,7 +181,7 @@ class Executor:
                 fh.write(payload)
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.chmod(tmp, 0o644)
+            os.chmod(tmp, _file_mode_for(target))
             os.replace(tmp, target)
         except OSError as exc:
             # replace 已成功时 tmp 不存在；清理失败不改变主错误
@@ -187,6 +203,24 @@ class Executor:
             if exc.errno in (errno.EACCES, errno.EPERM):
                 raise PeerError("sandbox_denied", f"permission denied: {path!r}") from None
             raise
+
+
+def _current_umask() -> int:
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
+# 导入期只读一次 umask：运行期不再改动进程 umask，避免线程间竞态把并发创建的文件放宽。
+_DEFAULT_FILE_MODE = 0o666 & ~_current_umask()
+
+
+def _file_mode_for(target: str) -> int:
+    """覆盖写沿用原文件权限位；新文件按 umask 推导，不再硬写 0644 放宽。"""
+    try:
+        return os.stat(target).st_mode & 0o777
+    except OSError:
+        return _DEFAULT_FILE_MODE
 
 
 def _media_type(payload: bytes) -> str:

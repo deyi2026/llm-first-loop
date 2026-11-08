@@ -11,12 +11,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import stat
 
 import pytest
 
 from llm_loop.peer.artifacts import ArtifactStore
 from llm_loop.peer.errors import PeerError
-from llm_loop.peer.executor import MAX_WRITE_BYTES, Executor
+from llm_loop.peer.executor import MAX_WRITE_B64_CHARS, MAX_WRITE_BYTES, Executor
 from llm_loop.peer.write_gate import require_write_target
 
 
@@ -54,6 +55,14 @@ def test_write_root_injected_is_used(tmp_path):
     assert require_write_target(
         str(tmp_path / "a.txt"), write_root=str(tmp_path)
     ) == os.path.realpath(tmp_path / "a.txt")
+
+
+def test_filesystem_root_write_root_is_hard_denied(tmp_path):
+    """写域根配 "/" 等于"可写整机"：必须在闸1硬拒，不能靠 _within 在根上退化放行。"""
+    with pytest.raises(PeerError) as err:
+        require_write_target(str(tmp_path / "a.txt"), write_root=os.sep)
+    code, detail = _err(err)
+    assert code == "sandbox_denied" and "filesystem_root" in detail
 
 
 def test_target_parent_outside_write_root_denied(tmp_path):
@@ -212,6 +221,53 @@ def test_fs_write_oversize_is_schema_invalid(tmp_path, env):
         )
     assert _err(err)[0] == "params_schema_invalid"
     assert not (root / "a.txt").exists()
+
+
+def test_fs_write_oversize_base64_rejected_before_decode(tmp_path, env):
+    """编码超上界必须按长度先拒：否则 1 MiB 上限要等整个 base64 解完才生效。"""
+    root, _artifacts, ex = env
+    with pytest.raises(PeerError) as err:
+        ex.run(
+            kind="fs.write",
+            params={"path": str(root / "a.txt"), "content_b64": "A" * (MAX_WRITE_B64_CHARS + 4)},
+            allowed_paths=(str(root),),
+        )
+    assert _err(err)[0] == "params_schema_invalid"
+    assert "at most" in _err(err)[1]
+    assert not (root / "a.txt").exists()
+
+
+def test_fs_write_missing_path_key_is_schema_invalid(tmp_path, env):
+    """缺 path 键必须是可判定拒绝，不是 KeyError 冒到路由层。"""
+    _root, _artifacts, ex = env
+    with pytest.raises(PeerError) as err:
+        ex.run(kind="fs.write", params={"content_b64": "eA=="}, allowed_paths=())
+    assert _err(err)[0] == "params_schema_invalid"
+
+
+def test_fs_write_overwrite_keeps_mode_and_new_file_respects_umask(tmp_path, env):
+    """覆盖写不改权限位；新文件按进程 umask 推导，不再硬写 0644 放宽。"""
+    root, _artifacts, ex = env
+    existing = root / "kept.txt"
+    existing.write_text("old", encoding="utf-8")
+    os.chmod(existing, 0o600)
+    ex.run(
+        kind="fs.write",
+        params={"path": str(existing), "content_b64": "bmV3", "overwrite": True},
+        allowed_paths=(str(root),),
+    )
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+    assert existing.read_text(encoding="utf-8") == "new"
+
+    fresh = root / "fresh.txt"
+    ex.run(
+        kind="fs.write",
+        params={"path": str(fresh), "content_b64": "bmV3"},
+        allowed_paths=(str(root),),
+    )
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o666 & ~current_umask
 
 
 def test_fs_write_create_parents_controls_mkdir(tmp_path, env):

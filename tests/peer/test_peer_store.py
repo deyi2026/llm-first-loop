@@ -187,3 +187,44 @@ def test_doc_payload_has_generation(tmp_path: Path) -> None:
     PeerStore(tmp_path / "peer")
     payload = json.loads((tmp_path / "peer" / "nodes.json").read_text(encoding="utf-8"))
     assert payload == {"schema": "lfl.peer.v1", "generation": 0, "items": []}
+
+
+def test_put_task_max_running_rejects_when_slot_taken(tmp_path: Path) -> None:
+    """配额裁决下沉到锁内：已有 1 个未终局任务时，第 2 个提交必须被拒。"""
+    store = PeerStore(tmp_path / "peer")
+    store.upsert_node(_node("n1"))
+    store.put_task(_task("task-1"))
+    store.put_task(_task("task-1", state="admitted"), expected_state="submitted")
+
+    with pytest.raises(PeerError) as denied:
+        store.put_task(_task("task-2"), max_running=1)
+    assert denied.value.reason_code == "quota_concurrency_exceeded"
+    assert store.get_task("task-2") is None
+
+
+def test_put_task_max_running_is_atomic_under_concurrency(tmp_path: Path) -> None:
+    """换成"先 count 再 put"的实现时，本用例会放进 2 个以上（8 线程只有 1 个名额）。"""
+    store = PeerStore(tmp_path / "peer")
+    store.upsert_node(_node("n1"))
+    outcomes: list[str] = []
+    guard = threading.Lock()
+
+    def worker(index: int) -> None:
+        try:
+            store.put_task(_task(f"task-{index}"), max_running=1)
+        except PeerError as exc:
+            result = exc.reason_code
+        else:
+            result = "admitted"
+        with guard:
+            outcomes.append(result)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert outcomes.count("admitted") == 1
+    assert outcomes.count("quota_concurrency_exceeded") == 7
+    assert len(store.list_tasks(node_id="n1")) == 1

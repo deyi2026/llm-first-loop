@@ -287,3 +287,51 @@ def test_manifest_conforms_and_conditional_guard_really_blocks(env):
     bad["desktop"].update(inject_click=True, screenshot=False)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema)
+
+
+def test_payload_requested_by_cannot_forge_identity(env):
+    """payload 同名字段可伪造：认证层未注入时必须为 null，注入后才写成注入值。"""
+    service, store, allowed, _tmp = env
+    store.issue_grant(make_grant(allowed))
+    (allowed / "a.txt").write_text("x")
+
+    forged = submit_payload(allowed)
+    forged["requested_by"] = "forged-node"
+    receipt = service.submit(forged)
+    assert receipt["state"] == "succeeded"
+    assert store.get_task(receipt["task_id"]).requested_by is None
+
+    receipt = service.submit(submit_payload(allowed, effect_id="eff_00000002"), requested_by="node-auth")
+    assert store.get_task(receipt["task_id"]).requested_by == "node-auth"
+
+
+def test_exhausted_or_expired_grant_does_not_shadow_usable_one(env):
+    """按最早过期挑租约时，耗尽/过期项会挡在可用项前面：必须优先挑真能用的。"""
+    service, store, allowed, _tmp = env
+    (allowed / "a.txt").write_text("x")
+    store.issue_grant(
+        make_grant(
+            allowed,
+            grant_id="gr_EXPIRED00001",
+            expires_at=iso(now_local() - timedelta(hours=1)),
+        )
+    )
+    store.issue_grant(
+        make_grant(
+            allowed,
+            grant_id="gr_USABLE00001",
+            expires_at=iso(now_local() + timedelta(hours=2)),
+        )
+    )
+    store.issue_grant(
+        make_grant(
+            allowed,
+            grant_id="gr_USEDUP000001",
+            expires_at=iso(now_local() + timedelta(minutes=5)),
+            max_tasks_total=3,
+            tasks_used=3,
+        )
+    )
+    receipt = service.submit(submit_payload(allowed))
+    assert receipt["state"] == "succeeded"
+    assert receipt["grant_id"] == "gr_USABLE00001"

@@ -70,6 +70,10 @@ def require_write_target(path: object, *, write_root: str | None = None) -> str:
         raise PeerError("sandbox_denied", f"write_root_must_be_absolute:{WRITE_ROOT_ENV}")
 
     root = _norm(root_raw)
+    if root == os.sep:
+        # 写域根配成 "/" 等于"可写整机"：_within 的 "root + sep" 边界在根上退化成
+        # "任意绝对路径"。这是配置事故而非更宽的授权，硬拒（fail-closed），不自动收窄。
+        raise PeerError("sandbox_denied", f"write_root_forbidden:{WRITE_ROOT_ENV}=filesystem_root")
     target = _norm(path)
     parent = os.path.dirname(target) or os.sep
     if not _within(root, parent):

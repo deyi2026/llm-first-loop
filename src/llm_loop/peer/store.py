@@ -22,6 +22,7 @@ from llm_loop.peer.errors import PeerError
 from llm_loop.peer.models import (
     GRANT_STATES,
     NODE_STATES,
+    SLOT_STATES,
     GrantRecord,
     NodeRecord,
     TaskRecord,
@@ -263,8 +264,14 @@ class PeerStore:
         *,
         expected_state: str | None = None,
         allow_terminal_rewrite: bool = False,
+        max_running: int | None = None,
     ) -> TaskRecord:
-        """落盘任务；终局不可改写，唯一例外是产物篡改隔离（``succeeded → failed``）。"""
+        """落盘任务；终局不可改写，唯一例外是产物篡改隔离（``succeeded → failed``）。
+
+        ``max_running`` 非空时在**同一个排他锁临界区**内复查该 node 的并发占用再追加。
+        调用方"读 running → 判定 → 落盘"的三步不是原子的：两个并发提交可以同时通过
+        上面的检查。最终裁决放在这里，读与写才是一次比较-写入。
+        """
         if expected_state is None and task.state != "submitted":
             raise PeerError("idempotency_conflict", "新任务只能以 submitted 落盘")
         with self._lock(exclusive=True):
@@ -283,6 +290,18 @@ class PeerStore:
                 payload["items"][index] = task.to_dict()
                 self._write("tasks", payload)
                 return task
+            if max_running is not None:
+                running = sum(
+                    1
+                    for item in payload["items"]
+                    if item.get("node_id") == task.node_id
+                    and item.get("state") in SLOT_STATES
+                )
+                if running >= int(max_running):
+                    raise PeerError(
+                        "quota_concurrency_exceeded",
+                        f"{running}/{int(max_running)} for {task.node_id}",
+                    )
             payload["items"].append(task.to_dict())
             self._write("tasks", payload)
         return task
