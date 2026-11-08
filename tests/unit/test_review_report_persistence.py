@@ -232,3 +232,44 @@ def test_report_dir_is_not_listable_by_other_users(tmp_path: Path, monkeypatch) 
     receipt = rr.rejected_receipt("child-1", kind="full_test", reason="r", answer="P1: x")
     mode = Path(receipt["review_report_path"]).parent.stat().st_mode & 0o777
     assert mode & 0o077 == 0, oct(mode)
+
+
+def test_none_placeholder_is_not_a_finding() -> None:
+    """EVO-20261108-e4db3e8f：P 标签下的空占位正文不是 finding。
+
+    reviewer 在某一级无发现时写 ``P0: none.``/``P1: N/A``/``- (none)``/
+    ``P1: —``——这些行曾被 _FINDING_RE 当成真实条目收进 findings 桶，
+    污染 status 回执（P0: ["none."]）与下游对账。占位正文一律不产生条目；
+    真实 finding 行不受影响。
+    """
+    probes_none = [
+        "P0: none.",
+        "P0: NONE.\n",
+        "P1: N/A\n",
+        "P2: (none)\n",
+        "P1: —\n",
+        "P1: -\n",
+        "P1: : \n",
+        "P0: nothing here\n",
+        "P1: no findings\n",
+        "P0: none.()\n",
+    ]
+    for probe in probes_none:
+        parsed = rr.extract_findings(probe)
+        assert not any(parsed.get("findings", {}).values()), (
+            f"占位行不得产生 finding: {probe!r} -> {parsed.get('findings')}"
+        )
+    # 混合场景：占位行不产生条目，带标签的真实 finding 正常收集。
+    # 注意逐行匹配语义：无 P 标签的编号行（"1. xxx"）本就不归属任何级别。
+    mixed = (
+        "P0: none.\n"
+        "\n"
+        "P1: `src/x.py` real defect one\n"
+        "1. unlabelled line must not be collected\n"
+        "P2: 2. real defect two\n"
+    )
+    parsed = rr.extract_findings(mixed)
+    findings = parsed.get("findings", {})
+    assert not findings.get("P0"), findings
+    assert findings.get("P1") == ["`src/x.py` real defect one"], findings
+    assert findings.get("P2") == ["2. real defect two"], findings

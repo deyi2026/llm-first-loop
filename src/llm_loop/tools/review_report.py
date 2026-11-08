@@ -61,6 +61,33 @@ _FINDING_RE = re.compile(
     r"(?m)^[ \t>]*[-*+]?[ \t]*\**[ \t]*\[?P([012])\b(?!\d)\]?[ \t]*\**[ \t]*[:：\-–—.)\]]*[ \t]*(.+?)[ \t]*$"
 )
 _COUNT_RE = re.compile(r"(?m)^[ \t>]*P0=(\d+) P1=(\d+) P2=(\d+)[ \t]*$")
+
+# EVO-20261108-e4db3e8f：reviewer 在某一级无发现时写 "P0: none." / "P1: N/A" /
+# "P2: (none)" / "P1: —" 这类空占位行。它们匹配 _FINDING_RE 的形态（P 标签 +
+# 分隔符 + 短正文），曾被当成真实条目收进 findings 桶，污染 status 回执与
+# 下游对账。比较前先做规范化（小写、剥外围标点/空白/括号），命中占位集
+# 即跳过；真实 finding 文本不受影响（"none" 出现在句中如 "P1: race on
+# none-match path" 规范化后 != "none"，不误伤）。
+_NONE_PLACEHOLDERS = frozenset(
+    {"none", "n/a", "na", "-", "--", "—", "–", ":", "::", "()", "(none)",
+     "nothing", "nothing here", "no findings", "no issues", "not applicable",
+     "无", "无发现"}
+)
+
+
+def _is_none_placeholder(text: str) -> bool:
+    normalized = text.strip().lower()
+    # 反复剥外围成对标点与空白："(none).", "-none-", "—（无）—" 等形态归一。
+    for _ in range(4):
+        stripped = normalized.strip(" \t.,;:!()[]{}<>\u2014\u2013-\"'“”‘’（）【】《》、。，；：")
+        if stripped == normalized:
+            break
+        normalized = stripped
+    # 剥完只剩标点（如 "—"、":"、"——"）本身就是占位，不是 finding。
+    if not normalized:
+        return True
+    return normalized in _NONE_PLACEHOLDERS
+
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -134,6 +161,8 @@ def extract_findings(answer: str) -> dict[str, Any]:
         level = "P" + match.group(1)
         text = " ".join(match.group(2).split())
         if not text:
+            continue
+        if _is_none_placeholder(text):
             continue
         key = level + "\x00" + text[:160].lower()
         if key in seen:
