@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import sys
 from pathlib import Path
 
@@ -51,6 +52,15 @@ def build_app(*, data_dir: Path, node_id: str, display_name: str | None) -> obje
     return create_peer_app(service=service, authenticator=authenticator)
 
 
+def _is_loopback(host: str) -> bool:
+    if host in {"localhost", ""}:
+        return host == "localhost"
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LFL peer 服务端（受控端）")
     parser.add_argument("--data-dir", type=Path, required=True)
@@ -59,6 +69,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8791)
     args = parser.parse_args(argv)
+
+    # D15（独立审查第 4 轮 P1，2026-11-08）：与主 app _mount_peer_routes 同一
+    # 明文禁令——TLS 未实现，明文 peer 端点只允许回环；LAN 访问走 SSH 隧道。
+    if not _is_loopback(args.host):
+        print(
+            f"拒绝启动：--host={args.host} 不是回环地址。TLS 未实现，"
+            "明文 peer 端点只允许绑 127.0.0.1/::1，LAN 访问请走 SSH 隧道。",
+            file=sys.stderr,
+        )
+        return 2
 
     import uvicorn
 
