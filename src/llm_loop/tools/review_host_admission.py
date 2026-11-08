@@ -1564,6 +1564,7 @@ def _source_snapshot_sections(
     scope_paths: Sequence[str] = (),
     tier_counts: tuple[int, int] | None = None,
     committed_projection: str = "full",
+    identity_scope: str = "material",
 ) -> tuple[str, str, list[tuple[str, int]], str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
@@ -1780,11 +1781,46 @@ def _source_snapshot_sections(
             " largest=[" + "; ".join(f"{label}={size}B" for label, size in top) + "]"
             + (f" excluded_untracked={excluded_untracked}" if excluded_untracked else "")
         )
-    identity = _digest(_canonical({
-        "head": head, "frozen_head": frozen_head, "base": base, "repo": str(repo),
-        "material": material, "first_push_ref": first_push_ref,
-        "untracked_shas": [(n, s) for n, s, _ in new_files],
-    }))
+    identity: str
+    if identity_scope == "commit_set":
+        # EVO-20261107-3ebd74b6（人工批准 2026-11-08）: push 的物理对象是
+        # commit 集——工作树改动与 untracked 文件不会随 push 上传，却曾随
+        # 全文 material + untracked_shas 进入 identity，导致多会话共享主仓
+        # 时并行正当落盘在「签发→消费」窗口内漂移指纹（2026-11-07 现场三连
+        # PASS 后同轮消费 deny）。git_push 的 identity 改绑「header 核心字段
+        # + committed delta（base..push_head）」的确定性指纹：
+        #   * committed 变化（新提交/amend）→ sha 必变 → 消费 deny（不弱化）；
+        #   * working/untracked 仍全文进入 material 供审查者判夹带（REVISE
+        #     权保留），只是不再进入 identity；
+        #   * header 中绑定树状态的字段（scope 外 untracked 计数 / 切片外
+        #     绑定计数 / vendored 投影计数）一并剔除，其余 commit 锚字段
+        #     （repo_head/push_remote_base/merge_base/frozen_head/first_push/
+        #     target_ref/scope 声明/投影声明）保留。
+        tree_state_header_keys = frozenset({
+            "review_scope_out_of_scope_untracked",
+            "review_bound_unreviewed_tracked",
+            "review_bound_unreviewed_untracked",
+            "vendored_projected_entries",
+        })
+        fp_header = [
+            (k, v) for k, v in header_fields if k not in tree_state_header_keys
+        ]
+        fingerprint_material = _frozen_material(
+            fp_header, committed, [], [], backlog=backlog_manifest
+        )
+        identity = _digest(_canonical({
+            "head": head, "frozen_head": frozen_head, "base": base, "repo": str(repo),
+            "fingerprint_material": fingerprint_material,
+            "first_push_ref": first_push_ref,
+            "identity_scope": "commit_set",
+        }))
+    else:
+        # full_test 真实跑在工作树上：树状态必须继续绑定 identity（不放宽）。
+        identity = _digest(_canonical({
+            "head": head, "frozen_head": frozen_head, "base": base, "repo": str(repo),
+            "material": material, "first_push_ref": first_push_ref,
+            "untracked_shas": [(n, s) for n, s, _ in new_files],
+        }))
     # 2026-11-02：与 commit 切分无关的内容指纹（见 _end_state_fingerprint）。
     # identity 把 head/frozen_head 也算进去，于是"先审 patch → 再 commit → 树
     # 内容逐字节相同"必然失效，必须重审一遍。这里额外摘出两份**同构**的内容
@@ -3295,6 +3331,9 @@ class HostReviewAdmission:
                 true_dir, push_base=push_base, push_head=push_head,
                 first_push_ref=dst_ref if first_push else "",
                 scope_paths=scope_paths, tier_counts=tier_counts,
+                # EVO-20261107-3ebd74b6: git_push identity 绑定 commit 集
+                # （push 上传的物理对象），不随共享树的并行工作区产物漂移。
+                identity_scope="commit_set",
             )
             dest = _push_target(command, true_dir)
             push_extra = {"src_commit": push_head,
