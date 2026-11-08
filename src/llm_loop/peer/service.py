@@ -351,8 +351,16 @@ class PeerService:
         ]
         if not usable:
             raise PeerError("grant_not_found", f"no active grant for {self._node_id}")
-        usable.sort(key=lambda g: g.expires_at)
-        return usable[0]
+        # 独立审查第 4 轮 P1-1（2026-11-08）：续约流程（G4/D10）保留旧租约、
+        # 新建 active 租约——按最早 expires_at 全量排序会把保留的 exhausted/
+        # 早期租约永远排在前面，续约后所有调度恒 grant_exhausted 拒绝。
+        # 修正：仍有额度的 active 租约绝对优先（同层内最早到期）；退而求
+        # 其次是额度耗尽的 active/exhausted（让闸2 产生具体拒绝码）。
+        active = [g for g in usable if g.state == "active"]
+        with_quota = [g for g in active if g.tasks_used < g.max_tasks_total]
+        pool = with_quota or active or usable
+        pool.sort(key=lambda g: g.expires_at)
+        return pool[0]
 
     def active_grant(self) -> GrantRecord | None:
         try:

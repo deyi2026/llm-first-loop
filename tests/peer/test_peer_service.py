@@ -301,3 +301,34 @@ def test_concurrent_same_effect_id_executes_once(env):
     assert len(tasks) == 1, [t.task_id for t in tasks]
     ledger = store.root / "effects" / "deepin-01__eff_race_0001.json"
     assert ledger.is_file()
+
+
+def test_select_grant_prefers_active_over_retained_exhausted(env):
+    """独立审查第 4 轮 P1-1（2026-11-08）：续约后 active 租约必须被选中。
+
+    G4/D10 续约保留旧租约（exhausted/更早到期）+ 新建 active——按最早
+    expires_at 全量排序会永远选中保留租约，调度恒 grant_exhausted。
+    """
+    service, store, allowed, _ = env
+    earlier = make_grant(
+        allowed, grant_id="gr_OLDERLEASE1", tasks_used=5,  # 已用尽
+    )
+    from datetime import timedelta
+
+    renewed = make_grant(
+        allowed,
+        grant_id="gr_NEWERLEASE2",
+        expires_at=iso(utcnow() + timedelta(days=365)),  # 远期 active：续约产物
+    )
+    store.issue_grant(earlier)
+    store.issue_grant(renewed)
+    earlier_record = store.get_grant("gr_OLDERLEASE1")
+    assert earlier_record.tasks_used >= earlier_record.max_tasks_total
+    selected = service._select_grant()
+    assert selected.grant_id == "gr_NEWERLEASE2", (
+        f"续约后必须选 active 租约，实际选中 {selected.grant_id}"
+    )
+    # 反向兼容：只有 exhausted 租约时仍选中它（闸2 产生具体拒绝码）
+    store.revoke_grant("gr_NEWERLEASE2", by="test")
+    only_exhausted = service._select_grant()
+    assert only_exhausted.grant_id == "gr_OLDERLEASE1"

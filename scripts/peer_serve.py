@@ -24,6 +24,7 @@ if str(_REPO / "src") not in sys.path:
 from llm_loop.peer.admission import AdmissionStore  # noqa: E402
 from llm_loop.peer.artifacts import ArtifactStore  # noqa: E402
 from llm_loop.peer.auth import PeerAuthenticator  # noqa: E402
+from llm_loop.peer.errors import PeerError  # noqa: E402
 from llm_loop.peer.pair import secret_key_from_store  # noqa: E402
 from llm_loop.peer.service import PeerService  # noqa: E402
 from llm_loop.peer.store import PeerStore  # noqa: E402
@@ -32,13 +33,18 @@ from llm_loop.web.peer_routes import create_peer_app  # noqa: E402
 
 def build_app(*, data_dir: Path, node_id: str, display_name: str | None) -> object:
     store = PeerStore(data_dir)
-    stored = store.read_secret(node_id)
-    if not stored:
+    # 独立审查第 4 轮 P1-2（2026-11-08）：身份拓扑对齐主 app/测试约定——
+    # executor 端 secrets/ 下存的是**对端（controller）**的密钥，HMAC 按
+    # 请求方 node id（X-Peer-Node-Id）解析 secrets/<controller>.key；本进程
+    # node_id 是受控端自身身份，不是密钥文件名。前置检查=至少完成过一次
+    # 配对（secrets/ 下存在任意 .key），否则启动无意义（每个请求都会
+    # peer_not_paired）。
+    paired_keys = sorted((data_dir / "secrets").glob("*.key"))
+    if not paired_keys:
         raise SystemExit(
-            f"未配对：{data_dir / 'secrets' / (node_id + '.secret')} 不存在。"
-            " 先完成 PAIR-OFFER/PAIR-CONFIRM 落盘 link_secret，再启动。"
+            f"未配对：{data_dir / 'secrets'} 下没有任何 <controller>.key。"
+            " 先完成 PAIR-OFFER/PAIR-CONFIRM 落盘对端 link_secret，再启动。"
         )
-    secret = secret_key_from_store(stored)
     service = PeerService(
         store=store,
         admissions=AdmissionStore(data_dir),
@@ -46,9 +52,18 @@ def build_app(*, data_dir: Path, node_id: str, display_name: str | None) -> obje
         node_id=node_id,
         display_name=display_name,
     )
-    authenticator = PeerAuthenticator(
-        secret_for=lambda candidate: secret if candidate == node_id else None
-    )
+    def _secret_for(candidate: str):
+        # P1-2（2026-11-08）：与主 app _mount_peer_routes._secret_for 同构——
+        # 按请求方（controller）node id 解 secrets/<candidate>.key。
+        stored = store.read_secret(candidate)
+        if not stored:
+            return None
+        try:
+            return secret_key_from_store(stored)
+        except (PeerError, ValueError):
+            return None
+
+    authenticator = PeerAuthenticator(secret_for=_secret_for)
     return create_peer_app(service=service, authenticator=authenticator)
 
 
