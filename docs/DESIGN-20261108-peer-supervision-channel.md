@@ -68,7 +68,7 @@ awaiting_supervision -> admitted | denied | cancelled | failed
 - **TTY 校验**：`sys.stdin.isatty()` 为假直接拒绝。管道、脚本、自动化不能代替人确认。
 - **票据绑定**：票据记录 `task_id + node_id + kind + params_digest + issued_by + issued_at + expires_at`（字段见 §3）。执行前重算 `params_digest` 并与票据比对，不一致 → `supervision_ticket_mismatch`。
 - **一次性**：票据文件以 `O_EXCL` 占位写入；消费时 `os.replace` 原子改名为 `<task_id>.consumed.json`，第二个消费者必然找不到源文件 → `supervision_ticket_consumed`。重放同一票据被拒。
-- **TTL**：票据有效期取配置的监督 TTL（`--supervision-ttl`，缺省 300 秒）。到期未确认 → `failed / supervision_timeout`（见附录 A6）。
+- **TTL**：票据有效期取 `min(task.deadline_s, --supervision-ttl)`（TTL 缺省 300 秒）。到期未确认 → `failed / supervision_timeout`（见附录 A6）。
 - **同一份配置**：CLI 必须与受控端服务使用同一个配置来源（`config.load_settings()`，或同一个显式 `--write-root`），不能各读各的环境。CLI 启动时打印实际生效的 `data_root` / `write_root` / `node_id`，并校验 data 目录属主等于当前 uid，不一致即拒绝。`write_root` 缺失时闸4 全拒——fail-closed，不会因为环境错配而越权写。策略层（`write_gate`）不读进程环境，只接受注入值。
 
 ### D4 确认即执行（同进程），不做后台轮询
@@ -113,7 +113,7 @@ supervised_ready = supervision_enabled and write_root_set and operator_channel_a
   → 执行器（内部再走闸4）
 ```
 
-票据不存在/已过期/摘要不符 → `denied` 并带具体 `reason_code`，不执行；租约或闸3 重判失败 → 抛错并保持 `awaiting_supervision`（票据保留，可修好前提后重试），收敛责任在 TTL（见附录 A8）。
+票据不存在/已过期/摘要不符 → `failed` 并带具体 `reason_code`，不执行（审计 verdict 仍记 `denied`）；租约或闸3 重判失败 → 抛错并保持 `awaiting_supervision`（票据保留，可修好前提后重试），收敛责任在 TTL（见附录 A8）。
 
 ### D7 四道闸对 supervised 任务全量生效
 
@@ -166,11 +166,11 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 | T1 | supervision 未开启，派 `fs.write` | `denied / requires_supervised_execution`（现状回归） |
 | T2 | 已开启但无票据直接调执行器 | 拒绝；执行器不自判 supervised |
 | T3 | 票据过期后确认 | `failed / supervision_timeout` |
-| T4 | 票据 `params_digest` 与任务不符 | `denied / supervision_mismatch`，不执行 |
-| T5 | 同一票据确认两次 | 第二次拒绝（`consumed_at` 非空） |
+| T4 | 票据 `params_digest` 与任务不符 | `failed / supervision_ticket_mismatch`，不执行 |
+| T5 | 同一票据确认两次 | 第二次拒绝（票据文件已被 `os.replace` 认领为 `.consumed.json`） |
 | T6 | 正常确认 → 写成功 | 回执 `succeeded`，`file_effect` 含 `path`/`bytes`/`sha256`，不含内容 |
 | T7 | 确认后、执行前租约被撤销 | 拒绝执行；任务保持 `awaiting_supervision`、票据保留（A8） |
-| T8 | 确认后目标路径越出 `LFL_PEER_WRITE_ROOT` | `denied / sandbox_denied`（supervision 不放宽闸4） |
+| T8 | 确认后目标路径越出 `LFL_PEER_WRITE_ROOT` | `failed / sandbox_denied`（supervision 不放宽闸4） |
 | T9 | 非 TTY 调 `confirm` | 拒绝，票据不写入 |
 | T10 | 宣告矩阵三行 | 与 §2 D5 表格逐行一致 |
 
@@ -247,7 +247,7 @@ D3 的"每次写可追溯到谁批准"对**实际执行**成立（票据 + 回�
 后可再次 `confirm`。这与 D6/T7 旧表述（"任何一步失败都落 denied"）不同：瞬时前提
 失败不应烧掉一次人工确认；但等待必须有界，收敛责任在 TTL（`expire_supervision` →
 `failed / supervision_timeout`）。票据本身的问题（缺失/过期/摘要不符/已被消费）仍按
-D6 落 `denied` 终局。
+D6 落 `failed` 终局（审计 verdict 记 `denied`）。
 
 **A9 票据形态与码名映射（实现↔设计）。** 票据字段为
 `task_id/node_id/kind/params_digest/issued_by/issued_at/expires_at`（无 `ticket_id`、
