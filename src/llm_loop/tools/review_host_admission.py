@@ -2924,12 +2924,16 @@ def _compose_review_task(
     # reads, with a verbatim template. Free-form instruction alone let two
     # reviewers emit a localized "结论：PASS" and fail their own gate.
     task += (
-        "\n\nMANDATORY OUTPUT CONTRACT: your reply must END with exactly "
-        "three lines in this verbatim shape (substitute true counts and the "
-        "candidate SHA; pick one of PASS/REVISE/BLOCK):\n"
+        "\n\nHOST_REVIEW_FINGERPRINT: " + sha[:16] + "\n"
+        "Copy this exact 16-character value into the final FINGERPRINT line. "
+        "Do not reproduce the full 64-character SHA256; the Host retains and "
+        "checks the full frozen candidate digest.\n\n"
+        "MANDATORY OUTPUT CONTRACT: your reply must END with exactly "
+        "three lines in this verbatim shape (substitute true counts; pick one "
+        "of PASS/REVISE/BLOCK):\n"
         "VERDICT: <PASS|REVISE|BLOCK>\n"
         "P0=<n> P1=<n> P2=<n>\n"
-        "SHA256: <candidate_sha256>\n"
+        "FINGERPRINT: <16 lowercase hex copied from HOST_REVIEW_FINGERPRINT>\n"
         "The Host parser accepts only these exact English standalone lines; "
         "localized labels (e.g. '结论：') are INVALID and fail the gate."
     )
@@ -2951,6 +2955,11 @@ def _qualifying_pass_p2(answer: str, sha: str) -> int | None:
         last_verdict = match
     conclusion = answer[last_verdict.end():] if last_verdict is not None else ""
     lines = re.findall(r"(?m)^P0=(\d+) P1=(\d+) P2=(\d+)\s*$", conclusion)
+    # The Host remains authoritative for the full 256-bit candidate identity.
+    # New reviewers echo only a 16-hex display fingerprint to avoid repeated
+    # long-digest transcription errors. Keep exact full-SHA acceptance for
+    # already-running reviewers that were spawned with the previous contract.
+    fingerprint_lines = re.findall(r"(?m)^FINGERPRINT:\s*([0-9a-f]{16})\s*$", conclusion)
     sha_lines = re.findall(r"(?m)^SHA256:\s*([0-9a-f]{64})\s*$", conclusion)
     mentions = {
         n: re.findall(r"\b" + n + r"\s*[:=]\s*(\d+)\b", conclusion)
@@ -2960,8 +2969,10 @@ def _qualifying_pass_p2(answer: str, sha: str) -> int | None:
         len(verdicts) == 1 and verdicts[0] == "PASS"
         and len(lines) == 1 and lines[0][:2] == ("0", "0")
         and all(len(set(rows)) == 1 and len(rows) >= 1 for rows in mentions.values())
-        and len(sha_lines) == 1
-        and sha_lines[0] == sha
+        and (
+            (len(fingerprint_lines) == 1 and fingerprint_lines[0] == sha[:16] and not sha_lines)
+            or (not fingerprint_lines and len(sha_lines) == 1 and sha_lines[0] == sha)
+        )
     )
     return int(lines[0][2]) if qualifying else None
 
