@@ -566,8 +566,12 @@ class PeerService:
             deadline = self._supervision_deadline(task)
             if deadline > now:
                 continue
+            try:
+                self._transition(task, "failed", reason_code="supervision_timeout")
+            except PeerError:
+                # 并发确认先一步把任务推进到 admitted/queued/running：不覆盖，跳过。
+                continue
             self._operator.discard(task.task_id)
-            self._transition(task, "failed", reason_code="supervision_timeout")
             expired.append(task.task_id)
         return expired
 

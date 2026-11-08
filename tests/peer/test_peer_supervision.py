@@ -212,6 +212,22 @@ def test_expire_supervision_converges_waiting_even_when_disabled(tmp_path):
     assert store.get_task(task_id).state == "failed"
 
 
+def test_expire_skips_task_concurrently_admitted(tmp_path, monkeypatch):
+    """确认与 TTL 收尾竞争：确认先赢时 expire 不覆盖、不抛错（P2-4 并发面）。"""
+    now = [now_local()]
+    env = _env(tmp_path, ttl=1, clock=lambda: now[0])
+    service, store, _root, task_id = _held(env)
+    stale = store.get_task(task_id)  # expire 先取到的旧快照
+    store.put_task(
+        stale.with_updates(state="admitted"),
+        expected_state="awaiting_supervision",
+    )
+    monkeypatch.setattr(store, "list_tasks", lambda **_kw: [stale])
+    now[0] += timedelta(seconds=2)
+    assert service.expire_supervision() == []
+    assert store.get_task(task_id).state == "admitted"
+
+
 # ---- CLI：非 TTY 不得确认 --------------------------------------------------
 def test_cli_confirm_refuses_without_tty(tmp_path):
     proc = subprocess.run(
