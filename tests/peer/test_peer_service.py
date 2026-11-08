@@ -344,7 +344,7 @@ def test_select_grant_prefers_active_over_retained_exhausted(env):
     renewed = make_grant(
         allowed,
         grant_id="gr_NEWERLEASE2",
-        expires_at=iso(utcnow() + timedelta(days=365)),  # 远期 active：续约产物
+        expires_at=iso(now_local() + timedelta(days=365)),  # 远期 active：续约产物
     )
     store.issue_grant(earlier)
     store.issue_grant(renewed)
