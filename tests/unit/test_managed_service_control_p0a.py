@@ -1006,7 +1006,7 @@ def _wheel_binding_layout(tmp_path: Path, name: str) -> tuple[Path, str]:
     lfl_home = _wheel_release_layout(tmp_path, name=name)
     dist = (
         lfl_home
-        / "releases/LFL-0.6.40/venv/lib/python3.13/site-packages/llm_loop/webui/dist"
+        / "releases/LFL-0.6.40/venv/lib/python3.13/site-packages/llm_loop/_bundled/webui/dist"
     )
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html>ok</html>", encoding="utf-8")
@@ -1050,7 +1050,7 @@ def test_verify_deployment_binding_reports_wheel_failures_precisely(
     # WebUI 资产树失配 → 资产失配（wheel 布局同样不豁免 WebUI 绑定）。
     dist_index = (
         lfl_home
-        / "releases/LFL-0.6.40/venv/lib/python3.13/site-packages/llm_loop/webui/dist/index.html"
+        / "releases/LFL-0.6.40/venv/lib/python3.13/site-packages/llm_loop/_bundled/webui/dist/index.html"
     )
     dist_index.write_text("<html>tampered</html>", encoding="utf-8")
     problems = verify_deployment_binding(

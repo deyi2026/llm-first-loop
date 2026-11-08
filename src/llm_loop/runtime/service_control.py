@@ -4741,7 +4741,7 @@ def _tree_sha256(root: Path) -> str:
 def _wheel_release_webui_dist(release: Path) -> Path | None:
     """release venv site-packages 内的 WebUI dist 树（pythonX.Y 不写死）。"""
     for candidate in sorted(
-        (release / "venv" / "lib").glob("python*/site-packages/llm_loop/webui/dist")
+        (release / "venv" / "lib").glob("python*/site-packages/llm_loop/_bundled/webui/dist")
     ):
         if candidate.is_dir():
             return candidate

@@ -1,0 +1,34 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261109-wheel-webui-publish-path",
+  "summary": "Correct the existing wheel WebUI lookup to its real bundled path and exercise actual-layout regressions. Preserve the pinned generic release-recovery verifier; execute the already-reviewed installed native publish/binding probe separately for this production window.",
+  "components": [
+    {
+      "component_id": "wheel-publish-path-repair",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "pyproject.toml",
+        "uv.lock",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/runtime/service_control.py",
+        "tests/unit/test_service_control_wheel_identity.py",
+        "docs/governance/submissions/20261109-wheel-webui-publish-path.json",
+        "tests/unit/test_managed_service_control_p0a.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "runtime wheel deployment and distribution verification",
+      "disposition": "reuse existing publish CAS, binding checks and bundled WebUI; correct one physical path; preserve the immutable v0.6.37 recovery verifier",
+      "evidence": [
+        "tests/unit/test_service_control_wheel_identity.py",
+        "tests/unit/test_managed_service_control_p0a.py",
+        "scripts/verify_install_distribution.py"
+      ],
+      "verification_level": "Incident RED reproduced; focused regressions and installed Linux native publish/binding probe passed; retain original generic verifier hash and rerun unchanged full R9 after narrow re-review.",
+      "model_evidence_veto_recovery_exit": "Existing structured publish failure, generation CAS and retained-release rollback remain unchanged.",
+      "rollback_route": "Original 0.6.41 services restored after publish failure; use cold data/config/unit snapshots for next controlled installation."
+    }
+  ],
+  "declarations": []
+}

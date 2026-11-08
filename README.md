@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.42 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.43 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 **手机 Web V2 操作**：屏幕右边缘的 `◂` 可展开右侧面板，再点 `▸` 收起；左上角 `☰` 打开会话导航。详见[移动端左右侧栏说明](docs/web-mobile-navigation.md)。
 

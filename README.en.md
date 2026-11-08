@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.42 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.43 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
 
 **Mobile Web V2:** Tap the `◂` arrow at the right screen edge to open the right panel; tap `▸` to close it. Use `☰` at the top left for session navigation. See the [mobile sidebar guide](docs/web-mobile-navigation.md).
 

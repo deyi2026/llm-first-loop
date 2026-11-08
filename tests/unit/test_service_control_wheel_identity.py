@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -23,10 +24,10 @@ def deployment(tmp_path):
     sha = hashlib.sha256(wheel.read_bytes()).hexdigest()
     (release / ".installer-wheel.sha256").write_text(f"{sha}  {wheel.name}\n")
     (home / ".LFL-active-version").write_text("0.6.42\n")
-    dist = release / "venv/lib/python3.13/site-packages/llm_loop/webui/dist"
+    dist = release / "venv/lib/python3.13/site-packages/llm_loop/_bundled/webui/dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("candidate UI")
-    dep = sc.build_wheel_deployment(home, webui_artifact_sha256=sc._tree_sha256(dist), generation=1)
+    dep = sc.build_wheel_deployment(home, generation=1)
     store = sc.ManagedServiceDeploymentStore(home / "data")
     store.compare_and_swap(dep, expected_generation=0)
     return store, dep
@@ -105,3 +106,13 @@ def test_all_worker_records_real_three_service_verification(deployment, monkeypa
         assert stable["matches_desired_generation"]
     assert not view["admission_barriers"]
 
+
+def test_missing_bundled_webui_does_not_publish_a_new_generation(deployment):
+    store, dep = deployment
+    dist = sc._wheel_release_webui_dist(Path(dep.release_dir))
+    assert dist is not None
+    dist.rename(dist.with_name("dist.unavailable"))
+    with pytest.raises(ValueError, match="wheel WebUI artifact unavailable"):
+        sc.main(["publish-wheel", "--lfl-home", dep.runtime_root,
+                 "--expected-generation", "1"])
+    assert store.read().generation == 1
