@@ -408,8 +408,9 @@ class PeerService:
     def recover_interrupted(self) -> list[TaskRecord]:
         """重启恢复：把上次进程留下的中间态收敛到可解释状态，**绝不自动重跑**。
 
-        - ``admitted`` / ``queued``：动作尚未开始（``_execute`` 只在 ``running`` 之后调用），
-          收敛为 ``failed/crashed``，额度不回滚。
+        - ``submitted`` / ``admitted`` / ``queued``：动作尚未开始（``_execute`` 只在 ``running`` 之后调用），
+          收敛为 ``failed/crashed``，额度不回滚。``submitted`` 也占并发名额（见 ``SLOT_STATES``），
+          不收敛就会永久吃掉一个槽位。
         - ``running``：幂等只读 kind → ``failed/crashed``；非幂等 → ``unknown_outcome``
           （可能已产生部分副作用，既不能声称失败，也不能声称成功）。
 
@@ -417,7 +418,7 @@ class PeerService:
         （``scripts/peer_serve.py`` / ``web`` 挂载），不在请求路径上。
         """
         recovered: list[TaskRecord] = []
-        for state in ("admitted", "queued", "running"):
+        for state in ("submitted", "admitted", "queued", "running"):
             for task in self._store.list_tasks(node_id=self._node_id, state=state, limit=10_000):
                 if state == "running" and task.idempotency_class != "idempotent":
                     recovered.append(self._transition(task, "unknown_outcome", reason_code="crashed"))
