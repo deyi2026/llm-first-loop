@@ -230,3 +230,46 @@ def test_secret_key_from_store_accepts_base64_and_plaintext():
     with pytest.raises(PeerError) as err:
         secret_key_from_store("short")
     assert err.value.reason_code == "peer_not_paired"
+
+
+def test_canonical_examples_pass_verify_confirm():
+    """独立审查 P1-2（2026-11-08）：冻结 example 对（offer+confirm）必须
+    被 verify_confirm 接受——CONFIRM 回显 offer 身份（DESIGN §5.7.2 单密钥
+    回显语义），canonical example 不得与实现矛盾。"""
+    from llm_loop.peer.pair import verify_confirm
+
+    offer = json.loads((SCHEMA_DIR / "examples" / "pair-offer.example.json").read_text())
+    confirm = json.loads(
+        (SCHEMA_DIR / "examples" / "pair-confirm.example.json").read_text()
+    )
+    # 冻结 example 的 expires_at 是静态日期；配对时钟固定在有效窗内。
+    from datetime import UTC, datetime
+
+    frozen_now = datetime.fromisoformat(offer["issued_at"]).astimezone(UTC)
+    secret = verify_confirm(confirm, offer=offer, now=frozen_now)
+    assert len(secret) == 32
+
+
+def test_node_record_persists_public_key_fingerprint():
+    """独立审查 P1-2（2026-11-08）：NodeRecord 必须可持久化配对指纹
+    （DESIGN §5.2 审计字段），且兼容不含该字段的存量落盘。"""
+    from llm_loop.peer.models import NodeRecord
+
+    base = dict(
+        node_id="deepin-01",
+        display_name="Deepin 工作站",
+        role="executor",
+        base_url="http://127.0.0.1:8970",
+        display_protocol="x11",
+        state="active",
+        paired_at="2026-11-07T13:30:00+08:00",
+    )
+    record = NodeRecord.from_dict(
+        {**base, "public_key_fingerprint": "K4M2-P7QX-7TB3-R7WN-2C5V-6HJD-7FSA-3LQE"}
+    )
+    assert record.to_dict()["public_key_fingerprint"] == (
+        "K4M2-P7QX-7TB3-R7WN-2C5V-6HJD-7FSA-3LQE"
+    )
+    legacy = NodeRecord.from_dict(dict(base))
+    assert legacy.public_key_fingerprint is None
+    assert "public_key_fingerprint" not in legacy.to_dict()

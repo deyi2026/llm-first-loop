@@ -51,6 +51,10 @@ class NodeRecord:
     paired_at: str
     last_seen_at: str | None = None
     manifest_digest: str | None = None
+    # DESIGN §5.2 PeerNode：配对期核对的 executor 公钥指纹必须持久化，
+    # 审计（node_id + short_fingerprint）与后续配对撤销依赖它。缺省 None
+    # 兼容既有落盘；新配对由 confirm 流程写入。
+    public_key_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _drop_none(asdict(self))
@@ -67,6 +71,7 @@ class NodeRecord:
             paired_at=raw["paired_at"],
             last_seen_at=raw.get("last_seen_at"),
             manifest_digest=raw.get("manifest_digest"),
+            public_key_fingerprint=raw.get("public_key_fingerprint"),
         )
 
 

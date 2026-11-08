@@ -271,7 +271,15 @@ def verify_confirm(
     offer: Mapping[str, Any],
     now: datetime | None = None,
 ) -> bytes:
-    """受控端校验 CONFIRM 并返回 link_secret 原始字节（落盘由调用方做，0600）。"""
+    """受控端校验 CONFIRM 并返回 link_secret 原始字节（落盘由调用方做，0600）。
+
+    身份语义（回显绑定，DESIGN §5.7.2"首版只有一对密钥"）：CONFIRM 的
+    node_id/public_key/short_fingerprint 必须逐字段等于 OFFER 的——确认方
+    回显被确认方（executor）身份，把"人眼核对的短指纹"钉进确认报文。
+    落盘义务：调用方在配对成立后必须把
+    ``confirm["short_fingerprint"]`` 写入 ``NodeRecord.public_key_fingerprint``
+    （DESIGN §5.2 审计字段：审计的 node_id+short_fingerprint 对由此产生）。
+    """
     _require_exact_fields(confirm, _CONFIRM_FIELDS, "pair_confirm")
     verify_offer(offer, expected_fingerprint=str(offer.get("short_fingerprint")), now=now)
     if confirm["schema"] != SCHEMA_VERSION or confirm["key_alg"] != KEY_ALG:

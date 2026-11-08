@@ -2,8 +2,8 @@
   "schema": "lfl.peer.v1",
   "node_id": "deepin-01",
   "key_alg": "ed25519",
-  "public_key": "3J8kQm2vB7dR1sT5nY9xL0pC4wA6eF8hG2jK4mN6qP0=",
-  "short_fingerprint": "K4M2-P7QX-7TB3-R7WN-2C5V-6HJD-7FSA-3LQE",
+  "public_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "short_fingerprint": "MMG4-2KLG-YQZW-NEIS-KREL-XMS3-J72B-FJE4",
   "nonce": "9c4f2a7b1d8e3f506a2c9b4d7e1f8203",
   "issued_at": "2026-11-07T12:40:00+08:00",
   "expires_at": "2026-11-07T12:45:00+08:00"
