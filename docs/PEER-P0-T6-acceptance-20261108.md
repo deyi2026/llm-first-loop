@@ -100,6 +100,9 @@ U5 验证的是"非幂等记录 + 真实重启 → `unknown_outcome` 且不自�
 - 本文件只声明：**上文列出的 25 条在真实进程/端口/HMAC 下断言命中**。
 - "闸已生效"仅对这些条目成立；U4/U7/U9b/U8b 与 U5 的副作用前提**未覆盖**。
 - 独立审查（RULE-AI-28）：审查子代理 PASS（candidate `a41d58a9…`，scope=patch，9 条声明路径）。
+  证据形态：`review_admission` 工具回执（`cached_pass: true`、child `subagent_559f0d7a837d`、scope=patch）；
+  **落盘回执 `data/review_admission/subagent_559f0d7a837d-full_test.md` 缺失**（2026-11-08 复核 `ls` 无此文件），原因未查清。
+  本条只声明"工具回执显示 PASS"，不声称有落盘文件。
 
 ## 6. 执行记录（2026-11-08）
 
@@ -123,4 +126,51 @@ U5 验证的是"非幂等记录 + 真实重启 → `unknown_outcome` 且不自�
 环境事实（不是代码问题，登记以免误判）：本轮验收在 **git worktree** 内跑，
 worktree 原本没有 `.venv`，导致 `test_env_preflight` 的"实测版本"断言拿不到版本号而失败。
 补 `.venv` 软链（`.gitignore` 已忽略，不入库）后转绿；主仓直接跑不受影响。
+
+## 7. T8 合并审查发现与修复（2026-11-08）
+
+按 `skills/merge-review-gate` 清单拆三份独立只读审查：A1（认证/存储/状态机）、
+A2（fail-closed/执行器/policy/产物）、B（诚实性/测试面/分支卫生）。三者均未参与本分支产出。
+
+### 7.1 已修复（提交 `058f07962`）
+
+| 编号 | 发现 | 处置 |
+| --- | --- | --- |
+| A1-A4 | `PeerError` detail 拼接 `OSError`/`JSONDecodeError` 原文，把本地路径回给已认证对端（**可达**） | 改为只带异常类型名 |
+| A1-A4 | `_path()` 非法 task_id 抛裸 `ValueError`；`from_dict` 的 `KeyError` 逃逸 → 500 面（当前不可达：task_id 全由服务端 `f"task_{uuid4().hex[:20]}"` 生成） | 收敛为 `PeerError`，不再依赖调用方 |
+| A1-附 | `os.write` 未检返回值，短写留半截 JSON（会被 `count_admitted` 按"已准入"计入） | 改为循环写满 |
+
+回归测试：`tests/peer/test_peer_store.py::test_corrupt_admission_record_fails_closed_without_leaking_path`。
+
+### 7.2 审查 PASS 面（摘审查者原文证据）
+
+- **A1**：闸1 认证的 canonical 覆盖 method + path（含 query）+ body sha256 + ts + nonce；300s 时间窗、
+  600s nonce 重放窗（按 node 分桶 + 全局 LRU）、`hmac.compare_digest`、nonce 只在验签后落账 → PASS。
+  `O_EXCL` 不可变准入；同载荷幂等、异载荷 `idempotency_conflict` → PASS。
+  十态枚举与 `receipt.schema.json` `$defs.state.enum` 逐一相同、非法迁移被拒 → PASS。
+- **A2**：manifest 只广播真有 handler 的 kind（黑盒探针 `manifest_kinds()` 只回 `fs.read`/`fs.list`，
+  即使显式传 `shell.exec`）；`desktop.*` 在 wayland/none → `unsupported_display_protocol`、
+  x11 → `handler_missing`，两路都拒。审计写失败走 `audit_unavailable` + `_deny(write_audit=False, persist=False)`：
+  额度不消耗、工具不执行、返回 200+denied 而非 500。水位单一真值（`service.py:90` 归一、`:104-108` 判定、
+  `:129` 播报同源）。产物篡改 → `artifact_digest_mismatch` + `quarantine_artifact` 把 succeeded 改写为 failed。
+  恢复入口 `service.py:389-407`、撤销报 `grant_revoked`（422）→ 均 PASS。
+
+### 7.3 未修改的已知残留（逐条记可达条件，不阻断合并）
+
+| 编号 | 残留 | 可达条件 |
+| --- | --- | --- |
+| A1-A4 | `models.py` 的 `iso()`/`parse_ts()` 抛裸 `ValueError` | 存储记录被外部改坏（`expires_at` 畸形）才可达；`auth.py` 侧时间戳另有 4xx 映射 |
+| A1-A3附 | `state.py:30` 注释称 denied 只能由准入产生，与迁移表允许 `admitted/queued → denied` 不一致 | 注释级，无行为影响 |
+| A2-A5 | `desktop.*` 协议判定嵌在 `handler is None` 分支内 | 未来补 desktop handler 时会绕过；本切片行为正确 |
+| A2-A8 | 篡改检测需有人 GET 产物才触发 | 不 GET 则 succeeded 回执不变 |
+| A2-A9 | `recover_interrupted` 的启动调用点未核 | 需在 `scripts/peer_serve.py` / web 挂载处核验 |
+| A2-附 | `audit` 只包 `OSError`；`_select_grant` 取最早过期，旧租约可能遮蔽新租约 | 多租约并存时 |
+
+### 7.4 诚实性/卫生面（B）
+
+- 分支卫生 PASS：`git status --porcelain` 空、`main..HEAD` 19 提交、`diff` 无 `experiences/`、`data/` 夹带。
+- 基线 PASS：`main=ee339e74d` 为 `HEAD` 祖先，`--ff-only` 可行。
+- guards baseline：`config.py::load_settings` 369→376、`web/__init__.py::build_app` 146→150 属**既有条目抬高**，
+  非"只新增"。按 `scripts/regen_function_size_baseline.py` docstring，该口径是"EVO-20261025-e0bff8ee 批准的
+  红线放宽，须 guard(r9) 提交可见"；`bf45b3224` 即该 guard(r9) 提交，§6 第 4 条已披露 → 不判违规，但记明性质。
 
