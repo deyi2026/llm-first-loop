@@ -162,6 +162,43 @@ class PeerService:
             params_digest=digest,
         )
 
+        # D6（独立审查 P1-2，2026-11-08）：O_EXCL 占坑先于一切副作用。
+        # 并发同 effect_id 只有一个提交能占坑；后来者等待占坑方落任务并
+        # 返回幂等回执（或 fail-closed 冲突），杜绝 check-then-act 双执行。
+        claimed = self._store.claim_effect(
+            self._node_id, shape["effect_id"], task.task_id, now_iso=now
+        )
+        if claimed is not None:
+            return self._resolve_effect_claim(claimed, shape, digest)
+
+        try:
+            return self._submit_claimed(task, shape, digest, spec)
+        except OSError:
+            # 落盘基础设施失败（如磁盘满）：回滚占坑，允许同 effect_id 重试。
+            self._store.release_effect(self._node_id, shape["effect_id"])
+            raise
+
+    def _resolve_effect_claim(
+        self, claimed_task_id: str, shape: dict[str, Any], digest: str
+    ) -> dict[str, Any]:
+        import time as _time
+
+        if claimed_task_id:
+            for _ in range(50):  # 占坑方 put_task 可能尚未可见：短暂等待
+                existing = self._store.get_task(claimed_task_id)
+                if existing is not None:
+                    if existing.kind == shape["kind"] and existing.params_digest == digest:
+                        return self.receipt(existing)
+                    raise PeerError(
+                        "idempotency_conflict", f"effect_id reused: {shape['effect_id']}"
+                    )
+                _time.sleep(0.02)
+        raise PeerError("idempotency_conflict", f"effect_id already claimed: {shape['effect_id']}")
+
+    def _submit_claimed(
+        self, task: TaskRecord, shape: dict[str, Any], digest: str, spec: Any
+    ) -> dict[str, Any]:
+        now = iso(self._clock())
         try:
             grant = self._select_grant()
         except PeerError as exc:

@@ -36,8 +36,25 @@ _TASK_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _ARTIFACT_REF_RE = re.compile(r"^artifact://v1/([A-Za-z0-9._-]{8,128})$")
 
 
+def _is_loopback_host(hostname: str) -> bool:
+    normalized = str(hostname or "").strip().lower().rstrip(".")
+    if normalized in {"localhost", "::1", "[::1]"}:
+        return True
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def origin_of(base_url: str) -> str:
-    """校验并归一 ``base_url`` 为纯 origin；不合规则是传输层不可用。"""
+    """校验并归一 ``base_url`` 为纯 origin；不合规则是传输层不可用。
+
+    D15（独立审查 P1-1，2026-11-08）：HMAC 只保护完整性/认证，不保护机密
+    性——fs.read 工件会经此通道传输。明文 http 仅允许 loopback（SSH 隧道/
+    本机形态）；非 loopback 必须显式 https，否则 fail-closed 拒绝传输。
+    """
     raw = str(base_url or "").strip()
     parts = urlsplit(raw)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
@@ -46,6 +63,11 @@ def origin_of(base_url: str) -> str:
         raise PeerError(
             "peer_transport_unavailable",
             f"base_url 必须是纯 origin（不带路径/query）: {raw!r}",
+        )
+    if parts.scheme == "http" and not _is_loopback_host(parts.hostname):
+        raise PeerError(
+            "peer_transport_unavailable",
+            f"D15: 明文 http 仅允许 loopback（SSH 隧道形态）；非 loopback 必须 https: {raw!r}",
         )
     return f"{parts.scheme}://{parts.netloc}"
 

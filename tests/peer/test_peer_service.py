@@ -261,3 +261,43 @@ def test_manifest_conforms_and_conditional_guard_really_blocks(env):
     bad["desktop"].update(inject_click=True, screenshot=False)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema)
+
+
+def test_concurrent_same_effect_id_executes_once(env):
+    """独立审查 P1-2（2026-11-08）：并发同 effect_id 提交恰执行一次。
+
+    O_EXCL 占坑先于副作用：双线程同时 submit，只有占坑成功方落任务并
+    执行；后来者返回同一 task_id 的幂等回执。破坏 check-then-act 双执行。
+    """
+    import threading
+
+    service, store, allowed, _ = env
+    target = allowed / "counter.txt"
+    target.write_text("0", encoding="utf-8")
+    store.issue_grant(make_grant(allowed))
+    payload = submit_payload(allowed, effect_id="eff_race_0001", path=str(target))
+    # fs.read 是只读 kind——用执行副作用计数不可行；断言落点=任务唯一性
+    receipts: list[dict] = []
+    errors: list[Exception] = []
+    barrier = threading.Barrier(2)
+
+    def submit():
+        try:
+            barrier.wait(timeout=5)
+            receipts.append(service.submit(dict(payload)))
+        except Exception as exc:  # noqa: BLE001 — 收集竞态方异常
+            errors.append(exc)
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not errors, errors
+    same = [r for r in receipts if r.get("task_id") == receipts[0]["task_id"]]
+    assert len(receipts) == 2 and len(same) == 2, receipts
+    tasks = [t for t in store.list_tasks(node_id="deepin-01", limit=100)
+             if t.effect_id == "eff_race_0001"]
+    assert len(tasks) == 1, [t.task_id for t in tasks]
+    ledger = store.root / "effects" / "deepin-01__eff_race_0001.json"
+    assert ledger.is_file()

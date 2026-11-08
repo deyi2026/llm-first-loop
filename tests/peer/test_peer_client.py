@@ -96,7 +96,7 @@ def world(tmp_path, monkeypatch):
     install_peer_error_handler(app)
     app.include_router(build_peer_router(service=service, authenticator=authenticator))
 
-    test_client = TestClient(app, base_url="http://testserver")
+    test_client = TestClient(app, base_url="https://testserver")
 
     def _fake_request(method, url, *, headers=None, content=None, timeout=None, follow_redirects=False):
         return test_client.request(method, url, headers=headers, content=content)
@@ -111,7 +111,7 @@ def world(tmp_path, monkeypatch):
             node_id=PEER_NODE,
             display_name="deepin lab",
             role="worker",
-            base_url="http://testserver",
+            base_url="https://testserver",
             display_protocol="none",
             state="paired",
             paired_at=iso(utcnow()),
@@ -176,7 +176,7 @@ def test_peer_client_signs_manifest(world):
 
 def test_peer_client_maps_wrong_secret_to_reason_code(world):
     bad = PeerClient(
-        PeerEndpoint(node_id=PEER_NODE, base_url="http://testserver", secret=b"\x08" * 32),
+        PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 32),
         local_node_id=LOCAL_NODE,
     )
     with pytest.raises(PeerError) as excinfo:
@@ -283,3 +283,17 @@ def test_mount_peer_routes_requires_signature(world):
     response = anonymous.get("/peer/v1/manifest")
     assert response.status_code == 401
     assert response.json()["reason_code"] == "peer_bad_signature"
+
+
+def test_origin_of_enforces_d15_plaintext_loopback_only():
+    """独立审查 P1-1（2026-11-08）：明文 http 仅允许 loopback；非 loopback 必须 https。"""
+    from llm_loop.peer.client import origin_of
+
+    assert origin_of("http://127.0.0.1:8903") == "http://127.0.0.1:8903"
+    assert origin_of("http://localhost") == "http://localhost"
+    assert origin_of("http://[::1]:8903") == "http://[::1]:8903"
+    assert origin_of("https://203.0.113.20:8903") == "https://203.0.113.20:8903"
+    with pytest.raises(PeerError) as lan_plain:
+        origin_of("http://203.0.113.20:8903")
+    assert lan_plain.value.reason_code == "peer_transport_unavailable"
+    assert "D15" in str(lan_plain.value)

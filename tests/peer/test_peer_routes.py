@@ -202,3 +202,45 @@ def test_invalid_json_body_is_400_class_error(env):
     res = client._c.post("/peer/v1/tasks", content=body, headers=headers)
     assert res.status_code == 400
     assert res.json()["reason_code"] == "params_schema_invalid"
+
+
+def test_mount_peer_routes_refuses_non_loopback_plain_bind(monkeypatch, tmp_path):
+    """独立审查 P1-1（2026-11-08，D15）：主 app 明文绑非 loopback 时拒绝挂载 peer 面。
+
+    fail-closed：/peer/v1/* 路由不得存在（peer 面不可用优于明文可用）；
+    逃生阀 PEER_ALLOW_PLAINTEXT_BIND=1 时恢复挂载。
+    """
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    from llm_loop.web import _mount_peer_routes
+
+    def mount(monkeypatch, *, web_host: str, escape: str = "") -> FastAPI:
+        app = FastAPI()
+        settings = SimpleNamespace(
+            peer_data_dir=str(tmp_path / "peer"),
+            data_dir=str(tmp_path),
+            peer_node_id="deepin-01",
+            peer_display_name="",
+            peer_kinds="fs.read",
+            web_host=web_host,
+        )
+        monkeypatch.setenv("WEB_HOST", web_host)
+        monkeypatch.setenv("PEER_ALLOW_PLAINTEXT_BIND", escape)
+        _mount_peer_routes(app, settings)
+        return app
+
+    def mounted(app: FastAPI) -> bool:
+        # 通过真实请求探测：路由存在时 manifest 返回鉴权类 4xx；未挂载=404。
+        from starlette.testclient import TestClient
+
+        response = TestClient(app).get("/peer/v1/manifest")
+        return response.status_code != 404
+
+    refused = mount(monkeypatch, web_host="0.0.0.0")
+    assert not mounted(refused), "非 loopback 明文绑定必须拒绝挂载 peer 面"
+    allowed = mount(monkeypatch, web_host="127.0.0.1")
+    assert mounted(allowed)
+    escaped = mount(monkeypatch, web_host="0.0.0.0", escape="1")
+    assert mounted(escaped)

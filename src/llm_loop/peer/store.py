@@ -234,6 +234,59 @@ class PeerStore:
                 return TaskRecord.from_dict(item)
         return None
 
+    # ---- effect 幂等占坑（D6：dedup 先于副作用持久化、与 admission 原子）----
+
+    def _effect_path(self, node_id: str, effect_id: str) -> Path:
+        # node_id/effect_id 均已在 schema/service 层通过字符集校验；
+        # 这里再防御一次（fail-closed，不落盘任何越界名）。
+        name = f"{_safe_name(node_id)}__{_safe_name(effect_id)}.json"
+        return self.root / "effects" / name
+
+    def claim_effect(self, node_id: str, effect_id: str, task_id: str, *, now_iso: str = "") -> str | None:
+        """O_EXCL 原子占坑；成功返回 None，已被占返回占坑记录里的 task_id。
+
+        独立审查 P1-2（2026-11-08）：``find_task_by_effect``（扫描）→
+        ``put_task`` 是 check-then-act——并发同 effect_id 双提交会双双通过
+        扫描并双双执行，破坏"执行次数仍为 1"。内核级 O_CREAT|O_EXCL 是
+        唯一免锁原子占坑：占坑成功方才允许落任务与副作用；后来者读占坑
+        记录返回既有 task_id（幂等回执）。
+        """
+        import time as _time
+
+        effects_dir = self.root / "effects"
+        effects_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path = self._effect_path(node_id, effect_id)
+        record = {
+            "schema": "lfl.peer.v1",
+            "node_id": node_id,
+            "effect_id": effect_id,
+            "task_id": task_id,
+            "claimed_at": now_iso,
+        }
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # 占坑者先创建后写内容：极短窗口内读到空/半文件，短暂重读。
+            for _ in range(50):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    return str(data.get("task_id") or "")
+                except (OSError, ValueError):
+                    _time.sleep(0.02)
+            return ""  # 无法读取：按已占用（fail-closed），调用方走冲突路径
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(record, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return None
+
+    def release_effect(self, node_id: str, effect_id: str) -> None:
+        """回滚占坑：任务落盘失败（如磁盘满）时删除，允许同 effect_id 重试。"""
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            self._effect_path(node_id, effect_id).unlink(missing_ok=True)
+
     def find_task_by_effect(self, node_id: str, effect_id: str) -> TaskRecord | None:
         for task in self.list_tasks(node_id=node_id, limit=10_000):
             if task.effect_id == effect_id:

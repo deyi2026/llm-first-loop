@@ -60,7 +60,33 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
     独立 mount 而不并入 ``router``：peer 请求只认四头 HMAC，不套浏览器侧
     ``require_api_key``（凭证混用）。缺 secret 时仍挂路由——每个请求会按
     ``peer_not_paired`` 拒绝，不会出现"无密钥但可访问"。
+
+    D15（独立审查 P1-1，2026-11-08）：主 app 以明文 HTTP 暴露在非 loopback
+    绑定上时拒绝挂载 peer 面——HMAC 不保护工件机密性，LAN 明文等于把
+    fs.read 工件内容暴露给同网段。fail-closed：不挂载（peer 面不可用）
+    而不是明文可用；显式逃生阀 ``PEER_ALLOW_PLAINTEXT_BIND=1`` 留给
+    用户自担风险的隔离试验环境。
     """
+    import os as _os
+
+    from llm_loop.web.auth import is_loopback
+
+    bind_host = str(
+        getattr(settings, "web_host", None)
+        or _os.environ.get("WEB_HOST", "127.0.0.1")
+    ).strip() or "127.0.0.1"
+    allow_plaintext = str(
+        _os.environ.get("PEER_ALLOW_PLAINTEXT_BIND", "") or ""
+    ).strip() == "1"
+    if not is_loopback(bind_host) and not allow_plaintext:
+        import logging
+
+        logging.getLogger(__name__).error(
+            "peer 面拒绝挂载：WEB_HOST=%s 非 loopback 且无 TLS（D15 明文禁令）。"
+            "LAN 部署请走 SSH 隧道 + loopback，或反向 TLS 终结后设置 "
+            "PEER_ALLOW_PLAINTEXT_BIND=1 自担风险。", bind_host,
+        )
+        return
     from llm_loop.peer.admission import AdmissionStore
     from llm_loop.peer.artifacts import ArtifactStore
     from llm_loop.peer.auth import PeerAuthenticator
