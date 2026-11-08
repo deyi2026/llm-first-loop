@@ -59,7 +59,8 @@ class Executor:
     ) -> None:
         self._artifacts = artifacts
         self._node_id = node_id
-        # None = 调用时读 env；显式值只用于测试与嵌入式装配。
+        # None = 写域未声明（闸4 全拒）；本类不读进程环境，值由装配层注入
+        # （config.PeerSettings.peer_write_root / peer_serve --write-root）。
         self._write_root = write_root
 
     def run(

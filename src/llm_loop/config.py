@@ -525,6 +525,8 @@ class Settings:
     peer_timeout_s: int = 20  # 控制端单请求超时（秒）
     # 受控端声明可执行的 kind（逗号分隔，如 file_read,exec）；空=不开放任何 kind
     peer_kinds: str = ""
+    # 闸4 写域根（绝对路径）；空=远程写全拒。读取点只在这里，策略层不读 env。
+    peer_write_root: str = ""
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -1155,6 +1157,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         peer_data_dir=env_values.get("LFL_PEER_DATA_DIR", "").strip(),
         peer_timeout_s=env_int("LFL_PEER_TIMEOUT_S", 20),
         peer_kinds=env_values.get("LFL_PEER_KINDS", "").strip(),
+        peer_write_root=env_values.get("LFL_PEER_WRITE_ROOT", "").strip(),
         browser_perception_cdp_url=env_values.get(
             "LFL_BROWSER_PERCEPTION_CDP_URL", ""
         ).strip(),

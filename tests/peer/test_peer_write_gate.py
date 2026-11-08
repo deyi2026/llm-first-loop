@@ -25,11 +25,22 @@ def _err(exc_info) -> tuple[str, str]:
     return err.reason_code, err.detail
 
 
-def test_write_root_unset_denies_everything(tmp_path, monkeypatch):
-    monkeypatch.delenv("LFL_PEER_WRITE_ROOT", raising=False)
+def test_write_root_unset_denies_everything(tmp_path):
+    """未注入写域根 = 全拒；不从 grant 或进程环境推导默认值。"""
     with pytest.raises(PeerError) as err:
         require_write_target(str(tmp_path / "a.txt"))
     assert _err(err) == ("sandbox_denied", "write_root_not_configured:LFL_PEER_WRITE_ROOT")
+
+
+def test_write_gate_ignores_process_env(tmp_path, monkeypatch):
+    """策略层已不读进程环境：设了 env 也不生效，只有显式注入才放行（防回落回潮）。"""
+    monkeypatch.setenv("LFL_PEER_WRITE_ROOT", str(tmp_path))
+    with pytest.raises(PeerError) as err:
+        require_write_target(str(tmp_path / "a.txt"))
+    assert _err(err)[1].startswith("write_root_not_configured")
+    assert require_write_target(
+        str(tmp_path / "a.txt"), write_root=str(tmp_path)
+    ) == os.path.realpath(tmp_path / "a.txt")
 
 
 def test_write_root_relative_is_denied(tmp_path):
@@ -39,9 +50,10 @@ def test_write_root_relative_is_denied(tmp_path):
     assert code == "sandbox_denied" and "must_be_absolute" in detail
 
 
-def test_write_root_from_env_is_used(tmp_path, monkeypatch):
-    monkeypatch.setenv("LFL_PEER_WRITE_ROOT", str(tmp_path))
-    assert require_write_target(str(tmp_path / "a.txt")) == os.path.realpath(tmp_path / "a.txt")
+def test_write_root_injected_is_used(tmp_path):
+    assert require_write_target(
+        str(tmp_path / "a.txt"), write_root=str(tmp_path)
+    ) == os.path.realpath(tmp_path / "a.txt")
 
 
 def test_target_parent_outside_write_root_denied(tmp_path):

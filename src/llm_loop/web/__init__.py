@@ -94,6 +94,7 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
         node_id=node_id,
         display_name=display_name,
         enabled_kinds=enabled_kinds,
+        write_root=str(getattr(settings, "peer_write_root", "") or "").strip() or None,
     )
     def _secret_for(candidate: str):
         # 契约：secret_for 返回 bytes（auth.sign 直接拿它做 HMAC key）；

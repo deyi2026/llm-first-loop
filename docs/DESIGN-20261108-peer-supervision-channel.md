@@ -17,7 +17,7 @@
 | `receipt.schema.json` 的 state enum 与上面 10 个一致 | `docs/schemas/lfl.peer.v1/receipt.schema.json` |
 | `task-submit.schema.json` `additionalProperties: false`，无 `supervised` 字段 | 同上目录 |
 | 契约 P1 的 `example-kinds==registry` 零漂移检查**尚未落地** | `scripts/verify_peer_schemas.py` 无该检查 |
-| `LFL_PEER_WRITE_ROOT` 未配置即全拒 | `src/llm_loop/peer/write_gate.py:37` |
+| 写域根未注入即全拒；策略层不读进程环境，读取点收敛在 `config.load_settings` | `src/llm_loop/peer/write_gate.py` / `src/llm_loop/config.py` |
 
 ## 1. 问题：三个必须同时成立的条件
 
@@ -68,7 +68,7 @@ awaiting_supervision -> admitted | denied | cancelled | failed
 - **票据绑定**：票据记录 `task_id + params_digest + expires_at + confirm_nonce`。执行前重算 `params_digest` 并与票据比对，不一致 → `supervision_mismatch`。
 - **一次性**：确认写入用 CAS 把 `consumed_at` 从空置为时间戳；重放同一票据 → 拒绝。
 - **TTL**：票据有效期 `min(task.deadline_s, LFL_PEER_SUPERVISION_TTL_S)`，缺省 300 秒。到期未确认 → `denied / supervision_timeout`。
-- **同一份配置**：CLI 必须读到与受控端服务相同的 `LFL_PEER_DATA_DIR` 与 `LFL_PEER_WRITE_ROOT`。CLI 启动时打印实际生效的 `data_root` / `write_root` / `node_id`，并校验 data 目录属主等于当前 uid，不一致即拒绝。`write_root` 缺失时闸4 会全拒——这是 fail-closed 的，不会因为环境错配而越权写。
+- **同一份配置**：CLI 必须与受控端服务使用同一个配置来源（`config.load_settings()`，或同一个显式 `--write-root`），不能各读各的环境。CLI 启动时打印实际生效的 `data_root` / `write_root` / `node_id`，并校验 data 目录属主等于当前 uid，不一致即拒绝。`write_root` 缺失时闸4 全拒——fail-closed，不会因为环境错配而越权写。策略层（`write_gate`）不读进程环境，只接受注入值。
 
 ### D4 确认即执行（同进程），不做后台轮询
 
@@ -118,7 +118,7 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 
 - 闸2 租约：同样校验 `allowed_kinds` / `allowed_paths` / 额度 / 并发；
 - 闸3 策略：同样校验参数形状与路径包含；
-- 闸4 写域：`LFL_PEER_WRITE_ROOT` / symlink / 封条 / 敏感路径，一条不少；
+- 闸4 写域：`config.PeerSettings.peer_write_root`（注入值）/ symlink / 封条 / 敏感路径，一条不少；
 - 审计：确认事件与执行事件都落 `data/peer/`。
 
 这一条必须有测试钉住（见 §4 的 T8），否则"有人在场"会变成"可以网开一面"的暗门。

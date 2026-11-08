@@ -105,9 +105,8 @@ def test_unimplemented_kinds_refuse_loudly(tmp_path, env, kind):
     assert "handler_missing" in err.value.detail
 
 
-def test_fs_write_without_write_root_fails_closed(tmp_path, env, monkeypatch):
+def test_fs_write_without_write_root_fails_closed(tmp_path, env):
     """handler 已实现 ≠ 可写：闸4 写域未声明时仍然全拒（不从租约推导默认值）。"""
-    monkeypatch.delenv("LFL_PEER_WRITE_ROOT", raising=False)
     _root, ex = env
     with pytest.raises(PeerError) as err:
         ex.run(

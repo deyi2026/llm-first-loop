@@ -5,9 +5,11 @@
 写域**，两者互不替代：grant 再宽也不能把写域撑大，写域再宽也不能越过 grant。
 
 判定顺序（任一条即可拒绝）：
-1. 写域根 ``LFL_PEER_WRITE_ROOT``：必须由本机操作者显式声明。**未配置即全拒**
+1. 写域根：必须由本机操作者显式声明（配置键 ``LFL_PEER_WRITE_ROOT``，由
+   ``config.load_settings`` 读取并经装配层注入）。**未注入即全拒**
    （``sandbox_denied`` / ``write_root_not_configured``）——不从 grant 推导默认值，
-   避免"给了一个租约就等于开了一条远程写路径"。
+   避免"给了一个租约就等于开了一条远程写路径"。本模块**不读进程环境**：
+   策略层只做纯判定，读取点收敛到配置层，便于审计与确定性测试。
 2. 目标本身若是 symlink 直接拒绝：``os.replace`` 会替换链接本身而不写穿，但
    "远程能删掉/替换一个链接"仍是域外效应。先判它，避免 realpath 把"链接指向域外"
    折叠成"父目录越界"，让控制端看不出真正原因。
@@ -37,15 +39,6 @@ from .policy import is_sensitive_path
 WRITE_ROOT_ENV: Final[str] = "LFL_PEER_WRITE_ROOT"
 
 
-def peer_write_root_from_env() -> str | None:
-    """读本机写域配置；空串/未设置都视作"未声明"。"""
-    raw = os.environ.get(WRITE_ROOT_ENV, "")
-    if not isinstance(raw, str):
-        return None
-    raw = raw.strip()
-    return raw or None
-
-
 def _norm(path: str) -> str:
     # 不用 Path.resolve()：不存在的路径不抛错，且 realpath 已展开 symlink 与 "..".
     return os.path.realpath(os.path.expanduser(path))
@@ -70,7 +63,7 @@ def require_write_target(path: object, *, write_root: str | None = None) -> str:
         # target_parent_outside，控制端就看不出真正原因是符号链接。
         raise PeerError("sandbox_denied", "target_is_symlink")
 
-    root_raw = write_root if write_root is not None else peer_write_root_from_env()
+    root_raw = write_root
     if not root_raw:
         raise PeerError("sandbox_denied", f"write_root_not_configured:{WRITE_ROOT_ENV}")
     if not os.path.isabs(root_raw):

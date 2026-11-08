@@ -36,6 +36,7 @@ def build_app(
     data_dir: Path,
     node_id: str,
     display_name: str | None,
+    write_root: str | None = None,
     display_protocol: str = "none",
     audit_watermark_pct: int = 90,
     max_concurrency: int = 1,
@@ -61,6 +62,7 @@ def build_app(
         audit_watermark_pct=audit_watermark_pct,
         max_concurrency=max_concurrency,
         enabled_kinds=enabled_kinds,
+        write_root=write_root,
         health=health,
     )
     if recover:
@@ -114,6 +116,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="逗号分隔的 kind 白名单；缺省用注册表 default_enabled",
     )
+    parser.add_argument(
+        "--write-root",
+        default=None,
+        help="闸4 写域根（绝对路径）；缺省=远程写全拒",
+    )
     args = parser.parse_args(argv)
 
     if not _is_loopback(args.host):
@@ -138,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         audit_watermark_pct=args.audit_watermark_pct,
         max_concurrency=args.max_concurrency,
         enabled_kinds=enabled,
+        write_root=args.write_root,
         health=args.health,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

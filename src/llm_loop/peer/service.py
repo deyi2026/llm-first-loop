@@ -73,11 +73,14 @@ class PeerService:
         max_concurrency: int = 1,
         audit_watermark_pct: int = 90,
         enabled_kinds: set[str] | None = None,
+        write_root: str | None = None,
         clock: Any = now_local,
     ) -> None:
         self._store = store
         self._admissions = admissions
-        self._executor = Executor(artifacts=artifacts, node_id=node_id)
+        self._executor = Executor(
+            artifacts=artifacts, node_id=node_id, write_root=write_root
+        )
         self._artifacts = artifacts
         self._node_id = node_id
         self._display_name = display_name

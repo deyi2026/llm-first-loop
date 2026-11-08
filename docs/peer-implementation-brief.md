@@ -116,7 +116,8 @@ secret 当 HMAC key 用）。
 6. T9-a ~~`fs.write` 执行器 + 闸4 写域门~~（完成，分支 `feat/peer-fs-write-gate-20261108`
    @65e44778f；**宣告面未开**：`EXECUTABLE_KINDS` 仍只读两种、manifest 不声称可写、
    准入 `supervised=False` 仍 `requires_supervised_execution`。闸4 写域由
-   `LFL_PEER_WRITE_ROOT` 显式声明，**未声明即全拒**；与闸3 各自独立拒绝
+   `LFL_PEER_WRITE_ROOT` 显式声明（`config.load_settings` 读取、装配层注入，
+   策略层不读进程环境），**未注入即全拒**；与闸3 各自独立拒绝
    （域外但租约内→`sandbox_denied`；租约外但域内→`path_outside_allowed_paths`）。
    测试：`pytest tests -k peer` 246 passed / 5 skipped）。
 7. T9-b 待做：有人在场通道（supervised 准入 + 本机确认）+ 宣告面开启。
