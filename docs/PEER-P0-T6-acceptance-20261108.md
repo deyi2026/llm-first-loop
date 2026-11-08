@@ -140,7 +140,9 @@ A2（fail-closed/执行器/policy/产物）、B（诚实性/测试面/分支卫�
 | A1-A4 | `_path()` 非法 task_id 抛裸 `ValueError`；`from_dict` 的 `KeyError` 逃逸 → 500 面（当前不可达：task_id 全由服务端 `f"task_{uuid4().hex[:20]}"` 生成） | 收敛为 `PeerError`，不再依赖调用方 |
 | A1-附 | `os.write` 未检返回值，短写留半截 JSON（会被 `count_admitted` 按"已准入"计入） | 改为循环写满 |
 
-回归测试：`tests/peer/test_peer_store.py::test_corrupt_admission_record_fails_closed_without_leaking_path`。
+回归测试（两条，"回退修复即红"已实测）：`test_corrupt_admission_record_fails_closed_without_leaking_path`
+（KeyError 分支）、`test_unreadable_admission_record_does_not_leak_path`（OSError/IsADirectoryError 分支；
+把 detail 改回 `f"...{exc}"` 时该用例变红，失败输出直接打出绝对路径）。
 
 ### 7.2 审查 PASS 面（摘审查者原文证据）
 

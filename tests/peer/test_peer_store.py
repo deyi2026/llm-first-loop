@@ -145,6 +145,21 @@ def test_corrupt_admission_record_fails_closed_without_leaking_path(tmp_path: Pa
     assert str(tmp_path) not in caught.value.detail
 
 
+def test_unreadable_admission_record_does_not_leak_path(tmp_path: Path) -> None:
+    """read_text 抛 OSError 的分支：detail 只带类型名，不带本地路径。
+
+    这条钉的是"泄露"本身——把 detail 改回 f"...{exc}" 时 IsADirectoryError 的
+    错误串含绝对路径，本用例必红。
+    """
+    admissions = AdmissionStore(tmp_path / "peer")
+    (admissions.dir / "task-dir.json").mkdir()
+    with pytest.raises(PeerError) as caught:
+        admissions.get_by_task("task-dir")
+    assert caught.value.reason_code == "executor_internal_error"
+    assert "IsADirectoryError" in caught.value.detail
+    assert str(tmp_path) not in caught.value.detail
+
+
 def test_corrupt_doc_fails_closed(tmp_path: Path) -> None:
     store = PeerStore(tmp_path / "peer")
     (tmp_path / "peer" / "tasks.json").write_text("{not json", encoding="utf-8")
