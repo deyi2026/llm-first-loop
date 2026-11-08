@@ -777,13 +777,14 @@ def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
     )
 
 
-def _register_basic_tools(register_basic: Any) -> None:
+def _register_basic_tools(register_basic: Any, settings: Any = None) -> None:
     """基础只读/结构工具注册。
 
     - EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     - present_files: 产物面板可点击打开/预览
     - DESIGN-20261030 §5.3 C9/FR-11: write scope 只读观测（有效 scope / 已写路径 /
       越界计数；纯只读零副作用）
+    - DESIGN-20261107 §D14: peer 控制端四工具（仅 LFL_PEER_ENABLED=1 时注册）
 
     放在模块级 helper 而非 build_engine 内联：build_engine 是 2151 行历史巨函数，
     其函数体行数受 R9 棘轮"只降不升"约束（tests/guards/function_size_baseline.json），
@@ -793,6 +794,11 @@ def _register_basic_tools(register_basic: Any) -> None:
     register_basic("present_files", PresentFilesTool())
     register_basic("verify_path_scope", VerifyPathScopeTool())
     register_basic("workspace_recovery_status", WorkspaceRecoveryStatusTool())
+    if settings is not None and getattr(settings, "peer_enabled", False):
+        from llm_loop.tools.builtin.peer_tools import build_peer_tools
+
+        for _name, _tool in build_peer_tools(settings).items():
+            register_basic(_name, _tool)
 
 
 def _attach_dialog_probes(perceive_tool: Any, operation_tool: Any, actuator: Any) -> None:
@@ -1734,7 +1740,7 @@ def build_engine(
                 )
                 _attach_dialog_probes(_browser_perceive_tool, _browser_semantic_operation_tool, _browser_actuator)
                 _register_basic("browser_operate", _browser_semantic_operation_tool)
-    _register_basic_tools(_register_basic)
+    _register_basic_tools(_register_basic, settings)
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
     _register_basic(
         "edit_file",

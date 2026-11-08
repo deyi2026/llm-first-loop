@@ -1,0 +1,18 @@
+{
+  "schema": "lfl.peer.v1",
+  "task_id": "pt_5e2b8c1a4f",
+  "effect_id": "eff_20261107_9f3c1a",
+  "admission_id": "adm_3d7f91c2",
+  "grant_id": "gr_7c1d9e4a3b52",
+  "state": "succeeded",
+  "idempotency_class": "idempotent",
+  "attempt": 1,
+  "result": {
+    "summary": "读取 4213 字节，未截断。",
+    "artifacts": [
+      { "ref": "artifact://v1/ev_2f8a1c9b4d7e", "sha256": "9f2c0d4b6a8e1f3c9f2c0d4b6a8e1f3c9f2c0d4b6a8e1f3c9f2c0d4b6a8e1f3c", "bytes": 4213, "media_type": "text/markdown" }
+    ]
+  },
+  "executor": { "node_id": "deepin-01", "health": "ok" },
+  "observed_at": "2026-11-07T13:30:02+08:00"
+}

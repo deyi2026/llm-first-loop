@@ -1,0 +1,18 @@
+{
+  "schema": "lfl.peer.v1",
+  "peer_api": "1",
+  "node_id": "deepin-01",
+  "display_name": "Deepin 工作站",
+  "role": "executor",
+  "health": "ok",
+  "display_protocol": "x11",
+  "desktop": { "screenshot": true, "inject_click": true, "inject_type": false, "focus_probe": true },
+  "kinds": [
+    { "kind": "fs.read", "idempotency_class": "idempotent", "supervised_only": false, "params_schema_hint": "path(abs), max_bytes<=1048576" },
+    { "kind": "fs.write", "idempotency_class": "idempotent", "supervised_only": false, "params_schema_hint": "path(abs), content_utf8<=262144, pre_snapshot:true" },
+    { "kind": "desktop.click", "idempotency_class": "non_idempotent", "supervised_only": true, "params_schema_hint": "frame_id, x, y, window_id" }
+  ],
+  "limits": { "max_concurrency": 2, "audit_watermark_pct": 90 },
+  "grant": { "grant_id": "gr_7c1d9e4a3b52", "expires_at": "2026-11-14T13:30:00+08:00", "tasks_remaining": 17 },
+  "observed_at": "2026-11-07T13:30:00+08:00"
+}

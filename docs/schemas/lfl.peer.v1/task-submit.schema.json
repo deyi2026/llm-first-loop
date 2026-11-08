@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lfl.local/schemas/lfl.peer.v1/task-submit.schema.json",
+  "title": "LFL Peer Task Submission (lfl.peer.v1)",
+  "description": "kind 的白名单不在此文件表达：schema 只保证形状，授权封闭由受控端 kind 注册表 + PeerGrant 在闸2 完成。把白名单写进 schema 会让新增 kind 变成 schema 变更，反而阻止冻结。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "effect_id", "kind", "params", "deadline_s"],
+  "properties": {
+    "schema": { "const": "lfl.peer.v1" },
+    "effect_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$", "description": "幂等键。由调用方程序生成并在重试中复用；不得由任务内容哈希推导（D6）；不得复用旧键改变语义。" },
+    "kind": { "type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+    "params": { "type": "object", "maxProperties": 32 },
+    "expect": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["summary", "artifact", "file_effect"] } },
+    "deadline_s": { "type": "integer", "minimum": 5, "maximum": 3600 },
+    "idempotency_hint": { "enum": ["idempotent", "non_idempotent"], "description": "仅提示。权威以受控端 kind 注册表为准；声明 idempotent 而注册表为 non_idempotent 时按后者处理（fail-closed）。" },
+    "artifact_accept": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "maxLength": 100 } },
+    "requested_by": { "type": "string", "maxLength": 128 }
+  }
+}

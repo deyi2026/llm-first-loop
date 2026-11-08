@@ -1,0 +1,10 @@
+{
+  "schema": "lfl.peer.v1",
+  "effect_id": "eff_20261107_9f3c1a",
+  "kind": "fs.read",
+  "params": { "path": "/srv/lfl/project/README.md", "max_bytes": 65536 },
+  "expect": ["summary", "artifact"],
+  "deadline_s": 30,
+  "idempotency_hint": "idempotent",
+  "requested_by": "mac-lfl-orchestrator"
+}

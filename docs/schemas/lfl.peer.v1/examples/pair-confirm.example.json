@@ -1,0 +1,10 @@
+{
+  "schema": "lfl.peer.v1",
+  "node_id": "mac-lfl",
+  "key_alg": "ed25519",
+  "public_key": "8Qm3vX7bN1kR5tY9wZ2aL4cE6gH0jK8mP2sU4vW6xY0=",
+  "short_fingerprint": "B7QD-2KXM-7WTR-4FJH-6LNP-3SVC-6YZA-5EGB",
+  "nonce": "9c4f2a7b1d8e3f506a2c9b4d7e1f8203",
+  "confirm_phrase": "I-HAVE-VERIFIED-THE-SHORT-FINGERPRINT",
+  "link_secret": "Zm9vYmFyYmF6cXV1eGNvcmdlZ3JhdWx0Z2FycGx5Z2g="
+}
