@@ -120,12 +120,14 @@ secret 当 HMAC key 用）。
    策略层不读进程环境），**未注入即全拒**；与闸3 各自独立拒绝
    （域外但租约内→`sandbox_denied`；租约外但域内→`path_outside_allowed_paths`）。
    测试：`pytest tests -k peer` 246 passed / 5 skipped）。
-7. T9-b 待做：有人在场通道（supervised 准入 + 本机确认）+ 宣告面开启。
-   设计已落 `docs/DESIGN-20261108-peer-supervision-channel.md`（仅设计，未实施）：
-   默认关闭（`LFL_PEER_SUPERVISION=0`）、新增 `awaiting_supervision` 非终局态、
-   TTY CLI 逐次确认且票据绑定 `params_digest`、执行前重判闸3、宣告按
-   "handler ∩ 本节点配置完备"条件化。既有 `example-kinds==registry` 零漂移检查
-   已随远端契约 P1 修复落地，后续宣告变更须继续通过该检查。
+7. ~~T9-b 有人在场通道 + 宣告面开启~~（完成，分支 `feat/peer-supervision-t9b-fix-20261109`）：
+   默认关闭（`--supervision`，或 `LFL_PEER_SUPERVISION=1` +
+   `LFL_PEER_SUPERVISION_TTL_S=300`）、新增 `awaiting_supervision` 非终局态、
+   TTY CLI `scripts/peer_operator.py confirm <task_id>` 逐次确认（键入 task_id 后 6 位，
+   票据绑定 effect/`params_digest`/`expires_at`、`O_EXCL` 一次性消费）、执行前重判闸3、
+   manifest 按"真能执行的 kind"条件化宣告。实现偏差与已知缺口见
+   `docs/DESIGN-20261108-peer-supervision-channel.md` 附录 A。既有
+   `example-kinds==registry` 零漂移检查已随远端契约 P1 修复落地，后续宣告变更须继续通过该检查。
    重测范围更正：**U5（部分副作用后 kill -9）**属本任务；**U7（`desktop.type` 注入）
    与 `fs.write` 无关，属 P2-B 桌面面**——上一版把 U5/U7 并列写在此处，是错的。
 

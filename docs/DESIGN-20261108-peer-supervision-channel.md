@@ -56,7 +56,8 @@ awaiting_supervision -> admitted | denied | cancelled | failed
 
 ### D3 确认 = 本机 TTY CLI，逐次、一次性、绑定参数摘要
 
-新增 `src/llm_loop/peer/operator.py`，入口 `python -m llm_loop.peer.operator`：
+新增 `src/llm_loop/peer/operator.py`（通道实现）与 `scripts/peer_operator.py`（CLI 入口；
+`python scripts/peer_operator.py <list|confirm|reject> ...`，参数与服务端同源）：
 
 - `list`：列出 `awaiting_supervision` 的任务，显示 `task_id` / `kind` / `path` / `bytes` / `sha256` / 过期时间。
 - `confirm <task_id>`：展示完整参数摘要 → 要求操作者键入 `task_id` 后 6 位 → 写确认票据 → 执行。
@@ -67,7 +68,7 @@ awaiting_supervision -> admitted | denied | cancelled | failed
 - **TTY 校验**：`sys.stdin.isatty()` 为假直接拒绝。管道、脚本、自动化不能代替人确认。
 - **票据绑定**：票据记录 `task_id + params_digest + expires_at + confirm_nonce`。执行前重算 `params_digest` 并与票据比对，不一致 → `supervision_mismatch`。
 - **一次性**：确认写入用 CAS 把 `consumed_at` 从空置为时间戳；重放同一票据 → 拒绝。
-- **TTL**：票据有效期 `min(task.deadline_s, LFL_PEER_SUPERVISION_TTL_S)`，缺省 300 秒。到期未确认 → `denied / supervision_timeout`。
+- **TTL**：票据有效期 `min(task.deadline_s, LFL_PEER_SUPERVISION_TTL_S)`，缺省 300 秒。到期未确认 → `failed / supervision_timeout`（见附录 A6）。
 - **同一份配置**：CLI 必须与受控端服务使用同一个配置来源（`config.load_settings()`，或同一个显式 `--write-root`），不能各读各的环境。CLI 启动时打印实际生效的 `data_root` / `write_root` / `node_id`，并校验 data 目录属主等于当前 uid，不一致即拒绝。`write_root` 缺失时闸4 全拒——fail-closed，不会因为环境错配而越权写。策略层（`write_gate`）不读进程环境，只接受注入值。
 
 ### D4 确认即执行（同进程），不做后台轮询
@@ -161,7 +162,7 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 |---|---|---|
 | T1 | supervision 未开启，派 `fs.write` | `denied / requires_supervised_execution`（现状回归） |
 | T2 | 已开启但无票据直接调执行器 | 拒绝；执行器不自判 supervised |
-| T3 | 票据过期后确认 | `denied / supervision_timeout` |
+| T3 | 票据过期后确认 | `failed / supervision_timeout` |
 | T4 | 票据 `params_digest` 与任务不符 | `denied / supervision_mismatch`，不执行 |
 | T5 | 同一票据确认两次 | 第二次拒绝（`consumed_at` 非空） |
 | T6 | 正常确认 → 写成功 | 回执 `succeeded`，`file_effect` 含 `path`/`bytes`/`sha256`，不含内容 |
@@ -191,6 +192,48 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 
 ## 7. 未决
 
-1. `operator.py` 的入口形态：`python -m llm_loop.peer.operator` 还是 `scripts/peer_operator.py`。倾向前者（与包同版本发布，不额外维护脚本）。
+1. ~~`operator.py` 的入口形态~~ → 已定：`scripts/peer_operator.py`（见附录 A7）。
 2. 票据 TTL 缺省 300s 是否合适（等待人走到机器前的时间）。可按实测定，但必须有上限。
 3. 服务端是否需要"有任务在等确认"的被动提示（manifest `health` 加 `supervision_pending` 计数）。这会动契约，倾向 P1 不做。
+
+## 附录 A：实施偏差与已知缺口（2026-11-09 交付时对齐）
+
+设计成稿后在与主线的并行开发中做了几处落地取舍，逐条留痕；下文与代码同源，
+改动请一起改。
+
+**A1 重启保留等待态。** `recover_interrupted()` 的扫描集合是
+`submitted / admitted / queued / running`，**不含** `awaiting_supervision`（D2）。
+等待态没有副作用风险，重启后应继续等人点确认；过期由 `expire_supervision()`
+按 TTL 收尾。若把它在启动时判成 `failed`，"人回来点确认"就永远不可能。
+
+**A2 并发裁决在锁内，不是先查后写。** 同 `effect_id` 的并发双提交用
+`claim_effect()`（`O_CREAT|O_EXCL`）在内核级占坑，占不到的读占坑记录返回既有
+`task_id`；名额上限由 `put_task(max_running=...)` 在 store 锁内做 compare-and-write。
+`_slot_count()` 统计 `SLOT_STATES`（含 `submitted`），所以"已准入未执行"也占名额。
+
+**A3 监督开关有两个入口。** 命令行 `--supervision` / `--supervision-ttl`，以及
+环境变量 `LFL_PEER_SUPERVISION` / `LFL_PEER_SUPERVISION_TTL_S`，两者都落到
+`PeerService(supervision_enabled=..., supervision_ttl_s=...)`；开关关闭时
+`fs.write` 不进 manifest，提交它也只会拿到 `requires_supervised_execution`。
+
+**A4 宣告门控只约束 manifest。** D5 要求"广告面 ⊆ 真能执行"；提交口不重复一刀切：
+注册表里已登记但本环境无 handler 的 kind（`desktop.*`）放行到执行器，由协议闸给
+DESIGN-20261107 §9 T9 要求的具体原因（wayland → `unsupported_display_protocol`，
+x11 → `handler_missing`）。`enabled_kinds` 的服务端准入边界只对**可执行** kind 生效，
+这样"配置关掉 fs.write 仍能提交执行"的缺口被堵住，同时不牺牲 T9 的可解释性。
+
+**A5 已知缺口：等待/超时不写 AdmissionRecord。** 目前只有
+`supervision_requested`→已由 `_hold_for_supervision` 落任务与回执、`confirm`/`reject`/
+准入拒绝三类写审计记录；`expire_supervision` 的 TTL 收尾没有单独审计条目。
+D3 的"每次写可追溯到谁批准"对**实际执行**成立（票据 + 回执 + 审计），对"等待中
+过期"只有任务状态可追。补审计需要在 `AdmissionStore` 增一类事件，留作后续。
+
+**A6 TTL 终局是 `failed`，不是 `denied`。** 任务已经过准入（租约、闸2、闸4 都过了），
+只是人没在窗口内确认，语义更接近"未完成"而非"策略拒绝"；与 `resume_supervised()`
+超龄路径（`_fail_waiting` → `failed/supervision_timeout`）保持一致。回执 schema
+两种终局都允许。
+
+**A7 CLI 入口定在 `scripts/peer_operator.py`。** 收掉 D3 文末的开放问题：通道实现
+留在 `src/llm_loop/peer/operator.py`（可被服务端与测试直接导入），CLI 作为脚本随仓库
+发布，避免包内再嵌一个 `__main__` 入口造成两份参数解析。`confirm` 按 D3 要求键入
+`task_id` 后 6 位，并校验 data 目录属主等于当前 uid。

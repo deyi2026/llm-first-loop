@@ -43,6 +43,8 @@ def build_app(
     max_concurrency: int = 1,
     enabled_kinds: set[str] | None = None,
     health: str | None = None,
+    supervision_enabled: bool = False,
+    supervision_ttl_s: int = 300,
     recover: bool = True,
 ) -> object:
     store = PeerStore(data_dir)
@@ -70,6 +72,8 @@ def build_app(
         enabled_kinds=enabled_kinds,
         write_root=write_root,
         health=health,
+        supervision_enabled=supervision_enabled,
+        supervision_ttl_s=supervision_ttl_s,
     )
     if recover:
         recovered = service.recover_interrupted()
@@ -136,6 +140,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="闸4 写域根（绝对路径）；缺省=远程写全拒",
     )
+    parser.add_argument(
+        "--supervision",
+        action="store_true",
+        help="开启监督通道（D5）：fs.write 进 manifest，但每次落盘前等人确认",
+    )
+    parser.add_argument(
+        "--supervision-ttl",
+        type=int,
+        default=300,
+        help="受监督任务等待人确认的有效期（秒），到期 supervision_timeout",
+    )
     args = parser.parse_args(argv)
 
     # D15（独立审查第 4 轮 P1，2026-11-08）：与主 app _mount_peer_routes 同一
@@ -164,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         enabled_kinds=enabled,
         write_root=args.write_root,
         health=args.health,
+        supervision_enabled=args.supervision,
+        supervision_ttl_s=args.supervision_ttl,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

@@ -314,10 +314,12 @@ def test_gate3_and_gate4_deny_independently(tmp_path, env):
 
 
 def test_fs_write_still_not_advertised():
-    """护栏实测（RULE-AI-35）：T9-a 不打开宣告面，manifest 仍不声称可写。"""
+    """护栏实测（RULE-AI-35）：T9-b 只"有条件"打开宣告面，默认仍不声称可写。"""
     from llm_loop.peer.kinds import EXECUTABLE_KINDS, manifest_kinds
 
-    assert "fs.write" not in EXECUTABLE_KINDS
+    assert "fs.write" in EXECUTABLE_KINDS
+    assert "fs.write" not in {row["kind"] for row in manifest_kinds()}
+    assert "fs.write" in {row["kind"] for row in manifest_kinds(supervised_ready=True)}
     assert "fs.write" not in {row["kind"] for row in manifest_kinds()}
 
 

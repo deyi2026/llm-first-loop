@@ -13,8 +13,9 @@ import fcntl
 import json
 import os
 import tempfile
+import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -235,25 +236,22 @@ class PeerStore:
                 return TaskRecord.from_dict(item)
         return None
 
-    # ---- effect 幂等占坑（D6：dedup 先于副作用持久化、与 admission 原子）----
+    # ---- effect 幂等占坑（D6：dedup 先于副作用持久化）------------------------
 
     def _effect_path(self, node_id: str, effect_id: str) -> Path:
-        # node_id/effect_id 均已在 schema/service 层通过字符集校验；
-        # 这里再防御一次（fail-closed，不落盘任何越界名）。
         name = f"{_safe_name(node_id)}__{_safe_name(effect_id)}.json"
         return self.root / "effects" / name
 
-    def claim_effect(self, node_id: str, effect_id: str, task_id: str, *, now_iso: str = "") -> str | None:
+    def claim_effect(
+        self, node_id: str, effect_id: str, task_id: str, *, now_iso: str = ""
+    ) -> str | None:
         """O_EXCL 原子占坑；成功返回 None，已被占返回占坑记录里的 task_id。
 
-        独立审查 P1-2（2026-11-08）：``find_task_by_effect``（扫描）→
-        ``put_task`` 是 check-then-act——并发同 effect_id 双提交会双双通过
-        扫描并双双执行，破坏"执行次数仍为 1"。内核级 O_CREAT|O_EXCL 是
-        唯一免锁原子占坑：占坑成功方才允许落任务与副作用；后来者读占坑
-        记录返回既有 task_id（幂等回执）。
+        独立审查 P1-2：``find_task_by_effect``（扫描）→ ``put_task`` 是
+        check-then-act——并发同 effect_id 双提交会双双通过扫描并双双执行。
+        内核级 O_CREAT|O_EXCL 是免锁原子占坑：占坑成功才允许落任务与副作用；
+        后来者读占坑记录返回既有 task_id（幂等回执）。
         """
-        import time as _time
-
         effects_dir = self.root / "effects"
         effects_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         path = self._effect_path(node_id, effect_id)
@@ -267,14 +265,14 @@ class PeerStore:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
-            # 占坑者先创建后写内容：极短窗口内读到空/半文件，短暂重读。
+            # 占坑者先建后写：极短窗口内可能读到空/半文件，短暂重读。
             for _ in range(50):
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                     return str(data.get("task_id") or "")
                 except (OSError, ValueError):
-                    _time.sleep(0.02)
-            return ""  # 无法读取：按已占用（fail-closed），调用方走冲突路径
+                    time.sleep(0.02)
+            return ""  # 读不到按已占用处理（fail-closed），调用方走冲突路径
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(record, stream, ensure_ascii=False)
             stream.flush()
@@ -283,9 +281,7 @@ class PeerStore:
 
     def release_effect(self, node_id: str, effect_id: str) -> None:
         """回滚占坑：任务落盘失败（如磁盘满）时删除，允许同 effect_id 重试。"""
-        import contextlib
-
-        with contextlib.suppress(OSError):
+        with suppress(OSError):
             self._effect_path(node_id, effect_id).unlink(missing_ok=True)
 
     def find_task_by_effect(self, node_id: str, effect_id: str) -> TaskRecord | None:
@@ -340,6 +336,22 @@ class PeerStore:
                         raise PeerError("idempotency_conflict", f"task {task.task_id} 已终局")
                 else:
                     require_transition(current.state, task.state)
+                # 进入槽位（非 SLOT_STATES → SLOT_STATES）时在同一临界区复查上限：
+                # 监督通道的 awaiting→admitted 走的是更新分支，若只在追加分支检查，
+                # "人点确认"就能绕过并发闸（P1-4 的更新分支一半）。
+                if max_running is not None and task.state in SLOT_STATES:
+                    occupied = sum(
+                        1
+                        for row in payload["items"]
+                        if row.get("node_id") == task.node_id
+                        and row.get("state") in SLOT_STATES
+                        and row.get("task_id") != task.task_id
+                    )
+                    if occupied >= int(max_running):
+                        raise PeerError(
+                            "quota_concurrency_exceeded",
+                            f"{occupied}/{int(max_running)} for {task.node_id}",
+                        )
                 payload["items"][index] = task.to_dict()
                 self._write("tasks", payload)
                 return task

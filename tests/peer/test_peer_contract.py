@@ -19,7 +19,8 @@ def _load(name: str) -> dict:
 def test_reason_codes_match_contract() -> None:
     contract = set(_load("reason-codes.json")["codes"])
     assert contract == set(REASON_CODES)
-    assert len(REASON_CODES) == 36
+    # 显式计数：新增/删除错误码必须同时改契约与本断言，不允许静默扩集。
+    assert len(REASON_CODES) == 44
 
 
 def test_receipt_state_enum_matches_state_machine() -> None:

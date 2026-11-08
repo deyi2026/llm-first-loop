@@ -197,6 +197,31 @@ def params_paths(kind: str, params: dict[str, Any]) -> tuple[str, ...]:
     return ()
 
 
+def precheck(
+    *,
+    kind: str,
+    params: dict[str, Any],
+    grant: GrantRecord,
+    supervised: bool | None = None,
+    running_tasks: int = 0,
+    now: Any = None,
+) -> KindSpec:
+    """闸2+闸3 的完整判定；``supervised=None`` 时略过"是否有人在场"这一项。
+
+    提交阶段对 supervised_only kind 先做预判（租约/额度/并发/形状/路径都过），
+    注定失败的任务不占用人的注意力。``supervised=None`` 只可用于提交预判，
+    执行路径必须给它一个明确布尔值（fail-closed）。
+    """
+    spec = require_kind_allowed(kind, grant)
+    require_grant_active(grant, running_tasks=running_tasks, now=now)
+    if supervised is not None:
+        require_supervision(spec, supervised=supervised)
+    validate_params(kind, params)
+    for path in params_paths(kind, params):
+        require_path_allowed(path, grant.allowed_paths)
+    return spec
+
+
 def evaluate(
     *,
     kind: str,
@@ -207,10 +232,11 @@ def evaluate(
     now: Any = None,
 ) -> KindSpec:
     """闸2+闸3 合成判定；通过返回 KindSpec，否则抛 PeerError（调用方落 denied 记录）。"""
-    spec = require_kind_allowed(kind, grant)
-    require_grant_active(grant, running_tasks=running_tasks, now=now)
-    require_supervision(spec, supervised=supervised)
-    validate_params(kind, params)
-    for path in params_paths(kind, params):
-        require_path_allowed(path, grant.allowed_paths)
-    return spec
+    return precheck(
+        kind=kind,
+        params=params,
+        grant=grant,
+        supervised=supervised,
+        running_tasks=running_tasks,
+        now=now,
+    )

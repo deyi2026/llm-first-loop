@@ -102,9 +102,11 @@ def _seed(store: PeerStore, task: TaskRecord) -> TaskRecord:
 
 # ---- 能力播报：不播报没有 handler 的 kind ----------------------------------
 def test_manifest_advertised_kinds_are_all_executable():
+    # D5：宣告面 ⊆ 真能执行；且"需要人逐次确认"的 kind 只在监督就绪时才宣告。
     advertised = {row["kind"] for row in manifest_kinds()}
-    assert advertised == set(EXECUTABLE_KINDS)
+    assert advertised == set(EXECUTABLE_KINDS) - {"fs.write"}
     assert "fs.write" not in advertised
+    assert {row["kind"] for row in manifest_kinds(supervised_ready=True)} == set(EXECUTABLE_KINDS)
     assert not any(kind.startswith("desktop.") for kind in advertised)
 
 

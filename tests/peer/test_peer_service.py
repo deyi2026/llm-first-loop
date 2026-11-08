@@ -164,10 +164,23 @@ def test_executor_failure_becomes_failed_receipt(env):
     assert receipt["reason_code"] == "params_schema_invalid"
 
 
-def test_desktop_kind_without_x11_fails_unsupported_display_protocol(env):
-    """非 X11 是协议级拒绝，不是"执行失败"：控制端据此可改派，不必猜重试。"""
-    service, store, allowed, _tmp = env
-    store.issue_grant(make_grant(allowed, allowed_kinds=("desktop.focus_probe",)))
+def test_unimplemented_kind_fails_with_protocol_reason(tmp_path):
+    """未实现 kind 不冒称成功：走到执行器，拿 DESIGN §9 T9 的具体原因。
+
+    submit 口不再一刀切拒（否则对端只看到 policy_task_kind_not_allowed，
+    分不清"缺 handler"还是"这份租约不给"）；wayland 下的确定原因是
+    unsupported_display_protocol + 修复指引。
+    """
+    allowed = tmp_path / "work" / "allowed"
+    allowed.mkdir(parents=True)
+    service = PeerService(
+        store=PeerStore(tmp_path / "peer"),
+        admissions=AdmissionStore(tmp_path / "peer"),
+        artifacts=ArtifactStore(tmp_path / "artifacts"),
+        node_id="deepin-01",
+        display_protocol="wayland",
+    )
+    service._store.issue_grant(make_grant(allowed, allowed_kinds=("desktop.focus_probe",)))
     receipt = service.submit(
         {
             "schema": "lfl.peer.v1",
@@ -179,6 +192,21 @@ def test_desktop_kind_without_x11_fails_unsupported_display_protocol(env):
     )
     assert receipt["state"] == "failed"
     assert receipt["reason_code"] == "unsupported_display_protocol"
+
+
+def test_executor_still_guards_display_protocol(tmp_path):
+    """submit 层提前拒绝不代替执行器闸：kind 进入可执行集后协议闸仍需生效。"""
+    from llm_loop.peer.executor import Executor
+
+    executor = Executor(artifacts=ArtifactStore(tmp_path / "artifacts"), node_id="deepin-01")
+    with pytest.raises(PeerError) as err:
+        executor.run(
+            kind="desktop.focus_probe",
+            params={},
+            allowed_paths=(),
+            display_protocol="none",
+        )
+    assert err.value.reason_code == "unsupported_display_protocol"
 
 
 def test_desktop_kind_on_x11_still_fails_handler_missing(tmp_path):

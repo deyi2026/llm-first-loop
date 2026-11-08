@@ -2,6 +2,10 @@
 
 设计 §5.3：``submitted → admitted → queued → running → succeeded``，失败分支见下表。
 刻意与 Human Turn Queue 同构以便复用 reaper 思路，但不混流（D8：身份与审计不同）。
+
+监督通道（DESIGN-20261108 §2.1）：``submitted → awaiting_supervision`` 是"已收到、
+尚未获准执行"的暂停态。它出现在准入之前，因此不消耗 grant 额度，也不占执行器并发
+名额；确认后重新走 ``admitted``，拒绝/超时/取消都直接收尾。
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from llm_loop.peer.models import GrantRecord, parse_ts
 
 TASK_STATES: tuple[str, ...] = (
     "submitted",
+    "awaiting_supervision",
     "admitted",
     "queued",
     "running",
@@ -29,7 +34,10 @@ TERMINAL_STATES: frozenset[str] = frozenset(
 
 # 允许的执行器/控制端迁移。denied 只能由准入（副作用前）产生，故任何非终局态都可被拒。
 _TRANSITIONS: dict[str, frozenset[str]] = {
-    "submitted": frozenset({"admitted", "denied", "cancelled", "failed"}),
+    "submitted": frozenset(
+        {"awaiting_supervision", "admitted", "denied", "cancelled", "failed"}
+    ),
+    "awaiting_supervision": frozenset({"admitted", "denied", "cancelled", "failed"}),
     "admitted": frozenset({"queued", "denied", "cancelled", "failed"}),
     "queued": frozenset({"running", "denied", "cancelled", "failed"}),
     "running": frozenset({"succeeded", "failed", "blocked", "unknown_outcome", "cancelled"}),
