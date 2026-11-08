@@ -33,7 +33,7 @@ P1 的授权模型是**无人值守**：控制端派单，受控端自动执行�
 
 ### D1 默认关闭，显式开启
 
-`LFL_PEER_SUPERVISION` 缺省为 `0`。缺省时行为与今天完全一致：`fs.write` 不宣告、派单得 `requires_supervised_execution`。
+监督开关缺省关闭（`peer_serve` 不传 `--supervision`）。缺省时行为与今天完全一致：`fs.write` 不宣告、派单得 `requires_supervised_execution`。
 
 原因：开一条"远程请求 + 本机人点确认"的通道，是把人的注意力变成可被远程消耗的资源。它必须是操作者的显式选择，不能因为升级 wheel 就自动打开。
 
@@ -61,14 +61,14 @@ awaiting_supervision -> admitted | denied | cancelled | failed
 
 - `list`：列出 `awaiting_supervision` 的任务，显示 `task_id` / `kind` / `path` / `bytes` / `sha256` / 过期时间。
 - `confirm <task_id>`：展示完整参数摘要 → 要求操作者键入 `task_id` 后 6 位 → 写确认票据 → 执行。
-- `reject <task_id>`：任务转 `denied / supervision_rejected`。
+- `reject <task_id>`：任务转 `denied / execution_not_authorized`（码名映射见 A9）。
 
 硬约束：
 
 - **TTY 校验**：`sys.stdin.isatty()` 为假直接拒绝。管道、脚本、自动化不能代替人确认。
-- **票据绑定**：票据记录 `task_id + params_digest + expires_at + confirm_nonce`。执行前重算 `params_digest` 并与票据比对，不一致 → `supervision_mismatch`。
-- **一次性**：确认写入用 CAS 把 `consumed_at` 从空置为时间戳；重放同一票据 → 拒绝。
-- **TTL**：票据有效期 `min(task.deadline_s, LFL_PEER_SUPERVISION_TTL_S)`，缺省 300 秒。到期未确认 → `failed / supervision_timeout`（见附录 A6）。
+- **票据绑定**：票据记录 `task_id + node_id + kind + params_digest + issued_by + issued_at + expires_at`（字段见 §3）。执行前重算 `params_digest` 并与票据比对，不一致 → `supervision_ticket_mismatch`。
+- **一次性**：票据文件以 `O_EXCL` 占位写入；消费时 `os.replace` 原子改名为 `<task_id>.consumed.json`，第二个消费者必然找不到源文件 → `supervision_ticket_consumed`。重放同一票据被拒。
+- **TTL**：票据有效期取配置的监督 TTL（`--supervision-ttl`，缺省 300 秒）。到期未确认 → `failed / supervision_timeout`（见附录 A6）。
 - **同一份配置**：CLI 必须与受控端服务使用同一个配置来源（`config.load_settings()`，或同一个显式 `--write-root`），不能各读各的环境。CLI 启动时打印实际生效的 `data_root` / `write_root` / `node_id`，并校验 data 目录属主等于当前 uid，不一致即拒绝。`write_root` 缺失时闸4 全拒——fail-closed，不会因为环境错配而越权写。策略层（`write_gate`）不读进程环境，只接受注入值。
 
 ### D4 确认即执行（同进程），不做后台轮询
@@ -86,10 +86,12 @@ awaiting_supervision -> admitted | denied | cancelled | failed
 `EXECUTABLE_KINDS` 回答的是"有没有 handler"；宣告还要回答"这台机器的配置是否完备"。两者分开：
 
 ```
-advertised = EXECUTABLE_KINDS | ({"fs.write"} if supervision_enabled and write_root_set else ∅)
+advertised = {k for k in EXECUTABLE_KINDS
+              if not k.supervised_only or supervised_ready}
+supervised_ready = supervision_enabled and write_root_set and operator_channel_available
 ```
 
-`manifest_kinds()` 增加一个显式的 `executable` 参数，缺省仍取 `EXECUTABLE_KINDS`（向后兼容）；受控端构造 manifest 时传入按本节点配置算出的集合。
+`fs.write` 已在 `EXECUTABLE_KINDS`（有 handler），靠 `supervised_only` 标记区分是否需要人确认。`manifest_kinds(supervised_ready=...)` 按本节点配置过滤；缺省 `supervised_ready=False`，即默认不播报 supervised kind（fail-closed）。
 
 结果矩阵：
 
@@ -97,7 +99,7 @@ advertised = EXECUTABLE_KINDS | ({"fs.write"} if supervision_enabled and write_r
 |---|---|---|---|
 | 0 | 任意 | 否 | `requires_supervised_execution` |
 | 1 | 未配 | 否 | `requires_supervised_execution`（不播报即不该被派） |
-| 1 | 已配 | 是 | `awaiting_supervision` → 确认后执行 / 超时 deny |
+| 1 | 已配 | 是 | `awaiting_supervision` → 确认后执行 / 超时 `failed / supervision_timeout`（A6） |
 
 不新增 manifest 字段：kind 级 `supervised_only: true` 已经表达"这个 kind 需要人确认"，控制端从现有 schema 就能读到。`manifest.schema.json` 是 `additionalProperties: false`，加 node 级字段要动契约，收益不抵成本。
 
@@ -111,7 +113,7 @@ advertised = EXECUTABLE_KINDS | ({"fs.write"} if supervision_enabled and write_r
   → 执行器（内部再走闸4）
 ```
 
-任何一步失败都落 `denied` 并带具体 `reason_code`，不执行。
+票据不存在/已过期/摘要不符 → `denied` 并带具体 `reason_code`，不执行；租约或闸3 重判失败 → 抛错并保持 `awaiting_supervision`（票据保留，可修好前提后重试），收敛责任在 TTL（见附录 A8）。
 
 ### D7 四道闸对 supervised 任务全量生效
 
@@ -130,29 +132,30 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 
 ```json
 {
-  "schema": "lfl.peer.supervision.v1",
-  "ticket_id": "sup_...",
   "task_id": "task_...",
   "node_id": "node_...",
   "kind": "fs.write",
   "params_digest": "sha256:...",
+  "issued_by": "uid-1000",
   "issued_at": "...",
-  "expires_at": "...",
-  "consumed_at": null,
-  "confirmed_by_uid": null
+  "expires_at": "..."
 }
 ```
 
 写入沿用现有磁盘权威 + CAS 模式（对齐 `admission.py` / fleet 的写法），不复用任务存储文件。
 
-审计事件（`data/peer/`）：`supervision_requested`、`supervision_confirmed`、`supervision_rejected`、`supervision_expired`、`supervision_mismatch`。每条带 `task_id` 与 `admission_id`，保证"每次写都能追到是谁在哪台机器上同意的"。
+审计事件（`data/peer/admissions/`）：`confirm`、`reject` 与准入拒绝落 `AdmissionRecord`；`supervision_requested` 落任务与回执；TTL 过期暂无单独审计条目（A5）。每条审计带 `task_id` 与 `admission_id`，保证"每次实际执行都能追到是谁在哪台机器上同意的"。
 
 新增 `reason_code`（须同步 `reason-codes.json` 与 receipt schema 的 enum 一致性检查）：
 
 - `supervision_timeout`
-- `supervision_mismatch`
-- `supervision_not_configured`
-- `supervision_rejected`
+- `supervision_ticket_mismatch`
+- `supervision_ticket_consumed`
+- `supervision_ticket_expired`
+- `supervision_ticket_missing`
+- `supervision_channel_unavailable`
+- `execution_not_authorized`
+- `requires_supervised_execution`
 
 ## 4. 验收与测试
 
@@ -166,7 +169,7 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 | T4 | 票据 `params_digest` 与任务不符 | `denied / supervision_mismatch`，不执行 |
 | T5 | 同一票据确认两次 | 第二次拒绝（`consumed_at` 非空） |
 | T6 | 正常确认 → 写成功 | 回执 `succeeded`，`file_effect` 含 `path`/`bytes`/`sha256`，不含内容 |
-| T7 | 确认后、执行前租约被撤销 | `denied / grant_revoked` |
+| T7 | 确认后、执行前租约被撤销 | 拒绝执行；任务保持 `awaiting_supervision`、票据保留（A8） |
 | T8 | 确认后目标路径越出 `LFL_PEER_WRITE_ROOT` | `denied / sandbox_denied`（supervision 不放宽闸4） |
 | T9 | 非 TTY 调 `confirm` | 拒绝，票据不写入 |
 | T10 | 宣告矩阵三行 | 与 §2 D5 表格逐行一致 |
@@ -211,10 +214,11 @@ supervision 只改变"谁允许放行"，不改变"放行后能做什么"：
 `task_id`；名额上限由 `put_task(max_running=...)` 在 store 锁内做 compare-and-write。
 `_slot_count()` 统计 `SLOT_STATES`（含 `submitted`），所以"已准入未执行"也占名额。
 
-**A3 监督开关有两个入口。** 命令行 `--supervision` / `--supervision-ttl`，以及
-环境变量 `LFL_PEER_SUPERVISION` / `LFL_PEER_SUPERVISION_TTL_S`，两者都落到
-`PeerService(supervision_enabled=..., supervision_ttl_s=...)`；开关关闭时
-`fs.write` 不进 manifest，提交它也只会拿到 `requires_supervised_execution`。
+**A3 监督开关的唯一入口是 CLI flag。** `peer_serve --supervision` /
+`--supervision-ttl` 落到 `PeerService(supervision_enabled=..., supervision_ttl_s=...)`。
+**`LFL_PEER_SUPERVISION` / `LFL_PEER_SUPERVISION_TTL_S` 环境变量未被读取**：设计早期
+设想过双入口，落地时只保留显式 CLI（设了环境变量也不会静默开启，属 fail-closed）。
+开关关闭时 `fs.write` 不进 manifest，提交它也只会拿到 `requires_supervised_execution`。
 
 **A4 宣告门控只约束 manifest。** D5 要求"广告面 ⊆ 真能执行"；提交口不重复一刀切：
 注册表里已登记但本环境无 handler 的 kind（`desktop.*`）放行到执行器，由协议闸给
@@ -237,3 +241,25 @@ D3 的"每次写可追溯到谁批准"对**实际执行**成立（票据 + 回�
 留在 `src/llm_loop/peer/operator.py`（可被服务端与测试直接导入），CLI 作为脚本随仓库
 发布，避免包内再嵌一个 `__main__` 入口造成两份参数解析。`confirm` 按 D3 要求键入
 `task_id` 后 6 位，并校验 data 目录属主等于当前 uid。
+
+**A8 重判失败不收敛 `denied`。** `resume_supervised()` 在租约/闸3 重判失败时直接抛
+`PeerError`，任务停在 `awaiting_supervision`、票据保留，操作者修好前提（如重新授权）
+后可再次 `confirm`。这与 D6/T7 旧表述（"任何一步失败都落 denied"）不同：瞬时前提
+失败不应烧掉一次人工确认；但等待必须有界，收敛责任在 TTL（`expire_supervision` →
+`failed / supervision_timeout`）。票据本身的问题（缺失/过期/摘要不符/已被消费）仍按
+D6 落 `denied` 终局。
+
+**A9 票据形态与码名映射（实现↔设计）。** 票据字段为
+`task_id/node_id/kind/params_digest/issued_by/issued_at/expires_at`（无 `ticket_id`、
+`confirm_nonce`、`consumed_at`、`confirmed_by_uid`）；一次性由文件名占位 +
+`os.replace` 改名 `.consumed.json` 保证，而非 CAS 时间戳。码名映射：
+`supervision_mismatch`→`supervision_ticket_mismatch`；
+`supervision_rejected`→`denied/execution_not_authorized`；
+`supervision_not_configured`→`supervision_channel_unavailable`；
+另新增 `supervision_ticket_consumed/expired/missing` 与 `supervision_timeout`。
+
+**A10 已知缺口（合并审查记录，未在本次修复）。** ①同机双 CLI 并发 confirm 可能各落一条
+`admitted` 审计（只有一个执行）；败者二次 CAS 失败会把错误抛给 CLI（无数据损害）。
+②确认后路径越出 `LFL_PEER_WRITE_ROOT` 的端到端专测只在 write_gate/executor 层
+覆盖，缺 hold→confirm→resume 的专测。③`_execute(ticket=...)` 参数当前无调用方传入，
+保留为内部扩展点；未来传入未消费票据会跳过一次性消费。

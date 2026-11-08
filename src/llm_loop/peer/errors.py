@@ -49,7 +49,7 @@ REASON_CODES: frozenset[str] = frozenset(
         "supervision_ticket_mismatch",
         "supervision_ticket_missing",
         "supervision_timeout",
-    "task_not_found",
+        "task_not_found",
         "timeout",
         "unknown_outcome",
         "unsupported_display_protocol",

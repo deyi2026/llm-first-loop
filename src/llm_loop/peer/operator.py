@@ -4,7 +4,7 @@
 
 - 绑定 ``task_id + params_digest + kind + node_id``：参数一改就失效；
 - 一次性：``consume`` 用 ``os.replace`` 原子认领，第二个消费者必然找不到源文件；
-- TTL：签发时取 ``min(task.deadline_s, LFL_PEER_SUPERVISION_TTL_S)``，过期不可用；
+- TTL：签发时取配置的监督 TTL（``--supervision-ttl``，缺省 300s），过期不可用；
 - 属主：数据目录必须属于当前 uid，避免别人替你批准。
 
 HTTP 面没有签发票据的入口（D3）；票据只能由本机 CLI 产生。

@@ -15,9 +15,9 @@
   ``sha256``/字节数，不回显内容。
 
 状态与边界：
-- ``fs.write`` 执行器已就绪，但**宣告面未开**：``kinds.EXECUTABLE_KINDS`` 仍只有只读两种，
-  manifest 不对外声称可写；准入侧 ``supervised`` 仍硬编码 False，故线上 fs.write 一律
-  ``requires_supervised_execution``。"有人在场通道 + 宣告"属 T9-b，与契约修复同批落地。
+- ``fs.write`` 执行器与监督通道（T9-b）均已就绪：``kinds.EXECUTABLE_KINDS`` 含 ``fs.write``，
+  但它是 ``supervised_only``——只有监督开启且 write_root/operator 可用时 manifest 才播报；
+  未监督的提交仍一律 ``requires_supervised_execution``。
 - 未实现：``shell.exec`` / ``desktop.*``（需要 X11 采集或进程沙盒，属有人在场路径）。
 """
 

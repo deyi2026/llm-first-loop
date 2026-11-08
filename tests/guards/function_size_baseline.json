@@ -671,7 +671,7 @@
           "src/llm_loop/peer/admission.py",
           "src/llm_loop/peer/operator.py"
         ],
-        "rationale": "peer 的 tasks/grants/nodes 与准入审计是跨重启恢复 SoT（重启恢复读它收敛中断态）。已核实：store 走 mkstemp + fsync(file) + os.replace + flock 独占；admission 走 O_CREAT|O_EXCL + fsync(file)，同一 task_id 重复写按内容幂等；operator 的票据/决定同样 O_CREAT|O_EXCL + fsync(file)（票一次性，靠文件名占位而非覆盖）。**缺**：三者都没有父目录 fsync，断电后 rename/create 的目录项可能丢失；故登记 partial 而非 conform。依据 durable-run-contract §10 以 guard(r9): 可见提交。",
+        "rationale": "peer 的 tasks/grants/nodes 与准入审计是跨重启恢复 SoT（重启恢复读它收敛中断态）。已核实：store 走 mkstemp + fsync(file) + os.replace + flock 独占；admission 走 O_CREAT|O_EXCL + fsync(file)，同一 task_id 重复写按内容幂等；operator 的票据/决定同样 O_CREAT|O_EXCL + fsync(file)（票一次性，靠文件名占位而非覆盖）。**缺**：operator 的 issue/consume 对 supervision 目录做了 best-effort `_fsync_dir`，但 store/admission 仍无父目录 fsync，断电后 rename/create 的目录项可能丢失；故登记 partial 而非 conform。依据 durable-run-contract §10 以 guard(r9): 可见提交。",
         "status": "partial",
         "tier": "T2"
       },

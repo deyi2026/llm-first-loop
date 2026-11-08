@@ -121,8 +121,7 @@ secret 当 HMAC key 用）。
    （域外但租约内→`sandbox_denied`；租约外但域内→`path_outside_allowed_paths`）。
    测试：`pytest tests -k peer` 246 passed / 5 skipped）。
 7. ~~T9-b 有人在场通道 + 宣告面开启~~（完成，分支 `feat/peer-supervision-t9b-fix-20261109`）：
-   默认关闭（`--supervision`，或 `LFL_PEER_SUPERVISION=1` +
-   `LFL_PEER_SUPERVISION_TTL_S=300`）、新增 `awaiting_supervision` 非终局态、
+   默认关闭（`peer_serve --supervision` / `--supervision-ttl`；不读环境变量）、新增 `awaiting_supervision` 非终局态、
    TTY CLI `scripts/peer_operator.py confirm <task_id>` 逐次确认（键入 task_id 后 6 位，
    票据绑定 effect/`params_digest`/`expires_at`、`O_EXCL` 一次性消费）、执行前重判闸3、
    manifest 按"真能执行的 kind"条件化宣告。实现偏差与已知缺口见
