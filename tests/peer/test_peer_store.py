@@ -135,6 +135,16 @@ def test_admission_is_immutable(tmp_path: Path) -> None:
     assert store.get_task("task-1") is None
 
 
+def test_corrupt_admission_record_fails_closed_without_leaking_path(tmp_path: Path) -> None:
+    admissions = AdmissionStore(tmp_path / "peer")
+    path = admissions.dir / "task-corrupt.json"
+    path.write_text('{"admission_id": "adm-1"}', encoding="utf-8")
+    with pytest.raises(PeerError) as caught:
+        admissions.get_by_task("task-corrupt")
+    assert caught.value.reason_code == "executor_internal_error"
+    assert str(tmp_path) not in caught.value.detail
+
+
 def test_corrupt_doc_fails_closed(tmp_path: Path) -> None:
     store = PeerStore(tmp_path / "peer")
     (tmp_path / "peer" / "tasks.json").write_text("{not json", encoding="utf-8")
