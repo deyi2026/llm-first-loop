@@ -1422,6 +1422,43 @@ def test_poll_malformed_verdict_returns_review_tail(tmp_path: Path) -> None:
     assert "结论：PASS" in outcome["review_tail"]
 
 
+def test_compose_review_task_uses_short_host_fingerprint() -> None:
+    sha = "0123456789abcdef" + "a" * 48
+    task = rha._compose_review_task("full_test", "target", sha, "frozen material")
+    assert f"HOST_REVIEW_FINGERPRINT: {sha[:16]}" in task
+    assert "FINGERPRINT: <16 lowercase hex copied from HOST_REVIEW_FINGERPRINT>" in task
+    assert "Do not reproduce the full 64-character SHA256" in task
+
+
+def test_poll_accepts_short_fingerprint_bound_to_full_candidate_sha(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    sha = issued["candidate_sha256"]
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=3\nFINGERPRINT: {sha[:16]}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+
+
+def test_poll_rejects_mistyped_short_fingerprint_fail_closed(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    sha = issued["candidate_sha256"]
+    wrong = ("0" if sha[0] != "0" else "1") + sha[1:16]
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nFINGERPRINT: {wrong}"
+    runner.state = "completed"
+    outcome = host.poll("author-1", "child-review-1")
+    assert outcome["qualification"] == "REVISE"
+    assert outcome["reason"] == "review_verdict_incomplete_or_not_pass"
+
+
 class BudgetProbeRunner(FakeChildRunner):
     """EVO-20261021-5bf26586: runner exposing the live-registry budget probe."""
 
