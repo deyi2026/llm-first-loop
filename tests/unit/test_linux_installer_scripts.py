@@ -598,14 +598,21 @@ def test_httpx_socks_extra_is_declared_and_locked() -> None:
 
 
 def test_built_wheel_metadata_requires_socks_extra(tmp_path: Path) -> None:
-    """真实构建管线下 wheel METADATA 必须声明 httpx[socks]（安装器据此装 socksio）。
+    """真实构建管线下 wheel METADATA 必须声明 httpx[socks] 且版本与 pyproject 一致。
 
     这是安装链的单一权威证据：``install_linux.sh`` 的
     ``uv pip install <wheel>`` 按 METADATA 的 Requires-Dist 解析 extras；
     若构建产物丢了 ``[socks]``，Deepin socks5 代理冷启动事故将复发。
-    构建输出到 tmp_path，不触碰 dist/。
+    Version 一致性防的是"发布候选 bump 后忘改 uv.lock / 构建出旧版本 wheel
+    混淆现有 release"（2026-11-08 版本纪律：不能用同版本号 wheel 覆盖生产
+    release，否则无法安全安装/回滚）。构建输出到 tmp_path，不触碰 dist/。
     """
+    import email
+    import tomllib
     import zipfile
+
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        project_version = tomllib.load(handle)["project"]["version"]
 
     completed = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
@@ -614,10 +621,22 @@ def test_built_wheel_metadata_requires_socks_extra(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr[-2000:]
     wheels = sorted(tmp_path.glob("llm_first_loop-*.whl"))
     assert len(wheels) == 1, f"expected exactly one built wheel, got {wheels}"
+    # wheel 文件名内嵌版本必须就是项目版本（安装器按
+    # llm_first_loop-<version>-py3-none-any.whl 定位资产）。
+    assert wheels[0].name == f"llm_first_loop-{project_version}-py3-none-any.whl", (
+        f"built wheel filename {wheels[0].name} does not match pyproject "
+        f"version {project_version}"
+    )
     with zipfile.ZipFile(wheels[0]) as archive:
         names = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
         assert len(names) == 1
-        metadata = archive.read(names[0]).decode("utf-8")
-    assert "Requires-Dist: httpx[socks]>=0.27" in metadata, (
+        metadata = email.message_from_bytes(archive.read(names[0]))
+    assert metadata.get("Name") == "llm-first-loop"
+    assert metadata.get("Version") == project_version, (
+        f"built wheel METADATA Version {metadata.get('Version')!r} does not "
+        f"match pyproject project version {project_version!r}"
+    )
+    requires = metadata.get_all("Requires-Dist") or []
+    assert "httpx[socks]>=0.27" in requires, (
         "built wheel METADATA must carry the socks extra requirement"
     )
