@@ -119,9 +119,14 @@ secret 当 HMAC key 用）。
    `LFL_PEER_WRITE_ROOT` 显式声明，**未声明即全拒**；与闸3 各自独立拒绝
    （域外但租约内→`sandbox_denied`；租约外但域内→`path_outside_allowed_paths`）。
    测试：`pytest tests -k peer` 246 passed / 5 skipped）。
-7. T9-b 待做：有人在场通道（supervised 准入 + 本机确认）+ 宣告面开启
-   （`EXECUTABLE_KINDS` 与示例 manifest 同步，须与契约 P1 修复的
-   `example-kinds==registry` 零漂移检查同批落地）+ **U5（部分副作用）/U7（类型注入）重测**。
+7. T9-b 待做：有人在场通道（supervised 准入 + 本机确认）+ 宣告面开启。
+   设计已落 `docs/DESIGN-20261108-peer-supervision-channel.md`（仅设计，未实施）：
+   默认关闭（`LFL_PEER_SUPERVISION=0`）、新增 `awaiting_supervision` 非终局态、
+   TTY CLI 逐次确认且票据绑定 `params_digest`、执行前重判闸3、宣告按
+   "handler ∩ 本节点配置完备"条件化。宣告面须与契约 P1 修复的
+   `example-kinds==registry` 零漂移检查同批落地（**该检查当前尚未落地**）。
+   重测范围更正：**U5（部分副作用后 kill -9）**属本任务；**U7（`desktop.type` 注入）
+   与 `fs.write` 无关，属 P2-B 桌面面**——上一版把 U5/U7 并列写在此处，是错的。
 
 ## 运行时限制（实测）
 子代理上下文预检在 `tokens_in≈180k` 时直接失败且无 `search_archive` 兜底。委派时只给 ≤3 个小文件、
