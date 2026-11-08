@@ -1560,7 +1560,7 @@ def _source_snapshot(
 
 def _snapshot_identity(
     identity_scope: str, head: str, frozen_head: str, base: str, repo: Path,
-    first_push_ref: str, header_fields: list[tuple[str, object]],
+    first_push_ref: str, header_fields: list[tuple[str, str]],
     committed: list[tuple[str, str]], backlog_manifest: str,
     material: str, new_files: list[tuple[str, str, str]],
 ) -> str:
