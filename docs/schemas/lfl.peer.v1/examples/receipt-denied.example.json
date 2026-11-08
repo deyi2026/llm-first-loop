@@ -1,0 +1,8 @@
+{
+  "schema": "lfl.peer.v1",
+  "task_id": "pt_8a1c3e5d7f",
+  "effect_id": "eff_20261107_4b2d6f",
+  "state": "denied",
+  "reason_code": "policy_task_kind_not_allowed",
+  "observed_at": "2026-11-07T13:31:00+08:00"
+}

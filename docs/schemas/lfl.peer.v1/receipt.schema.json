@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lfl.local/schemas/lfl.peer.v1/receipt.schema.json",
+  "title": "LFL Peer Task Receipt (lfl.peer.v1)",
+  "description": "回执只承载事实与引用，不承载叙事。state 由受控端推进，控制端不得猜测进度。reason_code 为封闭枚举，与 reason-codes.json 强一致（校验脚本强制）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "task_id",
+    "effect_id",
+    "state",
+    "observed_at"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lfl.peer.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,64}$"
+    },
+    "effect_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+    },
+    "admission_id": {
+      "type": "string",
+      "pattern": "^adm_[A-Za-z0-9]{8,40}$"
+    },
+    "grant_id": {
+      "type": "string",
+      "pattern": "^gr_[A-Za-z0-9]{8,40}$"
+    },
+    "state": {
+      "$ref": "#/$defs/state"
+    },
+    "reason_code": {
+      "$ref": "#/$defs/reason_code"
+    },
+    "idempotency_class": {
+      "enum": [
+        "idempotent",
+        "non_idempotent"
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "blocked_reason": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "suggested_next": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        }
+      }
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "health"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+        },
+        "health": {
+          "enum": [
+            "ok",
+            "degraded",
+            "failing"
+          ]
+        }
+      }
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "state": {
+      "enum": [
+        "submitted",
+        "admitted",
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "blocked",
+        "denied",
+        "cancelled",
+        "unknown_outcome"
+      ]
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "artifact_digest_mismatch",
+        "artifact_missing",
+        "audit_unavailable",
+        "blocked_timeout",
+        "cancelled_by_grant_revocation",
+        "cancelled_by_operator",
+        "command_not_allowed",
+        "crashed",
+        "desktop_target_not_grounded",
+        "executor_internal_error",
+        "executor_unhealthy",
+        "grant_exhausted",
+        "grant_expired",
+        "grant_issuer_not_human",
+        "grant_not_found",
+        "grant_revoked",
+        "grant_unbounded",
+        "idempotency_conflict",
+        "pair_fingerprint_mismatch",
+        "pair_nonce_expired",
+        "params_schema_invalid",
+        "path_outside_allowed_paths",
+        "peer_bad_signature",
+        "peer_not_paired",
+        "peer_replay_detected",
+        "peer_stale_signature",
+        "peer_transport_unavailable",
+        "peer_unknown_node",
+        "policy_desktop_type_not_allowed",
+        "policy_task_kind_not_allowed",
+        "quota_concurrency_exceeded",
+        "requires_supervised_execution",
+        "sandbox_denied",
+        "timeout",
+        "unknown_outcome",
+        "unsupported_display_protocol"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^artifact://v1/[A-Za-z0-9._-]{8,128}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_type": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "failed",
+              "denied",
+              "cancelled",
+              "unknown_outcome"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "reason_code"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "blocked"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "blocked_reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "succeeded"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "result"
+        ],
+        "not": {
+          "required": [
+            "reason_code"
+          ]
+        }
+      }
+    }
+  ]
+}

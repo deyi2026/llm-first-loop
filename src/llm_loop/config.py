@@ -515,6 +515,16 @@ class Settings:
     fleet_project_id: str = ""  # 空=启用时取稳定默认 "default"
     fleet_state_dir: str = ""  # 空=启用时派生 <data_dir>/fleet
     fleet_repo_head: str = ""  # workspace 记录的机械事实；空=未提供
+    # ── peer 通道（DESIGN-20261107 §D8/§5.8）：默认全关，零行为零回归 ──
+    # 开启后主 app 才挂 /peer/v1 路由（受控端）并注册控制端四工具
+    # （peer_list/peer_dispatch/peer_task/peer_fetch）。
+    peer_enabled: bool = False  # LFL_PEER_ENABLED=1 显式开启
+    peer_node_id: str = ""  # 空=从 hostname 派生稳定 id（lfl-<hostname>）
+    peer_display_name: str = ""  # 空=同 node_id
+    peer_data_dir: str = ""  # 空=派生 <data_dir>/peer（nodes/secrets/admissions/tasks/artifacts）
+    peer_timeout_s: int = 20  # 控制端单请求超时（秒）
+    # 受控端声明可执行的 kind（逗号分隔，如 file_read,exec）；空=不开放任何 kind
+    peer_kinds: str = ""
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -1138,6 +1148,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         fleet_project_id=env_values.get("LFL_FLEET_PROJECT_ID", "").strip(),
         fleet_state_dir=env_values.get("LFL_FLEET_STATE_DIR", "").strip(),
         fleet_repo_head=env_values.get("LFL_FLEET_REPO_HEAD", "").strip(),
+        # peer 通道（DESIGN-20261107）：缺省全关；显式 LFL_PEER_ENABLED=1 才挂路由+注册四工具
+        peer_enabled=env_bool("LFL_PEER_ENABLED", False),
+        peer_node_id=env_values.get("LFL_PEER_NODE_ID", "").strip(),
+        peer_display_name=env_values.get("LFL_PEER_DISPLAY_NAME", "").strip(),
+        peer_data_dir=env_values.get("LFL_PEER_DATA_DIR", "").strip(),
+        peer_timeout_s=env_int("LFL_PEER_TIMEOUT_S", 20),
+        peer_kinds=env_values.get("LFL_PEER_KINDS", "").strip(),
         browser_perception_cdp_url=env_values.get(
             "LFL_BROWSER_PERCEPTION_CDP_URL", ""
         ).strip(),

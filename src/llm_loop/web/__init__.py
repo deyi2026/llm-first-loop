@@ -54,6 +54,99 @@ def _scope_header(scope, name: bytes) -> str:
     return ""
 
 
+def _mount_peer_routes(app: FastAPI, settings) -> None:
+    """把 peer 受控端 HTTP 面挂进主 app（DESIGN-20261107 §D8 T5）。
+
+    独立 mount 而不并入 ``router``：peer 请求只认四头 HMAC，不套浏览器侧
+    ``require_api_key``（凭证混用）。缺 secret 时仍挂路由——每个请求会按
+    ``peer_not_paired`` 拒绝，不会出现"无密钥但可访问"。
+
+    D15（独立审查 P1-1，2026-11-08）：主 app 以明文 HTTP 暴露在非 loopback
+    绑定上时拒绝挂载 peer 面——HMAC 不保护工件机密性，LAN 明文等于把
+    fs.read 工件内容暴露给同网段。fail-closed：不挂载（peer 面不可用）
+    而不是明文可用；显式逃生阀 ``PEER_ALLOW_PLAINTEXT_BIND=1`` 留给
+    用户自担风险的隔离试验环境。
+    """
+    import os as _os
+
+    from llm_loop.web.auth import is_loopback
+
+    bind_host = str(
+        getattr(settings, "web_host", None)
+        or _os.environ.get("WEB_HOST", "127.0.0.1")
+    ).strip() or "127.0.0.1"
+    allow_plaintext = str(
+        _os.environ.get("PEER_ALLOW_PLAINTEXT_BIND", "") or ""
+    ).strip() == "1"
+    if not is_loopback(bind_host) and not allow_plaintext:
+        import logging
+
+        logging.getLogger(__name__).error(
+            "peer 面拒绝挂载：WEB_HOST=%s 非 loopback 且无 TLS（D15 明文禁令）。"
+            "LAN 部署请走 SSH 隧道 + loopback，或反向 TLS 终结后设置 "
+            "PEER_ALLOW_PLAINTEXT_BIND=1 自担风险。", bind_host,
+        )
+        return
+    from llm_loop.peer.admission import AdmissionStore
+    from llm_loop.peer.artifacts import ArtifactStore
+    from llm_loop.peer.auth import PeerAuthenticator
+    from llm_loop.peer.pair import secret_key_from_store
+    from llm_loop.peer.service import PeerService
+    from llm_loop.peer.store import PeerStore
+    from llm_loop.tools.builtin.peer_tools import default_node_id
+    from llm_loop.web.peer_routes import build_peer_router, install_peer_error_handler
+
+    raw_dir = str(getattr(settings, "peer_data_dir", "") or "").strip()
+    base_dir = str(getattr(settings, "data_dir", "./data") or "./data")
+    data_dir = (
+        Path(raw_dir).expanduser().resolve()
+        if raw_dir
+        else (Path(base_dir).expanduser() / "peer").resolve()
+    )
+    node_id = str(getattr(settings, "peer_node_id", "") or "").strip() or default_node_id()
+    display_name = str(getattr(settings, "peer_display_name", "") or "").strip() or None
+    # 空 peer_kinds = 不开放任何 kind（manifest.kinds=[]，控制端前置校验即拒绝）。
+    # 不用 None（那会落到 KINDS 的 default_enabled 集合，等于默认开放）。
+    enabled_kinds = {
+        item.strip()
+        for item in str(getattr(settings, "peer_kinds", "") or "").split(",")
+        if item.strip()
+    }
+    store = PeerStore(data_dir)
+    service = PeerService(
+        store=store,
+        admissions=AdmissionStore(data_dir),
+        artifacts=ArtifactStore(data_dir / "artifacts"),
+        node_id=node_id,
+        display_name=display_name,
+        enabled_kinds=enabled_kinds,
+    )
+    def _secret_for(candidate: str):
+        # 契约：secret_for 返回 bytes（auth.sign 直接拿它做 HMAC key）；
+        # store.read_secret 是 hex 文本，必须经 secret_key_from_store 解码。
+        stored = store.read_secret(candidate)
+        if not stored:
+            return None
+        try:
+            return secret_key_from_store(stored)
+        except ValueError:
+            return None
+
+    authenticator = PeerAuthenticator(secret_for=_secret_for)
+    install_peer_error_handler(app)
+    app.include_router(build_peer_router(service=service, authenticator=authenticator))
+    # 进程启动即收敛上一次中断留下的中间态（不自动重跑）：主 app 与独立 peer_serve
+    # 共用同一 data_dir，谁先起来谁负责收敛，避免中间态永久悬挂。
+    recovered = service.recover_interrupted()
+    logger.info(
+        "peer routes mounted: node_id=%s data_dir=%s kinds=%d recovered=%d",
+        node_id,
+        data_dir,
+        len(enabled_kinds),
+        len(recovered),
+    )
+
+
 def _effective_request_origin(scope) -> str:
     """Build the browser-visible request Origin for exact CSRF comparison.
 
@@ -336,6 +429,10 @@ def build_app(settings=None, engine=None) -> FastAPI:
     # Login/logout/status are deliberately public; all engine/data APIs stay behind
     # the protected router below when public exposure is enabled.
     app.include_router(auth_router)
+    # DESIGN-20261107 T5：peer 受控端面（默认关；LFL_PEER_ENABLED=1 才挂）
+    _peer_settings = settings if settings is not None else getattr(engine, "settings", None)
+    if _peer_settings is not None and getattr(_peer_settings, "peer_enabled", False):
+        _mount_peer_routes(app, _peer_settings)
     # P2-1: 跨站写防护（ASGI 中间件，mutating + 非回环 Origin → 403）
     app.add_middleware(_OriginGuardMiddleware)
 

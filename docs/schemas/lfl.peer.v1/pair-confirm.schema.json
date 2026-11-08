@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lfl.local/schemas/lfl.peer.v1/pair-confirm.schema.json",
+  "title": "LFL Peer Pairing Confirm (lfl.peer.v1)",
+  "description": "配对第二阶段。confirm_phrase 是摩擦设计不是安全边界（脚本同样能写出该常量）；真正的闸是人眼核对短指纹。link_secret 是后续 HMAC 请求签名的共享密钥。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "node_id",
+    "key_alg",
+    "public_key",
+    "short_fingerprint",
+    "nonce",
+    "confirm_phrase",
+    "link_secret"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lfl.peer.v1"
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "key_alg": {
+      "const": "ed25519"
+    },
+    "public_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{43}=$"
+    },
+    "short_fingerprint": {
+      "type": "string",
+      "pattern": "^([A-Z2-7]{4}-){7}[A-Z2-7]{4}$"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "confirm_phrase": {
+      "const": "I-HAVE-VERIFIED-THE-SHORT-FINGERPRINT"
+    },
+    "link_secret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{43}=$",
+      "description": "K_oe（32 字节 base64），由控制端生成、经 SSH 隧道传入。仅存于受控端 data/peer/secrets/（0600），不得写入常规审计与请求日志。"
+    }
+  }
+}

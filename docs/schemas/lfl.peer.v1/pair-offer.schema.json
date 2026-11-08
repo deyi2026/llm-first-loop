@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lfl.local/schemas/lfl.peer.v1/pair-offer.schema.json",
+  "title": "LFL Peer Pairing Offer (lfl.peer.v1)",
+  "description": "配对第一阶段。short_fingerprint 需人眼比对；它防的是 SSH 主机密钥已被替换时仍能发现，不是替代 SSH 加密。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "node_id", "key_alg", "public_key", "short_fingerprint", "nonce", "issued_at", "expires_at"],
+  "properties": {
+    "schema": { "const": "lfl.peer.v1" },
+    "node_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+    "key_alg": { "const": "ed25519" },
+    "public_key": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$" },
+    "short_fingerprint": { "type": "string", "pattern": "^([A-Z2-7]{4}-){7}[A-Z2-7]{4}$" },
+    "nonce": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" }
+  }
+}
