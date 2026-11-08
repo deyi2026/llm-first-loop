@@ -137,6 +137,32 @@ def validate_params(kind: str, params: dict[str, Any]) -> dict[str, Any]:
             _int_param(params, "max_bytes", default=DEFAULT_MAX_READ_BYTES, low=1, high=DEFAULT_MAX_READ_BYTES)
         else:
             _int_param(params, "depth", default=1, low=1, high=MAX_LIST_DEPTH)
+    elif kind == "fs.write":
+        # 写侧 params 只允许"路径 + 恰好一个内容源 + 两个显式开关"。
+        # 内容源二选一而不是二缺一顺延：缺省值会变成隐式语义，写错就是写错。
+        allowed = {"path", "content_b64", "artifact_ref", "overwrite", "create_parents"}
+        extra = sorted(set(params) - allowed)
+        if extra:
+            raise PeerError("params_schema_invalid", f"unexpected params: {extra}")
+        if not isinstance(params.get("path"), str):
+            raise PeerError("params_schema_invalid", "path is required")
+        sources = [name for name in ("content_b64", "artifact_ref") if name in params]
+        if len(sources) != 1:
+            raise PeerError(
+                "params_schema_invalid",
+                "exactly one of content_b64/artifact_ref is required",
+            )
+        if "content_b64" in params and not isinstance(params["content_b64"], str):
+            raise PeerError("params_schema_invalid", "content_b64 must be a string")
+        if "artifact_ref" in params:
+            ref = params["artifact_ref"]
+            if not isinstance(ref, str) or not ref.startswith("artifact://v1/"):
+                raise PeerError(
+                    "params_schema_invalid", "artifact_ref must be artifact://v1/<sha256>"
+                )
+        for flag in ("overwrite", "create_parents"):
+            if flag in params and not isinstance(params[flag], bool):
+                raise PeerError("params_schema_invalid", f"{flag} must be bool")
     elif kind == "shell.exec":
         if not isinstance(params.get("argv"), list) or not params["argv"]:
             raise PeerError("params_schema_invalid", "argv must be a non-empty array")

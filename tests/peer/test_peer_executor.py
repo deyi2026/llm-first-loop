@@ -96,13 +96,28 @@ def test_fs_list_entry_cap(tmp_path, env):
     assert listing["truncated"] is True
 
 
-@pytest.mark.parametrize("kind", ["fs.write", "shell.exec"])
+@pytest.mark.parametrize("kind", ["shell.exec"])
 def test_unimplemented_kinds_refuse_loudly(tmp_path, env, kind):
     _root, ex = env
     with pytest.raises(PeerError) as err:
         ex.run(kind=kind, params={}, allowed_paths=(str(tmp_path),))
     assert err.value.reason_code == "policy_task_kind_not_allowed"
     assert "handler_missing" in err.value.detail
+
+
+def test_fs_write_without_write_root_fails_closed(tmp_path, env, monkeypatch):
+    """handler 已实现 ≠ 可写：闸4 写域未声明时仍然全拒（不从租约推导默认值）。"""
+    monkeypatch.delenv("LFL_PEER_WRITE_ROOT", raising=False)
+    _root, ex = env
+    with pytest.raises(PeerError) as err:
+        ex.run(
+            kind="fs.write",
+            params={"path": str(tmp_path / "a.txt"), "content_b64": "eA=="},
+            allowed_paths=(str(tmp_path),),
+        )
+    assert err.value.reason_code == "sandbox_denied"
+    assert "write_root_not_configured" in err.value.detail
+    assert not (tmp_path / "a.txt").exists()
 
 
 @pytest.mark.parametrize("kind", ["desktop.screenshot", "desktop.click", "desktop.focus_probe"])
