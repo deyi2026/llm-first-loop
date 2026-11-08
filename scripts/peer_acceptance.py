@@ -831,13 +831,13 @@ def phase_unimplemented(root: Path) -> list[Result]:
             "U4",
             "blocked 超 deadline → failed/blocked_timeout",
             NOT_APP,
-            "本切片没有 blocked 生产者（人工确认通道未落地），回收器无输入可测",
+            "本切片没有 blocked 生产者（监督通道落 awaiting_supervision，不产生 blocked），回收器无输入可测",
         ),
         Result(
             "U7",
             "L3 文字注入 → policy_desktop_type_not_allowed",
             NOT_APP,
-            "本切片没有 desktop.type kind（注入类属 P2 监督通道），无该输入可构造",
+            "本切片没有 desktop.type kind（desktop 注入属后续切片），无该输入可构造",
         ),
     ]
 
