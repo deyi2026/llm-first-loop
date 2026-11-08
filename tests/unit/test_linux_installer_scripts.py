@@ -569,3 +569,55 @@ def test_github_ci_runs_linux_installer_on_native_x86_64_and_aarch64() -> None:
     assert "getconf GNU_LIBC_VERSION | grep -q '^glibc '" in linux_job
     assert "python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json" in linux_job
     assert "name: linux-installer-smoke-${{ matrix.arch }}" in linux_job
+
+
+def test_httpx_socks_extra_is_declared_and_locked() -> None:
+    """Deepin socks5 代理冷启动事故回归（2026-11-08）：wheel 必须随包携带 socksio。
+
+    根因：用户级 systemd 环境携带 ``all_proxy=socks5://127.0.0.1:7890`` 时，
+    ``httpx.Client(trust_env=True)`` 初始化需要 socksio；wheel 0.6.40 未携带
+    导致 ImportError、Web 冷启动失败。正式修复是把依赖声明为
+    ``httpx[socks]>=0.27``——安装器 ``uv pip install <wheel>`` 按 wheel
+    METADATA 的 ``Requires-Dist`` 解析 extras，从而装上 socksio。
+    红线：不改全局 trust_env、不禁用代理、不加永久 systemd UnsetEnvironment。
+    """
+    import re
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"httpx[socks]>=0.27"' in pyproject, (
+        "dependency must declare the socks extra so socksio ships in the wheel graph"
+    )
+    lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    assert re.search(r'^name = "socksio"$', lock, re.MULTILINE), (
+        "uv.lock must pin socksio (the httpx socks extra implementation)"
+    )
+    # 锁的项目 requires-dist 段必须精确携带 extras + 原下限（不漂移）。
+    assert '{ name = "httpx", extras = ["socks"], specifier = ">=0.27" }' in lock, (
+        "the locked project requires-dist edge must carry the socks extra with the >=0.27 floor"
+    )
+
+
+def test_built_wheel_metadata_requires_socks_extra(tmp_path: Path) -> None:
+    """真实构建管线下 wheel METADATA 必须声明 httpx[socks]（安装器据此装 socksio）。
+
+    这是安装链的单一权威证据：``install_linux.sh`` 的
+    ``uv pip install <wheel>`` 按 METADATA 的 Requires-Dist 解析 extras；
+    若构建产物丢了 ``[socks]``，Deepin socks5 代理冷启动事故将复发。
+    构建输出到 tmp_path，不触碰 dist/。
+    """
+    import zipfile
+
+    completed = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    wheels = sorted(tmp_path.glob("llm_first_loop-*.whl"))
+    assert len(wheels) == 1, f"expected exactly one built wheel, got {wheels}"
+    with zipfile.ZipFile(wheels[0]) as archive:
+        names = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+        assert len(names) == 1
+        metadata = archive.read(names[0]).decode("utf-8")
+    assert "Requires-Dist: httpx[socks]>=0.27" in metadata, (
+        "built wheel METADATA must carry the socks extra requirement"
+    )
