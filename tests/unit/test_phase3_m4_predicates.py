@@ -118,6 +118,9 @@ def test_closed_set_and_authorization_guards(tmp_path):
                   event_predicate="job_terminal", predicate_ref="r")
     assert {
         "job_terminal", "generation_reached", "action_settled",
+        # EVO-20261108-13d53b9c（人工批准）：review_admission 审查 child
+        # 终态谓词——审查完成即唤醒，消除等待期墙钟轮询空转。
+        "review_terminal",
     } == EVENT_PREDICATE_KINDS
 
 

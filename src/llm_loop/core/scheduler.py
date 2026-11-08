@@ -55,7 +55,7 @@ _WAKE_GRANTS: dict[tuple[str, str], Any] = {}
 # 扩展流程：先扩 EVENT_PREDICATE_KINDS（代码评审门），再 register_event_predicate
 # 登记求值器。求值器契约：fn(ref: str) -> bool；异常一律按 False（fail-safe 回退
 # 到超时分支，不阻断调度主链路）。求值只读外部状态，不得有副作用。
-EVENT_PREDICATE_KINDS = frozenset({"job_terminal", "generation_reached", "action_settled"})
+EVENT_PREDICATE_KINDS = frozenset({"job_terminal", "generation_reached", "action_settled", "review_terminal"})
 _EVENT_PREDICATES: dict[str, Callable[[str], bool]] = {}
 _EVENT_PREDICATE_LOCK = threading.Lock()
 _EVENT_PREDICATE_WARNED: set[str] = set()

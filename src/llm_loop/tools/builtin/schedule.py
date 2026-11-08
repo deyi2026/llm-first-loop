@@ -29,7 +29,9 @@ from llm_loop.core.trace_leak.ingress_token import (
 _MAX_SCHEDULE_MESSAGE_CHARS = 4000
 
 # antidrift R1: subject_refs 引用类型封闭集（OQ4 裁定；扩展须显式登记，不加白名单）
-_SUBJECT_REF_TYPES = ("job_id", "expected_generation", "action_id")
+# review_child: EVO-20261108-13d53b9c（人工批准）——review_admission 审查
+# child_id；配合 event_predicate=review_terminal 实现"审查完成即唤醒"。
+_SUBJECT_REF_TYPES = ("job_id", "expected_generation", "action_id", "review_child")
 
 
 class ScheduleTool:
@@ -128,18 +130,21 @@ class ScheduleTool:
                 "description": (
                     "可选自报对象引用：唤醒时程序会把这些对象的现状差量（终态/generation 前移/"
                     "动作状态，仅事实无结论）附于唤醒消息。type 为封闭枚举"
-                    "（job_id/expected_generation/action_id），未知类型按参数错误拒绝。"
+                    "（job_id/expected_generation/action_id/review_child），未知类型按参数错误拒绝。"
                 ),
                 "items": {
                     "type": "object",
                     "properties": {
                         "type": {
                             "type": "string",
-                            "enum": ["job_id", "expected_generation", "action_id"],
+                            "enum": ["job_id", "expected_generation", "action_id", "review_child"],
                         },
                         "id": {
                             "type": "string",
-                            "description": "引用对象标识（job id / 排程时观察到的 generation 值 / action id）",
+                            "description": (
+                                "引用对象标识（job id / 排程时观察到的 generation 值 / action id / "
+                                "review_admission 审查 child_id——配合 event_predicate=review_terminal"
+                            ),
                         },
                     },
                     "required": ["type", "id"],
@@ -147,19 +152,20 @@ class ScheduleTool:
             },
             "event_predicate": {
                 "type": "string",
-                "enum": ["job_terminal", "generation_reached", "action_settled"],
+                "enum": ["job_terminal", "generation_reached", "action_settled", "review_terminal"],
                 "description": (
                     "Phase3 M4：事件谓词唤醒（闭集枚举）。与 after/at 超时构成双通道竞速——"
                     "先到者触发唤醒，后到者只记录不重放。要求 wake=true（谓词不携带授权语义，"
                     "授权仍由当前真人 run 的 wake_grant 链独占）且不可用于周期条目。"
                     "示例：后台 job 完成即唤醒，最多等 after 秒兜底。"
-                    "可用性（终审 P2-7 留痕）：当前生产装配仅登记 job_terminal 求值器；"
+                    "可用性（终审 P2-7 留痕）：当前生产装配登记 job_terminal 与 review_terminal "
+                    "（EVO-20261108-13d53b9c，审查 child 终态即唤醒）求值器；"
                     "generation_reached/action_settled 尚无生产求值器，登记前会回退为纯超时唤醒（一次性告警）。"
                 ),
             },
             "predicate_ref": {
                 "type": "string",
-                "description": "谓词对象引用（job_id / 目标 generation 值 / action_id），与 event_predicate 配套必填。",
+                "description": "谓词对象引用（job_id / 目标 generation 值 / action_id / review_admission 审查 child_id），与 event_predicate 配套必填。",
             },
         },
         "required": ["message"],

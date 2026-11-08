@@ -225,6 +225,23 @@ def job_terminal_predicate(job_id: str) -> bool:
     return str(snap.get("state", "")).lower() in {"completed", "failed", "killed", "orphaned"}
 
 
+def review_terminal_predicate(child_id: str, *, _authority: Any = None) -> bool:
+    """review_terminal 事件谓词（EVO-20261108-13d53b9c，人工批准 2026-11-08）.
+
+    审查 child 进入 settled（PASS/REVISE/失败终态）即满足——把 job_terminal
+    的"完成即唤醒"平移到 review_admission 异步审查，消除父会话等待期的
+    墙钟轮询空转（2026-11-08 实测：50 分钟漏查 status、25 连续 wait 零
+    status 两次事故）。未知 child / 未装配 authority 一律 False
+    （fail-safe 回退超时分支，不误唤醒）。``_authority`` 仅供测试注入。
+    """
+    from llm_loop.tools.review_host_admission import HostReviewAdmission
+
+    authority = _authority if _authority is not None else HostReviewAdmission.current()
+    if authority is None:
+        return False
+    return authority.snapshot_child_state(child_id) == "settled"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -688,6 +705,16 @@ def _render_subject_refs_facts(entry: Any, data_dir: str | Path) -> str:
                     lines.append(f"{label} 现状不可解析（对象不存在）")
                     continue
                 lines.append(f"{label} 状态={action.status}({action.updated_at})")
+            elif rtype == "review_child":
+                # P1-2（合并审查 2026-11-08）：review_child 是一等 subject 类型，
+                # 差量渲染必须给出真实终态而非"未知引用类型"。
+                from llm_loop.tools.review_host_admission import HostReviewAdmission
+
+                state = HostReviewAdmission.current().snapshot_child_state(rid)
+                if state is None:
+                    lines.append(f"{label} 现状不可解析（对象不存在或未装配）")
+                else:
+                    lines.append(f"{label} 终态={state}")
             else:
                 lines.append(f"{label} 现状不可解析（未知引用类型）")
         except Exception as exc:  # noqa: BLE001 — 逐条解析 fail-open，如实标注
@@ -1142,6 +1169,9 @@ def build_engine(
     _host_review = HostReviewAdmission()
     _host_review.attach_event_store(event_store)
     registry.set_review_admission(_host_review)
+    # EVO-20261108-13d53b9c：模块级 authority 钩子（scheduler review_terminal
+    # 谓词经 HostReviewAdmission.current() 只读查询 child 终态）。
+    HostReviewAdmission.set_authority(_host_review)
 
     _job_registry = JobRegistry.instance()
     _job_registry.configure(
@@ -1158,6 +1188,10 @@ def build_engine(
 
     # Phase3 M4（G4）：登记 job_terminal 事件谓词求值器（模块级定义，可测）。
     register_event_predicate("job_terminal", job_terminal_predicate)
+    # EVO-20261108-13d53b9c（人工批准）：review_admission 审查 child 终态
+    # 事件谓词——schedule(subject_refs=[{type:review_child,id:<child_id>}],
+    # event_predicate=review_terminal) 即"审查完成即唤醒"。
+    register_event_predicate("review_terminal", review_terminal_predicate)
 
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs

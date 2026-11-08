@@ -3141,6 +3141,11 @@ def _contains_publication_target(raw: Any, name: str) -> bool:
 class HostReviewAdmission:
     """Volatile Host authority: only Host-created child completion can mint a permit."""
 
+    # EVO-20261108-13d53b9c：模块级 authority 钩子——factory 装配时登记唯一
+    # 生产实例，供 scheduler 事件谓词（review_terminal）只读查询 child 终态。
+    # 语义：current() 返回最近登记实例（或 None）；测试可置 None 隔离。
+    _CURRENT_AUTHORITY: HostReviewAdmission | None = None
+
     def __init__(self) -> None:
         self._runner: Any | None = None
         self._event_store: Any | None = None  # production receipt must be durable
@@ -3173,6 +3178,21 @@ class HostReviewAdmission:
 
     def attach_runner(self, runner: Any) -> None:
         self._runner = runner
+
+    @classmethod
+    def set_authority(cls, instance: HostReviewAdmission | None) -> None:
+        """EVO-20261108-13d53b9c：登记/清空模块级生产实例（factory 装配与测试隔离共用）。"""
+        cls._CURRENT_AUTHORITY = instance
+
+    @classmethod
+    def current(cls) -> HostReviewAdmission | None:
+        return cls._CURRENT_AUTHORITY
+
+    def snapshot_child_state(self, child_id: str) -> str | None:
+        """EVO-20261108-13d53b9c：child 状态只读查询（None=未知 child）。"""
+        with self._guard:
+            row = self._records.get(str(child_id))
+            return row.state if row is not None else None
 
     def attach_event_store(self, store: Any) -> None:
         """Attach the factory's audit writer: no event receipt means no new grant."""
