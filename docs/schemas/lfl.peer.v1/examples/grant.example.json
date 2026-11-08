@@ -6,10 +6,10 @@
   "issued_at": "2026-11-07T12:00:00+08:00",
   "expires_at": "2026-11-14T13:30:00+08:00",
   "state": "active",
-  "allowed_kinds": ["fs.read", "fs.write"],
+  "allowed_kinds": ["fs.read"],
   "allowed_paths": ["/srv/lfl/project", "/srv/lfl/.cache/lfl/tmp"],
   "max_concurrency": 2,
   "max_tasks_total": 20,
   "tasks_used": 3,
-  "note": "首周只读切片：fs.write 需 pre_snapshot"
+  "note": "首周只读切片：fs.write（supervised）暂不授权，放开需人工在场与 pre_snapshot"
 }

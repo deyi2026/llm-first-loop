@@ -1,0 +1,17 @@
+{
+  "schema": "lfl.peer.v1",
+  "peer_api": "1",
+  "node_id": "deepin-wayland-01",
+  "display_name": "Deepin Wayland 工作站",
+  "role": "executor",
+  "health": "ok",
+  "display_protocol": "wayland",
+  "desktop": { "screenshot": false, "inject_click": false, "inject_type": false, "focus_probe": false },
+  "kinds": [
+    { "kind": "fs.read", "idempotency_class": "idempotent", "supervised_only": false, "params_schema_hint": "path(abs), max_bytes<=1048576" },
+    { "kind": "fs.list", "idempotency_class": "idempotent", "supervised_only": false, "params_schema_hint": "path(abs), depth<=3" }
+  ],
+  "limits": { "max_concurrency": 2, "audit_watermark_pct": 90 },
+  "grant": null,
+  "observed_at": "2026-11-08T16:55:00+08:00"
+}

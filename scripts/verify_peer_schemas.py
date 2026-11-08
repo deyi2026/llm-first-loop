@@ -124,6 +124,22 @@ def _build_negatives(examples: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _peer_kind_registry() -> dict[str, tuple[str, bool]] | None:
+    """权威 kind 注册表（src/llm_loop/peer/kinds.py）；不可导入返回 None（记 SKIP 不冒充通过）。"""
+    src_root = str(REPO_ROOT / "src")
+    if src_root not in sys.path:
+        sys.path.insert(0, src_root)
+    try:
+        from llm_loop.peer.kinds import KINDS  # noqa: PLC0415
+
+        return {
+            spec.kind: (spec.idempotency_class, spec.supervised_only)
+            for spec in KINDS.values()
+        }
+    except Exception:  # noqa: BLE001 — registry 不可得按未检查处理，不伪造结论
+        return None
+
+
 def _check_invariants(base: Path, examples: dict[str, Any],
                       rows: list[tuple[str, str, str, str]]) -> None:
     codes = sorted(_load(base / "reason-codes.json")["codes"])
@@ -137,13 +153,32 @@ def _check_invariants(base: Path, examples: dict[str, Any],
         rows.append(("consistency", "reason_code enum == reason-codes.json", FAIL,
                      f"only_json={only_json} only_schema={only_schema}"))
 
-    for item in examples["manifest"]["kinds"]:
-        supervised = item["idempotency_class"] == "non_idempotent"
-        if supervised and not item["supervised_only"]:
-            rows.append(("invariant", f"non_idempotent => supervised_only ({item['kind']})",
-                         FAIL, "非幂等 kind 未标记 supervised_only"))
-        else:
-            rows.append(("invariant", f"non_idempotent => supervised_only ({item['kind']})", OK, ""))
+    # 独立审查 P1-2（2026-11-08）：example 的 kinds 声明曾与权威 registry 漂移
+    # （example 标 idempotent/supervised_only=false 绕过不变量）。修复后任何
+    # manifest* example 的每个 kind 条目都必须与 registry 零漂移。
+    registry = _peer_kind_registry()
+    for stem in sorted(k for k in examples if k == "manifest" or k.startswith("manifest-")):
+        for item in examples[stem]["kinds"]:
+            label = f"{stem}:{item['kind']}"
+            supervised = item["idempotency_class"] == "non_idempotent"
+            if supervised and not item["supervised_only"]:
+                rows.append(("invariant", f"non_idempotent => supervised_only ({label})",
+                             FAIL, "非幂等 kind 未标记 supervised_only"))
+            else:
+                rows.append(("invariant", f"non_idempotent => supervised_only ({label})", OK, ""))
+            if registry is None:
+                rows.append(("consistency", f"example kinds == registry ({label})",
+                             SKIP, "registry 不可导入"))
+                continue
+            spec = registry.get(item["kind"])
+            if spec is None:
+                rows.append(("consistency", f"example kinds == registry ({label})",
+                             FAIL, "kind 不在注册表"))
+            elif spec != (item["idempotency_class"], item["supervised_only"]):
+                rows.append(("consistency", f"example kinds == registry ({label})",
+                             FAIL, f"registry={spec} example 漂移"))
+            else:
+                rows.append(("consistency", f"example kinds == registry ({label})", OK, ""))
 
     grant = examples["grant"]
     if grant["tasks_used"] <= grant["max_tasks_total"]:

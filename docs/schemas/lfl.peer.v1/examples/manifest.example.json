@@ -9,7 +9,7 @@
   "desktop": { "screenshot": true, "inject_click": true, "inject_type": false, "focus_probe": true },
   "kinds": [
     { "kind": "fs.read", "idempotency_class": "idempotent", "supervised_only": false, "params_schema_hint": "path(abs), max_bytes<=1048576" },
-    { "kind": "fs.write", "idempotency_class": "idempotent", "supervised_only": false, "params_schema_hint": "path(abs), content_utf8<=262144, pre_snapshot:true" },
+    { "kind": "fs.write", "idempotency_class": "non_idempotent", "supervised_only": true, "params_schema_hint": "path: 授权内绝对路径; content_b64 或 artifact_ref; 需有人在场" },
     { "kind": "desktop.click", "idempotency_class": "non_idempotent", "supervised_only": true, "params_schema_hint": "frame_id, x, y, window_id" }
   ],
   "limits": { "max_concurrency": 2, "audit_watermark_pct": 90 },
