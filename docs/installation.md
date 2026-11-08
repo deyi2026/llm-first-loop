@@ -413,3 +413,32 @@ commit、WebUI 来源 SHA、wheel/sdist SHA）。目标目录必须从未存在�
 导出后用 `xwininfo -root -children` 找全屏遮挡窗口、
 `ffmpeg -f x11grab -i "$DISPLAY" -frames:v 1 /tmp/shot.png` 截一帧看亮度，
 即可区分"桌面没渲染"与"被窗口遮挡"两种黑屏。
+
+
+## Linux wheel 的三服务受管身份
+
+wheel 安装版使用 `version + wheel_sha256 + release_dir`，不伪造 Git SHA。
+`bash install_linux.sh --candidate /absolute/candidate.whl --expected-sha256 SHA --no-start`
+会安装候选、切换活动指针并准备校验用户级 units，但不重启或启用任何服务。
+该步骤应在已建立维护屏障、备份并确认旧服务空闲的维护窗口执行。
+随后从该 release 的 venv 执行
+`python -m llm_loop.runtime.service_control publish-wheel --lfl-home /absolute/lfl-home --expected-generation N`，
+再执行 `python -m llm_loop.runtime.service_control restart --data-dir /absolute/lfl-home/data --target all`。
+`all` 明确仅覆盖 Web / Feishu / Learning，不包含 WeCom。
+服务控制器使用独立 systemd transient unit，Web 重启不会杀死重启 worker。
+成功须同时具备真实新进程 manifest、版本/摘要/路径一致及 succeeded 重启回执；
+仅有 HTTP 200、相同版本号或手工 systemctl restart 不构成受管部署闭环。
+受控重启成功后，还必须显式启用四个用户级 units（不再次启动进程），并逐项确认
+均返回 `enabled`，才可关闭首次迁移窗口：
+
+```bash
+systemctl --user enable lfl-recovery.service lfl.service lfl-feishu.service lfl-learning.service
+systemctl --user is-enabled lfl-recovery.service lfl.service lfl-feishu.service lfl-learning.service
+loginctl show-user "$USER" -p Linger --value
+```
+
+任一启用失败都保留维护窗口并修复，不能仅以当次健康检查成功收口。
+无人值守开机还要求最后一条命令返回 `yes`；若未开启 linger，需由具备权限的
+运维人员启用后重新核验。`--no-start` 保持准备阶段不启用、不重启的语义，
+`restart` 本身不替代上述持久启用步骤。
+历史源码进程和数据目录的迁移需先逐项对账、保留副本，不能通过安装器覆盖它们。

@@ -525,6 +525,10 @@ class Settings:
     peer_timeout_s: int = 20  # 控制端单请求超时（秒）
     # 受控端声明可执行的 kind（逗号分隔，如 file_read,exec）；空=不开放任何 kind
     peer_kinds: str = ""
+    # 闸4 写域根（绝对路径）；空=远程写全拒。读取点只在这里，策略层不读 env。
+    peer_write_root: str = ""
+    peer_bind_host: str = "127.0.0.1"
+    peer_allow_plaintext_bind: bool = False
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -889,6 +893,33 @@ def _desktop_settings(env: Mapping[str, str]) -> _DesktopSettings:
     }
 
 
+class _PeerSettings(TypedDict):
+    peer_enabled: bool
+    peer_node_id: str
+    peer_display_name: str
+    peer_data_dir: str
+    peer_timeout_s: int
+    peer_kinds: str
+    peer_write_root: str
+    peer_bind_host: str
+    peer_allow_plaintext_bind: bool
+
+
+def _peer_settings(env: Mapping[str, str]) -> _PeerSettings:
+    """Resolve the existing peer controls from the canonical configuration snapshot."""
+    return {
+        "peer_enabled": _env_bool("LFL_PEER_ENABLED", False, env),
+        "peer_node_id": env.get("LFL_PEER_NODE_ID", "").strip(),
+        "peer_display_name": env.get("LFL_PEER_DISPLAY_NAME", "").strip(),
+        "peer_data_dir": env.get("LFL_PEER_DATA_DIR", "").strip(),
+        "peer_timeout_s": _env_int("LFL_PEER_TIMEOUT_S", 20, env),
+        "peer_kinds": env.get("LFL_PEER_KINDS", "").strip(),
+        "peer_write_root": env.get("LFL_PEER_WRITE_ROOT", "").strip(),
+        "peer_bind_host": env.get("WEB_HOST", "127.0.0.1").strip() or "127.0.0.1",
+        "peer_allow_plaintext_bind": env.get("PEER_ALLOW_PLAINTEXT_BIND", "").strip() == "1",
+    }
+
+
 def _codearts_settings(env: Mapping[str, str]) -> CodeArtsSettings:
     """CodeArts 子代理调度配置装配（原 load_settings 内联 kwargs，逐字等价迁移）。
 
@@ -1148,13 +1179,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         fleet_project_id=env_values.get("LFL_FLEET_PROJECT_ID", "").strip(),
         fleet_state_dir=env_values.get("LFL_FLEET_STATE_DIR", "").strip(),
         fleet_repo_head=env_values.get("LFL_FLEET_REPO_HEAD", "").strip(),
-        # peer 通道（DESIGN-20261107）：缺省全关；显式 LFL_PEER_ENABLED=1 才挂路由+注册四工具
-        peer_enabled=env_bool("LFL_PEER_ENABLED", False),
-        peer_node_id=env_values.get("LFL_PEER_NODE_ID", "").strip(),
-        peer_display_name=env_values.get("LFL_PEER_DISPLAY_NAME", "").strip(),
-        peer_data_dir=env_values.get("LFL_PEER_DATA_DIR", "").strip(),
-        peer_timeout_s=env_int("LFL_PEER_TIMEOUT_S", 20),
-        peer_kinds=env_values.get("LFL_PEER_KINDS", "").strip(),
+        **_peer_settings(env_values),
         browser_perception_cdp_url=env_values.get(
             "LFL_BROWSER_PERCEPTION_CDP_URL", ""
         ).strip(),

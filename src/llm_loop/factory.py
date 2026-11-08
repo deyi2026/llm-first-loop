@@ -234,12 +234,25 @@ def review_terminal_predicate(child_id: str, *, _authority: Any = None) -> bool:
     status 两次事故）。未知 child / 未装配 authority 一律 False
     （fail-safe 回退超时分支，不误唤醒）。``_authority`` 仅供测试注入。
     """
-    from llm_loop.tools.review_host_admission import HostReviewAdmission
-
     authority = _authority if _authority is not None else HostReviewAdmission.current()
     if authority is None:
         return False
     return authority.snapshot_child_state(child_id) == "settled"
+
+
+def _configure_review_admission(registry: Any, event_store: Any) -> HostReviewAdmission:
+    """Attach the existing Host authority without expanding the factory body."""
+    authority = HostReviewAdmission()
+    authority.attach_event_store(event_store)
+    registry.set_review_admission(authority)
+    HostReviewAdmission.set_authority(authority)
+    return authority
+
+
+def _register_runtime_event_predicates() -> None:
+    """Register the existing job and review completion predicates together."""
+    register_event_predicate("job_terminal", job_terminal_predicate)
+    register_event_predicate("review_terminal", review_terminal_predicate)
 
 
 logger = logging.getLogger(__name__)
@@ -708,9 +721,8 @@ def _render_subject_refs_facts(entry: Any, data_dir: str | Path) -> str:
             elif rtype == "review_child":
                 # P1-2（合并审查 2026-11-08）：review_child 是一等 subject 类型，
                 # 差量渲染必须给出真实终态而非"未知引用类型"。
-                from llm_loop.tools.review_host_admission import HostReviewAdmission
-
-                state = HostReviewAdmission.current().snapshot_child_state(rid)
+                authority = HostReviewAdmission.current()
+                state = authority.snapshot_child_state(rid) if authority is not None else None
                 if state is None:
                     lines.append(f"{label} 现状不可解析（对象不存在或未装配）")
                 else:
@@ -1166,12 +1178,7 @@ def build_engine(
     # only signals currently local handles; normal model final remains unaffected.
     # P0-B Host-owned review gate, in-memory admission only. Reviewer is attached
     # after the real SubAgentRunner has been built below.
-    _host_review = HostReviewAdmission()
-    _host_review.attach_event_store(event_store)
-    registry.set_review_admission(_host_review)
-    # EVO-20261108-13d53b9c：模块级 authority 钩子（scheduler review_terminal
-    # 谓词经 HostReviewAdmission.current() 只读查询 child 终态）。
-    HostReviewAdmission.set_authority(_host_review)
+    _host_review = _configure_review_admission(registry, event_store)
 
     _job_registry = JobRegistry.instance()
     _job_registry.configure(
@@ -1186,12 +1193,7 @@ def build_engine(
     # M3 测试显式对齐（M0 报告审查修订版 §4「装配一致性」项）。
     SideEffectRegistry.instance().configure(str(settings.data_dir))
 
-    # Phase3 M4（G4）：登记 job_terminal 事件谓词求值器（模块级定义，可测）。
-    register_event_predicate("job_terminal", job_terminal_predicate)
-    # EVO-20261108-13d53b9c（人工批准）：review_admission 审查 child 终态
-    # 事件谓词——schedule(subject_refs=[{type:review_child,id:<child_id>}],
-    # event_predicate=review_terminal) 即"审查完成即唤醒"。
-    register_event_predicate("review_terminal", review_terminal_predicate)
+    _register_runtime_event_predicates()
 
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs

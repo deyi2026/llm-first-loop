@@ -210,22 +210,24 @@ def test_mount_peer_routes_refuses_non_loopback_plain_bind(monkeypatch, tmp_path
     fail-closed：/peer/v1/* 路由不得存在（peer 面不可用优于明文可用）；
     逃生阀 PEER_ALLOW_PLAINTEXT_BIND=1 时恢复挂载。
     """
-    from types import SimpleNamespace
-
     from fastapi import FastAPI
 
+    from llm_loop.config import load_settings
     from llm_loop.web import _mount_peer_routes
 
     def mount(monkeypatch, *, web_host: str, escape: str = "") -> FastAPI:
         app = FastAPI()
-        settings = SimpleNamespace(
-            peer_data_dir=str(tmp_path / "peer"),
-            data_dir=str(tmp_path),
-            peer_node_id="deepin-01",
-            peer_display_name="",
-            peer_kinds="fs.read",
-            web_host=web_host,
-        )
+        settings = load_settings(env={
+            "LLM_API_KEY": "test-key",
+            "LLM_BASE_URL": "https://model.invalid/v1",
+            "DATA_DIR": str(tmp_path),
+            "LFL_PEER_ENABLED": "1",
+            "LFL_PEER_DATA_DIR": str(tmp_path / "peer"),
+            "LFL_PEER_NODE_ID": "deepin-01",
+            "LFL_PEER_KINDS": "fs.read",
+            "WEB_HOST": web_host,
+            "PEER_ALLOW_PLAINTEXT_BIND": escape,
+        })
         monkeypatch.setenv("WEB_HOST", web_host)
         monkeypatch.setenv("PEER_ALLOW_PLAINTEXT_BIND", escape)
         _mount_peer_routes(app, settings)
@@ -244,3 +246,4 @@ def test_mount_peer_routes_refuses_non_loopback_plain_bind(monkeypatch, tmp_path
     assert mounted(allowed)
     escaped = mount(monkeypatch, web_host="0.0.0.0", escape="1")
     assert mounted(escaped)
+    assert not mounted(mount(monkeypatch, web_host="0.0.0.0", escape="true"))

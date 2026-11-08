@@ -313,6 +313,9 @@ export interface ServiceLiveInfo {
   pid_alive?: boolean;
   started_at?: string | null;
   git_head?: string | null;
+  release_version?: string;
+  wheel_sha256?: string;
+  release_dir?: string;
   build?: Record<string, unknown>;
   model_ref?: string | null;
   provider_id?: string | null;
@@ -326,6 +329,10 @@ export interface ServiceStableInfo {
   succeeded_at: string;
   git_head: string | null;
   matches_desired_generation: boolean;
+  artifact_kind?: string;
+  version?: string;
+  wheel_sha256?: string;
+  release_dir?: string;
 }
 
 export interface ServiceIdentityInfo {
@@ -337,8 +344,12 @@ export interface ServiceIdentityInfo {
 
 export interface DesiredDeploymentInfo {
   generation: number;
-  git_head: string;
-  code_root: string;
+  git_head?: string;
+  code_root?: string;
+  artifact_kind?: string;
+  version?: string;
+  wheel_sha256?: string;
+  release_dir?: string;
   runtime_root: string;
   deployment_id: string;
   webui_artifact_sha256: string;

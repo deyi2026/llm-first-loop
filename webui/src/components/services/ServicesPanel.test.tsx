@@ -63,4 +63,39 @@ describe("ServicesPanel distinguishes live identity from stable receipt", () => 
     await waitFor(() => expect(within(card).getByText(/尚无成功重启回执/)).toBeInTheDocument());
     expect(within(card).queryByText(/✓ 稳定回执已追平 desired/)).not.toBeInTheDocument();
   });
+
+  it("shows wheel identities for all three services without claiming a Git revision", async () => {
+    const data = fakeStatus({ stableGen: 319 });
+    data.deployment = { generation: 319, runtime_root: "/lfl", deployment_id: "wheel-deploy",
+      artifact_kind: "wheel_release", version: "0.6.42", wheel_sha256: "abcdef012345".repeat(5) + "abcd",
+      release_dir: "/lfl/releases/LFL-0.6.42", webui_artifact_sha256: "hash" };
+    const service = data.services.feishu;
+    service.live = { manifest_present: true, pid: 123, release_version: "0.6.42",
+      wheel_sha256: data.deployment.wheel_sha256, git_head: "unknown" };
+    service.stable = { action_id: "actual-success", target: "all", generation: 319,
+      succeeded_at: "2026-11-08T11:44:36Z", git_head: null, matches_desired_generation: true,
+      artifact_kind: "wheel_release", version: "0.6.42", wheel_sha256: data.deployment.wheel_sha256 };
+    data.services = { web: service, feishu: service, learning: service };
+    vi.mocked(fetchServicesStatus).mockResolvedValue(data);
+    render(<ServicesPanel />);
+    for (const name of ["web", "feishu", "learning"]) {
+      const card = await screen.findByTestId("service-card-" + name);
+      expect(within(card).getAllByText(/wheel 0.6.42 · SHA abcdef012345/).length).toBeGreaterThan(0);
+      expect(within(card).queryByText(/unknown/)).not.toBeInTheDocument();
+    }
+  });
+
+  it("renders server clock independently of browser timezone", async () => {
+    const offset = vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480);
+    try {
+      const data = fakeStatus();
+      data.services.feishu.live.started_at = "2026-11-08T11:44:36Z";
+      vi.mocked(fetchServicesStatus).mockResolvedValue(data);
+      render(<ServicesPanel />);
+      const card = await screen.findByTestId("service-card-feishu");
+      expect(within(card).getByText(/19:44:36/)).toBeInTheDocument();
+    } finally {
+      offset.mockRestore();
+    }
+  });
 });

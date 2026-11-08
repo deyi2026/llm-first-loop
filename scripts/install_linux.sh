@@ -21,6 +21,7 @@ Options:
   --version VERSION                 Install a published stable release; use an installed version offline.
   --candidate FILE --expected-sha256 SHA256
                                     Install a local wheel after verifying its exact SHA-256.
+  --no-start                        Prepare units without restarting or enabling services.
   --rollback                        Switch back to the previous retained release, without network access.
   -h, --help                        Show this help.
 EOF
@@ -36,6 +37,7 @@ valid_version() {
 }
 
 MODE="latest"
+NO_START="0"
 REQUESTED_VERSION=""
 CANDIDATE=""
 EXPECTED_SHA=""
@@ -59,6 +61,10 @@ while (($#)); do
       (($# >= 2)) || die "--expected-sha256 requires a SHA-256 digest"
       EXPECTED_SHA="$2"
       shift 2
+      ;;
+    --no-start)
+      NO_START="1"
+      shift
       ;;
     --rollback)
       [[ "$MODE" == "latest" && -z "$CANDIDATE" ]] || die "--rollback cannot be combined with an install mode"
@@ -477,6 +483,8 @@ install_system_units() {
   # LFL_HOME/bin/lfl-service。systemd --user 不可用时跳过 units（不视为安装失败）；
   # 生成后由 Python 侧 systemd-analyze --user verify 校验，失败即 fail-closed。
   local output
+  local start_args=()
+  [[ "$NO_START" != "1" ]] || start_args=(--no-start)
   command -v systemctl >/dev/null 2>&1 || {
     printf 'LFL installer: systemctl not found; skipping systemd user units.\n'
     return 0
@@ -487,7 +495,7 @@ install_system_units() {
   }
   output="$(env LFL_HOME="$ROOT" PYTHONNOUSERSITE=1 \
     "$RELEASE_DIR/venv/bin/python" -m llm_loop.runtime.installation \
-    install-units --lfl-home "$ROOT" --home "$HOME" 2>&1)" \
+    install-units --lfl-home "$ROOT" --home "$HOME" "${start_args[@]}" 2>&1)" \
     || die "systemd user unit installation failed: $output"
   printf '%s\n' "$output"
 }

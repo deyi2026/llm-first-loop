@@ -16,6 +16,8 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.wheel_identity import installed_build_identity
+
 _GIT_TIMEOUT_S = 5
 
 
@@ -52,6 +54,9 @@ def compute_build_identity(workspace_root: str | Path) -> dict[str, Any]:
     already has separate manifest/config hashes.
     """
 
+    installed = installed_build_identity()
+    if installed is not None:
+        return installed
     workspace = Path(workspace_root).expanduser().resolve()
     release_version = _release_version(workspace)
     expected_release_tag = f"v{release_version}" if release_version else ""

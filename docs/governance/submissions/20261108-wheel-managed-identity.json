@@ -1,0 +1,160 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261108-wheel-managed-identity",
+  "summary": "Integrate diverged local and remote main without reverting existing peer protections, then close wheel Web/Feishu/Learning desired/live/stable with exact installed identity and independent worker lifecycle.",
+  "components": [
+    {
+      "component_id": "wheel-runtime-and-lifecycle",
+      "paths": [
+        "scripts/install_linux.sh",
+        "src/llm_loop/runtime/build_identity.py",
+        "src/llm_loop/runtime/installation.py",
+        "src/llm_loop/runtime/package_identity.py",
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/runtime/wheel_identity.py",
+        "src/llm_loop/runtime/wheel_service.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "runtime managed deployment",
+      "disposition": "reuse existing wheel identity and lifecycle state machine; preserve source deployment",
+      "evidence": [
+        "tests/unit/test_service_control_wheel_identity.py",
+        "tests/unit/test_wheel_runtime_identity.py",
+        "tests/unit/test_wheel_service_backend.py",
+        "webui/src/components/services/ServicesPanel.test.tsx"
+      ],
+      "verification_level": "targeted regression passed; independent GLM-5.3 and original full R9 required before production",
+      "model_evidence_veto_recovery_exit": "Existing service_control action logs, barriers, explicit operator release/adopt and retained release rollback remain available. No model semantic policy added.",
+      "rollback_route": "Retain the previous wheel release, config/unit backups and original data; restore via controlled deployment and verify actual processes.",
+      "declaration_id": "wheel-mechanical-identity"
+    },
+    {
+      "component_id": "release-ui-tests-and-documentation",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "docs/governance/submissions/20261108-wheel-managed-identity.json",
+        "docs/installation.md",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py",
+        "tests/unit/test_managed_service_control_p0a.py",
+        "tests/unit/test_release_sidecar.py",
+        "tests/unit/test_service_control_wheel_identity.py",
+        "tests/unit/test_wheel_runtime_identity.py",
+        "tests/unit/test_wheel_service_backend.py",
+        "uv.lock",
+        "webui/src/components/services/ServicesPanel.test.tsx",
+        "webui/src/components/services/ServicesPanel.tsx",
+        "webui/src/core/api.ts",
+        "src/llm_loop/factory.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "release and service identity presentation",
+      "disposition": "reuse existing wheel identity and lifecycle state machine; preserve source deployment",
+      "evidence": [
+        "tests/unit/test_service_control_wheel_identity.py",
+        "tests/unit/test_wheel_runtime_identity.py",
+        "tests/unit/test_wheel_service_backend.py",
+        "webui/src/components/services/ServicesPanel.test.tsx"
+      ],
+      "verification_level": "targeted regression passed; independent GLM-5.3 and original full R9 required before production",
+      "model_evidence_veto_recovery_exit": "Existing service_control action logs, barriers, explicit operator release/adopt and retained release rollback remain available. No model semantic policy added.",
+      "rollback_route": "Retain the previous wheel release, config/unit backups and original data; restore via controlled deployment and verify actual processes."
+    },
+    {
+      "component_id": "preserved-peer-integration",
+      "paths": [
+        "docs/DESIGN-20261108-peer-supervision-channel.md",
+        "docs/governance/receipts/merge_GOAL-20261107-3f142c52_T9_v1.md",
+        "docs/governance/receipts/merge_GOAL-20261107-3f142c52_T9c_v1.md",
+        "docs/peer-implementation-brief.md",
+        "scripts/peer_serve.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/peer/executor.py",
+        "src/llm_loop/peer/models.py",
+        "src/llm_loop/peer/policy.py",
+        "src/llm_loop/peer/service.py",
+        "src/llm_loop/peer/store.py",
+        "src/llm_loop/peer/write_gate.py",
+        "src/llm_loop/web/__init__.py",
+        "tests/peer/test_peer_executor.py",
+        "tests/peer/test_peer_service.py",
+        "tests/peer/test_peer_store.py",
+        "tests/peer/test_peer_write_gate.py",
+        "tests/peer/test_peer_routes.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "preserved-peer-integration",
+      "owning_subsystem": "existing peer service integration",
+      "disposition": "merge existing upstream implementations; preserve remote D15 bind guard, enabled-kind admission, effect-id claim and requester-keyed authentication together with local slot quota and write-root gate; do not activate new peer kinds",
+      "evidence": [
+        "tests/peer/test_peer_service.py",
+        "tests/peer/test_peer_store.py",
+        "tests/peer/test_peer_write_gate.py",
+        "tests/peer/test_peer_routes.py"
+      ],
+      "verification_level": "focused merge regression and independent complete-candidate review plus unchanged R9 required",
+      "model_evidence_veto_recovery_exit": "Existing peer receipts/reason codes, operator configured enabled kinds, lease revoke and disabled-by-default supervision stay authoritative. Merge does not remove those controls.",
+      "rollback_route": "Keep both source parent commits; no peer data migration or feature activation. Controlled wheel rollback retains original application data."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "wheel-mechanical-identity",
+      "g1": {
+        "necessity": "Only the process can attest its actual distribution, interpreter and installed bytes. A model cannot make a child survive the Linux service cgroup being stopped; the fixed systemd transient unit supplies that physical separation."
+      },
+      "g2": {
+        "authority_owner": "Existing ManagedServiceDeploymentStore, installer release checksum and systemd user manager.",
+        "relationship": "reuse",
+        "non_duplication": "Use existing CAS, barriers, worker, verification and receipt states; add a wheel physical adapter instead of a second controller."
+      },
+      "g3": {
+        "model_evidence": [
+          "Desired includes exact version, digest and release directory.",
+          "Live startup records verified distribution and installed bytes; mismatches are visible.",
+          "Workers retain real physical exit and per-service verification evidence."
+        ],
+        "recovery_or_reason": "Caller retains restart choice and existing operator barrier release/adopt and retained release rollback. Unit preparation can use --no-start."
+      },
+      "g4": {
+        "rollback": "Retain previous release/data/config/unit backups; restore actual services before considering recovery complete.",
+        "verification": [
+          "Four new regressions fail against the original candidate.",
+          "56 backend regressions and 6 UI cases passed, including all three service SHA mismatch inputs.",
+          "Independent GLM-5.3 PASS and unchanged full R9 exit 0 required before production.",
+          "Production must show three actual wheel processes, matching manifest identity and real succeeded stable receipt.",
+          "Before closing the migration window, explicitly enable recovery and all three user units without --now, verify each is enabled, and require Linger=yes for unattended boot."
+        ]
+      }
+    },
+    {
+      "declaration_id": "preserved-peer-integration",
+      "g1": {
+        "necessity": "Merge conflict resolution must retain the existing physical safety properties from both committed branches: no plaintext LAN mount, server-side enabled-kind boundary, atomic effect claim, requester-keyed auth, lock-local quota and sealed write root."
+      },
+      "g2": {
+        "authority_owner": "Existing PeerService, PeerStore, registry and operator configuration.",
+        "relationship": "reuse",
+        "non_duplication": "No replacement policy or second peer executor; combine already implemented guards from both branches."
+      },
+      "g3": {
+        "model_evidence": [
+          "Both source branch histories are preserved in the merge ancestry.",
+          "Original remote guard regression tests and local quota/write-root tests remain present.",
+          "Any admission denial retains the existing structured reason and receipt."
+        ],
+        "recovery_or_reason": "Operator can retain peer disabled or revoke grants; fs.write remains unadvertised and supervised admission remains disabled."
+      },
+      "g4": {
+        "rollback": "Retain both parent commits and the original production release/data; merge does not migrate peer data.",
+        "verification": [
+          "Run the union of tests/peer and wheel identity regressions, including the original four disputed guard cases.",
+          "Independent reviewer checks all staged paths and seven conflict files before the original complete R9.",
+          "Production acceptance remains confined to Web/Feishu/Learning wheel processes and their unchanged model profiles."
+        ]
+      }
+    }
+  ]
+}

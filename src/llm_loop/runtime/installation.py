@@ -7,8 +7,10 @@ import json
 import re
 import shlex
 from collections.abc import Mapping
-from importlib.metadata import PackageNotFoundError, distribution
+from importlib.metadata import distribution
 from pathlib import Path
+
+from llm_loop.runtime.package_identity import installed_identity as distribution_identity
 
 
 def bundle_root() -> Path | None:
@@ -17,26 +19,11 @@ def bundle_root() -> Path | None:
 
 
 def installed_identity(module: Path) -> dict[str, str] | None:
-    """Recognize a distribution-owned package, never a relocated source checkout."""
+    """Preserve the installer API while package facts stay lifecycle-independent."""
     root = bundle_root()
     if root is None:
         return None
-    try:
-        dist = distribution("llm-first-loop")
-        owned_module = Path(str(dist.locate_file("llm_loop/__init__.py"))).resolve()
-        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-        listed = {str(f) for f in dist.files or ()}
-        if (
-            module.resolve() != owned_module
-            or "llm_loop/_bundled/manifest.json" not in listed
-            or manifest.get("schema") != "lfl.application-bundle/v1"
-            or manifest.get("version") != dist.version
-        ):
-            return None
-        return {"name": "llm-first-loop", "version": dist.version,
-                "package_root": str(owned_module.parent)}
-    except (PackageNotFoundError, OSError, ValueError, AttributeError):
-        return None
+    return distribution_identity(module, bundle=root, distribution_resolver=distribution)
 
 
 def rules_doc_candidates(name: str) -> tuple[Path, ...]:
@@ -621,6 +608,7 @@ def install_service_units(
     home: str | Path | None = None,
     runner=None,
     env: Mapping[str, str] | None = None,
+    start_services: bool = True,
 ) -> dict:
     """安装三服务 unit 与 lfl-service 启动器，返回安装回执。
 
@@ -694,7 +682,7 @@ def install_service_units(
         _restore_unit_files(unit_path, original)
         raise UnitInstallError(f"systemctl --user daemon-reload failed: {detail}")
 
-    for name in unit_texts:
+    for name in unit_texts if start_services else ():
         if changed[name] and original[name][0] is not None:
             ok, detail = run_checked(["systemctl", "--user", "try-restart", name])
             if not ok:
@@ -705,7 +693,7 @@ def install_service_units(
     # recovery 门先启用（业务单元 Wants= 它；启动顺序由 Before/After 保证）。
     enable_order = [_RECOVERY_UNIT_NAME, *_MANAGED_UNIT_NAMES.values()]
     enabled: list[str] = []
-    for name in enable_order:
+    for name in enable_order if start_services else ():
         ok, detail = run_checked(["systemctl", "--user", "enable", "--now", name])
         if ok:
             enabled.append(name)
@@ -719,6 +707,7 @@ def install_service_units(
         "launcher": str(launchers["lfl-service"]),
         "recovery_launcher": str(launchers["lfl-recovery"]),
         "enabled": enabled,
+        "start_services": start_services,
         "failures": failures,
         "units": {
             name: {
@@ -744,6 +733,7 @@ def _install_units_main(argv: list[str] | None = None) -> int:
     p_install = sub.add_parser("install-units", help="install managed systemd user units")
     p_install.add_argument("--lfl-home", default=None)
     p_install.add_argument("--home", default=None)
+    p_install.add_argument("--no-start", action="store_true", help="install and verify units without restarting or enabling services")
     args = parser.parse_args(argv)
 
     lfl_home = Path(args.lfl_home or "")
@@ -751,7 +741,7 @@ def _install_units_main(argv: list[str] | None = None) -> int:
         # one-way ratchet：不直取进程环境；安装器 shell 已显式传 --lfl-home。
         parser.error("install-units requires --lfl-home")
     home = Path(args.home) if args.home else Path(_os.path.expanduser("~"))
-    receipt = install_service_units(lfl_home, home=home)
+    receipt = install_service_units(lfl_home, home=home, start_services=not args.no_start)
     print(_json.dumps(receipt, ensure_ascii=False, indent=2))
     # 审查 P2-1：enable/try-restart 部分失败（partial_failed）必须以非零退出，
     # 安装器（install_linux.sh）的 `|| die` 才能感知并停在可诊断状态。

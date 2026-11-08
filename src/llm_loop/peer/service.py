@@ -23,6 +23,7 @@ import hashlib
 import json
 import shutil
 import uuid
+from datetime import datetime
 from typing import Any
 
 from .admission import AdmissionStore
@@ -30,7 +31,15 @@ from .artifacts import ArtifactStore
 from .errors import PeerError
 from .executor import ExecOutcome, Executor
 from .kinds import get_kind, manifest_kinds
-from .models import AdmissionRecord, GrantRecord, TaskRecord, iso, now_local
+from .models import (
+    SLOT_STATES,
+    AdmissionRecord,
+    GrantRecord,
+    TaskRecord,
+    iso,
+    now_local,
+    parse_ts,
+)
 from .policy import evaluate
 from .suggestions import REASON_SUGGESTIONS
 
@@ -73,11 +82,14 @@ class PeerService:
         max_concurrency: int = 1,
         audit_watermark_pct: int = 90,
         enabled_kinds: set[str] | None = None,
+        write_root: str | None = None,
         clock: Any = now_local,
     ) -> None:
         self._store = store
         self._admissions = admissions
-        self._executor = Executor(artifacts=artifacts, node_id=node_id)
+        self._executor = Executor(
+            artifacts=artifacts, node_id=node_id, write_root=write_root
+        )
         self._artifacts = artifacts
         self._node_id = node_id
         self._display_name = display_name
@@ -165,7 +177,9 @@ class PeerService:
                 return self.receipt(replay)
             raise PeerError("idempotency_conflict", f"effect_id reused: {shape['effect_id']}")
 
-        return self._submit_new(shape, digest, requested_by=requested_by or shape.get("requested_by"))
+        # requested_by 只认认证层注入值：payload 同名字段可由调用方任意填写
+        # （docs/peer-implementation-brief.md §身份），回退到它等于让控制端身份可伪造。
+        return self._submit_new(shape, digest, requested_by=requested_by)
 
     def _submit_new(
         self, shape: dict[str, Any], digest: str, *, requested_by: str | None
@@ -234,20 +248,25 @@ class PeerService:
             return self._deny(
                 task, grant, PeerError("executor_unhealthy", "executor health=degraded")
             )
-        running = self._running_count()
+        slots = self._slot_count()
         try:
             evaluate(
                 kind=shape["kind"],
                 params=shape["params"],
                 grant=grant,
                 supervised=False,
-                running_tasks=running,
+                running_tasks=slots,
                 now=self._clock(),
             )
         except PeerError as exc:
             return self._deny(task, grant, exc)
 
-        self._store.put_task(task)
+        try:
+            # 上面的 evaluate 只是快速失败；配额最终裁决在落盘临界区内复查，
+            # 否则两个并发提交会同时读到 running=0 都通过。
+            self._store.put_task(task, max_running=grant.max_concurrency)
+        except PeerError as exc:
+            return self._deny(task, grant, exc)
         try:
             admission = self._write_admission(
                 AdmissionRecord(
@@ -422,9 +441,9 @@ class PeerService:
             updated, expected_state=task.state, allow_terminal_rewrite=allow_terminal_rewrite
         )
 
-    def _running_count(self) -> int:
+    def _slot_count(self) -> int:
         total = 0
-        for state in ("admitted", "queued", "running"):
+        for state in SLOT_STATES:
             total += len(self._store.list_tasks(node_id=self._node_id, state=state, limit=10_000))
         return total
 
@@ -432,8 +451,9 @@ class PeerService:
     def recover_interrupted(self) -> list[TaskRecord]:
         """重启恢复：把上次进程留下的中间态收敛到可解释状态，**绝不自动重跑**。
 
-        - ``admitted`` / ``queued``：动作尚未开始（``_execute`` 只在 ``running`` 之后调用），
-          收敛为 ``failed/crashed``，额度不回滚。
+        - ``submitted`` / ``admitted`` / ``queued``：动作尚未开始（``_execute`` 只在 ``running`` 之后调用），
+          收敛为 ``failed/crashed``，额度不回滚。``submitted`` 也占并发名额（见 ``SLOT_STATES``），
+          不收敛就会永久吃掉一个槽位。
         - ``running``：幂等只读 kind → ``failed/crashed``；非幂等 → ``unknown_outcome``
           （可能已产生部分副作用，既不能声称失败，也不能声称成功）。
 
@@ -441,7 +461,7 @@ class PeerService:
         （``scripts/peer_serve.py`` / ``web`` 挂载），不在请求路径上。
         """
         recovered: list[TaskRecord] = []
-        for state in ("admitted", "queued", "running"):
+        for state in ("submitted", "admitted", "queued", "running"):
             for task in self._store.list_tasks(node_id=self._node_id, state=state, limit=10_000):
                 if state == "running" and task.idempotency_class != "idempotent":
                     recovered.append(self._transition(task, "unknown_outcome", reason_code="crashed"))
@@ -464,16 +484,25 @@ class PeerService:
             if revoked:
                 raise PeerError("grant_revoked", f"grant revoked for {self._node_id}")
             raise PeerError("grant_not_found", f"no active grant for {self._node_id}")
-        # 独立审查第 4 轮 P1-1（2026-11-08）：续约流程（G4/D10）保留旧租约、
-        # 新建 active 租约——按最早 expires_at 全量排序会把保留的 exhausted/
-        # 早期租约永远排在前面，续约后所有调度恒 grant_exhausted 拒绝。
-        # 修正：仍有额度的 active 租约绝对优先（同层内最早到期）；退而求
-        # 其次是额度耗尽的 active/exhausted（让闸2 产生具体拒绝码）。
-        active = [g for g in usable if g.state == "active"]
-        with_quota = [g for g in active if g.tasks_used < g.max_tasks_total]
-        pool = with_quota or active or usable
+        # 多张租约时优先"真能用"的：撤销/过期/用尽仍留在 usable 里，只为 denied 原因可解释。
+        # 若把它们排在可执行租约之前，会出现"明明有额度却报 grant_exhausted/expired"。
+        live = [g for g in usable if self._selectable(g, self._clock())]
+        pool = live or usable
         pool.sort(key=lambda g: g.expires_at)
         return pool[0]
+
+    @staticmethod
+    def _selectable(grant: GrantRecord, now: datetime) -> bool:
+        """能否被优先选中：未撤销、未过期、额度未用尽；时间戳不可解析按不可用处理。"""
+        if grant.state != "active" or grant.revoked_at or not grant.expires_at:
+            return False
+        try:
+            expires_at = parse_ts(grant.expires_at)
+        except ValueError:
+            return False
+        if expires_at <= now:
+            return False
+        return grant.tasks_used < grant.max_tasks_total
 
     def active_grant(self) -> GrantRecord | None:
         try:

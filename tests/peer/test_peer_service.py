@@ -10,7 +10,7 @@ import pytest
 from llm_loop.peer.admission import AdmissionStore
 from llm_loop.peer.artifacts import ArtifactStore
 from llm_loop.peer.errors import PeerError
-from llm_loop.peer.models import GrantRecord, iso, now_local
+from llm_loop.peer.models import GrantRecord, TaskRecord, iso, now_local
 from llm_loop.peer.service import PeerService
 from llm_loop.peer.store import PeerStore
 
@@ -394,3 +394,77 @@ def test_submit_rejects_kind_not_enabled_and_uppercase_effect(env):
         enabled_kinds={"fs.read"},
     )
     assert shape_ok["effect_id"] == "eff_lower0002"
+
+
+def test_payload_requested_by_cannot_forge_identity(env):
+    """payload 同名字段可伪造：认证层未注入时必须为 null，注入后才写成注入值。"""
+    service, store, allowed, _tmp = env
+    store.issue_grant(make_grant(allowed))
+    (allowed / "a.txt").write_text("x")
+
+    forged = submit_payload(allowed)
+    forged["requested_by"] = "forged-node"
+    receipt = service.submit(forged)
+    assert receipt["state"] == "succeeded"
+    assert store.get_task(receipt["task_id"]).requested_by is None
+
+    receipt = service.submit(submit_payload(allowed, effect_id="eff_00000002"), requested_by="node-auth")
+    assert store.get_task(receipt["task_id"]).requested_by == "node-auth"
+
+
+def test_exhausted_or_expired_grant_does_not_shadow_usable_one(env):
+    """按最早过期挑租约时，耗尽/过期项会挡在可用项前面：必须优先挑真能用的。"""
+    service, store, allowed, _tmp = env
+    (allowed / "a.txt").write_text("x")
+    store.issue_grant(
+        make_grant(
+            allowed,
+            grant_id="gr_EXPIRED00001",
+            expires_at=iso(now_local() - timedelta(hours=1)),
+        )
+    )
+    store.issue_grant(
+        make_grant(
+            allowed,
+            grant_id="gr_USABLE00001",
+            expires_at=iso(now_local() + timedelta(hours=2)),
+        )
+    )
+    store.issue_grant(
+        make_grant(
+            allowed,
+            grant_id="gr_USEDUP000001",
+            expires_at=iso(now_local() + timedelta(minutes=5)),
+            max_tasks_total=3,
+            tasks_used=3,
+        )
+    )
+    receipt = service.submit(submit_payload(allowed))
+    assert receipt["state"] == "succeeded"
+    assert receipt["grant_id"] == "gr_USABLE00001"
+
+
+def test_recover_interrupted_releases_orphan_submitted_slot(env):
+    """提交后崩溃留下的 submitted 占着并发名额：启动恢复必须把它收敛掉。"""
+    service, store, allowed, _tmp = env
+    store.put_task(
+        TaskRecord(
+            task_id="task_orphan01",
+            effect_id="eff_orphan01",
+            node_id="deepin-01",
+            kind="fs.read",
+            params={"path": str(allowed / "a.txt")},
+            expect=("stdout",),
+            deadline_s=30,
+            state="submitted",
+            idempotency_class="idempotent",
+            supervised_only=False,
+            created_at=iso(now_local()),
+            updated_at=iso(now_local()),
+        )
+    )
+    recovered = service.recover_interrupted()
+    assert [task.task_id for task in recovered] == ["task_orphan01"]
+    orphan = store.get_task("task_orphan01")
+    assert orphan.state == "failed" and orphan.reason_code == "crashed"
+    assert service._slot_count() == 0

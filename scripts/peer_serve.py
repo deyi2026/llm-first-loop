@@ -37,6 +37,7 @@ def build_app(
     data_dir: Path,
     node_id: str,
     display_name: str | None,
+    write_root: str | None = None,
     display_protocol: str = "none",
     audit_watermark_pct: int = 90,
     max_concurrency: int = 1,
@@ -67,8 +68,18 @@ def build_app(
         audit_watermark_pct=audit_watermark_pct,
         max_concurrency=max_concurrency,
         enabled_kinds=enabled_kinds,
+        write_root=write_root,
         health=health,
     )
+    if recover:
+        recovered = service.recover_interrupted()
+        if recovered:
+            print(
+                f"[peer] 恢复中断任务 {len(recovered)} 条：" + ", ".join(
+                    f"{t.task_id}={t.state}({t.reason_code})" for t in recovered
+                ),
+                file=sys.stderr,
+            )
     def _secret_for(candidate: str):
         # P1-2（2026-11-08）：与主 app _mount_peer_routes._secret_for 同构——
         # 按请求方（controller）node id 解 secrets/<candidate>.key。
@@ -120,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="逗号分隔的 kind 白名单；缺省用注册表 default_enabled",
     )
+    parser.add_argument(
+        "--write-root",
+        default=None,
+        help="闸4 写域根（绝对路径）；缺省=远程写全拒",
+    )
     args = parser.parse_args(argv)
 
     # D15（独立审查第 4 轮 P1，2026-11-08）：与主 app _mount_peer_routes 同一
@@ -146,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         audit_watermark_pct=args.audit_watermark_pct,
         max_concurrency=args.max_concurrency,
         enabled_kinds=enabled,
+        write_root=args.write_root,
         health=args.health,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

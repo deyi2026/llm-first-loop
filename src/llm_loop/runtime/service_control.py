@@ -49,11 +49,13 @@ from llm_loop.runtime.admission_barrier import (
     BarrierConflictError,
 )
 from llm_loop.runtime.learning_idle import learning_busy_reason
+from llm_loop.runtime.package_identity import installed_identity
 from llm_loop.runtime.service_control_derivation import (
     RestartTargetDerivation,
     derive_restart_target,
 )
 from llm_loop.runtime.webui_provenance import verify_webui_source_binding
+from llm_loop.runtime.wheel_identity import manifest_identity_problems, read_release_identity
 from llm_loop.timekeeping import system_local_now
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
@@ -2402,6 +2404,9 @@ def _receipt_stable_view(
         "verify_verdict": receipt.verify_verdict,
         "verify_evidence": receipt.verify_evidence[:240],
     }
+    if matches and deployment and _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+        stable.update({"artifact_kind": _ARTIFACT_KIND_WHEEL, "version": deployment.version,
+                       "wheel_sha256": deployment.wheel_sha256, "release_dir": deployment.release_dir})
     if deployment is not None and receipt.deployment_generation < deployment.generation:
         # R3①降级/R6: live 健康而回执落后只作完整性事实展示（直连
         # 重启是合法无回执路径），不进 restart_required。
@@ -2428,6 +2433,7 @@ def _live_service_identity(
     git_head；推断显式标注 inferred，并列原始证据）。
     """
     live: dict[str, Any] = {"manifest_present": manifest_path.is_file()}
+    raw: dict[str, Any] = {}
     if live["manifest_present"]:
         try:
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2442,6 +2448,8 @@ def _live_service_identity(
                     # P1-1（审查 b7691f4e）：wheel 比对键的扁平镜像，
                     # 与 _verify_restart_targets 同源于 _manifest_release_version。
                     "release_version": _manifest_release_version(raw),
+                    "wheel_sha256": (raw.get("build_identity") or {}).get("wheel_sha256", ""),
+                    "release_dir": (raw.get("build_identity") or {}).get("release_dir", ""),
                     "model_ref": raw.get("model_ref"),
                     "provider_id": raw.get("provider_id"),
                     "config_hash": raw.get("config_hash"),
@@ -2479,11 +2487,15 @@ def _live_service_identity(
         # source checkout（v1/v2）仍比对精确 git_head。
         if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
             live_release = str(live.get("release_version") or "")
-            identity_matches = bool(live_release) and live_release == deployment.version
+            identity_matches = not manifest_identity_problems(raw, deployment)
             desired_evidence: dict[str, Any] = {
                 "artifact_kind": _ARTIFACT_KIND_WHEEL,
                 "desired_version": deployment.version,
                 "live_release_version": live_release,
+                "desired_wheel_sha256": deployment.wheel_sha256,
+                "live_wheel_sha256": live.get("wheel_sha256", ""),
+                "desired_release_dir": deployment.release_dir,
+                "live_release_dir": live.get("release_dir", ""),
             }
         else:
             identity_matches = str(live.get("git_head") or "") == deployment.git_head
@@ -2562,15 +2574,8 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             if live.get("pid") and not live.get("pid_alive"):
                 reasons.append("live_pid_not_running")
             if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
-                # §3.2：wheel 身份没有 git_head——比对 release_version（单一实现源）。
-                live_release = str(live.get("release_version") or "")
-                if not live_release:
-                    reasons.append("live_release_version_missing")
-                elif live_release != deployment.version:
-                    reasons.append(
-                        f"live_release_version_mismatch "
-                        f"live={live_release} desired={deployment.version}"
-                    )
+                raw = _read_runtime_manifest(store, service) or {}
+                reasons.extend("live_" + reason for reason in manifest_identity_problems(raw, deployment))
             else:
                 live_head = str(live.get("git_head") or "")
                 if not live_head:
@@ -3486,6 +3491,11 @@ def _control_subprocess_env(
         "LFL_RUNTIME_ROOT": runtime_root,
         "PYTHONPATH": str(resolved_python_src),
     }
+    # systemctl --user must reach the account's own manager, without inheriting business env.
+    user_runtime = Path("/run/user") / str(os.getuid())
+    if user_runtime.is_dir() and not user_runtime.is_symlink() and user_runtime.stat().st_uid == os.getuid():
+        env["XDG_RUNTIME_DIR"] = str(user_runtime)
+        env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + str(user_runtime / "bus")
     if extra:
         env.update({str(key): str(value) for key, value in extra.items()})
     return env
@@ -3520,6 +3530,17 @@ def build_restart_plan(
         raise DeploymentGenerationConflictError("action deployment_id no longer matches desired deployment")
     if action.deployment_generation != deployment.generation:
         raise DeploymentGenerationConflictError("action deployment generation is stale")
+    if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+        if action.target not in {"web", "feishu", "learning", "all"}:
+            raise ValueError("wheel restart supports web, feishu, learning, all")
+        return RestartPlan(
+            argv=(str(Path(deployment.release_dir) / "venv/bin/python"), "-m",
+                  "llm_loop.runtime.wheel_service", "--lfl-home", deployment.runtime_root,
+                  "--target", action.target),
+            cwd=deployment.runtime_root,
+            env={"LFL_RESTART_CODE_ROOT": "", "LFL_RESTART_RUNTIME_ROOT": deployment.runtime_root,
+                 "LFL_RESTART_ACTION_ID": action.action_id, "PYTHONPATH": ""},
+        )
     script = Path(deployment.code_root) / "scripts" / "restart_mirror.sh"
     return RestartPlan(
         argv=("/bin/bash", str(script), action.target),
@@ -3541,6 +3562,12 @@ def build_restart_plan(
     )
 
 
+def _controller_python_src() -> Path:
+    module = Path(__file__).resolve().parents[1] / "__init__.py"
+    installed = installed_identity(module)
+    return Path(installed["package_root"]).parent if installed else _control_code_root() / "src"
+
+
 def spawn_service_control_worker(store: ManagedServiceDeploymentStore, action_id: str) -> None:
     action = store.read_action(action_id)
     deployment = store.read()
@@ -3552,8 +3579,19 @@ def spawn_service_control_worker(store: ManagedServiceDeploymentStore, action_id
     env = _control_subprocess_env(
         code_root=deployment.code_root,
         runtime_root=deployment.runtime_root,
-        python_src=_control_code_root() / "src",
+        python_src=_controller_python_src(),
     )
+    if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+        argv = ["systemd-run", "--user", "--collect", "--quiet",
+                "--unit=lfl-control-" + action_id, "--property=Type=exec",
+                "--property=StandardOutput=append:" + str(log_path),
+                "--property=StandardError=inherit", "/usr/bin/env", "-i",
+                *(key + "=" + value for key, value in env.items()),
+                sys.executable, "-m", "llm_loop.runtime.service_control", "worker",
+                "--data-dir", str(store.data_dir), "--action-id", action_id]
+        subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                       check=True, timeout=30)
+        return
     stream = log_path.open("a", encoding="utf-8")
     try:
         subprocess.Popen(  # noqa: S603 - fixed argv, no shell
@@ -4173,16 +4211,7 @@ def _verify_restart_targets(
             if not _pid_alive(pid):
                 problems.append(f"pid_dead:{pid or 0}")
             if deployment is not None and _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
-                # §3.2：wheel 验收比对 manifest build_identity.release_version
-                # （单一实现源 _manifest_release_version，与 compose 视图同键）。
-                live_release = _manifest_release_version(raw)
-                if not live_release:
-                    problems.append("release_version_missing")
-                elif live_release != deployment.version:
-                    problems.append(
-                        f"release_version_mismatch live={live_release} "
-                        f"desired={deployment.version}"
-                    )
+                problems.extend(manifest_identity_problems(raw, deployment))
             else:
                 if not head:
                     problems.append("git_head_missing")
@@ -5254,7 +5283,7 @@ def build_wheel_deployment(
     lfl_home: str | Path,
     *,
     data_dir: str | Path | None = None,
-    webui_artifact_sha256: str,
+    webui_artifact_sha256: str | None = None,
     generation: int,
     deployment_id: str | None = None,
 ) -> ManagedServiceDeployment:
@@ -5279,34 +5308,12 @@ def build_wheel_deployment(
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError(f"active-version pointer is invalid: {version!r}")
     release_dir = home / "releases" / f"LFL-{version}"
-    if release_dir.is_symlink() or not release_dir.is_dir():
-        raise ValueError(f"release directory missing or unsafe: {release_dir}")
-    if (release_dir / ".installer-incomplete").exists():
-        raise ValueError(f"release {version} is marked incomplete; refusing identity")
-    manifest = release_dir / ".installer-wheel.sha256"
-    if manifest.is_symlink() or not manifest.is_file():
-        raise ValueError(f"release {version} lacks its wheel integrity record")
-    lines = [
-        line
-        for line in manifest.read_text(encoding="ascii").splitlines()
-        if line.strip()
-    ]
-    wheel_name = f"llm_first_loop-{version}-py3-none-any.whl"
-    if len(lines) != 1:
-        raise ValueError("wheel manifest must list exactly one file")
-    parts = lines[0].split()
-    if len(parts) != 2 or parts[1] != wheel_name:
-        raise ValueError(f"wheel manifest names an unexpected file: {lines[0]!r}")
-    recorded_sha = parts[0].lower()
-    wheel_file = release_dir / wheel_name
-    if wheel_file.is_symlink() or not wheel_file.is_file():
-        raise ValueError(f"release wheel file missing: {wheel_name}")
-    actual_sha = hashlib.sha256(wheel_file.read_bytes()).hexdigest()
-    if actual_sha != recorded_sha:
-        raise ValueError(
-            f"release {version} wheel checksum mismatch "
-            f"(recorded={recorded_sha[:12]} actual={actual_sha[:12]})"
-        )
+    identity = read_release_identity(release_dir)
+    if webui_artifact_sha256 is None:
+        dist = _wheel_release_webui_dist(release_dir)
+        if dist is None:
+            raise ValueError("wheel WebUI artifact unavailable")
+        webui_artifact_sha256 = _tree_sha256(dist)
     resolved_data = (
         Path(str(data_dir)).expanduser().resolve()
         if data_dir is not None
@@ -5323,8 +5330,8 @@ def build_wheel_deployment(
         data_dir=str(resolved_data),
         webui_artifact_sha256=webui_artifact_sha256,
         version=version,
-        wheel_sha256=actual_sha,
-        release_dir=str(release_dir),
+        wheel_sha256=identity["wheel_sha256"],
+        release_dir=identity["release_dir"],
     )
 
 
@@ -5338,10 +5345,24 @@ def _missing_webui_artifacts(code_root: str | Path) -> list[str]:
     return []
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="llm_loop.runtime.service_control")
-    sub = parser.add_subparsers(dest="command", required=True)
+def _publish_wheel_cli(args: argparse.Namespace) -> int:
+    home = Path(args.lfl_home).expanduser().resolve()
+    store = ManagedServiceDeploymentStore(args.data_dir or home / "data")
+    previous = store.read()
+    expected = args.expected_generation
+    if expected is None:
+        expected = previous.generation if previous else 0
+    deployment = build_wheel_deployment(home, data_dir=store.data_dir, generation=expected + 1)
+    store.compare_and_swap(deployment, expected_generation=expected)
+    print(json.dumps(deployment.to_dict(), ensure_ascii=False, sort_keys=True))
+    return 0
 
+
+def _add_publish_parsers(sub: Any) -> None:
+    wheel_publish = sub.add_parser("publish-wheel")
+    wheel_publish.add_argument("--lfl-home", required=True)
+    wheel_publish.add_argument("--data-dir")
+    wheel_publish.add_argument("--expected-generation", type=int, default=None)
     publish = sub.add_parser("publish")
     publish.add_argument(
         "--expected-generation",
@@ -5352,6 +5373,14 @@ def main(argv: list[str] | None = None) -> int:
     publish.add_argument("--code-root", required=True)
     publish.add_argument("--runtime-root", required=True)
     publish.add_argument("--data-dir")
+
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="llm_loop.runtime.service_control")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    _add_publish_parsers(sub)
 
     show = sub.add_parser("show")
     show.add_argument("--data-dir", required=True)
@@ -5432,6 +5461,8 @@ def main(argv: list[str] | None = None) -> int:
     barrier_release.add_argument("--reason", required=True)
 
     args = parser.parse_args(argv)
+    if args.command == "publish-wheel":
+        return _publish_wheel_cli(args)
     if args.command == "publish":
         runtime = Path(args.runtime_root).expanduser().resolve()
         data_dir = Path(args.data_dir).expanduser().resolve() if args.data_dir else _default_data_dir(runtime)

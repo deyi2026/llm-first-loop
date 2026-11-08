@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.42 — Linux wheel 受管三服务身份闭环（2026-11-08）
+
+- Web / Feishu / Learning 从自身安装的 wheel 采集版本、包摘要、release 路径及安装完整性，不从业务工作区借用 Git 身份。状态面板与重启验收使用同一组事实，拒绝同版本不同包、错误解释器或数据目录造成的假一致。
+- 新增 wheel Desired 发布入口及 systemd 用户级重启执行路径；受管 worker 使用独立 transient unit，避免随 Web 的 cgroup 一起停止。源码部署保留原执行路径。
+- Linux 安装器支持 `--no-start`：只准备和校验三服务 units，物理切换由受管动作完成；面板显示 wheel 身份并修正服务器时间换算。
+- 新包使用独立版本目录，保留 0.6.41 回退版本；以上为实现变更，生产三服务统一验收需以真实成功回执为准。
+
 ## v0.6.41 — SOCKS 代理冷启动修复与发行版本号续位（2026-11-08）
 
 - **SOCKS 代理冷启动修复**：用户级 systemd 环境携带 `all_proxy=socks5://…` 时，`httpx.Client(trust_env=True)` 初始化需要 `socksio`，wheel 0.6.40 未携带导致 Web 冷启动 ImportError（2026-11-08 Deepin 生产事故；临时以 runtime drop-in `UnsetEnvironment` 恢复）。正式修复将依赖声明改为 `httpx[socks]>=0.27`（uv.lock 新增 `socksio==1.0.0`，其余依赖零漂移），不动 `trust_env`/代理配置/生产 systemd。隔离 venv 端到端验证 5/5：安装器同款安装后 socksio 可导入、socks5 代理环境下 Client 初始化成功、负控制复现根因。

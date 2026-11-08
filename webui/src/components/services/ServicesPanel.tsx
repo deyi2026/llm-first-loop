@@ -27,11 +27,12 @@ function fmtServerClock(
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    hour12: false,
   };
   if (serverOffsetMin === undefined) return d.toLocaleString(undefined, opts);
   // 平移到服务器挂钟后以 UTC 格式化（toLocaleString 不再二次偏移）
   const shifted = new Date(
-    d.getTime() + (serverOffsetMin + d.getTimezoneOffset()) * 60000
+    d.getTime() + serverOffsetMin * 60000
   );
   return shifted.toLocaleString(undefined, { ...opts, timeZone: "UTC" });
 }
@@ -67,6 +68,7 @@ export function ServicesPanel() {
   }, []);
 
   const deployment = info?.deployment ?? null;
+  const wheel = deployment?.artifact_kind === "wheel_release";
   const serverOffset = info?.server_tz_offset_minutes;
 
   return (
@@ -80,10 +82,12 @@ export function ServicesPanel() {
         <div style={cardStyle}>
           <strong>desired deployment</strong>
           <div>
-            generation {deployment.generation} · {shortHead(deployment.git_head)}
+            generation {deployment.generation} · {wheel
+              ? `wheel ${deployment.version} · SHA ${deployment.wheel_sha256?.slice(0, 12) ?? "—"}`
+              : shortHead(deployment.git_head)}
           </div>
           <div className="v2-service-code-root" style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
-            code_root {deployment.code_root}
+            {wheel ? `release_dir ${deployment.release_dir}` : `code_root ${deployment.code_root}`}
           </div>
         </div>
       ) : loaded ? (
@@ -106,7 +110,9 @@ export function ServicesPanel() {
               <div>
                 live: pid {svc.live.pid ?? "—"}
                 {svc.live.pid_alive === false ? "（进程不存在）" : ""} ·{" "}
-                {shortHead(svc.live.git_head)}
+                {wheel
+                  ? `wheel ${svc.live.release_version || "身份缺失"} · SHA ${svc.live.wheel_sha256?.slice(0, 12) || "—"}`
+                  : shortHead(svc.live.git_head)}
                 {svc.live.started_at ? " · " + fmtServerClock(svc.live.started_at, serverOffset) : ""}
               </div>
             ) : (
@@ -119,7 +125,9 @@ export function ServicesPanel() {
                 <>
                   gen {svc.stable.generation}
                   {svc.stable.matches_desired_generation
-                    ? " · " + shortHead(svc.stable.git_head)
+                    ? " · " + (wheel
+                      ? `wheel ${svc.stable.version || "身份缺失"} · SHA ${svc.stable.wheel_sha256?.slice(0, 12) || "—"}`
+                      : shortHead(svc.stable.git_head))
                     : " · （早于当前 desired，不声明 git 身份）"}
                   {" · " + fmtServerClock(svc.stable.succeeded_at, serverOffset)}
                 </>

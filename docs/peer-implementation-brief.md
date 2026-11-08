@@ -111,9 +111,23 @@ secret 当 HMAC key 用）。
 4. ~~T6 T1–T10/U1–U10 应拦实测~~（完成：`scripts/peer_acceptance.py` 真进程/真端口/真 HMAC，
    29 条 = PASS 25 / N/A 4 / FAIL 0，结果与 8 条实测缺陷见
    `docs/PEER-P0-T6-acceptance-20261108.md`；U4/U7/U9b/U8b 与 U5 的副作用前提**未覆盖**）。
-5. T8 lane 合并审查 → 入 main。
-6. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）；`peer_fetch.to_path` 已接
-   `current_write_scope`，但写类工具面尚未开放。落地后 **U5（部分副作用）与 U7（类型注入）必须重测**。
+5. ~~T8 lane 合并审查 → 入 main~~（完成：已合入 main；T8 三项验收在 main@52853d6c4 复跑全绿——
+   `verify_peer_schemas.py` PASS(30,1 skipped)、`pytest -k peer` 225 passed、合并树==lane 树）。
+6. T9-a ~~`fs.write` 执行器 + 闸4 写域门~~（完成，分支 `feat/peer-fs-write-gate-20261108`
+   @65e44778f；**宣告面未开**：`EXECUTABLE_KINDS` 仍只读两种、manifest 不声称可写、
+   准入 `supervised=False` 仍 `requires_supervised_execution`。闸4 写域由
+   `LFL_PEER_WRITE_ROOT` 显式声明（`config.load_settings` 读取、装配层注入，
+   策略层不读进程环境），**未注入即全拒**；与闸3 各自独立拒绝
+   （域外但租约内→`sandbox_denied`；租约外但域内→`path_outside_allowed_paths`）。
+   测试：`pytest tests -k peer` 246 passed / 5 skipped）。
+7. T9-b 待做：有人在场通道（supervised 准入 + 本机确认）+ 宣告面开启。
+   设计已落 `docs/DESIGN-20261108-peer-supervision-channel.md`（仅设计，未实施）：
+   默认关闭（`LFL_PEER_SUPERVISION=0`）、新增 `awaiting_supervision` 非终局态、
+   TTY CLI 逐次确认且票据绑定 `params_digest`、执行前重判闸3、宣告按
+   "handler ∩ 本节点配置完备"条件化。既有 `example-kinds==registry` 零漂移检查
+   已随远端契约 P1 修复落地，后续宣告变更须继续通过该检查。
+   重测范围更正：**U5（部分副作用后 kill -9）**属本任务；**U7（`desktop.type` 注入）
+   与 `fs.write` 无关，属 P2-B 桌面面**——上一版把 U5/U7 并列写在此处，是错的。
 
 ## 运行时限制（实测）
 子代理上下文预检在 `tokens_in≈180k` 时直接失败且无 `search_archive` 兜底。委派时只给 ≤3 个小文件、

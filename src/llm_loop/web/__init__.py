@@ -67,17 +67,13 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
     而不是明文可用；显式逃生阀 ``PEER_ALLOW_PLAINTEXT_BIND=1`` 留给
     用户自担风险的隔离试验环境。
     """
-    import os as _os
-
     from llm_loop.web.auth import is_loopback
 
     bind_host = str(
         getattr(settings, "web_host", None)
-        or _os.environ.get("WEB_HOST", "127.0.0.1")
+        or getattr(settings, "peer_bind_host", "127.0.0.1")
     ).strip() or "127.0.0.1"
-    allow_plaintext = str(
-        _os.environ.get("PEER_ALLOW_PLAINTEXT_BIND", "") or ""
-    ).strip() == "1"
+    allow_plaintext = bool(getattr(settings, "peer_allow_plaintext_bind", False))
     if not is_loopback(bind_host) and not allow_plaintext:
         import logging
 
@@ -120,6 +116,7 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
         node_id=node_id,
         display_name=display_name,
         enabled_kinds=enabled_kinds,
+        write_root=str(getattr(settings, "peer_write_root", "") or "").strip() or None,
     )
     def _secret_for(candidate: str):
         # 契约：secret_for 返回 bytes（auth.sign 直接拿它做 HMAC key）；

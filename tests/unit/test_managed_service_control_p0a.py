@@ -1096,7 +1096,18 @@ def _write_wheel_live_manifest(
         "identity_ok": True,
     }
     if release_version is not None:
-        payload["build_identity"] = {"release_version": release_version}
+        release = data_dir.parent / "releases/LFL-0.6.40"
+        wheel = release / "llm_first_loop-0.6.40-py3-none-any.whl"
+        import hashlib
+
+        payload["python_executable"] = str(release / "venv/bin/python")
+        payload["data_dir"] = str(data_dir)
+        payload["build_identity"] = {
+            "artifact_kind": "wheel_release", "release_version": release_version,
+            "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            "release_dir": str(release),
+            "package_root": str(release / "venv/lib/python3.13/site-packages/llm_loop"),
+        }
     (runtime / f"runtime_manifest.{service}.json").write_text(
         json.dumps(payload), encoding="utf-8"
     )
