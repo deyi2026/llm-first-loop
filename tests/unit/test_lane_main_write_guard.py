@@ -1046,3 +1046,84 @@ def test_push_lane_block_ignores_non_push(tmp_path):
         "git commit -m x", audit_dir=audit, session_id="me", workdir=str(repo)
     )
     assert out is None
+
+
+# --- 审查残余①⑤（2026-11-09 收口）：docs/ 收紧为回执/证据前缀 + pathspec 按 cwd 归一 ---
+def test_commit_behavioral_doc_no_longer_exempt(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x -- docs/ai_rules.md",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+def test_commit_evidence_prefixes_allowed(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    for path in ("docs/governance/review-receipts/x.md", "docs/verification/verify-x.md"):
+        out = check_git_main_write(
+            f"git commit -m x -- {path}",
+            audit_dir=audit,
+            session_id="me",
+            workdir=str(repo),
+        )
+        assert out is None, path
+
+
+def test_commit_receipts_relative_from_docs_subdir_allowed(tmp_path):
+    # 残余⑤：pathspec 按 git 命令 cwd 归一——从 docs/ 子目录发起的相对路径，
+    # 实际落点仍是回执路径，应走窄通道
+    repo = _git_repo(tmp_path / "repo", "main")
+    (repo / "docs").mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x -- governance/receipts/x.md",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo / "docs"),
+    )
+    assert out is None
+
+
+def test_commit_code_relative_from_subdir_still_blocked(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    (repo / "src").mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x -- app.py",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo / "src"),
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+def test_commit_behavioral_doc_from_docs_subdir_blocked(tmp_path):
+    # cwd 归一后落点是行为性文档（docs/ai_rules.md）→ 不在证据前缀，仍按宽判据
+    repo = _git_repo(tmp_path / "repo", "main")
+    (repo / "docs").mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x -- ai_rules.md",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo / "docs"),
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+def test_resolve_commit_paths_helper(tmp_path):
+    repo = tmp_path / "repo"
+    assert guard_module._resolve_commit_paths(
+        ["governance/receipts/x.md"], str(repo / "docs"), str(repo)
+    ) == ["docs/governance/receipts/x.md"]
+    assert guard_module._resolve_commit_paths(["x.py"], str(repo), str(repo)) == ["x.py"]
+    assert guard_module._resolve_commit_paths(["x.py"], None, str(repo)) is None
+    assert guard_module._resolve_commit_paths(["x.py"], str(repo), None) is None
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    assert guard_module._resolve_commit_paths(["x.py"], str(outside), str(repo)) is None

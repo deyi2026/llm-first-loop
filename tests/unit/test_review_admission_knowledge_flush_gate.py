@@ -218,3 +218,51 @@ def test_git_push_lane_precheck_runs_before_consume(monkeypatch, tmp_path: Path)
     decision = host.check_shell("parent", "git push origin main", str(tmp_path))
     assert decision.allowed is False
     assert "lane_precheck_denied" in decision.reason
+
+
+def _git(repo: Path, *args: str) -> str:
+    out = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return out.stdout.strip()
+
+
+# --- 审查残余③④（2026-11-09 收口）：admission 与 hook 同口径 ---
+def test_committed_placeholder_with_backfilled_worktree_blocks_start(tmp_path: Path) -> None:
+    """残余④：回执已提交占位、工作区已回填 → 必须按 HEAD blob 拒，不再白烧资格。"""
+    repo = _repo(tmp_path)
+    _receipt(repo, "| main_sha_after | 待回填 |\n")
+    _commit_all(repo, "receipt v1")
+    _git(repo, "update-ref", "refs/remotes/origin/main", _git(repo, "rev-parse", "HEAD~1"))
+    # 工作区副本已回填（未提交）——旧实现读工作区会放行，push 时 hook 才拦
+    _receipt(repo, "| main_sha_after | 4866ffa36 |\n")
+    receipt = _receipt_placeholder_receipt(str(repo))
+    assert receipt is not None
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "receipt_placeholder_pending"
+    assert any("merge-probe.md" in f for f in receipt["files"])
+
+
+def test_renamed_receipt_placeholder_in_range_blocks_start(tmp_path: Path) -> None:
+    """残余③：rename+modify 的回执（--diff-filter=AM 为空）在 range 扫描中仍须命中。"""
+    repo = _repo(tmp_path)
+    path = _receipt(repo, "| main_sha_after | 4866ffa36 |\n")
+    _commit_all(repo, "receipt old")
+    _git(repo, "mv", "docs/governance/receipts/merge-probe.md",
+         "docs/governance/receipts/merge-renamed.md")
+    _commit_all(repo, "receipt renamed")
+    path.unlink(missing_ok=True)
+    (repo / "docs/governance/receipts/merge-renamed.md").write_text(
+        "| main_sha_after | 待回填 |\n"
+    )
+    _commit_all(repo, "receipt placeholder")
+    _git(repo, "update-ref", "refs/remotes/origin/main", _git(repo, "rev-parse", "HEAD~2"))
+    receipt = _receipt_placeholder_receipt(str(repo))
+    assert receipt is not None
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "receipt_placeholder_pending"
+    assert any("merge-renamed.md" in f for f in receipt["files"])

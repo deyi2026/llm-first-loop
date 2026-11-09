@@ -14,6 +14,7 @@
 """
 
 import json
+import os
 import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -243,4 +244,55 @@ def test_hook_allows_backfilled_receipt(repo: Path) -> None:
     receipt.write_text("| main_sha_after | 4866ffa36 |\n", encoding="utf-8")
     out = _run_hook(repo)
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+# --- 审查残余②③（2026-11-09 收口）---
+@pytest.mark.skipif(os.geteuid() == 0, reason="root 无视权限位，测不出读失败")
+def test_hook_fail_closed_on_unreadable_untracked_receipt(repo: Path) -> None:
+    """残余②：未跟踪回执读失败（如权限）必须拒推，不再静默按空内容放行。"""
+    receipt = repo / "docs/governance/receipts/locked.md"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text("| main_sha_after | 待回填 |\n", encoding="utf-8")
+    receipt.chmod(0o000)
+    try:
+        out = _run_hook(repo)
+    finally:
+        receipt.chmod(0o644)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "无法读取未跟踪回执" in out.stderr
+
+
+def test_hook_blocks_renamed_receipt_with_placeholder(repo: Path) -> None:
+    """残余③：rename+modify 的回执在 `--diff-filter=AM` 下为空，必须仍被扫到。"""
+    # per-ref 循环会跑隐私扫描：stub 成恒过，把回执占位闸单独隔离出来
+    scan = repo / "scripts" / "git_security_scan.sh"
+    scan.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    scan.chmod(0o755)
+    d = repo / "docs/governance/receipts"
+    d.mkdir(parents=True)
+    # 两行含一行共同内容：rename 检测按行相似度配对（单行全变=0% 不配对，
+    # 那是 A/D 而非 R，AM 也能扫到，测不出残余③）
+    (d / "old.md").write_text(
+        "| main_sha_after | 4866ffa36 |\n"
+        "| verify_receipt_id | lane-x:4866ffa3 |\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "receipt-old", "--no-verify")
+    _git(repo, "mv", "docs/governance/receipts/old.md", "docs/governance/receipts/new.md")
+    (d / "new.md").write_text(
+        "| main_sha_after | 待回填 |\n"
+        "| verify_receipt_id | lane-x:4866ffa3 |\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "receipt-new", "--no-verify")
+    base = _git(repo, "rev-parse", "HEAD~1").stdout.strip()
+    tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert (
+        _git(repo, "diff", "--name-only", "--diff-filter=AM", base, tip).stdout.strip() == ""
+    ), "前置条件失败：AM 应漏掉 rename+modify（该行为即残余③）"
+    out = _run_hook(repo, stdin=f"refs/heads/main {tip} refs/heads/main {base}\n")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "new.md" in out.stderr and "待回填" in out.stderr
 

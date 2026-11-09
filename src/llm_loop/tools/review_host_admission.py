@@ -1045,8 +1045,16 @@ def _receipt_placeholder_receipt(workdir: str) -> dict[str, Any] | None:
 
 
 def _receipt_placeholder_hits(root: Path) -> list[str]:
-    """返回 ``file:line`` 命中；git 读失败抛 ValueError（调用方 fail-closed）。"""
-    paths: set[str] = set()
+    """与 .githooks/pre-push 同口径，按「将要被推送的内容」判占位 → ``file:line``。
+
+    残余③④（2026-11-09 收口）：旧实现把 range 路径也读工作区副本——回执已提交
+    占位、工作区已回填时 admission 放行、钩子按 blob 拒绝，白烧一次审查资格；
+    且 ``--diff-filter=AM`` 对 rename+modify 为空漏检。现 range 内改读 HEAD
+    blob、filter 放宽到 AMRC（取新路径）；未跟踪回执仍读工作区（与钩子
+    ``ls-files --others`` 一致）。git 读失败抛 ValueError（调用方 fail-closed）。
+    """
+    hits: list[str] = []
+    # 1) 未跟踪回执：工作区内容（untracked 不在任何提交里，读盘是唯一来源）
     raw = _git(
         root,
         "status",
@@ -1056,9 +1064,22 @@ def _receipt_placeholder_hits(root: Path) -> list[str]:
         "--",
         _RECEIPT_DIR,
     )
-    for _status, path in _porcelain_rows(raw):
-        if path.startswith(_RECEIPT_DIR + "/"):
-            paths.add(path)
+    for status, path in _porcelain_rows(raw):
+        if not path.startswith(_RECEIPT_DIR + "/"):
+            continue
+        if not status.startswith("??"):
+            # 已跟踪的工作区改动不随本次推送走（是否被推取决于已提交 blob），
+            # 与钩子口径一致，避免 admission 比 hook 更严造成无谓拒绝。
+            continue
+        try:
+            text = (root / path).read_text(encoding="utf-8", errors="surrogateescape")
+        except OSError as exc:
+            raise ValueError(f"receipt_unreadable:{path}:{exc}") from exc
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if any(marker in line for marker in _RECEIPT_PLACEHOLDER_MARKERS):
+                hits.append(f"{path}:{lineno}")
+    # 2) 待推 range：origin/main..HEAD（与钩子的 RANGE 一致；无 origin/main → 首推
+    #    空集，与钩子对 remote_sha 全零的降级一致）。读 HEAD blob 而非工作区副本。
     try:
         origin_main = _git(root, "rev-parse", "--verify", "--quiet", "origin/main")
     except ValueError:
@@ -1068,26 +1089,19 @@ def _receipt_placeholder_hits(root: Path) -> list[str]:
             root,
             "diff",
             "--name-only",
-            "--diff-filter=AM",
+            "--diff-filter=AMRC",
             "origin/main..HEAD",
             "--",
             _RECEIPT_DIR,
         )
-        for line in raw_range.decode("utf-8", "surrogateescape").splitlines():
-            if line.startswith(_RECEIPT_DIR + "/"):
-                paths.add(line)
-    hits: list[str] = []
-    for rel in sorted(paths):
-        path = root / rel
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="surrogateescape")
-        except OSError as exc:
-            raise ValueError(f"receipt_unreadable:{rel}:{exc}") from exc
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if any(marker in line for marker in _RECEIPT_PLACEHOLDER_MARKERS):
-                hits.append(f"{rel}:{lineno}")
+        for rel in raw_range.decode("utf-8", "surrogateescape").splitlines():
+            if not rel.startswith(_RECEIPT_DIR + "/"):
+                continue
+            blob = _git(root, "show", f"HEAD:{rel}")  # 失败→ValueError→fail-closed
+            text = blob.decode("utf-8", "surrogateescape")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if any(marker in line for marker in _RECEIPT_PLACEHOLDER_MARKERS):
+                    hits.append(f"{rel}:{lineno}")
     return hits
 
 

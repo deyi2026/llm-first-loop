@@ -67,7 +67,15 @@ if ! untracked_receipts="$(git ls-files --others --exclude-standard -- "$RECEIPT
 fi
 while IFS= read -r f; do
   [[ -n "$f" ]] || continue
-  check_receipt_content "${f}（未跟踪）" "$(cat "$f")"
+  # 残余②（2026-11-09 收口）：读失败（如权限）不再静默按空内容放行——fail-closed，
+  # 与枚举失败同处置；看不见内容的闸等于没有闸。
+  if ! untracked_body="$(cat "$f" 2>/dev/null)"; then
+    echo "[pre-push] 拒绝：无法读取未跟踪回执 ${f}（fail-closed）。" >&2
+    echo "[pre-push] 修复：恢复该文件可读，或入库/删除后重推。" >&2
+    receipt_hit=1
+    continue
+  fi
+  check_receipt_content "${f}（未跟踪）" "$untracked_body"
 done <<< "$untracked_receipts"
 
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -80,7 +88,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
   else
     RANGE_ARGS=(--range "$remote_sha" "$local_sha")
-    if ! changed_receipts="$(git diff --name-only --diff-filter=AM "$remote_sha" "$local_sha" -- "$RECEIPT_DIR")"; then
+    # 残余③（2026-11-09 收口）：AM 对 rename+modify 的回执为空漏检；AMRC 取新路径
+    # （--name-only 对 R/C 只列新名，旧名已不在 tip、无需扫）。
+    if ! changed_receipts="$(git diff --name-only --diff-filter=AMRC "$remote_sha" "$local_sha" -- "$RECEIPT_DIR")"; then
       echo "[pre-push] 拒绝：无法计算回执变更集（fail-closed）。" >&2
       exit 1
     fi

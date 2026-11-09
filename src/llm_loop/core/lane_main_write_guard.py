@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import posixpath
 import re
 import shlex
 import subprocess
@@ -61,9 +63,15 @@ STALE_AFTER_S = 4 * 3600.0
 # verifying/merging 超过该时长仍未终态 → 不再阻断 push。只豁免 push；commit
 # 仍被任意 live lane 挡（共享 worktree 直写会落错分支）。0 或负数=关闭豁免。
 CLOSING_BLOCK_MAX_S = 30 * 60.0
-# docs/回执窄通道：`git commit ... -- <paths>` 显式列出且全部落在该前缀时，不受
-# 他人 live lane 阻挡（回执是只追加证据，改不到代码）。其他任何形态按宽判据处理。
-_DOC_COMMIT_PREFIX = "docs/"
+# 回执/证据窄通道（审查残余①，2026-11-09 收紧）：`git commit ... -- <paths>`
+# 显式列出且全部落在这些前缀下时，不受他人 live lane 阻挡（只追加证据，改不到
+# 代码）。原 `docs/` 整树过宽——`docs/ai_rules.md` 这类行为性文档也能借道；
+# 现只豁免交付证据路径，其余任何形态按宽判据处理（fail-closed）。
+_EVIDENCE_COMMIT_PREFIXES = (
+    "docs/governance/receipts/",
+    "docs/governance/review-receipts/",
+    "docs/verification/",
+)
 
 logger = logging.getLogger(__name__)
 # git 全局选项里带值、且会影响目标仓库的选项：
@@ -739,10 +747,50 @@ def _commit_pathspecs(refs: list[str]) -> list[str] | None:
     return out
 
 
+def _is_evidence_commit_path(rel: str) -> bool:
+    """repo-root 相对路径是否落在回执/证据前缀下（窄通道白名单）。"""
+    return any(
+        rel == pre.rstrip("/") or rel.startswith(pre) for pre in _EVIDENCE_COMMIT_PREFIXES
+    )
+
+
+def _resolve_commit_paths(
+    paths: list[str], git_cwd: str | None, repo_root: str | None
+) -> list[str] | None:
+    """把 pathspec 按 git 语义（相对 git 命令 cwd）归一成 repo-root 相对路径。
+
+    审查残余⑤：字面前缀判定与 git 实际落点不一致——从 ``docs/`` 子目录发起的
+    ``commit governance/receipts/x.md`` 实际落点是回执路径，而仓库根下发起的
+    同名字符串则不是。先归一再判前缀，判定才与提交内容一致。cwd/仓库顶层
+    解析不出、cwd 在仓库外或归一后越出仓库 → None（按宽判据处理，fail-closed，
+    宁可多挡）。
+    """
+    if not git_cwd or not repo_root:
+        return None
+    try:
+        rel_cwd = os.path.relpath(Path(git_cwd).resolve(), Path(repo_root).resolve())
+    except (ValueError, OSError):
+        return None
+    if rel_cwd in (os.curdir, "."):
+        rel_cwd = ""
+    elif rel_cwd.startswith(".."):
+        return None  # cwd 在仓库外：无法归一
+    base = rel_cwd.replace(os.sep, "/")
+    out: list[str] = []
+    for p in paths:
+        joined = (
+            posixpath.normpath(posixpath.join(base, p)) if base else posixpath.normpath(p)
+        )
+        if not joined or joined == "." or joined == ".." or joined.startswith("../"):
+            return None
+        out.append(joined)
+    return out
+
+
 def _collect_main_write_hits(
     verbs: list[tuple[str, list[str], str | None]], workdir: str | None
 ) -> tuple[
-    list[list[str] | None],
+    list[tuple[list[str] | None, str | None]],
     list[tuple[str, str | None, str | None, str]],
     bool,
     bool,
@@ -751,12 +799,12 @@ def _collect_main_write_hits(
     """扫描已解析的 git 段，收集「直写 main」命中。
 
     返回 ``(commit_hits, pushes, push_all, push_delete_main, basis_workdir)``：
-    ``commit_hits`` 每项是该次 commit 的显式 pathspec 列表；``None`` = 宽判据
-    （无 ``--``、含 -a/--amend 等）。``pushes`` 每项为 ``(目标分支, 被推 src,
-    目标仓库, remote)``，src="" 表示删除型 refspec；``basis_workdir`` 为首个
-    可解析的目标仓库（供闲置判定）。
+    ``commit_hits`` 每项是 ``(该次 commit 的显式 pathspec 列表, git 命令 cwd)``；
+    pathspec ``None`` = 宽判据（无 ``--``、含 -a/--amend 等）。``pushes`` 每项为
+    ``(目标分支, 被推 src, 目标仓库, remote)``，src="" 表示删除型 refspec；
+    ``basis_workdir`` 为首个可解析的目标仓库（供闲置判定）。
     """
-    commit_hits: list[list[str] | None] = []
+    commit_hits: list[tuple[list[str] | None, str | None]] = []
     # (目标分支, 被推 src, 目标仓库, remote)；src="" 表示删除型 refspec
     pushes: list[tuple[str, str | None, str | None, str]] = []
     push_all = False
@@ -777,7 +825,8 @@ def _collect_main_write_hits(
         if not branches:
             continue
         if verb == "commit":
-            commit_hits.append(_commit_pathspecs(refs))
+            # pathspec 按 git 语义相对命令 cwd 解析（残余⑤），归一在窄通道判定处做
+            commit_hits.append((_commit_pathspecs(refs), target_workdir))
             continue
         push_all = push_all or is_all
         if _push_is_delete(refs) and any(name in _MAIN_BRANCHES for name in branches):
@@ -889,17 +938,21 @@ def check_git_main_write(
     now = datetime.now().astimezone()
     live, stale = _split_stale_lanes(others, workdir=basis_workdir, now=now)
     if commit_hits and live:
-        # docs/回执窄通道（P3）：每次 commit 都显式 ``-- <paths>`` 且全部落在
-        # docs/ 下 → 只追加证据，改不到代码，不占他人合并窗口。
+        # 回执/证据窄通道（P3 + 审查残余①⑤）：每次 commit 都显式 ``-- <paths>``
+        # 且归一后全部落在回执/证据前缀下 → 只追加证据，改不到代码，不占他人
+        # 合并窗口。pathspec 按 git 命令 cwd 归一到 repo-root 相对路径再判前缀
+        # （与提交实际落点一致）；解析不出按宽判据处理（fail-closed，宁可多挡）。
+        repo_root = _repo_root(basis_workdir or workdir)
         narrow = all(
             paths is not None
-            and all(p.startswith(_DOC_COMMIT_PREFIX) for p in paths)
-            for paths in commit_hits
+            and (resolved := _resolve_commit_paths(paths, git_cwd, repo_root)) is not None
+            and all(_is_evidence_commit_path(rp) for rp in resolved)
+            for paths, git_cwd in commit_hits
         )
         if narrow:
             logger.info(
-                "docs 窄 commit 放行（存在他人 live lane，pathspec 全在 %s 下）：%s",
-                _DOC_COMMIT_PREFIX,
+                "回执/证据窄 commit 放行（存在他人 live lane，pathspec 归一后全在"
+                "回执/证据前缀下）：%s",
                 _lanes_note(live),
             )
         else:
@@ -913,8 +966,9 @@ def check_git_main_write(
                 "并行会话期间 main 直写会与他人合并闸竞争（2026-11-05/06 两次事故）。"
                 "建议: 先 lane_open 登记并在分支提交，或等对方 lane 合并后再动 main；"
                 "合并建议可用 lane_merge_advice。"
-                "（仅 `git commit -m <msg> -- docs/...` 这类显式 docs/回执单文件"
-                "提交可豁免。）",
+                "（仅 `git commit -m <msg> -- docs/governance/receipts/...` 这类显式"
+                "回执/证据路径提交可豁免：receipts/、review-receipts/、verification/；"
+                "路径按 git 命令 cwd 归一后判定。）",
             )
     if pushes:
         denial = _push_lane_denial(
