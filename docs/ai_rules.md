@@ -452,6 +452,8 @@ k3（Kimi，经 model_catalog 回执核验）"。
 3. **push 闸（推送前）**：任何 `git push` 前交 push 审查子代理核——待推提交清单 vs 预期范围、暂存/未跟踪文件不夹带（重点审计 .gitignore 盲区，如未被忽略的 `audit-id/` 类目录）、敏感文件（密钥/代理配置/运行时备份/超大文件）、remote 目标正确（本仓库双 remote：`lfl` 主仓 / `origin` legacy，240+ 未推提交现状下尤其要逐次确认目标）；push 失败先诊断根因（dry-run / fetch 分叉分析）再行动，**禁止盲目重试烧时间**。审查不通过有直接阻断权：不推。
 4. **隐私闸（全量入库与 push 前机械扫描，用户指示 2026-10-29）**：任何全量/批量入库（knowledge flush、experiences/ 等知识档案）**入库前必须完成内容脱敏**（内网 IP、用户名/主机名、免密访问描述、密钥值）；任何 `git push` 前必须先跑 `scripts/git_security_scan.sh --range <远端ref> <本地ref>`（含规则5：私网 IPv4 / `user@` / 主机名，**不继承 experiences/ 等粒度豁免**）并取得 exit 0 回执，未过闸不推。审查子代理核验该回执与扫描覆盖的提交范围；`.githooks/pre-push` 与 CI `privacy-scan` 是机械兜底，不替代 agent 侧义务。背景：2026-10-29 知识卡携带内网 IP+用户名公开泄露约 10 分钟（Gitee 侧独立审查发现后重写历史修复）。
 
+**知识资产闸（2026-11-09，机械层）**：`.githooks/pre-push` 在隐私扫描之外增加**工作区**判定——`data/methods/*/METHOD.md` 与 `experiences/*.md` 存在未入库变更（含未跟踪）时，按 `scripts/knowledge_flush.py --check` 的 exit 3 拒推并打印修复命令；闸脚本缺失或判定非 0/3 一律 fail-closed 拒推。该闸是机械兜底，`--no-verify` 可绕过，不替代本条 agent 侧「push 前跑 knowledge_flush」义务；push 审查仍须核对待推提交之外的工作区知识资产。
+
 5. **全量口径（用户指示 2026-11-02）**：全量门禁的唯一口径是 `bash scripts/ci_gate.sh`（其内 pytest 以 `--dist loadfile` 分片并排除 `real_llm`/`serial_signal`）。自创调用（`pytest tests -q -n 4` 之类）只能称**定向测试**：其红不得报告为"全量失败"，其绿不得报告为"全量通过"；要主张全量结论，必须在同一任务内跑一次 canonical 全量并给出命令与 pass/fail 计数回执。背景（2026-10-31 实测）：自创 `-n 4` 分片得 240 红，换 canonical 口径后真红仅 1 个——假红烧掉的时间与假绿骗过的闸门同等严重。
 
 **通过语义与回执**：三态 verdict——PASS（放行）/ REVISE（修订+窄复审）/ BLOCK（未通过，不进入该动作）。审查回执必须落盘（审查人 subagent id、verdict、P0/P1/P2 发现、建议采纳/拒绝清单及理由、被审产物 SHA）；无落盘回执不得声称"已审查通过"。回执必须对应真实独立子会话、对应审查类型及当前产物；子会话 completed 本身不等于 PASS，检索到的 PASS 文本不等于有效回执。产物变化后按新指纹窄复审，原审查与窄复审的覆盖关系均须保留；push 还须核对待推提交和 remote/ref 目标。
