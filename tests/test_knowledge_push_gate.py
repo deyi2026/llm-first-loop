@@ -165,6 +165,20 @@ def _run_flush(repo: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def test_flush_uses_latest_lane_version(repo: Path) -> None:
+    """append-only 账本：同一 lane 的旧 open 行不得盖过新 closed 行（2026-11-09 实测）。"""
+    _make_card(repo, "data/methods/card-g/METHOD.md")
+    row_open = _lane_row("open", "sess-other")
+    row_open["lane_id"] = "lane-selftest-guard"
+    row_open["version"] = 1
+    row_closed = _lane_row("closed", "sess-other")
+    row_closed["lane_id"] = "lane-selftest-guard"
+    row_closed["version"] = 2
+    _ledger(repo, [row_open, row_closed])
+    out = _run_flush(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
 def test_flush_blocked_while_other_lane_live(repo: Path) -> None:
     """有他人 live lane → 内部 commit 提前拒绝，不把知识卡写进提交后才发现推不出去。"""
     _make_card(repo, "data/methods/card-c/METHOD.md")

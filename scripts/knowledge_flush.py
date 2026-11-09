@@ -204,10 +204,28 @@ def _live_other_lanes(
 ) -> list[str]:
     """返回阻塞 flush 的他人 live lane 标识；账本结构不可读 → fail-closed。"""
     now = datetime.now(timezone.utc)  # noqa: UP017 — hook 跑系统 python3（3.9）
-    out: list[str] = []
+    # 账本 append-only：同一 lane 有多行，只认最新 version（否则历史 open 行会
+    # 永久挡住；2026-11-09 实测被 selftest 的旧 open 行卡住）。
+    latest: dict[str, dict] = {}
     for row in rows:
         if not isinstance(row, dict):
             raise FlushError("lane 账本存在非对象记录，按 fail-closed 拒绝入库")
+        key = str(row.get("lane_id") or row.get("branch") or "")
+        prev = latest.get(key)
+        try:
+            ver = int(row.get("version") or 0)
+        except (TypeError, ValueError):
+            ver = 0
+        prev_ver = 0
+        if prev is not None:
+            try:
+                prev_ver = int(prev.get("version") or 0)
+            except (TypeError, ValueError):
+                prev_ver = 0
+        if prev is None or ver >= prev_ver:
+            latest[key] = row
+    out: list[str] = []
+    for row in latest.values():
         status = str(row.get("status") or "")
         if status in _LANE_TERMINAL:
             continue
