@@ -17,12 +17,16 @@ from pathlib import Path
 
 import pytest
 
+from tests import env_channel
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "restore_prebackup.sh"
 
 pytestmark = pytest.mark.skipif(
-    not SCRIPT.is_file() or subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
-    reason="需要 git 与 scripts/restore_prebackup.sh",
+    not SCRIPT.is_file()
+    or subprocess.run(["git", "--version"], capture_output=True).returncode != 0
+    or env_channel.tmpdir_unwritable(),
+    reason="需要 git 与 scripts/restore_prebackup.sh（且默认临时目录可写：脚本用 mktemp）",
 )
 
 

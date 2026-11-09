@@ -174,8 +174,33 @@ def in_git_worktree_detached_root() -> bool:
     return _probe_in_git_worktree_detached_root()
 
 
+@functools.lru_cache(maxsize=1)
+def tmpdir_unwritable() -> bool:
+    """mktemp 的默认落点不可写（工具层 sandbox 只放行工作区/缓存时无根由）。
+
+    只看 mktemp 实际会用的目录（TMPDIR，缺省 /tmp），不学 tempfile 的
+    多候选回退——回退会让谓词与脚本行为分叉。
+    """
+    target = os.environ.get("TMPDIR", "").strip() or "/tmp"
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="env-channel-tmpdir-probe-", dir=target
+        ):
+            return False
+    except OSError:
+        return True
+
+
+@functools.lru_cache(maxsize=1)
+def docker_cli_available() -> bool:
+    """宿主 PATH 上有 docker（darwin 上 auto 会解析到 docker 而非 sandbox-exec）。"""
+    return shutil.which("docker") is not None
+
+
 def reset_caches() -> None:
     """清空谓词缓存（自测钩子；进程内探测只应发生一次）。"""
     nested_sandbox_exec.cache_clear()
     operator_mailbox_absent.cache_clear()
     in_git_worktree_detached_root.cache_clear()
+    tmpdir_unwritable.cache_clear()
+    docker_cli_available.cache_clear()
