@@ -137,7 +137,17 @@ echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (parallel subset only
 # 注意：命令行 -m 覆盖 addopts 的 -m，条件必须写全，否则 real_llm 会被收进来。
 # 位置：放在并行全量之前 = 便宜且高信号的补集先跑，红了不必等整轮全量。
 echo "── serial_signal 串行补跑（并行集合的补集；物理信号时序敏感，失败即阻断）──"
-"$PY" -m pytest -m "not real_llm and serial_signal" -q
+# exit 5 = 一条都没收集到：说明 marker 集合与门禁假设已不符（改名/删除/marker 失效），
+# 按 RULE-AI-30 fail-closed 处理——不把它当作「没有 serial 用例，所以通过」。
+# 本步红不进 known-reds 对账：现行基线为空（任何红都是新增红）；若将来登记 serial_signal
+# 存量红，必须同时接入对账，否则并行/串行两条路径口径分裂。
+SERIAL_RC=0
+"$PY" -m pytest -m "not real_llm and serial_signal" -q || SERIAL_RC=$?
+if [[ "$SERIAL_RC" -eq 5 ]]; then
+  echo "❌ serial_signal 选择集为空（pytest exit 5）：并行集合排除了它、这里又没跑到，等于静默丢覆盖，按未通过阻断" >&2
+  exit 1
+fi
+[[ "$SERIAL_RC" -eq 0 ]] || exit "$SERIAL_RC"
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 # 2026-10-23（P1 出口判据③ CI 红数对账）：产出 junitxml 供红数对账脚本消费。
 # 实测红项与登记基线 eval/rules/known_reds_current.json 对账：超出登记项 = 新红 = 阻断。

@@ -454,7 +454,7 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 **知识资产闸（2026-11-09，机械层）**：`.githooks/pre-push` 在隐私扫描之外增加**工作区**判定——`data/methods/*/METHOD.md` 与 `experiences/*.md` 存在未入库变更（含未跟踪）时，按 `scripts/knowledge_flush.py --check` 的 exit 3 拒推并打印修复命令；闸脚本缺失或判定非 0/3 一律 fail-closed 拒推。同一事实另由 `review_admission(action=start, kind=git_push)` 在**审查开始前**判定（`reason=knowledge_flush_pending`，带卡数/经验数与修复命令；扫描失败 fail-closed）：钩子仍是唯一不可绕过的机械兜底，前置层只是避免先烧掉一个完整审查周期。该闸是机械兜底，`--no-verify` 可绕过，不替代本条 agent 侧「push 前跑 knowledge_flush」义务；push 审查仍须核对待推提交之外的工作区知识资产。
 
-5. **全量口径（用户指示 2026-11-02）**：全量门禁的唯一口径是 `bash scripts/ci_gate.sh`（其内 pytest 以 `--dist loadfile` 分片并排除 `real_llm`/`serial_signal`）。自创调用（`pytest tests -q -n 4` 之类）只能称**定向测试**：其红不得报告为"全量失败"，其绿不得报告为"全量通过"；要主张全量结论，必须在同一任务内跑一次 canonical 全量并给出命令与 pass/fail 计数回执。背景（2026-10-31 实测）：自创 `-n 4` 分片得 240 红，换 canonical 口径后真红仅 1 个——假红烧掉的时间与假绿骗过的闸门同等严重。
+5. **全量口径（用户指示 2026-11-02）**：全量门禁的唯一口径是 `bash scripts/ci_gate.sh`（其内并行集以 `--dist loadfile` 分片并排除 `real_llm`/`serial_signal`，被排除的 `serial_signal` 在同一门禁内串行补跑——排除不等于少跑；2026-11-09 前脚本并未排除 `serial_signal`，是规则与实现不一致，已修）。自创调用（`pytest tests -q -n 4` 之类）只能称**定向测试**：其红不得报告为"全量失败"，其绿不得报告为"全量通过"；要主张全量结论，必须在同一任务内跑一次 canonical 全量并给出命令与 pass/fail 计数回执。背景（2026-10-31 实测）：自创 `-n 4` 分片得 240 红，换 canonical 口径后真红仅 1 个——假红烧掉的时间与假绿骗过的闸门同等严重。
 
 **通过语义与回执**：三态 verdict——PASS（放行）/ REVISE（修订+窄复审）/ BLOCK（未通过，不进入该动作）。审查回执必须落盘（审查人 subagent id、verdict、P0/P1/P2 发现、建议采纳/拒绝清单及理由、被审产物 SHA）；无落盘回执不得声称"已审查通过"。回执必须对应真实独立子会话、对应审查类型及当前产物；子会话 completed 本身不等于 PASS，检索到的 PASS 文本不等于有效回执。产物变化后按新指纹窄复审，原审查与窄复审的覆盖关系均须保留；push 还须核对待推提交和 remote/ref 目标。
 
@@ -594,7 +594,7 @@ k3（Kimi，经 model_catalog 回执核验）"。
 3. **统一 push 收敛**：多方在 main 排队时，本地合并为线性历史后一次性 push（单次整树审查），不在他人合并闸在途时抢推。
 4. **push 闸机械层扩展（2026-11-09 EVO-20261109-b1dad92e，人工批准 21:01）**：
    - **收口截止**：`verifying`/`merging` 进入收口态超过 `CLOSING_BLOCK_MAX_S`（30min）仍未终态 → 不再阻断 `push`，拒绝回执以 `stale_lanes[].reclaim_basis=closing_deadline` 标注依据与已收口分钟数；`commit` 仍被任意 live lane 挡。计时只看进入收口态时记录的 `closing_since`，不看每次更新都会刷新的 `last_activity`；缺失/naive 时间按仍阻断处理（fail-closed）。
-   - **回执窄通道**：`git commit ... -- <paths>` 显式列出且路径（按 git 命令 cwd 归一到 repo-root 相对路径）全部落在回执/证据前缀（`docs/governance/receipts/`、`docs/governance/review-receipts/`、`docs/verification/`）下时，不受他人 live lane 阻挡（只追加证据，改不到代码；2026-11-09 由 `docs/` 收紧——行为性文档不再借道）；无 `--`、含 `-a/--amend`、绝对路径、`..`、通配、反斜杠或路径无法归一一律按宽判据处理。
+   - **回执窄通道**：`git commit ... -- <paths>` 显式列出且路径（按 git 命令 cwd 归一到 repo-root 相对路径）全部落在回执/证据前缀（`docs/governance/receipts/`、`docs/governance/review-receipts/`、`docs/verification/`）下时，不受他人 live lane 阻挡（只追加证据，改不到代码；2026-11-09 由 `docs/` 收紧——行为性文档不再借道）；文稿审查回执 `docs/promotion/receipts/` **故意不列入**（该前缀同时装着未入库草稿与 92MB 抓取归档，放行整前缀等于让非证据搭车），回执须在无他人 live lane 时提交；无 `--`、含 `-a/--amend`、绝对路径、`..`、通配、反斜杠或路径无法归一一律按宽判据处理。
    - **资格消费顺序**：`review_admission(action=start, kind=git_push)` 在消费一次性资格**之前**先做同一账本的只读 lane 预检；命中即拒（`reason=main_push_closing_lane`）且**不消费**，lane 终态后可原样重试同一命令。读不到账本/判定异常时放行，由命令闸与 `pre-push` hook 兜底。
    - **知识入库同门**：`scripts/knowledge_flush.py` 在内部 commit 前自检 lane 账本；有他人 live lane 即非 0 退出并给指引，账本损坏按 fail-closed 拒绝；自己的 lane 用 `--session-id` 排除。空闲超时（4h）且 worktree 干净的 lane 按失效回收（与命令闸同口径的保守子集）。
    - **回执占位闸**：`review_admission(git_push)` 前置与 `.githooks/pre-push` 双重扫描待推/未跟踪回执，正文仍含「待回填」（如 `main_sha_after`/`verify_receipt_id` 未回填）即拒（`reason=receipt_placeholder_pending`）；只阻断推送，不阻断本地提交。两层同口径（2026-11-09 收口审查残余③④）：range 按 `--diff-filter=AMRC` 取新路径（rename+modify 不漏检），range 内读已提交 blob、未跟踪读工作区——回执已提交占位而工作区已回填时两层都拦，不再白烧审查资格；未跟踪回执读失败同样 fail-closed。
