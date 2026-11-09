@@ -13,8 +13,10 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime
 from typing import Any
 
+from llm_loop.core.lane_main_write_guard import STALE_AFTER_S
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.lane import (
     LaneConstraintError,
@@ -285,6 +287,70 @@ def run_lane_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     )
 
 
+def _close_idle_hours(entry: dict) -> float | None:
+    """距 last_activity 的小时数；naive/不可解析返回 None（不据此授权）。"""
+    raw = str(entry.get("last_activity") or "").strip()
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        return None
+    return (datetime.now().astimezone() - ts).total_seconds() / 3600.0
+
+
+def _close_authorization(store: LaneStore, host: Any, lane_id: str) -> str:
+    """非属主 lane_close 的机械授权判据（收口治理③b，2026-11-10）。
+
+    返回空串=放行；非空=拒绝说明。无属主/无会话身份/属主本人不设限；属主
+    失配时只认两类**可证事实**：该 lane 的合并队列已 merged，或闲置 ≥ 守卫的
+    STALE_AFTER_S（4h）。都不满足则拒绝——堵「任何会话可 close 任何 lane」的
+    治理缺口（2026-11-10 复核：close 仅 CAS，无属主判定；2026-11-09 曾靠该缺口
+    人工代收口僵尸 lane，属应急通道，不应常开）。读不到判定材料时放行，由
+    store.close 的 CAS/终态不可逆约束兜底（拒绝须基于已证事实）。
+    """
+    try:
+        entry = store.get(lane_id)
+    except Exception:  # noqa: BLE001 — 判定材料读不到：保持既有语义
+        return ""
+    if entry is None:
+        return ""
+    owner = str(entry.get("owner_session_id") or "")
+    if not owner:
+        return ""
+    try:
+        from llm_loop.introspection.tools_status import bound_session_id
+
+        caller = str(bound_session_id() or "")
+    except Exception:  # noqa: BLE001
+        caller = ""
+    if not caller or caller == owner:
+        return ""
+    queue_row = None
+    try:
+        from llm_loop.introspection.merge_queue import MergeQueueStore
+
+        audit_dir = str(host.audit_dir) if getattr(host, "audit_dir", None) else ""
+        if audit_dir:
+            queue_row = MergeQueueStore(audit_dir, create=False).get(lane_id)
+    except Exception:  # noqa: BLE001 — 队列不可读不构成放行依据，继续看闲置事实
+        queue_row = None
+    if queue_row is not None and str(queue_row.get("status")) == "merged":
+        return ""
+    idle = _close_idle_hours(entry)
+    if idle is not None and idle * 3600.0 >= STALE_AFTER_S:
+        return ""
+    return (
+        f"lane 属主为其他会话（{owner[:8]}…），且无可证收口事实"
+        f"（队列未 merged；闲置 {f'{idle:.1f}h' if idle is not None else '不可判定'}"
+        f" < {STALE_AFTER_S / 3600.0:.0f}h）。"
+        "请协调属主收口，或等事实成立（队列 merged / 闲置超时）后重试；"
+        "reason 需引用事实。"
+    )
+
+
 def run_lane_close(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(host)
     if store is None:
@@ -302,6 +368,14 @@ def run_lane_close(ctx: Any, host: Any, args: dict) -> ToolResult:
         expected = int(raw_expected)
     except (TypeError, ValueError):
         return _fail("expected_version 必须是整数（CAS）", "lane_close", "missing_param")
+
+    denial = _close_authorization(store, host, lane_id)
+    if denial:
+        return _fail(
+            f"[close_not_authorized] {denial}",
+            "lane_close",
+            "close_not_authorized",
+        )
 
     try:
         entry = store.close(

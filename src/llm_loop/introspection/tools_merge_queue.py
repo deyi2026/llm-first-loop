@@ -350,6 +350,39 @@ def run_lane_merge_advice(ctx: Any, host: Any, args: dict) -> ToolResult:
     return _ok(card, tool, summary)
 
 
+def _autosweep_lane_after_merge(host: Any, queue_entry: dict) -> dict:
+    """queue.merged ⇒ lane 落 merged（收口治理③，2026-11-10）。
+
+    2026-11-09 实测反例：queue.merged 已落、lane 停在 merging 卡住所有 main push
+    一夜。合并事实由队列给出，lane 的在途状态是同一事实的滞后投影——登记
+    merged 时顺手收敛它，reason 引用队列事实（queue_id/merge_commit）可归因。
+    lane 账本不可用/找不到 lane/冲突时**不阻断** done 本身，把事实带回执交人工
+    lane_close 兜底（拒绝必须基于已证事实，但 done 已是事实，不回滚）。
+    """
+    lanes = _lanes(host)
+    if lanes is None:
+        return {"closed": False, "note": "lane 账本不可用"}
+    lane_id = str((queue_entry or {}).get("lane_id") or "")
+    queue_id = str((queue_entry or {}).get("queue_id") or "")
+    merge_commit = str((queue_entry or {}).get("merge_commit") or "")
+    try:
+        result = lanes.close_if_live(
+            lane_id,
+            status="merged",
+            reason=(
+                f"queue.merged 自动收口（{queue_id or 'queue_id 未记'}；"
+                f"merge_commit={merge_commit or 'unrecorded'}）——收口治理③"
+                "（2026-11-10）：队列已完成合并，lane 状态滞后投影由登记方收敛，"
+                "避免 verifying/merging 僵尸占用 push 门。"
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — 自动收口失败不连坐 done
+        return {"closed": False, "note": f"close_if_live 异常: {exc}"}
+    if result.get("conflict"):
+        return {"closed": False, "conflict": True, "note": "CAS 冲突重试用尽（并发写者）"}
+    return result
+
+
 def run_lane_queue_confirm(ctx: Any, host: Any, args: dict) -> ToolResult:
     tool = "lane_queue_confirm"
     lane_id = str(args.get("lane_id") or "").strip()
@@ -384,7 +417,15 @@ def run_lane_queue_confirm(ctx: Any, host: Any, args: dict) -> ToolResult:
                 expected_version=version,
                 merge_commit=str(args.get("merge_commit") or ""),
             )
-            return _ok(entry, tool, f"[已登记 merged] lane={lane_id}")
+            sweep = _autosweep_lane_after_merge(host, entry)
+            summary = f"[已登记 merged] lane={lane_id}"
+            if sweep.get("closed"):
+                summary += "；lane 已自动落终态 merged"
+            elif sweep.get("already"):
+                summary += f"；lane 已是终态 {sweep['already']}"
+            elif not sweep.get("missing"):
+                summary += f"；lane 自动收口未成（{sweep.get('note') or 'conflict'}），请人工 lane_close 兜底"
+            return _ok({"queue": entry, "lane_autoclose": sweep}, tool, summary)
         entry = store.abort(
             lane_id,
             expected_version=version,

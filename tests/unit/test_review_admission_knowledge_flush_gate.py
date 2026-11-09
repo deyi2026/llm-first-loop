@@ -283,3 +283,39 @@ def test_untracked_directory_row_enumerates_files(tmp_path: Path, monkeypatch) -
     assert receipt["accepted"] is False
     assert receipt["reason"] == "receipt_placeholder_pending"
     assert any("merge-probe.md" in f for f in receipt["files"])
+
+
+# --- 收口治理③（2026-11-10）：知识闸前置到消费口 -----------------------------
+def test_consume_side_knowledge_gate_does_not_burn_qualification(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """审查窗口内新落卡：消费口先拒，资格未被消费。
+
+    旧链路：PASS → git push → .githooks/pre-push 知识闸 exit 1 → 资格已被
+    check_shell 消费、白烧一个审查周期。新链路在消费前做同一口径只读判定，
+    命中即非消费性拒绝（树已变必然重审，本闸省的是投递与兜底噪音）。
+    """
+    repo = _repo(tmp_path)
+    _card(repo, "data/methods/probe-consume/METHOD.md")
+    host = HostReviewAdmission()
+    record = admission_module._Frozen(
+        kind="git_push", parent="author-2", target="git_push:origin/main:main",
+        sha="a" * 64, child_id="child-consume", granted=True, consumed=False,
+        created_at=0.0, state="settled",
+    )
+    host._records["child-consume"] = record
+    monkeypatch.setattr(
+        HostReviewAdmission,
+        "_lane_push_precheck",
+        staticmethod(lambda parent, command, workdir: None),
+    )
+
+    def _sentinel(*args, **kwargs):  # pragma: no cover - 消费口必须先拒
+        raise AssertionError("知识闸必须先于资格消费判定")
+
+    monkeypatch.setattr(HostReviewAdmission, "_target", staticmethod(_sentinel))
+    decision = host.check_shell("author-2", "git push origin main", str(repo))
+    assert decision.allowed is False
+    assert "未入库知识资产" in decision.reason
+    assert "knowledge_flush.py" in decision.reason
+    assert host._records["child-consume"].consumed is False

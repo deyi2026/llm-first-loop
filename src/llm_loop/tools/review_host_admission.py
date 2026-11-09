@@ -4828,6 +4828,18 @@ class HostReviewAdmission:
             lane_denial = self._lane_push_precheck(parent, command, workdir)
             if lane_denial is not None:
                 return lane_denial
+            # 收口治理③（2026-11-10）：知识闸前置到消费口——审查窗口内新落卡
+            # 时，投递本会被 .githooks/pre-push 拦（exit 1），资格已被消费、
+            # 白烧一个审查周期。这里先做同一口径的只读判定（与 start 的
+            # _knowledge_gate_receipt 一致），命中则非消费性拒绝。注意树已变
+            # 必然重审（candidate sha 不再匹配），本闸省的是投递与兜底噪音。
+            knowledge_gate = _knowledge_gate_receipt(workdir)
+            if knowledge_gate is not None:
+                return self._deny(
+                    "工作区存在未入库知识资产（方法卡/经验卡），推送会被 pre-push "
+                    "知识闸拒绝；资格未被消费。",
+                    hint=str(knowledge_gate.get("fix") or ""),
+                )
         for scope_paths, recorded_digest, tier in scopes:
             try:
                 # Re-resolves the push base (ls-remote) too: if the remote ref

@@ -332,6 +332,53 @@ class LaneStore:
             )
             return entry
 
+    def close_if_live(
+        self,
+        lane_id: str,
+        *,
+        status: str = "merged",
+        reason: str = "",
+        max_attempts: int = 3,
+    ) -> dict:
+        """幂等自动收口：在途则按终态关闭（CAS 冲突重读重试），已终态原样返回。
+
+        收口治理③（2026-11-10，用户 2026-11-10 07:11 授权）：队列已完成合并后
+        lane 必须落终态——2026-11-09 实测 queue.merged 已落、lane 停在 merging，
+        卡住所有 main push 长达一夜（靠人工代收口解锁）。返回 dict 而非抛异常：
+
+        - ``{"closed": True,  "entry": …}``：本次关闭成功；
+        - ``{"closed": False, "already": <status>, "entry": …}``：已是终态（幂等）；
+        - ``{"closed": False, "missing": True}``：账本无此 lane（队列孤儿）；
+        - ``{"closed": False, "conflict": True}``：重试用尽仍 CAS 冲突（并发写者
+          在动它），调用方应把事实带回执、不静默放弃。
+        """
+        if status not in TERMINAL_STATUSES:
+            raise LaneConstraintError(f"close 仅接受终态 {TERMINAL_STATUSES}: {status!r}")
+        reason = str(reason or "").strip()
+        if not reason:
+            raise LaneConstraintError("close 必须提供非空 reason（终态可归因）")
+        for _ in range(max(1, int(max_attempts))):
+            try:
+                entry = self.get(lane_id)
+            except (OSError, LaneStoreCorruptionError):
+                return {"closed": False, "missing": True}
+            if entry is None:
+                return {"closed": False, "missing": True}
+            current = str(entry.get("status") or "open")
+            if current in TERMINAL_STATUSES:
+                return {"closed": False, "already": current, "entry": entry}
+            try:
+                closed = self.close(
+                    lane_id,
+                    expected_version=self.version_of(entry),
+                    status=status,
+                    reason=reason,
+                )
+            except LaneVersionConflictError:
+                continue
+            return {"closed": True, "entry": closed}
+        return {"closed": False, "conflict": True}
+
     def request_merge(self, lane_id: str, *, expected_version: int) -> dict:
         """申请合入 main：只把状态推进到 verifying（入队由合并队列负责）。"""
         return self.update(lane_id, expected_version=expected_version, status="verifying")
