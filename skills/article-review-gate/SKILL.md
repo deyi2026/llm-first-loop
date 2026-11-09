@@ -26,11 +26,12 @@ description: 文章审查闸（RULE-AI-28 第 2 条）——所有对外发表�
 - **P1 必改**：事实错误/引语无源/结构断裂/合规缺失。
 - **P2 尽量改**：表述优化、口径标注补全；不阻塞但回执留痕。
 
-## 回执（落盘 docs/promotion/receipts/，命名 YYYYMMDD-issue-review[-narrow].json）
+## 回执（落盘 docs/receipts/，命名 YYYYMMDD-issue-review[-narrow].json）
 
-> ⚠️ 该目录被 `.git/info/exclude` 屏蔽。回执写盘后必须
-> `git add -f docs/promotion/receipts/<文件名>` 才会进历史；普通 `git add` 收不进，
-> 漏了不会报错、只在 git 里查不到（2026-11-09 用户决定：回执进历史）。
+> 该目录不在任何 ignore 规则内，普通 `git add docs/receipts/<文件名>` 即可入库。
+> 写盘后随本次交付提交；`.githooks/pre-push` 检测到未跟踪回执或未回填占位会拒推
+> （2026-11-10 起。旧落点 `docs/promotion/receipts/` 已转历史归档、只读不新增——
+> 它在 `.git/info/exclude` 中被整目录屏蔽，`git add` 静默收不进）。
 ```json
 {"gate": "article", "reviewer": "<subagent_id>", "verdict": "PASS|REVISE|BLOCK",
  "issue": "<实际文稿编号>", "scope": "full|narrow", "findings": [{"id": "P1-1", "category": "structure", "issue": "...", "fix": "..."}],

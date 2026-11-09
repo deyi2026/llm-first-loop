@@ -49,6 +49,11 @@ fi
 # 说明交付链没闭合（本次合并回执曾因此卡住 push）。口径与知识闸一致：判定异常
 # fail-closed（看不见的闸等于没有闸）。
 RECEIPT_DIR="docs/governance/receipts"
+# 新落点（2026-11-10，用户指示）：RULE-AI-28 回执的正式目录。
+# 与 governance 目录的区别：docs/receipts/ 不在任何 ignore 规则内（由
+# tests/unit/test_receipts_dir_versioned.py 断言），普通 git add 就能入库——
+# 因此「未跟踪」不再只是「待检查」，而是「写了没入库，会随换机/清工作区消失」。
+NEW_RECEIPT_DIR="docs/receipts"
 receipt_hit=0
 check_receipt_content() {
   local label="$1" body="$2" hits
@@ -78,11 +83,27 @@ while IFS= read -r f; do
   check_receipt_content "${f}（未跟踪）" "$untracked_body"
 done <<< "$untracked_receipts"
 
+# 新落点未入库闸（2026-11-10）：docs/receipts/ 的回执未跟踪即拒推，fail-closed。
+# 旧落点 docs/promotion/ 被 .git/info/exclude 整目录遮住，git add 静默收不进、
+# 漏加不报错——这正是本次换落点要根治的失败模式；这里把「写了没入库」变成
+# 推送前的显式失败。只判 *.json：README 等说明文档不属于回执。
+if ! untracked_new_receipts="$(git ls-files --others --exclude-standard -- "$NEW_RECEIPT_DIR")"; then
+  echo "[pre-push] 拒绝：无法枚举 docs/receipts 未跟踪文件（fail-closed）。" >&2
+  exit 1
+fi
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  [[ "$f" == *.json ]] || continue
+  echo "[pre-push] 拒绝：回执 ${f} 未入库（未跟踪）。" >&2
+  echo "[pre-push] 修复：git add ${f}   # 该目录未被忽略，无需 -f；或删除不需要的回执" >&2
+  receipt_hit=1
+done <<< "$untracked_new_receipts"
+
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" =~ ^0+$ ]] && continue
   if [[ "$remote_sha" =~ ^0+$ ]]; then
     RANGE_ARGS=(--commit "$local_sha")   # 首推：扫待推提交可达的完整历史（逐提交，非仅 tip 树）
-    if ! changed_receipts="$(git ls-tree -r --name-only "$local_sha" -- "$RECEIPT_DIR")"; then
+    if ! changed_receipts="$(git ls-tree -r --name-only "$local_sha" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
       echo "[pre-push] 拒绝：无法枚举首推回执（fail-closed）。" >&2
       exit 1
     fi
@@ -90,7 +111,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     RANGE_ARGS=(--range "$remote_sha" "$local_sha")
     # 残余③（2026-11-09 收口）：AM 对 rename+modify 的回执为空漏检；AMRC 取新路径
     # （--name-only 对 R/C 只列新名，旧名已不在 tip、无需扫）。
-    if ! changed_receipts="$(git diff --name-only --diff-filter=AMRC "$remote_sha" "$local_sha" -- "$RECEIPT_DIR")"; then
+    if ! changed_receipts="$(git diff --name-only --diff-filter=AMRC "$remote_sha" "$local_sha" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
       echo "[pre-push] 拒绝：无法计算回执变更集（fail-closed）。" >&2
       exit 1
     fi
@@ -98,6 +119,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # 本次 range 新增/修改的回执：逐文件读 blob，命中占位即拒推。
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
+    # 新落点的非 JSON 文件（README/说明）不是回执，不参与占位判定。
+    if [[ "$f" == "$NEW_RECEIPT_DIR"/* && "$f" != *.json ]]; then
+      continue
+    fi
     if ! body="$(git show "${local_sha}:${f}" 2>/dev/null)"; then
       echo "[pre-push] 拒绝：无法读取回执 ${f}@${local_sha:0:12}（fail-closed）。" >&2
       receipt_hit=1
