@@ -73,3 +73,36 @@
 - 部署：`service_control publish(web)` + `restart` → 新护栏在服务进程生效
 - **远端推送不在本 lane 范围**：origin/main 停在 `75ed7eb3a`（00:07），本地 main 领先 42 个提交（多会话累积）。远端发布是独立的批次动作，本 lane 不代他人推送；此处显式记录，不假装已推。
 
+---
+
+## P2 残留处置（2026-11-09 后续 lane `lane-9286edca`）
+
+- 分支：`fix/lane-guard-p2-residuals-20261109`，基线 main `483b51fc4`
+- 范围：`src/llm_loop/core/lane_main_write_guard.py`、`tests/unit/test_lane_main_write_guard.py`、本回执
+- 处置原则：四项都按"无法判定 → 不静默放行"收敛；只增加拦截面，不放松既有判据。
+
+| # | 残留 | 处置 | 覆盖测试 |
+|---|---|---|---|
+| P2-1 | `git push origin :main` 删除远端 main 可被当"快进"放行 | 识别删除型 refspec（`:dst` / `--delete` / `-d`）；删除目标含 main 时按宽判据（任意 live lane 挡），不进快进校验 | `test_push_delete_refspec_main_denied_with_other_lane`、`test_push_delete_flag_main_denied_with_other_lane`、`test_push_delete_feature_branch_not_blocked`、`test_push_delete_main_allowed_without_other_lane` |
+| P2-2 | `_push_is_non_ff` 用 dst 名解析本地 sha，`feat:main` 可能误拒 | 新增 `_push_src_name` 取 refspec 左端；`_push_is_non_ff(..., local_ref=src)` 用 src 的 sha 判祖先关系 | `test_push_src_name_maps_refspec_left_side`、`test_push_src_branch_used_for_non_ff_check` |
+| P2-3 | naive `last_activity` 按本地时区补 tzinfo，可能放大/缩小 idle | 时区不可判定 → `_idle_seconds` 返回 None（按 live 挡，永不据此回收）；写入侧当前为 aware 本地时间（`system_local_now().isoformat()`，已核 `data/audit/lanes.jsonl`） | `test_naive_last_activity_not_reclaimed` |
+| P2-4 | `--git-dir`/`--work-tree`/`GIT_DIR` 重定向仓库不跟随 | 显式选项与紧邻 env 赋值（含 `env GIT_DIR=...`）→ 标记目标仓库不明，按 fail-closed 保守当 main | `test_git_dir_option_fail_closed_for_commit`、`test_git_dir_env_prefix_fail_closed`、`test_git_dir_env_prefix_via_env_command`、`test_git_dir_option_readonly_command_ignored`、`test_git_dir_option_allowed_without_other_lane` |
+
+### RULE-AI-35 真机实测（真实账本 `data/audit`，当时存在 2 个他人 live lane）
+
+| 命令 | 判定 |
+|---|---|
+| `git push origin :main` | `main_push_delete_other_lane`（拦） |
+| `git push --delete origin main` | `main_push_delete_other_lane`（拦） |
+| `git push origin :feat/x` | ALLOW |
+| `git --git-dir=<main>/.git commit -m probe`（workdir=feature worktree） | `main_commit_other_lane`（拦） |
+| `git --git-dir=<main>/.git status` | ALLOW |
+| `GIT_DIR=<main>/.git git commit -m probe` | `main_commit_other_lane`（拦） |
+| `git commit -m probe`（feature worktree） | ALLOW |
+
+### 仍未覆盖（诚实边界）
+
+- 间接 shell：`sh -c 'GIT_DIR=... git commit'` 中的赋值在引号内，`_git_verbs` 只看 git 前的紧邻 token，看不到 → 仍与"间接 shell 改别的仓库"同级残余。
+- `git --git-dir` 指向的仓库存在但不在本机常见布局：保守当 main（可能误拒，方向安全）。
+- 删除型 refspec + `--all`/`--mirror` 组合无实际语义，未单独建模。
+

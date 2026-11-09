@@ -23,6 +23,16 @@
 - **目标仓库跟随**：``git -C <path>`` 会被解析（相对路径按命令 workdir），
   判定用的是写入实际落到的仓库分支，避免从 feature worktree 借 ``-C`` 改道。
 
+2026-11-09 P2 残留处置（本文件）：
+- **删除型 refspec**（``:main`` / ``--delete main``）：删除无法用快进证明安全，
+  不再走快进校验静默放行；删除目标含 main 时按宽判据（任意 live lane 挡）。
+- **非快进校验用被推 src**：``git push origin feat:main`` 用 ``feat`` 的 sha
+  判定，不再误用本地 ``main``（旧实现只会误拒，但仍应修正）。
+- **naive 时间戳**：时区不可判定 → 不参与闲置回收（按 live 挡），不再按本地
+  时区猜（写入侧当前为 aware 本地时间；naive 只在旧数据/外部写入出现）。
+- **--git-dir/--work-tree**：目标仓库不明 → 保守当 main（fail-closed），
+  不再静默按 workdir 当前分支放行。
+
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
 一致：拒绝必须基于已证事实）。
@@ -30,6 +40,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from datetime import datetime
@@ -47,8 +58,8 @@ _PUSH_CLOSING = frozenset({"verifying", "merging"})
 STALE_AFTER_S = 4 * 3600.0
 # git 全局选项里带值、且会影响目标仓库的选项：
 # - ``-C`` 会被链式解析成实际目标仓库（见 _chained_cwd）；无法解析按 main 保守处理；
-# - ``--git-dir``/``--work-tree`` 不做路径解析（已知限制：改写这两项可绕过
-#   本闸，属于与间接 shell 同级的已知残余）；
+# - ``--git-dir``/``--work-tree`` 会重定向仓库且不做路径语义跟随 → 标记目标仓库
+#   不明，调用方按 fail-closed 保守当 main（2026-11-09 P2：由"静默放行"改为保守判定）；
 # - ``-c``/``--namespace`` 与目标仓库无关，仅跳过其取值以免误判。
 _GIT_VALUE_OPTS = frozenset({"-c", "-C", "--git-dir", "--work-tree", "--namespace"})
 # push 的"分离式带值"flag：其值是数据（push option / 路径），不是 remote 或 refspec。
@@ -84,11 +95,29 @@ def _git_verbs(
             continue
         j = i + 1
         target: str | None = None
+        # 环境变量 GIT_DIR/GIT_WORK_TREE 同样会重定向 git 仓库；只看紧邻 git 前的
+        # 赋值链（`env GIT_DIR=... git ...` 也覆盖），与 --git-dir 同一处置：
+        # 目标不明 → 保守当 main（fail-closed）。
+        k = i - 1
+        while k >= 0 and "=" in tokens[k] and not tokens[k].startswith("-"):
+            if tokens[k].startswith(("GIT_DIR=", "GIT_WORK_TREE=")):
+                target = ""
+                break
+            k -= 1
         while j < len(tokens) and tokens[j].startswith("-"):
-            if tokens[j] in _GIT_VALUE_OPTS:
-                if tokens[j] == "-C" and j + 1 < len(tokens):
+            tok = tokens[j]
+            if tok in _GIT_VALUE_OPTS:
+                if tok == "-C" and j + 1 < len(tokens):
                     target = _chained_cwd(target, tokens[j + 1], workdir)
+                elif tok in ("--git-dir", "--work-tree"):
+                    # 仓库被选项重定向，且不做后续路径语义跟随（--git-dir 可指
+                    # .git 目录或 bare 仓库）→ 标记"目标仓库不明"，调用方按
+                    # fail-closed 保守当 main（与 -C 链不可解析同一处置）。
+                    target = ""
                 j += 2
+            elif tok.startswith(("--git-dir=", "--work-tree=")):
+                target = ""
+                j += 1
             else:
                 j += 1
         if j < len(tokens) and tokens[j] in ("commit", "push"):
@@ -217,6 +246,45 @@ def _push_targets(
     return targets
 
 
+def _push_src_name(
+    refspecs: list[str], dst: str, workdir: str | None = None
+) -> str | None:
+    """与 ``dst`` 配对的 refspec 左端（src）名；无法唯一对应返回 None。
+
+    ``""`` 表示删除型 refspec（``:main`` / ``--delete main``，src 为空）。
+    """
+    args, flags = _push_positional(refspecs)
+    if any(flag in ("--delete", "-d") for flag in flags):
+        return ""
+    for tok in args[1:]:
+        if ":" in tok:
+            src, raw_dst = tok.split(":", 1)
+        else:
+            src = raw_dst = tok
+        name = _normalize_ref_name(raw_dst)
+        if name in ("HEAD", "@"):
+            name = _current_branch(workdir) or ""
+        if name != dst:
+            continue
+        src = _normalize_ref_name(src)
+        if src in ("HEAD", "@"):
+            src = _current_branch(workdir) or ""
+        return src
+    return None
+
+
+def _push_is_delete(refspecs: list[str]) -> bool:
+    """删除型 push：``--delete``/``-d`` flag 或 ``:<dst>`` 空 src refspec。
+
+    删除远端 ref 没有"快进"可证，不能走快进校验；是否拦由调用方按
+    "删除的是否 main"决定（见 ``check_git_main_write``）。
+    """
+    args, flags = _push_positional(refspecs)
+    if any(flag in ("--delete", "-d") for flag in flags):
+        return bool(args[1:])
+    return any(tok.startswith(":") and tok.strip() != ":" for tok in args[1:])
+
+
 def _git_out(args: list[str], cwd: str | None, timeout: float = 5.0) -> str | None:
     """只读 git 命令的 stdout；失败/超时/无 cwd 返回 None（按无法判定处理）。"""
     if not cwd:
@@ -290,7 +358,10 @@ def _active_other_lanes(audit_dir: str, session_id: str) -> list[dict[str, Any]]
 
 
 def _idle_seconds(row: dict[str, Any], now: datetime) -> float | None:
-    """距最后一次活动（last_activity，缺失回退 created_at）的秒数；无法解析 None。"""
+    """距最后一次活动（last_activity，缺失回退 created_at）的秒数。
+
+    无法解析或时区不可判定 → None（调用方按 live 处理，永不已此回收）。
+    """
     raw = str(row.get("last_activity") or row.get("created_at") or "").strip()
     if not raw:
         return None
@@ -299,7 +370,10 @@ def _idle_seconds(row: dict[str, Any], now: datetime) -> float | None:
     except ValueError:
         return None
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=now.tzinfo)
+        # naive 时间戳的时区不可判定：既可能是 naive UTC，也可能是 naive 本地
+        # 时间，两者差一个时区偏移；据此算 idle 会放大或缩小闲置时长，反向
+        # 影响回收。按 fail-closed 视为不可判定，该 lane 仍按 live 挡。
+        return None
     return (now - ts).total_seconds()
 
 
@@ -445,8 +519,33 @@ def _is_shallow(workdir: str | None) -> bool | None:
     return None
 
 
-def _push_is_non_ff(branch: str, remote: str, workdir: str | None) -> bool:
-    """远端 main 有本地未包含的提交 → True；读不到远端/本地按无法判定放行。"""
+_SAFE_REV_RE = re.compile(r"^(?!--)[A-Za-z0-9._/@^~-]+$")
+
+
+def _rev_sha(rev: str, workdir: str | None) -> str | None:
+    """分支名/HEAD/sha → 本地 commit sha；不可安全解析返回 None（无法判定）。
+
+    只接受不以 ``-`` 开头、无选项/通配元字符的 token，绝不把任意命令文本
+    喂给 git（防 ``--upload-pack=`` 一类选项注入）。
+    """
+    if not rev or not _SAFE_REV_RE.match(rev):
+        return None
+    if rev in ("HEAD", "@"):
+        return _git_out(["rev-parse", "--verify", "--quiet", "HEAD"], workdir)
+    return _git_out(
+        ["rev-parse", "--verify", "--quiet", f"refs/heads/{rev}"], workdir
+    ) or _git_out(["rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"], workdir)
+
+
+def _push_is_non_ff(
+    branch: str, remote: str, workdir: str | None, local_ref: str | None = None
+) -> bool:
+    """远端 main 有本地未包含的提交 → True；读不到远端/本地按无法判定放行。
+
+    ``local_ref`` 是被推 refspec 的 **src**（``git push origin feat:main`` 的
+    ``feat``）；只用 dst 名解析会把本地 ``main`` 误当被推对象。``None``（无
+    显式 refspec / 无法唯一对应）退回 dst 名。
+    """
     if not workdir:
         return False
     if not remote or remote.startswith("-"):
@@ -462,9 +561,7 @@ def _push_is_non_ff(branch: str, remote: str, workdir: str | None) -> bool:
     remote_sha = parts[0] if parts else ""
     if not remote_sha:
         return False
-    local_sha = _git_out(
-        ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], workdir
-    )
+    local_sha = _rev_sha(local_ref if local_ref is not None else branch, workdir)
     if not local_sha or local_sha == remote_sha:
         return False
     # 快进要求远端 sha 是本地祖先；对象在本地不存在即证明不是祖先。
@@ -543,8 +640,10 @@ def check_git_main_write(
     if not verbs:
         return None
     commit_hit = False
-    pushes: list[tuple[str, str | None, str]] = []  # (branch, 目标仓库, remote)
+    # (目标分支, 被推 src, 目标仓库, remote)；src="" 表示删除型 refspec
+    pushes: list[tuple[str, str | None, str | None, str]] = []
     push_all = False
+    push_delete_main = False
     basis_workdir: str | None = None
     for verb, refs, cwd_override in verbs:
         # 判定基于实际目标仓库：`git -C <path>` 会改变写入落到哪个分支。
@@ -564,9 +663,16 @@ def check_git_main_write(
             commit_hit = True
             continue
         push_all = push_all or is_all
+        if _push_is_delete(refs) and any(name in _MAIN_BRANCHES for name in branches):
+            push_delete_main = True
         remote = _push_remote(refs)
         for name in branches:
-            entry = (name, target_workdir, remote)
+            entry = (
+                name,
+                _push_src_name(refs, name, target_workdir),
+                target_workdir,
+                remote,
+            )
             if entry not in pushes:
                 pushes.append(entry)
     if not commit_hit and not pushes:
@@ -590,7 +696,7 @@ def check_git_main_write(
             "合并建议可用 lane_merge_advice。",
         )
     if pushes:
-        if any(name == "__REPO_OPTION__" for name, _wd, _r in pushes):
+        if any(entry[0] == "__REPO_OPTION__" for entry in pushes):
             if live:
                 return _deny(
                     "main_push_repo_option_unmodeled",
@@ -603,7 +709,14 @@ def check_git_main_write(
                 )
             # 无他人 live lane → 闸本就不拦，去掉标记继续（无可判定目标）。
             pushes = [p for p in pushes if p[0] != "__REPO_OPTION__"]
-        if push_all:
+        if push_delete_main:
+            blockers = live
+            code = "main_push_delete_other_lane"
+            why = (
+                "命令删除远端 main（删除型 refspec 无法用快进证明安全），"
+                "且存在他人 live lane"
+            )
+        elif push_all:
             blockers = live
             code = "main_push_all_other_lane"
             why = (
@@ -629,8 +742,10 @@ def check_git_main_write(
                 stale,
                 f"{why}：{_lanes_note(blockers)}。先等对方落定再推。",
             )
-        for branch, target_workdir, remote in pushes:
-            if _push_is_non_ff(branch, remote, target_workdir):
+        for branch, local_ref, target_workdir, remote in pushes:
+            if local_ref == "":  # 删除型 refspec：无"快进"语义（前面已按删除判定）
+                continue
+            if _push_is_non_ff(branch, remote, target_workdir, local_ref=local_ref):
                 return {
                     "reason": "lane_main_write_conflict",
                     "reason_code": "main_push_not_fast_forward",
