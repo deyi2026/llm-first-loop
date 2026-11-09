@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci_gate.sh — R9 CI 同款三件套门禁（一条命令本地复现）
 #
-# 链路: ruff → 测试环境声明门禁 → pyright → pytest -m tier0（预检快反馈）→ pytest --dist loadfile -n auto（全量）
+# 链路: ruff → 测试环境声明门禁 → pyright → pytest -m tier0（预检快反馈）→ 全量门禁（并行集 --dist loadfile -n auto + serial_signal 串行补跑）
 #
 # ⚠️ 门禁不降级（R9-WF-01c 常驻原则）: tier0 仅是开发回路预检（分钟级反馈），
 #    提交门禁恒为【全量】——本脚本最后一步永远跑全量用例，任何"分层=可以少跑"
@@ -127,7 +127,17 @@ echo "═══ [5/5] pytest 全量门禁（xdist loadfile 并行；提交门禁
 # collected test cases, turn off xdist, or reinterpret resource failures as
 # passing tests. Operators may explicitly override the worker budget.
 export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
-echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (full test selection unchanged)"
+echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (parallel subset only; serial_signal 走下面的串行补跑)"
+# 2026-11-09（P0-1 选择集口径统一，用户授权）：此前并行集合只排 real_llm——
+# pyproject 的 addopts 是 `-m "not real_llm"`，不含 serial_signal；而 marker 定义、
+# scripts/verify_serial_signal_stability.sh 与 scripts/verify_ambient_gate_mutation.sh
+# 都以「并行排除 serial_signal + 串行补跑」为前提。这里补齐两半：
+#   ① 并行集合显式排除 serial_signal（见下方 pytest 命令行）；
+#   ② 被排除的用例在此串行补跑——只排不跑 = 静默丢失覆盖，故失败即阻断。
+# 注意：命令行 -m 覆盖 addopts 的 -m，条件必须写全，否则 real_llm 会被收进来。
+# 位置：放在并行全量之前 = 便宜且高信号的补集先跑，红了不必等整轮全量。
+echo "── serial_signal 串行补跑（并行集合的补集；物理信号时序敏感，失败即阻断）──"
+"$PY" -m pytest -m "not real_llm and serial_signal" -q
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 # 2026-10-23（P1 出口判据③ CI 红数对账）：产出 junitxml 供红数对账脚本消费。
 # 实测红项与登记基线 eval/rules/known_reds_current.json 对账：超出登记项 = 新红 = 阻断。
@@ -136,7 +146,7 @@ GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_se
 # 后续每次运行都挂（2026-10-23 14:01 实测：2 个 ci_gate 结论行测试因此变红）。
 # 改为"独立临时目录 + 固定文件名"，跨平台且可反复运行。
 GATE_TMP="$(mktemp -d /tmp/ci_gate.XXXXXX)"; GATE_XML="$GATE_TMP/report.xml"
-if "$PY" -m pytest --dist loadfile -n auto -q --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
+if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal" --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
   cat "$GATE_OUT"
   echo "（xdist 全量绿）"
 else
@@ -184,8 +194,8 @@ fi
 
 if [[ "$PYRIGHT_STATUS" == "unknown" ]]; then
   echo "⚠️ ci_gate 全链路完成，但 pyright=UNKNOWN（本轮无类型诊断数据，非 PASS）："
-  echo "   ruff + env-pin 声明门禁 + tier0 预检 + 全量门禁均已通过；"
+  echo "   ruff + env-pin 声明门禁 + tier0 预检 + 全量门禁（并行集 + serial_signal 串行补跑）均已通过；"
   echo "   发布资格（release.yml 带 --require-complete）不得引用本次结果作为类型检查通过。"
 else
-  echo "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁）"
+  echo "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）"
 fi
