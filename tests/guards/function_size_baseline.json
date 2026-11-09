@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "head_commit": "8fff7d183",
+    "head_commit": "36e314c87",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
-    "生成时间": "2026-11-09",
+    "生成时间": "2026-11-10",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
     "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升；实测更高时按实测重定＝抬高，属 EVO-20261025-e0bff8ee 批准的红线放宽，须随 guard(r9) 提交逐条可见，不是静默放宽）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
@@ -1022,6 +1022,7 @@
       }
     },
     "write_exemptions": {
+      "src/llm_loop/agent_completion.py": "lfl-agent-completion 人工显式 --output 写出独立验证结果；属一次性 CLI 交付验收报告，不承载 LFL 运行态恢复 SoT；未传 --output 时仅 stdout。输出失败不能代替运行终态，也不授予发布资格。",
       "src/llm_loop/eval/oracle_1210.py": "评测命令显式生成 report.json/report.md；属于测试/评测输出工件，不是运行态恢复 SoT。",
       "src/llm_loop/extensions/sources.py": "P2-B（§5.2）源获取仅写 fetch 临时目录与解包目标（git 浅克隆、HTTP 下载 sink、zip/tar 解包、临时归档产物），属一次性外部文件效果与缓存，不是内部 durable 状态 SoT；插件安装态写入仍由 extensions/store.py 单一持久面负责。",
       "src/llm_loop/introspection/evolution_handoff.py": "EVO-20261106-b0806c32 跨会话完成待登记暂存: 便捷staging条目（tmp+os.replace 原子写），丢失仅退化回 help_request 人工路径，非任何恢复路径的 SoT，不承载审计事实（正式登记仍在 evolution_exec_log）",
@@ -1242,6 +1243,7 @@
     "_doc": "P0-3 扩张冻结：src/llm_loop 下新增顶层包/能力文件必须在此登记（guard(r9) 前缀提交）或入 exemptions；plane 归属引 AUDIT-20261007 §2.1/§2.2",
     "exemptions": {},
     "modules": {
+      "agent_completion.py": "delivery（独立 Agent 完成判定 CLI；检验外部 pytest 与哈希回执，不能控制主 Engine 运行终态）",
       "cli.py": "Action（入口）",
       "cli_contracts.py": "delivery（共享CLI参数契约；不拥有Engine执行权）",
       "config.py": "kernel-candidate（runtime 配置）",
