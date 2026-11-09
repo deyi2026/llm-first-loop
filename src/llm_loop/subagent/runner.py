@@ -245,10 +245,11 @@ class SubAgentResult:
 
 
 # EVO-20261108-b5fead21 ①②: 子代理收敛提醒与截断判决细分的机械判据。
-# 三态结论契约（审查类派单）使用独立大写 PASS/FAIL/BLOCK token；词边界匹配
-# 避免 FAILED/passing/blocked 之类误报。这是“是否已出现结论标记”的机械判定，
-# 不证明结论真伪、不构成对子代理完成度的人工裁决。
-_VERDICT_TOKEN_RE = re.compile(r"\b(PASS|FAIL|BLOCK)\b")
+# 三态结论契约（审查类派单）使用独立大写 PASS/FAIL/BLOCK token；ASCII 字母
+# 边界匹配避免 FAILED/passing/blocked 之类误报（独立审查 P2-2：Unicode \b 在
+# CJK 字旁不成立，"结论PASS" 曾漏检——字母边界使 CJK 邻接词也命中）。这是
+# “是否已出现结论标记”的机械判定，不证明结论真伪、不构成人工裁决。
+_VERDICT_TOKEN_RE = re.compile(r"(?<![A-Za-z])(PASS|FAIL|BLOCK)(?![A-Za-z])")
 
 
 def assistant_verdict_marker(messages: list[Message]) -> str:

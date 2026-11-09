@@ -100,7 +100,9 @@ def _required_write_scope_kwargs(reqs: Any, declared: bool) -> dict:
 # skill_load 拒载，宁可父级 spawn 当场知情（今晚审查闸技能被隐藏的盲区）。
 # 纯披露不拦截派单：披露面失败按无警告处理（fail-open，派单主路径不因此挂）。
 _SKILL_REF_PATTERNS = (
-    re.compile(r"skills/([A-Za-z0-9][A-Za-z0-9_.\-]*)"),
+    # 独立审查 P2-3：内部点后必须跟名字字符，句尾英文句点不再被吞进技能名
+    # （"skills/beta." 抽出 "beta"；含点技能名仍可完整抽出）。
+    re.compile(r"skills/([A-Za-z0-9](?:[A-Za-z0-9_\-]|\.(?=[A-Za-z0-9_\-]))*)"),
     re.compile(r"skill_load\(\s*['\"]([^'\"]+)['\"]"),
 )
 
@@ -145,6 +147,13 @@ def _hidden_skill_warnings(
             warnings.append(
                 f"{name}({meta.integrity})——child 启动后 skill_load 将被完整性门禁"
                 f"拒载；请先重跑基线登记（approve_skills.py）或改派不依赖该技能的任务"
+            )
+        elif meta is None:
+            # 独立审查 P2-4：引用了但本地技能目录不存在——child 的 skill_load
+            # 将 not-found 失败，父级当场知情优于事后排查。
+            warnings.append(
+                f"{name}(missing)——本地技能目录无此技能，child 启动后 skill_load"
+                f" 将 not-found；请核对技能名或先登记该技能"
             )
     return warnings
 

@@ -201,3 +201,16 @@ def test_subagent_result_receipt_surfaces_truncation_detail(build_test_engine):
     assert "[截断细分]" in terminal.content
     assert "exhausted_without_verdict" in terminal.content
     assert "重派" in terminal.content
+
+
+def test_verdict_token_ascii_letter_boundary():
+    """独立审查 P2-2：ASCII 字母边界——CJK 邻接词命中，英文前后缀不误报."""
+    from llm_loop.subagent.runner import assistant_verdict_marker
+
+    def msgs(text: str) -> list[Message]:
+        return [Message(role="assistant", content=text, source=MessageSource.SYSTEM)]
+
+    assert assistant_verdict_marker(msgs("最终结论PASS，按此收敛")) == "PASS"
+    assert assistant_verdict_marker(msgs("整体阻塞BLOCK。")) == "BLOCK"
+    assert assistant_verdict_marker(msgs("FAILED as expected")) == ""
+    assert assistant_verdict_marker(msgs("passed quickly")) == ""

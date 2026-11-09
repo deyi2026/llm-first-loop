@@ -154,3 +154,22 @@ def test_disclosure_failure_is_fail_open(build_test_engine, skills_dir, monkeypa
 def test_fixture_integrity_states_are_as_expected(skills_dir):
     metas = {m.name: m.integrity for m in scan_skills_dir(skills_dir)}
     assert metas == {"alpha": INTEGRITY_OK, "beta": "modified"}
+
+
+def test_trailing_period_not_swallowed_into_skill_name():
+    # 独立审查 P2-3：句尾英文句点不属于技能名（"skills/beta." → 抽出 "beta"）
+    assert _referenced_skill_names("先用 skills/beta. 完成审查") == ["beta"]
+    assert _referenced_skill_names("参见 skills/a.b.c 的说明") == ["a.b.c"]
+
+
+def test_missing_skill_reference_disclosed(skills_dir, monkeypatch):
+    # 独立审查 P2-4：引用了但本地目录无此技能 → missing 披露（child skill_load 将 not-found）
+    from llm_loop.tools.builtin.spawn_subagent import _hidden_skill_warnings
+
+    monkeypatch.setenv("LFL_SKILLS_REQUIRE_MANIFEST", "1")
+    warnings = _hidden_skill_warnings(
+        "请加载 skills/ghost-review-gate 后开始", lambda: str(skills_dir)
+    )
+    assert any("ghost-review-gate(missing)" in w for w in warnings), warnings
+    # 存在且 ok 的技能仍零噪声
+    assert _hidden_skill_warnings("用 skills/alpha 即可", lambda: str(skills_dir)) == []
