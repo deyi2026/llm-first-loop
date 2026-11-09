@@ -1,0 +1,42 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261109-feishu-requester-exit",
+  "summary": "Reuse existing requester-exit lease wait for Feishu restarts so an idle heartbeat cannot kill its dispatching turn; expose the same deferred-effect and recovery exits in tool receipts.",
+  "components": [
+    {
+      "component_id": "feishu-requester-exit-repair",
+      "paths": [
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/tools/builtin/service_control.py",
+        "tests/unit/test_service_control_two_phase_restart.py",
+        "tests/unit/test_service_control_argument_contract.py",
+        "docs/governance/submissions/20261109-feishu-requester-exit.json",
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/security_guard.py",
+        "src/llm_loop/tools/builtin/read_file.py",
+        "src/llm_loop/memory/extractor.py",
+        "pyproject.toml",
+        "uv.lock",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/feishu/handlers.py",
+        "tests/unit/test_deepin_privacy_preservation.py",
+        "CHANGELOG.md",
+        "README.md",
+        "README.en.md"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "managed service restart lifecycle",
+      "disposition": "Reuse requester whole-run lease, existing bounded wait and existing explicit evidence override; include Feishu in the existing Web/all phase rather than adding another controller. Preserve the deployed 0.6.45 privacy protections and repair whole-PEM redaction, clarify recovery hints and issue 0.6.46 without changing model configuration. Keep existing function-size baselines unchanged: isolate privacy-aware read preparation and extraction input preparation in small helpers rather than enlarging legacy methods. Transport redaction inspects raw current credentials via the existing runtime process snapshot boundary, without dotenv loading or new direct environment access; public version markers remain consistent.",
+      "evidence": [
+        "tests/unit/test_service_control_two_phase_restart.py",
+        "tests/unit/test_service_control_argument_contract.py",
+        "tests/unit/test_deepin_privacy_preservation.py"
+      ],
+      "verification_level": "Revision2 independent GLM-5.3 PASS; original R9 reached full suite but stopped on environment-read ratchet, incomplete public version markers and missing worktree interpreter link. Corrected those causes without changing tests, baselines or model settings. Revision3 focused validation, independent re-review and original full R9 are required.",
+      "model_evidence_veto_recovery_exit": "Existing natural requester completion, waiting_for_requester_exit evidence override, cancel/adopt and structured timeout suggestion remain available.",
+      "rollback_route": "Revert this isolated candidate before integration; do not modify the installed production wheel."
+    }
+  ],
+  "declarations": []
+}

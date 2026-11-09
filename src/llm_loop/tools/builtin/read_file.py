@@ -12,6 +12,7 @@ from llm_loop.core.run_context import (
     workspace_base,
 )
 from llm_loop.sealed_paths import seal_enabled, sealed_path_reason
+from llm_loop.security_guard import redact_sensitive_content, sensitive_path_reason
 from llm_loop.tools.safety import link_shaped_paths
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
@@ -185,14 +186,14 @@ class ReadFileTool:
                     tool_name=self.name,
                 )
             if snapshot_requested:
-                return self._read_physical_snapshot(
+                return self._read_context_snapshot(
                     p,
                     offset=offset,
                     limit=(None if limit is None else int(limit)),
                     link_note=_link_note,
                 )
             st_before = p.stat()
-            file_text = p.read_text(encoding="utf-8", errors="replace")
+            file_text, sensitive_note = self._read_context_text(p)
             st_after = p.stat()
             version_token = (
                 f"stat:{st_after.st_mtime_ns}:{st_after.st_size}"
@@ -218,7 +219,7 @@ class ReadFileTool:
             note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
             # 元信息首行提供路径/总行数/选定范围；正文保持真实字节直到统一 hard cap。
             meta = f"[read_file] {p} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
-            content = meta + "\n" + numbered + note + _link_note
+            content = meta + "\n" + numbered + note + _link_note + sensitive_note
 
             raw_observation = content if current_evidence_shadow_enabled.get() else None
             # EVO-20260823-12be9cac: 成功翻转 + 登记正帧（存在 + 元数据，查询时 stat 对账）
@@ -254,6 +255,41 @@ class ReadFileTool:
                 error_type=type(exc).__name__,
                 error_detail=str(exc),
             )
+
+    def _read_context_text(self, path: Path) -> tuple[str, str]:
+        """Return only model-visible text plus an explicit redaction disclosure."""
+        text = path.read_text(encoding="utf-8", errors="replace")
+        reason = sensitive_path_reason(path)
+        if reason is None:
+            return text, ""
+        text, redactions = redact_sensitive_content(text)
+        notice = (
+            f"\n[敏感内容已脱敏] 该路径命中敏感判定（{reason}）——"
+            f"{redactions} 处敏感值已替换为占位符，明文未进入模型上下文"
+        )
+        return text, notice
+
+    def _read_context_snapshot(
+        self, path: Path, *, offset: int, limit: int | None, link_note: str,
+    ) -> ToolResult:
+        """Refuse sensitive raw baselines before any artifact persistence."""
+        reason = sensitive_path_reason(path)
+        if reason is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[敏感文件] 该路径命中敏感判定（{reason}）——snapshot "
+                    "基线会把密钥明文固化进持久化存储，故不提供快照基线。"
+                    "如只需查看键名/结构，请用默认只读模式（snapshot=false），"
+                    "敏感值会被脱敏后返回。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="SensitivePathSnapshotRefused",
+            )
+        return self._read_physical_snapshot(
+            path, offset=offset, limit=limit, link_note=link_note,
+        )
 
     def _read_physical_snapshot(
         self,

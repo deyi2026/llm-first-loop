@@ -119,6 +119,12 @@ from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+_CACHE_GUARD_RECOVERY_HINT = (
+    "若为隐私命中，请先脱敏输入或相关历史内容；若为上下文超限，"
+    "再考虑压缩 checkpoint 或换新会话。处理原因后可发送“继续”重试。"
+)
+
+
 _CANCELLED_ANSWER = "（已停止——用户点击停止按钮，本轮回答终止）"
 
 # Phase5 M2（设计 §2.2.1/§2.3）：LLM 流内插话检查点节流间隔。
@@ -2243,9 +2249,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     if self.status:
                         self.status.record_exception("guard_block", exc)
                     _run_end_reason = "guard_blocked"
-                    final_answer = (
-                        f"[缓存守卫拦截] {exc}\n\n建议：压缩 checkpoint 或换新会话后重试。"
-                    )
+                    final_answer = f"[缓存守卫拦截] {exc}\n\n{_CACHE_GUARD_RECOVERY_HINT}"
                     break
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:

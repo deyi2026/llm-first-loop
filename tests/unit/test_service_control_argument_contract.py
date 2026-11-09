@@ -262,3 +262,21 @@ def test_restart_all_next_check_declares_whole_action_deferred(tmp_path) -> None
     assert "deferred_effect" in result.content
     # 两个机器可读块必须能各自独立解析（re 只截到第一个 JSON 的边界）
     assert '"pending": true' in result.content
+
+
+def test_feishu_restart_receipt_explains_requester_exit_before_effect(tmp_path) -> None:
+    _publish_deployment(tmp_path)
+    tool, _store, spawned = _tool(tmp_path)
+    result = tool.execute(action="restart", target="feishu", expected_generation=1)
+    assert result.status == ToolResultStatus.SUCCESS
+    assert len(spawned) == 1
+    assert _deferred_payload(result.content) == {
+        "condition": "requester_run_end",
+        "effective_after_session_end": True,
+        "pending": True,
+        "services": ["feishu"],
+    }
+    payload = _next_check_payload(result.content)
+    assert payload["target"] == "feishu"
+    assert "waiting_for_requester_exit" in payload["gates"]
+    assert {item["kind"] for item in payload["exits"]} == {"natural", "override"}

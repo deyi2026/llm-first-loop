@@ -4384,10 +4384,10 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         return 3
 
     sessions_dir = Path(deployment.runtime_root) / "data" / "sessions"
-    # Phase 1 - requester exit (web/all only): never kill the dispatching
+    # Phase 1 - requester exit (web/feishu/all): never kill the dispatching
     # session mid-turn, and never hold the lifecycle lease while waiting for
     # it, so desired-state publication stays unblocked.
-    if action.target in {"web", "all"} and _requester_run_active(
+    if action.target in {"web", "feishu", "all"} and _requester_run_active(
         sessions_dir, action.requester_session_id
     ) and not _wait_for(
         store,

@@ -288,7 +288,7 @@ def test_idle_timeout_fails_closed(tmp_path: Path, fast_waits: None) -> None:
     assert "feishu busy" in final.detail
 
 
-def test_feishu_restart_skips_requester_gate(
+def test_feishu_restart_times_out_without_killing_active_requester(
     tmp_path: Path, fast_waits: None
 ) -> None:
     store = ManagedServiceDeploymentStore(tmp_path / "data")
@@ -304,12 +304,14 @@ def test_feishu_restart_skips_requester_gate(
         rc = run_action_worker(store, action.action_id)
     finally:
         lock.release()
-    assert rc == 0
+    assert rc == 1
     final = store.read_action(action.action_id)
     assert final is not None
-    assert final.status == "succeeded"
-    assert "verify=confirmed_ok" in (final.detail or "")
-    assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=feishu"
+    assert final.status == "failed"
+    assert not final.verify_evidence
+    assert "requester run still active" in final.detail
+    assert not (tmp_path / "marker.txt").exists()
+    assert json.loads(final.next_step)["kind"] == "requester_exit_timeout"
 
 
 def test_learning_target_records_targeted_action(tmp_path: Path) -> None:
@@ -392,11 +394,8 @@ def test_verify_failure_records_evidence_without_rerun(
     action = store.accept_restart(
         target="feishu", expected_generation=1, requester_session_id="session-A"
     )
-    lock = _HeldRunLock(tmp_path / "data" / "sessions", "session-A")
-    try:
-        rc = run_action_worker(store, action.action_id)
-    finally:
-        lock.release()
+    # This case exercises post-restart identity failure after the requester exited.
+    rc = run_action_worker(store, action.action_id)
     assert rc == 5
     final = store.read_action(action.action_id)
     assert final is not None
@@ -406,3 +405,43 @@ def test_verify_failure_records_evidence_without_rerun(
     assert "git_head_mismatch" in (final.detail or "")
     # L6: 程序不再据核验结论自动重跑——物理脚本只执行一次。
     assert (tmp_path / "runs.txt").read_text(encoding="utf-8").splitlines() == ["run"]
+
+
+def test_feishu_restart_waits_for_requester_even_with_idle_heartbeat(
+    tmp_path: Path, fast_waits: None
+) -> None:
+    """A stale idle heartbeat cannot authorize killing the dispatching Feishu run."""
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    _record_target_script(tmp_path)
+    deployment = _git_deployment(tmp_path)
+    _write_verify_head(tmp_path, deployment)
+    _write_heartbeat(tmp_path)
+    store.compare_and_swap(deployment, expected_generation=0)
+    action = store.accept_restart(
+        target="feishu", expected_generation=1, requester_session_id="session-A"
+    )
+    lock = _HeldRunLock(tmp_path / "data" / "sessions", "session-A")
+    outcome: dict[str, int] = {}
+    thread = threading.Thread(
+        target=lambda: outcome.update(rc=run_action_worker(store, action.action_id))
+    )
+    thread.start()
+    try:
+        waiting = _wait_for_status(
+            store, action.action_id,
+            {"waiting_for_requester_exit", "succeeded", "failed"},
+        )
+        assert waiting is not None
+        assert waiting.status == "waiting_for_requester_exit"
+        assert not (tmp_path / "marker.txt").exists()
+        with store.lifecycle_lock_path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock.release()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert outcome["rc"] == 0
+    final = store.read_action(action.action_id)
+    assert final is not None and final.status == "succeeded"
+    assert (tmp_path / "marker.txt").read_text().strip() == "target=feishu"

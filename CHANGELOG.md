@@ -1,5 +1,12 @@
 # Changelog（公开变更记录）
 
+## v0.6.46 — Deepin controlled restart repair (2026-11-09)
+
+- Include Feishu in the existing requester-exit phase so a controlled restart waits for the dispatching run to finish, with matching deferred-effect receipts.
+- Preserve deployed 0.6.45 sensitive-read, full-history privacy and memory-extraction protections; redact complete PEM bodies, including missing-footer and multiline assignment cases.
+- Clarify privacy-block and interrupted-reply recovery hints without automatically repeating business operations.
+
+
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
 ## v0.6.43 — wheel WebUI 发布路径修复（2026-11-09）

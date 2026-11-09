@@ -29,6 +29,8 @@ from pathlib import Path
 from llm_loop.core.message import dict_wire_chars
 from llm_loop.llm.errors import LLMError
 from llm_loop.runtime.resolver import business_config_snapshot
+from llm_loop.security_guard import OUTBOUND_SECRET_PATTERNS as _OUTBOUND_SECRET_PATTERNS
+from llm_loop.security_guard import SENSITIVE_ENV_NAMES as _SENSITIVE_ENV_NAMES
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -147,8 +149,14 @@ _SENSITIVE_PATTERNS = [
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),  # GitHub token
     # 拼接书写避免本文件自身字面量被 CacheGuard 拦截（审查材料会包含本源码）。
     re.compile("BEGIN " + r"(RSA |EC |OPENSSH )?" + "PRIVATE KEY"),  # 私钥
+    # EVO-20261109-d3e0487c：并入出站脱敏的同一份模式——真实签发方的 key 常带
+    # 分隔符（sk-cp-…），旧的 ``sk-[A-Za-z0-9]{16,}`` 匹配不到，规则 E 只能靠
+    # env 值比对兜住（key 不在环境变量里时完全漏检）；规则 E 与脱敏口径必须一致，
+    # 否则出现"守卫会拦、脱敏却漏"的窗口。
+    *[pattern for _kind, pattern in _OUTBOUND_SECRET_PATTERNS],
 ]
-_SENSITIVE_ENV_NAMES = {"DEEPSEEK_API_KEY", "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "KIMI_API_KEY", "MINIMAX_API_KEY"}
+# _SENSITIVE_ENV_NAMES 来自 security_guard（单一事实源，模块顶部 import）——
+# EVO-20261109-d3e0487c：规则 E 的 env 值比对与出站脱敏共用同一份名单。
 
 
 @dataclass
@@ -329,7 +337,10 @@ def _check_privacy(messages: list[dict], system_text: str) -> GuardDecision | No
     CACHE_GUARD_PERF_BLOCK 开关影响（D'-1.1 性能类退出只作用于性能面——本函数
     一行不动；D-G5 对照断言一票否决项）。
     """
-    blob = system_text + "\n" + "\n".join(str(m.get("content") or "") for m in messages[:3])
+    blob = system_text + "\n" + "\n".join(str(m.get("content") or "") for m in messages)
+    # EVO-20261109-d3e0487c：检查窗口 = 本次请求**实际外发的全部** message content。
+    # 旧实现只取 messages[:3]——第 4 条及以后（工具结果最常落在那里）等价于
+    # "不检查"：read_file 的明文密钥不在检查窗口内，却随完整 messages 一起外发。
     for pat in _SENSITIVE_PATTERNS:
         if pat.search(blob):
             return GuardDecision(

@@ -598,7 +598,7 @@ class ServiceControlTool:
                 "[service_control accepted] "
                 f"action_id={receipt.action_id} target={target} "
                 f"generation={receipt.deployment_generation}; "
-                "两阶段等待（web/all 先等 requester 会话结束，再等目标空闲）期间不占 publish 锁。"
+                "两阶段等待（web/feishu/all 先等 requester 会话结束，再等目标空闲）期间不占 publish 锁。"
                 "受理≠完成：后台动作的终态是异步事实——未查询到 status=succeeded/failed"
                 " 不得当作已完成/已失败宣布；终态核对入口："
                 "service_control(action=status, action_id=...)（或 status 含 action 摘要），"
@@ -802,9 +802,9 @@ class ServiceControlTool:
 
     @staticmethod
     def _deferred_gates(receipt: ServiceControlAction) -> tuple[str, ...]:
-        """web 类两阶段门（``action.target in {web, all}``）：accepted 态还没落到
+        """Web/Feishu 两阶段门（``action.target in {web, feishu, all}``）：accepted 态还没落到
         status 上，但回执得自证"还差哪道门"——否则 target=all 会被读成已重启。"""
-        if receipt.target in {"web", "all"} and receipt.status in {
+        if receipt.target in {"web", "feishu", "all"} and receipt.status in {
             "accepted",
             "waiting_for_requester_exit",
         }:
@@ -827,17 +827,17 @@ class ServiceControlTool:
 
     @staticmethod
     def _deferred_restart_note(target: str) -> str:
-        """web 类重启必然等待 requester run 结束：把「尚未生效」写成机器可读待办。
+        """Web/Feishu 重启等待 requester run 结束：把「尚未生效」写成机器可读待办。
 
-        第一阶段闸门挂在**动作**上（`action.target in {"web","all"}`，见
+        第一阶段闸门挂在**动作**上（`action.target in {"web","feishu","all"}`，见
         runtime 两阶段等待），所以 target=all 时整条动作（四个服务）都在等待，
         不只是 web——回执若只写 web，读回执的人会以为其余三个已重启完成。
 
         payload 必须是可 json.loads 的严格 JSON：回执里写了"机器可读"就得真能解析。
         """
-        if target not in {"web", "all"}:
+        if target not in {"web", "feishu", "all"}:
             return ""
-        deferred = ["web"] if target == "web" else ["web", "feishu", "wecom", "learning"]
+        deferred = [target] if target != "all" else ["web", "feishu", "wecom", "learning"]
         payload = json.dumps(
             {
                 "pending": True,

@@ -39,6 +39,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
+from llm_loop.security_guard import redact_secrets_for_transport
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,22 @@ def _fingerprint(content: str) -> str:
     """内容规范化 SHA-256（去空白/标点）用于去重."""
     norm = re.sub(r"[\s\W_]+", "", content.lower())
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+def _extraction_failure_reason(exc: BaseException) -> str:
+    """提取失败原因分列（可行动）——守卫拦截 ≠ 解析失败 ≠ 其它异常.
+
+    EVO-20261109-d3e0487c：旧实现一律写 "提取调用失败: {exc}"，会话侧只能看到
+    entries=0，既分不清"内容被隐私规则拦"也看不出下一步该做什么。
+    """
+    detail = str(exc)
+    if "cache_guard" in detail or "privacy_leak" in detail:
+        return (
+            f"提取调用被 cache_guard 拦截（隐私规则）：{detail}——请求内容含密钥/"
+            "环境变量明文。已对会话历史做出站前脱敏；仍被拦说明源头仍在（如工具"
+            "结果未脱敏、或该密钥不在环境变量中），请改用不含敏感值的摘要重试"
+        )
+    return f"提取调用失败: {type(exc).__name__}: {detail}"
 
 
 class MemoryExtractor:
@@ -225,8 +242,7 @@ class MemoryExtractor:
 
         session = self._load_session_for_trigger(session_id, trigger)
         # 预算: 输入超限截断最旧 + 标注
-        history_text = self._build_history_text(session.messages)
-        note = ""
+        history_text, note = self._build_extraction_input(session.messages)
         if len(history_text) > self.max_input_chars:
             history_text = history_text[: self.max_input_chars]
             note = f"输入超预算，已截断至 {self.max_input_chars} 字符"
@@ -294,7 +310,7 @@ class MemoryExtractor:
                 trigger,
                 "会话全量",
                 len(history_text),
-                [f"提取调用失败: {exc}"],
+                [_extraction_failure_reason(exc)],
                 note="提取失败",
             )
             return ExtractResult(records=[], entries=[], skipped_duplicates=0)
@@ -344,6 +360,12 @@ class MemoryExtractor:
         )
 
     # ── 辅助 ──
+    def _build_extraction_input(self, messages: list[Any]) -> tuple[str, str]:
+        """Prepare redacted model input without mutating durable source messages."""
+        text, redactions = redact_secrets_for_transport(self._build_history_text(messages))
+        note = f"出站前脱敏 {redactions} 处敏感值（密钥/环境变量明文）" if redactions else ""
+        return text, note
+
     def _build_history_text(self, messages: list[Any]) -> str:
         lines = []
         for idx, m in enumerate(messages):
