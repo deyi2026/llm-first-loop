@@ -173,7 +173,7 @@ docs/**         -> classification=equivalent  root=<ws>/docs                 ESC
 
 ```
 $ ls -l scripts/ci_gate.sh
--rw-------  1 yyj staff 10709 Oct 23 14:19 scripts/ci_gate.sh
+-rw-------  1 <user> staff 10709 Oct 23 14:19 scripts/ci_gate.sh
 $ git ls-files -s scripts/ci_gate.sh
 100644 7b65b4ea… 0  scripts/ci_gate.sh      ← 仓库记录就是 644，无 exec 位
 $ scripts/ci_gate.sh
