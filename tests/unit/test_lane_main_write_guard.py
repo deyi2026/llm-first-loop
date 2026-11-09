@@ -678,3 +678,214 @@ def test_push_is_non_ff_refuses_option_like_remote(tmp_path):
     """防御：远端名以 `-` 开头时不喂给 ls-remote，按非快进拒绝。"""
     repo = _git_repo(tmp_path / "repo", "main")
     assert guard_module._push_is_non_ff("main", "--upload-pack=x", str(repo)) is True
+
+
+# --- 2026-11-09 P2 残留处置：删除 refspec / src 非快进 / naive 时间 / --git-dir ---
+
+
+def test_push_src_name_maps_refspec_left_side():
+    """P2-2 基础：src 取 refspec 左端；`:` 空 src 与 `--delete` 标记为删除（""）。"""
+    assert guard_module._push_src_name(["origin", "feat/x:main"], "main") == "feat/x"
+    assert guard_module._push_src_name(["origin", ":main"], "main") == ""
+    assert guard_module._push_src_name(["origin", "main"], "main") == "main"
+    assert guard_module._push_src_name(["origin", "--delete", "main"], "main") == ""
+
+
+def test_push_delete_refspec_main_denied_with_other_lane(tmp_path):
+    """P2-1：`:main` 是删除远端 main，不能因"远端与本地 main 相同=快进"而放行。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "active", "other")])
+    out = check_git_main_write(
+        "git push origin :main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None
+    assert out["reason_code"] == "main_push_delete_other_lane"
+
+
+def test_push_delete_flag_main_denied_with_other_lane(tmp_path):
+    """P2-1：`--delete main` 与 `:main` 同义，同样按宽判据拦。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "open", "other")])
+    out = check_git_main_write(
+        "git push --delete origin main",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo),
+    )
+    assert out is not None
+    assert out["reason_code"] == "main_push_delete_other_lane"
+
+
+def test_push_delete_feature_branch_not_blocked(tmp_path):
+    """P2-1 反向：删非 main 分支不误伤。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "active", "other")])
+    assert (
+        check_git_main_write(
+            "git push origin :feat/x",
+            audit_dir=audit,
+            session_id="me",
+            workdir=str(repo),
+        )
+        is None
+    )
+
+
+def test_push_delete_main_allowed_without_other_lane(tmp_path):
+    """P2-1 边界：无他人 live lane 时本闸不拦（纪律与 commit 一致）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [])
+    assert (
+        check_git_main_write(
+            "git push origin :main", audit_dir=audit, session_id="me", workdir=str(repo)
+        )
+        is None
+    )
+
+
+def test_push_src_branch_used_for_non_ff_check(tmp_path):
+    """P2-2：`feat:main` 的快进判定用被推 src（feat），不是本地 main。
+
+    构造：远端 main 已前进到 C2，本地 main 仍停在 C1，feat 指向 C3（C2 的后继）。
+    `git push <bare> feat:main` 实际是快进；旧实现用本地 main=C1 比对会误判
+    非快进而拒绝。
+    """
+    repo = _git_repo(tmp_path / "repo", "main")
+    bare = _bare_remote(tmp_path, repo)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.name", "t"], check=True)
+    (other / "b.txt").write_text("y")
+    subprocess.run(["git", "-C", str(other), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(other), "commit", "-qm", "ahead"], check=True)
+    subprocess.run(["git", "-C", str(other), "push", "-q", "origin", "main"], check=True)
+    subprocess.run(["git", "-C", str(repo), "fetch", "-q", str(bare), "main"], check=True)
+    subprocess.run(["git", "-C", str(repo), "branch", "feat", "FETCH_HEAD"], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "feat"], check=True)
+    (repo / "c.txt").write_text("z")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "feat-ahead"], check=True)
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "active", "other")])
+    assert (
+        check_git_main_write(
+            f"git push {bare} feat:main",
+            audit_dir=audit,
+            session_id="me",
+            workdir=str(repo),
+        )
+        is None
+    )
+
+
+def test_naive_last_activity_not_reclaimed(tmp_path):
+    """P2-3：naive 时间戳时区不可判定 → 不参与回收（按 live 挡）。
+
+    旧实现按本地时区补 tzinfo：写入"10 小时前的 naive 本地时间"会被算成
+    闲置 10h > TTL 且 worktree 干净 → 回收放行；新实现必须仍拦。
+    """
+    repo = _git_repo(tmp_path / "repo", "main")
+    wt = _clean_worktree(tmp_path / "wt")
+    naive_old = (datetime.now() - timedelta(hours=10)).isoformat(timespec="seconds")
+    audit = _ledger(
+        tmp_path / "audit",
+        [
+            {
+                **_lane("lane-naive", "verifying", "sess-other"),
+                "worktree": str(wt),
+                "last_activity": naive_old,
+            }
+        ],
+    )
+    out = check_git_main_write(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None
+    assert out["stale_lanes"] == []
+
+
+def test_git_dir_option_fail_closed_for_commit(tmp_path):
+    """P2-4：`--git-dir/--work-tree` 重定向仓库 → 目标不明，保守当 main。
+
+    旧实现直接跳过这两个选项，按命令 workdir 的 feat 分支判 → 放行。
+    """
+    main = _git_repo(tmp_path / "main", "main")
+    feat = tmp_path / "feat"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "-b", "feat/x", str(feat)],
+        check=True,
+    )
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "open", "other")])
+    out = check_git_main_write(
+        f"git --git-dir={main}/.git --work-tree={main} commit -m x",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["operation"] == "commit"
+
+
+def test_git_dir_option_readonly_command_ignored(tmp_path):
+    """P2-4 反向：非 commit/push 的 --git-dir 命令不误伤。"""
+    main = _git_repo(tmp_path / "main", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "open", "other")])
+    assert (
+        check_git_main_write(
+            f"git --git-dir={main}/.git status",
+            audit_dir=audit,
+            session_id="me",
+            workdir=str(main),
+        )
+        is None
+    )
+
+
+def test_git_dir_option_allowed_without_other_lane(tmp_path):
+    """P2-4 边界：无他人 lane 时保守判定不生效。"""
+    main = _git_repo(tmp_path / "main", "main")
+    audit = _ledger(tmp_path / "audit", [])
+    assert (
+        check_git_main_write(
+            f"git --git-dir={main}/.git commit -m x",
+            audit_dir=audit,
+            session_id="me",
+            workdir=str(main),
+        )
+        is None
+    )
+
+
+def test_git_dir_env_prefix_fail_closed(tmp_path):
+    """P2-4 补充：`GIT_DIR=` 环境前缀同样重定向仓库 → 保守当 main。"""
+    main = _git_repo(tmp_path / "main", "main")
+    feat = tmp_path / "feat"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "-b", "feat/y", str(feat)],
+        check=True,
+    )
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "open", "other")])
+    out = check_git_main_write(
+        f"GIT_DIR={main}/.git git commit -m x",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["operation"] == "commit"
+
+
+def test_git_dir_env_prefix_via_env_command(tmp_path):
+    """P2-4 补充：`env GIT_DIR=... git ...` 也识别（紧邻赋值链回溯）。"""
+    main = _git_repo(tmp_path / "main", "main")
+    feat = tmp_path / "feat"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "-b", "feat/z", str(feat)],
+        check=True,
+    )
+    audit = _ledger(tmp_path / "audit", [_lane("l1", "open", "other")])
+    out = check_git_main_write(
+        f"env GIT_DIR={main}/.git git commit -m x",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["operation"] == "commit"
