@@ -1,7 +1,7 @@
 {
   "skills": {
     "anonymize-paper": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "b86e218eca4d67c3cc99cce3ef0f69db0a826df8f4b987ff28079b54e7a45584",
@@ -16,7 +16,7 @@
       "upstream": "ShaishavMaisuria/research-paper-lifecycle-skills@f9a0ed8"
     },
     "article-review-gate": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "3de8f79a175c2aca2c496523d557697e9976e0ce3d07e8ef55bf83fef43f8101"
@@ -26,7 +26,7 @@
       "tree_sha256": "ade29e4c3211ecd1a49215799e10d1f217377158e6d00b2282582fa24e2a9230"
     },
     "assess-paper": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "b86e218eca4d67c3cc99cce3ef0f69db0a826df8f4b987ff28079b54e7a45584",
@@ -38,7 +38,7 @@
       "upstream": "ShaishavMaisuria/research-paper-lifecycle-skills@f9a0ed8"
     },
     "cache-cost": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "a141c5341fdd24622b8dabc3c573f63992c76c6ce3de4206fa2af05bdfdbaf7a"
@@ -48,7 +48,7 @@
       "tree_sha256": "3acc4ffa2008e96b3628908879c1fda3b229c1a07ee33816905ae35ea940a3da"
     },
     "cache-hit-debug": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "37b6e9ce5753728af0116c65aaff625ddc48ddf7dd047ed81a97757847710bda"
@@ -58,7 +58,7 @@
       "tree_sha256": "e52310691ef63ce0e0f862053fa0ccb81f5b1d21f2f0e33a2f37646c4492b3fd"
     },
     "code-nav": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "e27db3a3d7f351b48ec8f8d9b271384ebad6d3143536809a331cb23a7472b932"
@@ -68,17 +68,17 @@
       "tree_sha256": "2c51b0f73cae5cafdf81e9cea030b71bb5c93ac42e1332ee61cf54868516bfd4"
     },
     "code-review-gate": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
-        "SKILL.md": "aaedb23f47a58f22c675b0e04fa78fa097493bc6989e08668c9e43427b303d76"
+        "SKILL.md": "c7b1317172b56812217674240d1221847c87de49419da70fbcc76466487a70af"
       },
-      "sha256": "aaedb23f47a58f22c675b0e04fa78fa097493bc6989e08668c9e43427b303d76",
+      "sha256": "c7b1317172b56812217674240d1221847c87de49419da70fbcc76466487a70af",
       "source": "local",
-      "tree_sha256": "c2a985e66e0454e6633bacc3cd50fe5f3777feca95860c4c057f9b7005de4045"
+      "tree_sha256": "4aaa9bbe548ef0ac59532bb42e6d5155589a8ee414c839229bf08482c1c3ef8a"
     },
     "fit-page-limit": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "b86e218eca4d67c3cc99cce3ef0f69db0a826df8f4b987ff28079b54e7a45584",
@@ -92,7 +92,7 @@
       "upstream": "ShaishavMaisuria/research-paper-lifecycle-skills@f9a0ed8"
     },
     "frontend-design": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
@@ -105,7 +105,7 @@
       "upstream": "anthropics/skills@ca45fc496a3436251f191354091d557da31c15b5（skills/frontend-design）"
     },
     "gstack-design-consultation": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "e56fbb5b3d95756f3fa1cfefa24732ec79f18ece1ad08a4e79e00df57e8b198c",
@@ -118,7 +118,7 @@
       "upstream": "garrytan/gstack@088bfc5914f8001a3d49b3a0c35d6f7cb800268c（design-consultation）"
     },
     "gstack-design-review": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "e56fbb5b3d95756f3fa1cfefa24732ec79f18ece1ad08a4e79e00df57e8b198c",
@@ -131,7 +131,7 @@
       "upstream": "garrytan/gstack@088bfc5914f8001a3d49b3a0c35d6f7cb800268c（design-review）"
     },
     "gstack-plan-design-review": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "e56fbb5b3d95756f3fa1cfefa24732ec79f18ece1ad08a4e79e00df57e8b198c",
@@ -144,7 +144,7 @@
       "upstream": "garrytan/gstack@088bfc5914f8001a3d49b3a0c35d6f7cb800268c（plan-design-review）"
     },
     "gzh-design": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         ".github/ISSUE_TEMPLATE/bug_report.md": "0bfb69aaa92c974446418ea2c00ca6c9de0a2ffb217a337764eb0fa741b7a027",
@@ -228,7 +228,7 @@
       "tree_sha256": "74e983c069ed202bb38168e38916e604329c7ba3acb76f53b3741517a4696de2"
     },
     "humanizer-zh-next": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         ".github/workflows/validate.yml": "718b0ddbf5d653b489f2e5e193aff04e0b8f4f14ba56062df11346c31f4fecaf",
@@ -255,7 +255,7 @@
       "tree_sha256": "eb06892044520c7f18cb7627f7671c07446bfb20c3ee6047982251eaaaecb487"
     },
     "incident-report": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "5698a1617c606370ab1b5180490e252f2ef20ba5cc4eeb46d0b3da261babb146"
@@ -265,7 +265,7 @@
       "tree_sha256": "21807b7a4d0754e2411b15c2cebff78c8da22f850224b35b1dc4f87d14d7a65c"
     },
     "integrity-auditor": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "51b7aee81111072e2e5f8c27a4655bd48222dbc91f9d6694dad7b07ce8577299",
@@ -297,7 +297,7 @@
       "upstream": "ai4s-research/ai4s-skills@744ab20"
     },
     "long-task-research": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "89345c3500b924adb000f2c30241e9f18ac2fe40a2fe6d4244812407e8a0e516"
@@ -307,7 +307,7 @@
       "tree_sha256": "f5348e187e2b17402f389ae060df798be42d2f41f357e27255a3d451c0a3c674"
     },
     "md2pdf": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "5119fe69b9c73790d53cdc518e4cbe202aa795eb2530747f8d50a6b473ec269b"
@@ -317,17 +317,17 @@
       "tree_sha256": "7d7bba4c14f893a8ae2e56ef8c86bab7b83473624d4bc172bcbd433bac591b85"
     },
     "merge-review-gate": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
-        "SKILL.md": "37111ca9104e95eab19ccaa8a4c729d21b9f4ed0df58b93b317f2efe4eef8b2e"
+        "SKILL.md": "97eccd877c365f3572f22aecf7be2bb6aeb6823cdcd1e55661ed55d39cb3fc7e"
       },
-      "sha256": "37111ca9104e95eab19ccaa8a4c729d21b9f4ed0df58b93b317f2efe4eef8b2e",
+      "sha256": "97eccd877c365f3572f22aecf7be2bb6aeb6823cdcd1e55661ed55d39cb3fc7e",
       "source": "local",
-      "tree_sha256": "8dc606f6b61293b5aac727530b884f466a490cca0b82bf1fcfc5b9bbb11e6818"
+      "tree_sha256": "9721490ceef91f67136f22da47aa270af6b283f02f58b5e09e27e1307b3a8472"
     },
     "method-ab-experiment": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "2ae0442f3c86a9c5383334877849afd20c898bb757408590571c06c5a0e7b394"
@@ -337,7 +337,7 @@
       "tree_sha256": "fd0906daf2f66d6c13d8efc1edf17a6f42199eeb28ea384c7bf6205298a5745e"
     },
     "method-candidate-ab-validity-trigger-confound": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "dbfe4b817e42feffc71ead3868406f0b606df8587fd15b37b5da1e0f1a3e9d83"
@@ -347,7 +347,7 @@
       "tree_sha256": "56e8f54dd6758276db4c5b8055a3361f258b5461fdee2363d938a3eccea7c72d"
     },
     "method-candidate-current-callsite-refresh": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "f0f108d0927de501c9ce64da27c74803237ae78bac1a630d99ba42820b13852f"
@@ -357,7 +357,7 @@
       "tree_sha256": "a0c8946f668a34c42a92884856aeba54c9b30958b24260d9298c846bea6909f6"
     },
     "method-candidate-hydrate-trace": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "8f40cd2f727179a1c0eeb7cb283339c66387052948a5b8faba9d73c184ec3d40"
@@ -367,7 +367,7 @@
       "tree_sha256": "416c27c369867950043d11c8c17b984ce322e74386c023610f1283998442bbf9"
     },
     "method-candidate-relative-clock-never-state": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "a319f34017be7a3df703e3ace6aab55f4ccb803f7969ec1937ceba352d7ba6f2"
@@ -377,7 +377,7 @@
       "tree_sha256": "1a5299b5f365bad5479e70042ceb08b62b48b708d773e50864e3fba4dc4d5716"
     },
     "method-repo-api-discovery": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "2cceb6eca284b16788ebef4667aa9a897dc3da9c9aab52acd64a1bcafb3de35e"
@@ -387,7 +387,7 @@
       "tree_sha256": "232a6dcb5d382e12ceca5dcaa6acbfefb79ecfbb88194d7122f163a39e930fe9"
     },
     "method-root-cause": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "79b3c8275c61d593472329e8e63790dc7fed7ef799c0c48e3fb51bf4a305f72d"
@@ -397,7 +397,7 @@
       "tree_sha256": "c8244326650da10136b39f56efe920440dddce8090abd692bc97e57f83402db8"
     },
     "method-self-distill": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "c44b5522ce8a38213260748877d4cf1d88cc3e069e0152c488611b33fe73a90d"
@@ -407,7 +407,7 @@
       "tree_sha256": "39f94fa919a94c946eb58d22760ac91217adf8299852ffb2d2ddb75436e4c915"
     },
     "method-self-distill-ab": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "9cded4a34eeed9b86dafb2143cfe0968bf42d41ef8cd74fa1784efd71bb91044"
@@ -417,7 +417,7 @@
       "tree_sha256": "df3ad4550c07eab44ab9413e9b838092ecab51ce7d1b2b886d70201286f74571"
     },
     "method-self-distill-repo-api": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "21fd453257a90d580d597cb763d28441a5747254c40ecea2175271a82c56497f"
@@ -427,7 +427,7 @@
       "tree_sha256": "a3a9eef81c9e2f9ddd1fa412b7fd3243b1b16a4dcd6184f2f8eda1161295b4d0"
     },
     "method-self-distill-root-cause": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "0ba43b91c5d14c153e16793da9088edff522f31344edf650403c132d594835d3"
@@ -437,7 +437,7 @@
       "tree_sha256": "123dbb1e16e62719e46ce8e420dbb32c3718fe13d9a70906b644ce94ead52b01"
     },
     "method-web-source-diagnosis": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "82cea6d28a65383f0f32b5314a5da7c5445db3fe4b2b400962e05f1175e96db1"
@@ -447,7 +447,7 @@
       "tree_sha256": "14a505d55c4627c7523253cf6cafbf9880bb30de880c9ec4acda4db140c04621"
     },
     "mirror-restart": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "55fef169ab5c5e031e5df0be33df3c8b743651a43ff9387e3744b0f97c321f99"
@@ -457,7 +457,7 @@
       "tree_sha256": "72524d256c3d387c0fb51f5599388d76682fa0c51de2efd51bfe2b594d1259b5"
     },
     "notebook-session": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "88d9beaf8f47c1f0380558a2ff8de21c348e4aa877ff3058ecf70b6d8554cc31"
@@ -467,7 +467,7 @@
       "tree_sha256": "e053bdf800bf555170df6063085d3fbe4af280b033e75e274f552325e6bbc007"
     },
     "paper-search-pro": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
@@ -570,7 +570,7 @@
       "upstream": "O0000-code/paper-search-pro@b551d74（其内 vendored 内容源自 futurehouse/paper-qa，Apache-2.0）"
     },
     "preflight-check": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "b86e218eca4d67c3cc99cce3ef0f69db0a826df8f4b987ff28079b54e7a45584",
@@ -591,7 +591,7 @@
       "upstream": "ShaishavMaisuria/research-paper-lifecycle-skills@f9a0ed8"
     },
     "push-review-gate": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "53f64c035ffda5ea77846d490bcef6a51585c4acdb4a1fcb1ba3010acc94e799"
@@ -601,7 +601,7 @@
       "tree_sha256": "85eb834bc1ea7df6f0dc2851815db6bca5a05eeddc71222c66c1f911d202d1df"
     },
     "sdd-workflow": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "41c9161a30d59befae7167a240ddb9bac7f217a903e64ab334840787e6da5e95",
@@ -613,7 +613,7 @@
       "tree_sha256": "8ba02bbcc19c61fe259f7ea89ed5584fc189b95dd12909b37e3e6faea1d8e7b4"
     },
     "swe-bench": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "29b035767b02077808a0457a6f6fdfd55d98d7a2e7f6de7bd10246cd361ce934"
@@ -623,7 +623,7 @@
       "tree_sha256": "2094350800e734706941f63bd4b34be647975b7de82e0545ee7db048a2530abe"
     },
     "ui-ux-pro-max": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "738f69dfa83db5c347c678fb9d90e560877059f0de93a327c39001bff92dc014",
@@ -682,7 +682,7 @@
       "upstream": "nextlevelbuilder/ui-ux-pro-max-skill@9a3f14f7423037ccb8feeb4fee7482291b9c820e（.claude/skills/ui-ux-pro-max）"
     },
     "verify-citations": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "LICENSE": "b86e218eca4d67c3cc99cce3ef0f69db0a826df8f4b987ff28079b54e7a45584",
@@ -698,7 +698,7 @@
       "upstream": "ShaishavMaisuria/research-paper-lifecycle-skills@f9a0ed8"
     },
     "web-fetch-fast": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "da566508d848d1306d6ecc2542aa1a8ee2f8c2868e8640fb47892d4ff57703f1"
@@ -708,7 +708,7 @@
       "tree_sha256": "3f31d1eade0bdeb27d46d04a2fd026e73563bf1ef17403551e37a89eebb3a245"
     },
     "web-self-restart-triage": {
-      "approved_at": "2026-11-08T21:36:04+08:00",
+      "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
       "files": {
         "SKILL.md": "ad04cb307980487143f80eee0dad86c97da37306eb54ff4ae8a6a3e75ea40d79"
