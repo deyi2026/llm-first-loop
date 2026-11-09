@@ -393,7 +393,9 @@ def sandbox_argv(
 
     - none → (None, "")（调用方走既有 shell=True 路径，零回归；note 不加任何"已隔离"措辞）
     - auto → 解析到具体后端后按该后端执行；解析到 none：非 strict 同 none（已先行写
-      warning），EXEC_SANDBOX_STRICT=1 → RuntimeError（fail-closed，回执如实失败）
+      warning），EXEC_SANDBOX_STRICT=1 → RuntimeError（fail-closed，回执如实失败）。
+      若 none 是因为 sandbox-exec 套用被拒，note 会带上"未套内层沙箱、写入边界仅由
+      外层决定"的探测结论（不宣称隔离）；其余不可用原因的 note 为空，原因见 warning。
     - bwrap/docker/sandbox-exec 且可用 → (argv, note)（note 文案与实际后端一一对应，S2-6）
     - 显式开启但后端不可用 → 抛 RuntimeError（fail-closed，调用方如实失败回执）
     - writable_roots（T05）：追加可写根，仅 sandbox-exec 后端消费——原样透传
