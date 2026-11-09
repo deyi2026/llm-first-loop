@@ -20,6 +20,30 @@ fi
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCAN="$SELF_DIR/../scripts/git_security_scan.sh"
+FLUSH="$SELF_DIR/../scripts/knowledge_flush.py"
+
+# 知识资产闸（2026-11-09）：工作区存在未入库的方法卡/经验卡时拒推，fail-closed。
+# 背景：data/methods/*/METHOD.md 与 experiences/*.md 在 .gitignore 里是入库例外，
+# 但此前没有任何闸提醒过它们——卡片只活在本机工作区，换机/清工作区/新 clone 即静默
+# 丢失。它们是学习资产，与代码同属发布面，故与隐私扫描同列在推送前判定。
+# 判定异常（脚本缺失/退出码非 0/非 3）一律拒推：看不见的闸等于没有闸。
+if [[ ! -f "$FLUSH" ]]; then
+  echo "[pre-push] 拒绝：知识闸脚本缺失（${FLUSH}），无法判定，按 fail-closed 处理。" >&2
+  echo "[pre-push] 修复：git checkout -- scripts/knowledge_flush.py" >&2
+  exit 1
+fi
+python3 "$FLUSH" --check --quiet
+FLUSH_RC=$?
+if [[ "$FLUSH_RC" -eq 3 ]]; then
+  echo "[pre-push] 拒绝：工作区有未入库的知识资产（方法卡/经验卡）。" >&2
+  echo "[pre-push] 它们尚未进任何提交，脱离本机工作区就会消失。" >&2
+  echo "[pre-push] 修复：python3 scripts/knowledge_flush.py   # 入库后重试推送" >&2
+  exit 1
+elif [[ "$FLUSH_RC" -ne 0 ]]; then
+  echo "[pre-push] 拒绝：知识闸判定失败（exit=${FLUSH_RC}），按 fail-closed 处理。" >&2
+  echo "[pre-push] 先手动跑一次排查：python3 scripts/knowledge_flush.py --check --json" >&2
+  exit 1
+fi
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" =~ ^0+$ ]] && continue
