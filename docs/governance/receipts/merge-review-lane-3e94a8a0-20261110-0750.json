@@ -1,0 +1,34 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_3abc18bff39f",
+  "reviewer_role": "独立只读子代理（未参与本分支任何产出，RULE-AI-34 BLOCK 权未触发）",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261110-e81b42d9",
+  "branch": "feat/lane-githooks-exec-guard-20261110",
+  "based_on_main": true,
+  "base_main_sha": "36e314c87f3488f61e948f4dcfdd872ef96620d4",
+  "commits": ["761ace9c970ee842964a03892fd0a81d34e8da87"],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "deficiency_closure: 三层断言 owner r+x / 非 owner r+x / 索引 100755 + 空目录 fail-closed = pass",
+    "branch_hygiene: status --porcelain 空 + 单提交 + 4 文件来历清楚 = pass",
+    "baseline_freshness: merge-base == main == 36e314c87f34 = pass",
+    "test_surface: 与已给证据一致（未重跑）+ 无静默通过路径 = pass",
+    "merge_method: ff 可行，0 冲突 = pass",
+    "privilege_scope: 仅 --local / 无 --force 不覆盖 / 缺执行位拒装 / 真实回读 / 无注入或通配误伤 = pass",
+    "comment_only_diff: 两个改动文件均为纯注释 = pass"
+  ],
+  "rule_ai_35_negative_probe": {
+    "chmod_644": "test_githooks_exec_bit.py 2 例红（owner r+x / 非 owner r+x）",
+    "git_update_index_chmod_minus_x": "1 例红（索引 100755）",
+    "edit_file_rewrite": "重写 .githooks/pre-commit 落盘 600，被新用例当场拦下（同类故障第 3 次）"
+  },
+  "pytest_scope_note": "分支树运行 tests/unit/test_githooks_exec_bit.py（3 例）+ tests/unit/test_receipts_dir_versioned.py（3 例）= 6 passed；新增文件本身为 3 个 test 函数",
+  "main_sha_after": "ff 合并后 main 应等于本分支 HEAD（合并后以 goal checkpoint 记录的实测 sha 为准）",
+  "branch_disposition": "merged 后删除分支与 worktree",
+  "verify_receipt_id": "lane-3e94a8a0:36e314c8（PASS 后由 scripts/issue_verify_receipt.py --apply 签发）",
+  "non_blocking_followups": [
+    "r9_commit.sh 注释引用的「2026-11-10 镜像区取消」已记入 goal checkpoint 以保留授权来源追溯"
+  ]
+}

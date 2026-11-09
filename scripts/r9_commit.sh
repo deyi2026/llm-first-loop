@@ -4,9 +4,10 @@
 #   message 可含多行（$'...' 传入）；等价性回执行 wire-fixtures: PASS 由提交者
 #   跑 fixtures 对照后自附（refactor(r9) 前缀时机检强制）。
 #
-# 设计（§0.5 裁量）：不装 .git/hooks、不改 core.hooksPath——镜像区 .git 由外部
-# 会话共享，强制 hook 会波及外部提交。机检以本脚本承载；外部混合层合流后再评估
-# hook 化（EVO 待办）。
+# 设计（§0.5 裁量）：本脚本不装 .git/hooks、不管理 core.hooksPath——机检以本脚本
+# 承载，钩子统一由 scripts/install_security_hooks.sh 安装。历史：原裁量理由是
+# 「镜像区 .git 由外部会话共享」，2026-11-10 镜像区取消（用户确认）后该前提消失，
+# 钩子化改由安装脚本承担（EVO 待办落地）。
 #
 # 提交队列（B3-PREP-06）：多代理/多会话并行提交的唯一串行化点——锁住机检/门禁/
 # 提交全段（write-tree 预检与 git commit 之间的 TOCTOU、ci_gate 读树与提交推进
