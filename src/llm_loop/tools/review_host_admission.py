@@ -908,6 +908,120 @@ def _git(root: Path, *argv: str) -> bytes:
     return _git_capped(root, _GIT_OUTPUT_MAX_BYTES, *argv)
 
 
+# --- 知识资产入库闸（push 闸的前置判定层，2026-11-09） ---------------------
+# .githooks/pre-push 已是机械兜底，但那发生在审查全部跑完之后：卡片没入库时
+# 白烧一个完整审查周期，模型只能从钩子 stderr 反推原因。这里把同一事实提前
+# 到 git_push 准入的最前面，给出机器可读的 reason 与张数。判定口径必须与
+# scripts/knowledge_flush.py 的 collect() 一致（同一份「什么算未入库」，两个
+# 闸才不会互相打架）；该脚本刻意零依赖（钩子用系统 python3 跑），因此不共享
+# 实现，靠回归测试锁住口径。
+_KNOWLEDGE_ASSET_ROOTS = ("data/methods", "experiences")
+_KNOWLEDGE_CARD_MIN_BYTES = 40
+_KNOWLEDGE_SAMPLE_LIMIT = 10
+
+
+def _porcelain_rows(raw: bytes) -> list[tuple[str, str]]:
+    """解析 ``git status --porcelain -z``：[(XY, path)]（重命名条目跳过原路径）。"""
+    rows: list[tuple[str, str]] = []
+    i = 0
+    while i < len(raw):
+        status = raw[i : i + 2].decode("ascii", "replace")
+        i += 3  # XY + 空格
+        end = raw.find(b"\0", i)
+        if end < 0:
+            end = len(raw)
+        rows.append((status, raw[i:end].decode("utf-8", "surrogateescape")))
+        i = end + 1
+        if status[:1] in {"R", "C"}:
+            nxt = raw.find(b"\0", i)  # 重命名/复制条目后跟原路径
+            i = len(raw) if nxt < 0 else nxt + 1
+    return rows
+
+
+def _knowledge_flush_pending(root: Path) -> tuple[list[str], list[str], list[str]]:
+    """未入库知识资产：(方法卡, 经验卡, 卡片目录附属文件)。
+
+    口径对齐 ``scripts/knowledge_flush.py::collect()``：
+    - 新增的 METHOD.md 正文 <40 字节视为半成品，不算未入库（flush 也清不掉它，
+      否则闸会变成恒拒）；
+    - 缺 METHOD.md 的半成品目录不计；删除（暂存/工作区 D）照常计；
+    - 卡目录里的附属文件（qualification.json 等）随卡一起入库，故也计入。
+    """
+    raw = _git(
+        root, "status", "--porcelain", "-z", "--untracked-files=all",
+        "--", *_KNOWLEDGE_ASSET_ROOTS,
+    )
+    cards: list[str] = []
+    experiences: list[str] = []
+    extras: list[str] = []
+    for status, path in _porcelain_rows(raw):
+        if path.startswith("data/methods/"):
+            if path.endswith("/METHOD.md"):
+                card = root / path
+                is_new = "?" in status or status[:1] == "A"
+                if is_new and card.is_file() and card.stat().st_size < _KNOWLEDGE_CARD_MIN_BYTES:
+                    continue
+                if not card.is_file() and "D" not in status:
+                    continue
+                cards.append(path)
+            elif (root / path).parent.joinpath("METHOD.md").is_file():
+                extras.append(path)
+        elif path.startswith("experiences/"):
+            (experiences if path.endswith(".md") else extras).append(path)
+    return cards, experiences, extras
+
+
+def _knowledge_gate_receipt(workdir: str) -> dict[str, Any] | None:
+    """git_push 准入前置：有未入库知识资产 → 拒绝回执；干净 → None。
+
+    workdir 为空时不判定，交给 _target 报 workdir_required（同一调用仍会被拒，
+    不构成绕过）。扫描本身失败按 fail-closed 拒绝（RULE-AI-30）。
+    """
+    if not workdir:
+        return None
+    try:
+        top = _git(Path(workdir), "rev-parse", "--show-toplevel")
+        cards, experiences, extras = _knowledge_flush_pending(
+            Path(top.decode("utf-8", "surrogateescape").strip())
+        )
+    except (ValueError, OSError):
+        return {
+            "accepted": False,
+            "reason": "knowledge_flush_scan_unavailable",
+            "fix": "python3 scripts/knowledge_flush.py --check --json",
+        }
+    files = cards + experiences + extras
+    if not files:
+        return None
+    return {
+        "accepted": False,
+        "reason": "knowledge_flush_pending",
+        "cards": len(cards),
+        "experiences": len(experiences),
+        "other_files": len(extras),
+        "files": files[:_KNOWLEDGE_SAMPLE_LIMIT],
+        "files_truncated": len(files) > _KNOWLEDGE_SAMPLE_LIMIT,
+        "fix": "python3 scripts/knowledge_flush.py   # 入库后重试 review_admission(action=start)",
+    }
+
+
+def _start_preconditions(
+    kind: str, scope: str, paths: Sequence[str] | None, workdir: str
+) -> tuple[dict[str, Any], tuple[str, ...], dict[str, Any] | None]:
+    """start 的前置判定：scope 解析错误 → 拒；git_push 再有未入库知识资产 → 拒。
+
+    独立成助手是为了不让 start 本身体积增长（function-lines 棘轮，2026-11-09）。
+    """
+    scope_receipt, scope_paths, scope_error = _resolve_scope(kind, scope, paths)
+    if scope_error:
+        return scope_receipt, scope_paths, {"accepted": False, "reason": scope_error}
+    if kind == "git_push":
+        blocked = _knowledge_gate_receipt(workdir)
+        if blocked is not None:
+            return scope_receipt, scope_paths, blocked
+    return scope_receipt, scope_paths, None
+
+
 # EVO-20261030-62773eae: 单路径材料超限与 git 状态超限此前共用
 # git_state_too_large 一个码，修复指引无法区分「拆该文件」与「git 状态本身
 # 过大」。这里只加后缀区分，不改前缀——既有消费方
@@ -3408,9 +3522,9 @@ class HostReviewAdmission:
     ) -> dict[str, Any]:
         if not parent or self._runner is None:
             return {"accepted": False, "reason": "review_host_unavailable"}
-        scope_receipt, scope_paths, scope_error = _resolve_scope(kind, scope, paths)
-        if scope_error:
-            return {"accepted": False, "reason": scope_error}
+        scope_receipt, scope_paths, denial = _start_preconditions(kind, scope, paths, workdir)
+        if denial is not None:
+            return denial
         # 先算一次切片外绑定：材料头与回执必须说同一个数（分两次算会漂）。
         binding = _out_of_scope_binding(workdir, scope_paths) if scope_paths else ("", 0, 0, 0)
         tier_counts = None if binding is None else (binding[2], binding[3])
