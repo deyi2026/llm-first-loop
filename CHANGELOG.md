@@ -1,5 +1,12 @@
 # Changelog（公开变更记录）
 
+## v0.6.47 — Peer 监督截止时间与 wheel 兼容防降级（2026-11-10）
+
+- 将 Peer 任务监督截止时间写入任务记录，服务端与本机 Operator CLI 共用同一绝对期限；旧记录缺失、损坏或票据期限不一致时 fail-closed。
+- Peer 服务启动与人工确认入口核验 wheel 的显式监督 API；仅声明 `**kwargs` 但未实现能力的旧 wheel 不再被误判为兼容。
+- 增加 Agent Run 完成回执与独立 pytest/产物摘要核验工具；Run 未完成、测试失败、证据缺失或不匹配均不接受。
+
+
 ## v0.6.46 — Deepin controlled restart repair (2026-11-09)
 
 - Include Feishu in the existing requester-exit phase so a controlled restart waits for the dispatching run to finish, with matching deferred-effect receipts.

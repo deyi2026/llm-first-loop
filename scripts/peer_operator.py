@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import inspect
 import json
 import os
 import sys
@@ -38,7 +39,30 @@ def _default_operator() -> str:
         return "operator"
 
 
+def _require_supervision_runtime() -> None:
+    """Refuse old wheels clearly; never turn an API mismatch into a bypass."""
+    try:
+        parameters = inspect.signature(PeerService).parameters
+    except (TypeError, ValueError) as exc:
+        raise PeerError("executor_internal_error", f"无法核验 PeerService API: {exc}") from exc
+    # **kwargs accepts arbitrary values but may ignore supervision entirely.
+    missing = []
+    for required in ("supervision_enabled", "write_root"):
+        if required not in parameters:
+            missing.append(required)
+    for method in ("list_supervised", "issue_supervision_ticket", "resume_supervised", "reject_supervised"):
+        if not callable(getattr(PeerService, method, None)):
+            missing.append(method)
+    if missing:
+        raise PeerError(
+            "executor_internal_error",
+            "peer_runtime_incompatible: 当前安装 wheel 缺少受监督 Peer API: " + ", ".join(missing)
+            + "；请安装与 peer_operator.py 同版本的 LFL wheel。",
+        )
+
+
 def _service(args: argparse.Namespace) -> PeerService:
+    _require_supervision_runtime()
     return PeerService(
         store=PeerStore(args.data_dir),
         admissions=AdmissionStore(args.data_dir),
@@ -46,7 +70,6 @@ def _service(args: argparse.Namespace) -> PeerService:
         node_id=args.node_id,
         write_root=args.write_root,
         supervision_enabled=True,
-        supervision_ttl_s=args.supervision_ttl_s,
     )
 
 
@@ -133,7 +156,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--node-id", required=True)
     parser.add_argument("--write-root", default=None, help="与 peer_serve 一致；confirm 必填")
-    parser.add_argument("--supervision-ttl-s", type=int, default=300)
+    parser.add_argument(
+        "--supervision-ttl-s", type=int, default=None,
+        help="兼容旧调用；已停用，期限一律读取任务持久化 supervision_expires_at",
+    )
     parser.add_argument("--operator", default=_default_operator())
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="列出等待确认的任务")

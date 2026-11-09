@@ -316,10 +316,244 @@ def test_peer_serve_cli_wires_supervision_and_write_root():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
-    spec = importlib.util.spec_from_file_location("peer_serve_under_test", root / "scripts" / "peer_serve.py")
+    spec = importlib.util.spec_from_file_location(
+        "peer_serve_under_test", root / "scripts" / "peer_serve.py"
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     params = set(inspect.signature(module.build_app).parameters)
     assert {"write_root", "supervision_enabled", "supervision_ttl_s"} <= params
+
+
+def test_supervision_deadline_is_persisted_and_shared_across_cli_instances(tmp_path):
+    now = [now_local()]
+    env = _env(tmp_path, ttl=8, clock=lambda: now[0])
+    service, store, root, task_id = _held(env)
+    task = store.get_task(task_id)
+    assert task is not None
+    assert task.supervision_expires_at == iso(now[0] + timedelta(seconds=8))
+
+    # The operator CLI constructs a fresh service whose default TTL is 300s.
+    # It must use the task's persisted absolute deadline, not its own config.
+    operator_service = PeerService(
+        store=store,
+        admissions=AdmissionStore(tmp_path / "peer"),
+        artifacts=ArtifactStore(tmp_path / "artifacts"),
+        node_id=NODE,
+        write_root=str(root),
+        supervision_enabled=True,
+        supervision_ttl_s=300,
+        clock=lambda: now[0],
+    )
+    row = operator_service.list_supervised()[0]
+    assert row["expires_at"] == task.supervision_expires_at
+    ticket = operator_service.issue_supervision_ticket(task_id, issued_by="tester")
+    assert ticket.expires_at == task.supervision_expires_at
+
+    now[0] += timedelta(seconds=9)
+    receipt = operator_service.resume_supervised(task_id, decided_by="tester")
+    assert receipt["state"] == "failed"
+    assert receipt["reason_code"] == "supervision_timeout"
+    assert not (root / "out.txt").exists()
+    assert store.get_grant(GRANT_ID).tasks_used == 0
+
+
+def test_supervision_deadline_is_capped_by_task_deadline(tmp_path):
+    now = [now_local()]
+    env = _env(tmp_path, ttl=60, clock=lambda: now[0])
+    _service, store, _root, task_id = _held(env)
+    task = store.get_task(task_id)
+    assert task is not None
+    assert task.supervision_expires_at == iso(now[0] + timedelta(seconds=30))
+
+
+def test_legacy_waiting_task_without_persisted_deadline_fails_closed(tmp_path):
+    service, store, root, task_id = _held(_env(tmp_path, ttl=60))
+    task = store.get_task(task_id)
+    assert task is not None
+    # Simulate a JSON record written by a pre-upgrade wheel: the normal store
+    # correctly rejects awaiting->awaiting as an illegal state transition.
+    payload = store._read("tasks")  # noqa: SLF001 -- fixture for legacy persisted data
+    for item in payload["items"]:
+        if item.get("task_id") == task_id:
+            item.pop("supervision_expires_at", None)
+    store._write("tasks", payload)  # noqa: SLF001 -- test-only legacy fixture
+
+    assert service.list_supervised() == []
+    failed = store.get_task(task_id)
+    assert failed is not None
+    assert failed.state == "failed"
+    assert failed.reason_code == "supervision_timeout"
+    assert not (root / "out.txt").exists()
+    assert store.get_grant(GRANT_ID).tasks_used == 0
+
+
+def test_resume_rejects_ticket_expiry_different_from_task_deadline(tmp_path):
+    import json
+
+    service, store, root, task_id = _held(_env(tmp_path, ttl=60))
+    service.issue_supervision_ticket(task_id, issued_by="tester")
+    ticket_path = service._operator._path(task_id)  # noqa: SLF001
+    raw = json.loads(ticket_path.read_text(encoding="utf-8"))
+    raw["expires_at"] = iso(now_local() + timedelta(hours=1))
+    ticket_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    receipt = service.resume_supervised(task_id, decided_by="tester")
+    assert receipt["state"] == "failed"
+    assert receipt["reason_code"] == "supervision_ticket_mismatch"
+    assert not (root / "out.txt").exists()
+    assert store.get_grant(GRANT_ID).tasks_used == 0
+
+
+def test_legacy_wheel_serve_rejects_missing_supervision_and_write_capabilities(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "peer_serve_wheel_compat_test", REPO / "scripts" / "peer_serve.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class LegacyPeerService:
+        def __init__(self, *, store, admissions, artifacts, node_id):
+            self.node_id = node_id
+
+    monkeypatch.setattr(module, "PeerService", LegacyPeerService)
+    base = dict(store=object(), admissions=object(), artifacts=object(), node_id=NODE)
+    assert module._construct_peer_service(**base, supervision_enabled=False) is not None
+
+    for options in (
+        {"supervision_enabled": True, "supervision_ttl_s": 8},
+        {"write_root": "/tmp/qa-only"},
+        {"display_name": "nondefault-label"},
+        {"audit_watermark_pct": 80},
+    ):
+        with pytest.raises(PeerError) as error:
+            module._construct_peer_service(**base, **options)
+        assert error.value.reason_code == "executor_internal_error"
+        assert "peer_runtime_incompatible" in error.value.detail
+
+
+def test_legacy_kwargs_wheel_cannot_silently_ignore_supervision(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "peer_serve_kwargs_compat_test", REPO / "scripts" / "peer_serve.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class LegacyKwargsPeerService:
+        def __init__(self, *, store, admissions, artifacts, node_id, **kwargs):
+            self.ignored_kwargs = kwargs
+
+    monkeypatch.setattr(module, "PeerService", LegacyKwargsPeerService)
+    base = dict(store=object(), admissions=object(), artifacts=object(), node_id=NODE)
+    assert module._construct_peer_service(**base, supervision_enabled=False) is not None
+    for options in (
+        {"supervision_enabled": True, "supervision_ttl_s": 8},
+        {"write_root": "/tmp/qa-only"},
+        {"enabled_kinds": {"read_file"}},
+        {"max_concurrency": 2},
+    ):
+        with pytest.raises(PeerError) as error:
+            module._construct_peer_service(**base, **options)
+        assert error.value.reason_code == "executor_internal_error"
+        assert "peer_runtime_incompatible" in error.value.detail
+
+
+def test_legacy_wheel_operator_refuses_missing_supervision_api(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "peer_operator_wheel_compat_test", REPO / "scripts" / "peer_operator.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class LegacyPeerService:
+        def __init__(self, *, store, admissions, artifacts, node_id):
+            pass
+
+    monkeypatch.setattr(module, "PeerService", LegacyPeerService)
+    with pytest.raises(PeerError) as error:
+        module._require_supervision_runtime()
+    assert error.value.reason_code == "executor_internal_error"
+    assert "peer_runtime_incompatible" in error.value.detail
+
+
+def test_legacy_kwargs_wheel_operator_must_have_explicit_supervision_parameters(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "peer_operator_kwargs_compat_test", REPO / "scripts" / "peer_operator.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class LegacyKwargsPeerService:
+        def __init__(self, *, store, admissions, artifacts, node_id, **kwargs):
+            self.ignored_kwargs = kwargs
+
+        def list_supervised(self):
+            return []
+
+        def issue_supervision_ticket(self):
+            return None
+
+        def resume_supervised(self):
+            return None
+
+        def reject_supervised(self):
+            return None
+
+    monkeypatch.setattr(module, "PeerService", LegacyKwargsPeerService)
+    with pytest.raises(PeerError) as error:
+        module._require_supervision_runtime()
+    assert error.value.reason_code == "executor_internal_error"
+    assert "peer_runtime_incompatible" in error.value.detail
+
+
+def test_corrupt_persisted_supervision_expiry_fails_closed(tmp_path):
+    service, store, root, task_id = _held(_env(tmp_path, ttl=60))
+    payload = store._read("tasks")  # noqa: SLF001 -- test-only corrupt on-disk record
+    for item in payload["items"]:
+        if item.get("task_id") == task_id:
+            item["supervision_expires_at"] = "not-a-timestamp"
+    store._write("tasks", payload)  # noqa: SLF001 -- test-only corrupt on-disk record
+    assert service.list_supervised() == []
+    task = store.get_task(task_id)
+    assert task is not None and task.state == "failed"
+    assert task.reason_code == "supervision_timeout"
+    assert not (root / "out.txt").exists()
+
+
+def test_operator_legacy_ttl_flag_is_accepted_but_not_applied(tmp_path):
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "peer_operator.py"),
+            "--data-dir",
+            str(tmp_path / "peer"),
+            "--node-id",
+            NODE,
+            "--supervision-ttl-s",
+            "9999",
+            "list",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert "没有等待确认" in proc.stdout

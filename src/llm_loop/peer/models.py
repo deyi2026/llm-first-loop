@@ -166,6 +166,9 @@ class TaskRecord:
     result: dict[str, Any] | None = None
     requested_by: str | None = None
     params_digest: str | None = None
+    # Absolute authoritative expiry set when the task first enters awaiting_supervision.
+    # Legacy records may omit it and are failed closed by PeerService.
+    supervision_expires_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         raw = asdict(self)
@@ -194,6 +197,7 @@ class TaskRecord:
             result=raw.get("result"),
             requested_by=raw.get("requested_by"),
             params_digest=raw.get("params_digest"),
+            supervision_expires_at=raw.get("supervision_expires_at"),
         )
 
     def with_updates(self, **changes: Any) -> TaskRecord:
