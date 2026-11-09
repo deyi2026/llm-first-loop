@@ -622,23 +622,15 @@ def _deny(
     }
 
 
-def check_git_main_write(
-    command: str,
-    *,
-    audit_dir: str,
-    session_id: str,
-    workdir: str | None,
-) -> dict[str, Any] | None:
-    """判定命令是否构成「他人 live lane 存在时直写 main」。
+def _collect_main_write_hits(
+    verbs: list[tuple[str, list[str], str | None]], workdir: str | None
+) -> tuple[bool, list[tuple[str, str | None, str | None, str]], bool, bool, str | None]:
+    """扫描已解析的 git 段，收集「直写 main」命中。
 
-    返回 None=放行；返回 dict={reason, reason_code, operation, detail, lanes,
-    stale_lanes} 表示拒绝事实。
+    返回 ``(commit_hit, pushes, push_all, push_delete_main, basis_workdir)``：
+    ``pushes`` 每项为 ``(目标分支, 被推 src, 目标仓库, remote)``，src="" 表示
+    删除型 refspec；``basis_workdir`` 为首个可解析的目标仓库（供闲置判定）。
     """
-    if not command or not audit_dir:
-        return None
-    verbs = _git_verbs(command, workdir)
-    if not verbs:
-        return None
     commit_hit = False
     # (目标分支, 被推 src, 目标仓库, remote)；src="" 表示删除型 refspec
     pushes: list[tuple[str, str | None, str | None, str]] = []
@@ -675,6 +667,29 @@ def check_git_main_write(
             )
             if entry not in pushes:
                 pushes.append(entry)
+    return commit_hit, pushes, push_all, push_delete_main, basis_workdir
+
+
+def check_git_main_write(
+    command: str,
+    *,
+    audit_dir: str,
+    session_id: str,
+    workdir: str | None,
+) -> dict[str, Any] | None:
+    """判定命令是否构成「他人 live lane 存在时直写 main」。
+
+    返回 None=放行；返回 dict={reason, reason_code, operation, detail, lanes,
+    stale_lanes} 表示拒绝事实。
+    """
+    if not command or not audit_dir:
+        return None
+    verbs = _git_verbs(command, workdir)
+    if not verbs:
+        return None
+    commit_hit, pushes, push_all, push_delete_main, basis_workdir = (
+        _collect_main_write_hits(verbs, workdir)
+    )
     if not commit_hit and not pushes:
         return None
     others = _active_other_lanes(audit_dir, session_id)
