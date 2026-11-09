@@ -583,8 +583,12 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 **并行会话纪律（2026-11-06 用户指示，建议①/②落地）**：多会话共享同一仓库时——
 
-1. **lane 先行登记**：开始任何可合并改动前，先 `lane_open`（分支+基线+路径面）再 `git commit`；`main` 直写仅在无他人 active lane 时允许（一次性小修），push 前按 RULE-AI-28(3) 统一审查。
-2. **机械门（已生效）**：`execute_command` 检测到「存在他人 active lane 且命令为 `git commit`/`git push` 目标 main」时返回 `error_type=lane_main_write_denied` 拒绝执行（无冲突/无法判定时放行，零回归）。应拦/放行双向实测见 `tests/unit/test_lane_main_write_guard.py`（RULE-AI-35）。
+1. **lane 先行登记**：开始任何可合并改动前，先 `lane_open`（分支+基线+路径面）再 `git commit`；`main` 直写仅在无他人 live lane 时允许（一次性小修），push 前按 RULE-AI-28(3) 统一审查。
+2. **机械门（已生效，2026-11-09 EVO-20261109-0e5fdde5 扩展）**：`execute_command` 检测到「目标 main 的 `git commit`/`git push`」且存在他人 lane 时返回 `error_type=lane_main_write_denied` 拒绝执行：
+   - `commit`：任何他人 **live** lane（open/active/verifying/merging）都拦（共享 worktree 直写会落错分支）；
+   - `push`：只被 **live `verifying`/`merging`** 拦（对方即将改写 main），并附加 `ls-remote` 快进校验（明确非快进才拒绝；读不到远端按无法判定放行）；`--all`/`--mirror` 会推他人分支，保持宽判据；
+   - **失效回收**：他人 lane 的 `last_activity` 超 4h（模块常量 `STALE_AFTER_S`，<=0 关闭；缺失回退 `created_at`；本轮不新增 env 读取，维持 env 访问单向棘轮）且（head 已并入 main 或 worktree 无未提交改动）→ 不再计入 blocker，拒绝回执以 `stale_lanes` 标注依据与闲置时长（只读投影，不改写账本；睡眠会话的未合并分支不被作废）。浅克隆里远端对象本地缺失不判非快进（无法判定放行）。
+   应拦/放行双向实测见 `tests/unit/test_lane_main_write_guard.py`（RULE-AI-35）。
 3. **统一 push 收敛**：多方在 main 排队时，本地合并为线性历史后一次性 push（单次整树审查），不在他人合并闸在途时抢推。
 
 ---

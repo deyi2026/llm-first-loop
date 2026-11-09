@@ -456,22 +456,56 @@ def _check_s1_07(ev: S1Evidence, cfg: GateConfig) -> dict:
     )
 
 
+def _block_relevant_to_lane(
+    request: dict[str, Any], *, lane_id: str, owner_session_id: str
+) -> bool:
+    """need=block 是否作用到本 lane/本会话。
+
+    EVO-20261109-0e5fdde5：block 不再一律全局停工——带 lane_id/to_session 的
+    请求只挡其目标；只有**未声明作用域**的 block 才是全局停工信号。归属无法
+    判定（lane 记录缺 owner_session_id 而请求指定了 to_session）时保守按相关。
+    """
+    req_lane = str(request.get("lane_id") or "")
+    req_to = str(request.get("to_session") or "")
+    if not req_lane and not req_to:
+        return True
+    if req_lane and lane_id and req_lane == lane_id:
+        return True
+    if req_lane and not lane_id:
+        # 请求指向具体 lane，但当前上下文没有 lane_id → 归属不明，保守按相关。
+        return True
+    if req_to:
+        # 归属无法判定（lane 记录缺 owner_session_id）时保守按相关（fail-closed）。
+        return not owner_session_id or req_to == owner_session_id
+    return False
+
+
 def _check_s1_08(ev: S1Evidence, cfg: GateConfig) -> dict:
-    """第 8 行: 无 need=block 的未决协助请求（数据源 = P1 协助收件箱, 未接入则 skip）。"""
+    """第 8 行: 无作用到本 lane 的未决 need=block（数据源 = P1 协助收件箱）。"""
     requests = ev.help_requests
     if requests is None:
         return _skip("s1_08", "P1 协助收件箱视图未接入（依赖不可用, skip ≠ pass）")
-    blocking = [
+    pending_blocks = [
         r for r in requests
         if str(r.get("need") or "") == "block"
         and str(r.get("state") or "pending") == "pending"
+    ]
+    lane = ev.lane or {}
+    lane_id = str(lane.get("lane_id") or "")
+    owner = str(lane.get("owner_session_id") or "")
+    blocking = [
+        r for r in pending_blocks
+        if _block_relevant_to_lane(r, lane_id=lane_id, owner_session_id=owner)
     ]
     if blocking:
         return _result(
             "s1_08", "fail", "help_blocking",
             {"blocking": [str(r.get("id") or r) for r in blocking]},
         )
-    return _result("s1_08", "pass", "", {"checked": len(requests)})
+    return _result(
+        "s1_08", "pass", "",
+        {"checked": len(requests), "scoped_out": len(pending_blocks) - len(blocking)},
+    )
 
 
 def _check_s1_09(ev: S1Evidence, cfg: GateConfig) -> dict:

@@ -34,8 +34,10 @@ HELP_REQUEST_TOOL_DEF: dict = {
     "description": (
         "向其他会话投递一条协助请求（L3 文件式收件箱，跨会话持久化）。"
         "何时用: 需要另一个会话/人提供信息、评审，或本 lane 被卡住需要标记阻塞时。"
-        "need 口径: info=要信息; block=被阻塞（计入阻塞计数，S1 第 8 条机检会拦）; "
-        "review=请评审。何时不用: 只是自查可读状态（用 help_inbox）。"
+        "need 口径: info=要信息; block=被阻塞; review=请评审。"
+        "block 的作用域（2026-11-09 起）: 填了 lane_id/to_session 只挡该 lane/会话的合并；"
+        "两者都不填才是全局停工信号（会让所有 lane 合并被 S1-08 拦）——提醒某人收口用 info，别用 block。"
+        "何时不用: 只是自查可读状态（用 help_inbox）。"
         "边界: 收到请求 ≠ 获得写权; 投递即止，不自动派发（被请求方自行认领）。"
         "失败对策: need 非法换合法值重试; inbox_unavailable 表示 data 目录不可写。"
     ),

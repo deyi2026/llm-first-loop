@@ -241,7 +241,7 @@ unlock
 | 5 | 改动路径 ⊆ `auto_merge_allowlist`（**默认空 = 全不自动**，必须显式配置） | `path_not_allowed` |
 | 6 | 改动路径 ∩ `sealed_paths` = ∅，且不含 rules / 部署配置 / 迁移脚本 | `sealed_path` |
 | 7 | K / F 权重未超限（§4.4.2） | `budget_exceeded` |
-| 8 | 无 `need=block` 的未决协助请求 | `help_blocking` |
+| 8 | 无**作用到本 lane/会话**的未决 `need=block`（无 lane_id/to_session = 全局停工） | `help_blocking` |
 | 9 | 无其他 lane 对重叠 paths 持有 claim | `claim_overlap` |
 | 10 | 可一步 revert（`--no-ff` 且父即当前 main head） | `not_revertible` |
 
@@ -643,8 +643,9 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 
 `lane_gate_check` 在调用方未显式提供 `help_requests` 时，自动从收件箱读取未决请求；
 数据源不可用则保持 `None` → `s1_08` 返回 `skip + dependency_unavailable`（skip ≠ pass，不会误放行）。
-实测（RULE-AI-35）：无 block 请求 → `s1_08=pass`；存在 `need=block` → `s1_08=fail / help_blocking`。
-测试见 `tests/unit/test_help_s1_integration.py`。
+实测（RULE-AI-35）：无 block 请求 → `s1_08=pass`；存在**无作用域**的 `need=block` → `s1_08=fail / help_blocking`。
+EVO-20261109-0e5fdde5 起按作用域判定：带 `lane_id`/`to_session` 的 block 只挡其目标（`scoped_out` 计数可见），
+归属无法判定（lane 记录缺 `owner_session_id`）时保守按相关。测试见 `tests/unit/test_help_s1_integration.py`、`tests/unit/test_lane_gate.py`。
 
 ### 15.3 Board 的 channel 段
 

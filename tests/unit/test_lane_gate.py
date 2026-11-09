@@ -281,6 +281,81 @@ def test_help_info_level_not_blocking() -> None:
     assert _check(_gate(ev), "s1_08")["verdict"] == "pass"
 
 
+def test_help_block_scoped_to_other_lane_not_blocking() -> None:
+    """EVO-20261109：带 lane_id 的 block 只挡目标 lane，不再全局停工。"""
+    ev = _evidence(
+        help_requests=[
+            {"id": "h3", "need": "block", "state": "pending", "lane_id": "lane-other"}
+        ]
+    )
+    c = _check(_gate(ev), "s1_08")
+    assert c["verdict"] == "pass" and c["evidence"]["scoped_out"] == 1
+
+
+def test_help_block_scoped_to_other_session_not_blocking() -> None:
+    lane = dict(GREEN_LANE, owner_session_id="sess-gate")
+    ev = _evidence(
+        lane=lane,
+        help_requests=[
+            {"id": "h4", "need": "block", "state": "pending", "to_session": "sess-x"}
+        ],
+    )
+    assert _check(_gate(ev), "s1_08")["verdict"] == "pass"
+
+
+def test_help_block_scoped_to_this_lane_fails() -> None:
+    ev = _evidence(
+        help_requests=[
+            {
+                "id": "h5",
+                "need": "block",
+                "state": "pending",
+                "lane_id": "lane-gate0001",
+            }
+        ]
+    )
+    c = _check(_gate(ev), "s1_08")
+    assert c["verdict"] == "fail" and c["evidence"]["blocking"] == ["h5"]
+
+
+def test_help_block_with_lane_id_but_unknown_context_fails() -> None:
+    """P2（R4）：请求指向具体 lane、上下文无 lane_id → 归属不明，保守按相关。"""
+    ev = _evidence(
+        lane={"head_sha": "abc"},
+        help_requests=[
+            {"id": "h9", "need": "block", "state": "pending", "lane_id": "lane-x"}
+        ],
+    )
+    c = _check(_gate(ev), "s1_08")
+    assert c["verdict"] == "fail" and c["evidence"]["blocking"] == ["h9"]
+
+
+def test_help_block_scoped_to_this_session_fails() -> None:
+    lane = dict(GREEN_LANE, owner_session_id="sess-gate")
+    ev = _evidence(
+        lane=lane,
+        help_requests=[
+            {
+                "id": "h6",
+                "need": "block",
+                "state": "pending",
+                "to_session": "sess-gate",
+            }
+        ],
+    )
+    assert _check(_gate(ev), "s1_08")["verdict"] == "fail"
+
+
+def test_help_block_owner_unknown_treated_as_relevant() -> None:
+    """lane 记录缺 owner_session_id 时无法判定归属 → 保守按相关（fail-closed）。"""
+    ev = _evidence(
+        help_requests=[
+            {"id": "h7", "need": "block", "state": "pending", "to_session": "sess-x"}
+        ]
+    )
+    assert _check(_gate(ev), "s1_08")["verdict"] == "fail"
+
+
 def test_red_claim_overlap_denied() -> None:
     ev = _evidence(claim_overlaps=[{"lane_id": "lane-other", "shared_paths": ["src/llm_loop/x/mod.py"]}])
     c = _check(_gate(ev), "s1_09")
