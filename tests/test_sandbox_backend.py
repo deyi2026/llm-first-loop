@@ -6,6 +6,7 @@
 - sandbox-exec profile 生成：默认可写根 + EXEC_SANDBOX_MACOS_WRITABLE 追加 + S 表达式转义
 - darwin 真实执行：工作区可写、~/Documents 写被拒
 - note 文案与后端一一对应（S2-6：不得夸大隔离范围；none 不加"已隔离"措辞）
+- sandbox-exec 可用性实跑探测（2026-11-09：套用被拒/execvp 失败/异常三路分类）
 - worktree 隔离语义如实标注（S2-6：isolation=true 非系统沙箱从句）
 """
 
@@ -66,6 +67,17 @@ def _patch_backends(
             sbx.os.path, "isfile", lambda p: bool(sandbox_exec_ok) if p == sbx._SANDBOX_EXEC else False
         )
         monkeypatch.setattr(sbx.os, "access", lambda p, m: bool(sandbox_exec_ok))
+        # 2026-11-09：可用性改由"实跑套用"判定；矩阵测试不真起 sandbox-exec，
+        # 这里直接给出探测结论，探测本身的分类逻辑由专门的用例覆盖。
+        monkeypatch.setattr(
+            sbx,
+            "_sandbox_exec_applicable",
+            lambda ok=sandbox_exec_ok: (
+                (True, f"{sbx._SANDBOX_EXEC} 可套用 profile（实跑探测通过）", "")
+                if ok
+                else (False, f"{sbx._SANDBOX_EXEC} 不存在或不可执行", "")
+            ),
+        )
     monkeypatch.delenv("EXEC_SANDBOX_STRICT", raising=False)
 
 
@@ -188,6 +200,11 @@ def test_notes_match_backend_semantics(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(sbx.os.path, "isfile", lambda p: p == sbx._SANDBOX_EXEC)
     monkeypatch.setattr(sbx.os, "access", lambda p, m: True)
+    monkeypatch.setattr(
+        sbx,
+        "_sandbox_exec_applicable",
+        lambda: (True, f"{sbx._SANDBOX_EXEC} 可套用 profile（实跑探测通过）", ""),
+    )
     argv, note = sbx.sandbox_argv("echo hi", "/w", mode="sandbox-exec")
     assert argv is not None and argv[0] == "/usr/bin/sandbox-exec" and note == SBX_NOTE
     # none：不加任何"已隔离"措辞
@@ -212,6 +229,123 @@ def test_sandbox_exec_missing_on_linux_fail_closed(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     with pytest.raises(RuntimeError, match="fail-closed"):
         sbx.sandbox_argv("echo hi", "/w", mode="sandbox-exec")
+
+
+# ---- sandbox-exec 实跑探测（2026-11-09：二进制存在 ≠ 可套用）----
+
+
+def _stub_probe_process(monkeypatch, *, returncode: int, stderr: str = "", exc=None) -> list[list[str]]:
+    """伪 sandbox-exec 探测：记录 argv，按需返回退出码/stderr/异常；宿主二进制视为存在."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        if exc is not None:
+            raise exc
+        return SimpleNamespace(returncode=returncode, stdout="", stderr=stderr)
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        sbx.os.path, "isfile", lambda p: p in {sbx._SANDBOX_EXEC, "/usr/bin/true"}
+    )
+    monkeypatch.setattr(sbx.os, "access", lambda p, m: True)
+    monkeypatch.setattr(sbx.subprocess, "run", fake_run)
+    return calls
+
+
+def test_probe_apply_refused_is_not_available(monkeypatch):
+    calls = _stub_probe_process(
+        monkeypatch,
+        returncode=71,
+        stderr="sandbox-exec: sandbox_apply: Operation not permitted\n",
+    )
+    assert sbx._probe_sandbox_exec() is False
+    assert "套用被拒" in sbx._sandbox_exec_detail
+    assert "套用被拒" in sbx._sandbox_exec_nested_note()
+    # 探测体必须是确定存在的可执行文件：不得回落到历史 /bin/true（本机不存在）
+    assert calls and "/bin/true" not in calls[0]
+    assert calls[0][3] == "/usr/bin/true"
+
+
+def test_probe_available_only_on_real_apply(monkeypatch):
+    calls = _stub_probe_process(monkeypatch, returncode=0)
+    assert sbx._probe_sandbox_exec() is True
+    assert "实跑探测通过" in sbx._sandbox_exec_detail
+    assert sbx._sandbox_exec_nested_note() == ""
+    assert sbx._probe_sandbox_exec() is True
+    assert len(calls) == 1  # 进程内缓存：只实跑一次
+
+
+def test_probe_execvp_failure_not_misread_as_nested(monkeypatch):
+    _stub_probe_process(
+        monkeypatch,
+        returncode=71,
+        stderr=(
+            "sandbox-exec: execvp() of '/usr/bin/true' failed: "
+            "No such file or directory\n"
+        ),
+    )
+    assert sbx._probe_sandbox_exec() is False
+    assert "套用被拒" not in sbx._sandbox_exec_detail
+    assert sbx._sandbox_exec_nested_note() == ""
+
+
+def test_probe_exception_unavailable_and_not_nested(monkeypatch):
+    _stub_probe_process(
+        monkeypatch, returncode=0, exc=PermissionError(1, "Operation not permitted")
+    )
+    assert sbx._probe_sandbox_exec() is False
+    assert "探测无法执行" in sbx._sandbox_exec_detail
+    assert sbx._sandbox_exec_nested_note() == ""
+
+
+def test_auto_nested_degrade_note_is_honest(monkeypatch):
+    _stub_probe_process(
+        monkeypatch,
+        returncode=71,
+        stderr="sandbox-exec: sandbox_apply: Operation not permitted\n",
+    )
+    monkeypatch.setattr(sbx.shutil, "which", lambda name: None)
+    backend, reasons = sbx.resolve_auto_backend()
+    assert backend == "none"
+    assert any("套用被拒" in r for r in reasons)
+
+    argv, note = sbx.sandbox_argv("echo hi", "/w", mode="auto")
+    assert argv is None
+    assert "未套内层沙箱" in note
+    assert "已隔离" not in note
+
+
+def test_explicit_sandbox_exec_nested_fail_closed(monkeypatch):
+    _stub_probe_process(
+        monkeypatch,
+        returncode=71,
+        stderr="sandbox-exec: sandbox_apply: Operation not permitted\n",
+    )
+    with pytest.raises(RuntimeError, match="套用被拒"):
+        sbx.sandbox_argv("echo hi", "/w", mode="sandbox-exec")
+
+
+def test_reset_auto_cache_clears_apply_probe(monkeypatch):
+    calls = _stub_probe_process(monkeypatch, returncode=0)
+    assert sbx._probe_sandbox_exec() is True
+    sbx.reset_auto_cache()
+    assert sbx._probe_sandbox_exec() is True
+    assert len(calls) == 2
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="需要 macOS sandbox-exec")
+def test_live_probe_matches_real_apply():
+    """双向实测（可用侧）：探测结论必须与真实套用结果一致，且真实主机解析到 sandbox-exec."""
+    sbx.reset_auto_cache()
+    proc = subprocess.run(
+        sbx._sandbox_exec_probe_argv(), capture_output=True, text=True, timeout=30
+    )
+    applicable = sbx._probe_sandbox_exec()
+    assert applicable is (proc.returncode == 0)
+    if applicable:
+        backend, _ = sbx.resolve_auto_backend()
+        assert backend == "sandbox-exec"
 
 
 # ---- sandbox-exec profile 生成与转义 ----

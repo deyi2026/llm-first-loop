@@ -25,7 +25,10 @@
   **只约束写域**：可写根 = 工作区 + /tmp + /private/tmp + /dev + ~/.cache +
   ~/Library/Caches + ~/.npm + `EXEC_SANDBOX_MACOS_WRITABLE`（os.pathsep 分隔的追加项）；
   路径做 S 表达式转义（双引号/反斜杠）防策略注入。**不隔离网络、不限制读**。
-  非 darwin 或 sandbox-exec 不可用 → fail-closed 拒绝执行。
+  可用性按**实跑套用**判定（2026-11-09）：二进制存在不够，进程已被外层沙箱包裹时
+  内层 `sandbox_apply` 会被拒（EPERM，每条命令都以退出码 71 失败）。
+  非 darwin、二进制缺失或套用被拒 → 视为不可用；auto 落到 none 时 note 如实说明
+  "未套内层沙箱、写入边界仅由外层决定"，不宣称隔离。显式 sandbox-exec → fail-closed。
 - `none`：不启用（零回归；auto 解析到 none 且非 strict 时同此，但必先写一次 warning）。
 
 `EXEC_SANDBOX_STRICT=1`：auto 解析到 none → RuntimeError（fail-closed，回执如实失败）；
@@ -63,17 +66,20 @@ _auto_logged = False
 _docker_daemon_cache: bool | None = None
 _docker_probe_detail = "未探测"
 _sandbox_exec_detail = "未探测"
+# sandbox-exec 实跑探测缓存：(可用, 说明, 嵌套说明)；仅"套用被拒"时第三项非空。
+_sandbox_exec_apply_cache: tuple[bool, str, str] | None = None
 
 
 def reset_auto_cache() -> None:
     """清空 auto 解析与 docker 探测缓存（测试钩子；生产进程只解析一次）。"""
     global _auto_cache, _auto_logged, _docker_daemon_cache
-    global _docker_probe_detail, _sandbox_exec_detail
+    global _docker_probe_detail, _sandbox_exec_detail, _sandbox_exec_apply_cache
     _auto_cache = None
     _auto_logged = False
     _docker_daemon_cache = None
     _docker_probe_detail = "未探测"
     _sandbox_exec_detail = "未探测"
+    _sandbox_exec_apply_cache = None
 
 
 def _strict_enabled() -> bool:
@@ -114,7 +120,66 @@ def _probe_docker() -> bool:
     return _docker_daemon_cache
 
 
+def _sandbox_exec_probe_argv() -> list[str]:
+    """实跑探测命令：用宿主上确定存在的可执行体套一次最宽松 profile。
+
+    历史坑：曾以 `/bin/true` 探测，而本机（macOS 15）只有 `/usr/bin/true`——探测自身
+    execvp 失败同样返回退出码 71，会被误读成"外层沙箱拒绝套用"。这里优先
+    `/usr/bin/true`，缺失时回落到当前解释器，保证探测失败只可能来自"套用"这一步。
+    """
+    if os.path.isfile("/usr/bin/true"):
+        return [_SANDBOX_EXEC, "-p", "(version 1)(allow default)", "/usr/bin/true"]
+    return [_SANDBOX_EXEC, "-p", "(version 1)(allow default)", sys.executable, "-c", "pass"]
+
+
+def _sandbox_exec_applicable() -> tuple[bool, str, str]:
+    """实跑探测 sandbox-exec 能否真的套用 profile（进程内缓存）。
+
+    仅探二进制存在不足以判定可用：进程已被外层沙箱包裹时，内层 sandbox-exec 会在
+    sandbox_apply 阶段被拒（Operation not permitted），表现为**每条命令**都以退出码
+    71 失败——与 profile 内容无关。这里套一条最宽松的 profile 实跑一次，按真实结果
+    判定；只有拿到 `sandbox_apply` 拒绝签名才归因为"不能再套内层沙箱"，其余失败
+    （探测体不存在、exec 被拒等）只如实记录，不冒充嵌套。
+    """
+    global _sandbox_exec_apply_cache
+    if _sandbox_exec_apply_cache is not None:
+        return _sandbox_exec_apply_cache
+    argv = _sandbox_exec_probe_argv()
+    try:
+        proc = subprocess.run(
+            argv, capture_output=True, text=True, timeout=5.0, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _sandbox_exec_apply_cache = (
+            False,
+            f"{_SANDBOX_EXEC} 探测无法执行（{type(exc).__name__}: {exc}）",
+            "",
+        )
+        return _sandbox_exec_apply_cache
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode == 0:
+        _sandbox_exec_apply_cache = (
+            True,
+            f"{_SANDBOX_EXEC} 可套用 profile（实跑探测通过）",
+            "",
+        )
+        return _sandbox_exec_apply_cache
+    first_line = stderr.splitlines()[0] if stderr else f"退出码 {proc.returncode}"
+    if "sandbox_apply" in stderr:
+        detail = f"{_SANDBOX_EXEC} 存在但 profile 套用被拒（{first_line}）"
+        nested_note = (
+            "（sandbox-exec 套用被拒：本进程不能再套内层沙箱；"
+            "命令未套内层沙箱执行，写入边界仅由外层决定）"
+        )
+    else:
+        detail = f"{_SANDBOX_EXEC} 探测失败（{first_line}）"
+        nested_note = ""
+    _sandbox_exec_apply_cache = (False, detail, nested_note)
+    return _sandbox_exec_apply_cache
+
+
 def _probe_sandbox_exec() -> bool:
+    """sandbox-exec 是否可用（macOS + 二进制存在 + profile 实跑套用通过）。"""
     global _sandbox_exec_detail
     if sys.platform != "darwin":
         _sandbox_exec_detail = f"当前平台 {sys.platform!r} 非 darwin"
@@ -122,8 +187,17 @@ def _probe_sandbox_exec() -> bool:
     if not (os.path.isfile(_SANDBOX_EXEC) and os.access(_SANDBOX_EXEC, os.X_OK)):
         _sandbox_exec_detail = f"{_SANDBOX_EXEC} 不存在或不可执行"
         return False
-    _sandbox_exec_detail = f"{_SANDBOX_EXEC} 可执行"
-    return True
+    applicable, detail, _nested = _sandbox_exec_applicable()
+    _sandbox_exec_detail = detail
+    return applicable
+
+
+def _sandbox_exec_nested_note() -> str:
+    """auto 因套用被拒降级 none 时的如实 note；未探测/非该形态返回空串。"""
+    cache = _sandbox_exec_apply_cache
+    if cache is not None and not cache[0]:
+        return cache[2]
+    return ""
 
 
 def resolve_auto_backend() -> tuple[str, list[str]]:
@@ -149,14 +223,15 @@ def resolve_auto_backend() -> tuple[str, list[str]]:
                     "set EXEC_SANDBOX=none/docker consciously"
                 )
             else:
-                _auto_cache = (
-                    "none",
-                    [
-                        f"sandbox-exec 不可用（{_sandbox_exec_detail}）",
-                        f"docker 不可用（{_docker_probe_detail}）",
-                        "bwrap 不参与 darwin auto 探测（darwin 顺序：sandbox-exec → docker）",
-                    ],
-                )
+                why_none = [
+                    f"sandbox-exec 不可用（{_sandbox_exec_detail}）",
+                    f"docker 不可用（{_docker_probe_detail}）",
+                    "bwrap 不参与 darwin auto 探测（darwin 顺序：sandbox-exec → docker）",
+                ]
+                nested = _sandbox_exec_nested_note()
+                if nested:
+                    why_none.append(nested)
+                _auto_cache = ("none", why_none)
         elif _probe_bwrap():
             _auto_cache = ("bwrap", ["bwrap 已安装"])
         elif _probe_docker():
@@ -338,7 +413,7 @@ def sandbox_argv(
                     "请安装可用后端（Linux: bubblewrap；任意平台: 启动 docker daemon；"
                     "macOS: /usr/bin/sandbox-exec），或显式设 EXEC_SANDBOX=none。"
                 )
-            return (None, "")
+            return (None, _sandbox_exec_nested_note())
         mode = backend
     if mode == "bwrap":
         if shutil.which("bwrap") is None:
@@ -361,7 +436,8 @@ def sandbox_argv(
         if not _probe_sandbox_exec():
             raise RuntimeError(
                 "EXEC_SANDBOX=sandbox-exec 已显式配置，但当前不可用"
-                f"（{_sandbox_exec_detail}）——fail-closed：命令未执行。"
+                f"（{_sandbox_exec_detail}）{_sandbox_exec_nested_note()}"
+                "——fail-closed：命令未执行。"
                 "可改用 EXEC_SANDBOX=auto 自动解析或 EXEC_SANDBOX=none。"
             )
         return (

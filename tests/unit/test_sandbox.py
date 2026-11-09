@@ -199,6 +199,16 @@ def _patch_platform_backends(
             lambda p: bool(sandbox_exec_ok) if p == sbx._SANDBOX_EXEC else False,
         )
         monkeypatch.setattr(sbx.os, "access", lambda p, m: bool(sandbox_exec_ok))
+        # 2026-11-09：可用性改由"实跑套用"判定；本文件只关心平台顺序，直接给结论。
+        monkeypatch.setattr(
+            sbx,
+            "_sandbox_exec_applicable",
+            lambda ok=sandbox_exec_ok: (
+                (True, f"{sbx._SANDBOX_EXEC} 可套用 profile（实跑探测通过）", "")
+                if ok
+                else (False, f"{sbx._SANDBOX_EXEC} 不存在或不可执行", "")
+            ),
+        )
     monkeypatch.delenv("EXEC_SANDBOX_STRICT", raising=False)
 
 
