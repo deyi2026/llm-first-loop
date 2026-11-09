@@ -1,0 +1,34 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_0405d4b9e7b1（独立只读审查会话，未参与该分支任何产出）",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261109-bd2efbd8",
+  "branch": "feat/review-admission-knowledge-flush-gate-20261109",
+  "based_on_main": true,
+  "commits": ["27caf3bfea288157b0edc76a1c312fcc1a9faf81"],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "定向 4 文件（knowledge_flush_gate / gitpush_fingerprint / split_plan / arch_guards）-q -p no:randomly → 71 passed in 9.67s（审查者独立复跑）",
+    "分支卫生：porcelain 空；main..HEAD 仅 27caf3bfe；merge-base == main == 35961db58 → ff-only 可合并",
+    "口径对照 scripts/knowledge_flush.py::collect()（61-151 行）：40 字节阈值、扫描根、小卡跳过、半成品目录跳过、D 照常计、卡目录附属文件随卡计入 —— 逐条一致",
+    "位序：_start_preconditions 于 start() 第 3525 行调用，早于 _out_of_scope_binding 与 _target 材料快照/切片/子代理拉起；测试用 _target 哨兵 + _BlowUpRunner 证明闸后依赖未被触达",
+    "fail-closed：_git_capped 非零退出 raise ValueError（901 行）→ 捕获 → reason=knowledge_flush_scan_unavailable；workdir 为空时 _target 仍 raise workdir_required（3433 行），不构成绕过",
+    "作用域仅 push 类 kind；test_full_test_kind_is_not_gated 证明另一 kind 行为不变",
+    "应拦输入实测（RULE-AI-35）：真实 git 仓库 7 类输入均按预期拦或放（含入库后放行对照，非恒拒）",
+    "RULE-AI-28 套件门禁与 scripts/ci_gate.sh 退出码 0：父会话声明，本审查按 SKILL 第 25 条引用未复跑（回执 ID 未落盘，见 disclosures）"
+  ],
+  "main_sha_after": "27caf3bfea288157b0edc76a1c312fcc1a9faf81",
+  "branch_disposition": "kept: worktree/branch 保留供回溯（与本仓既有 lane 惯例一致；主检出 main 已含该提交）",
+  "verify_receipt_id": "lane-3b1c2e71:35961db5",
+  "lane_id": "lane-3b1c2e71",
+  "base_main_sha": "35961db58d7a88b0fada02a0ad02551da1ad4964",
+  "branch_head_sha": "27caf3bfea288157b0edc76a1c312fcc1a9faf81",
+  "diff_reviewed": "3 files +270/-4：src/llm_loop/tools/review_host_admission.py +120、tests/unit/test_review_admission_knowledge_flush_gate.py 新增 152、docs/ai_rules.md ±2",
+  "disclosures": [
+    "非阻断：RULE-AI-28 套件门禁与 CI 门禁的落盘回执 ID 未在 docs/governance/receipts/ 找到；事件日志显示本分支确有 RULE-AI-28 审查会话（subagent_0405d4b9e7b1 / f65a6b7665f3 / ef559a8c5793 引用 27caf3bfe 与本分支名）。建议合并时回填 child/candidate id 与门禁 job id。",
+    "非阻断：本层是 agent 侧前置判定，钩子仍是唯一不可绕过的机械兜底；绕过旗标可跳过前置层（docs/ai_rules.md 已自述）。",
+    "非阻断：get_goal 工具在本审查会话不可用；完成证据以 receipts/merge_GOAL-20261109-bd2efbd8_v1.md（覆盖前一增量分支）加本分支独立测试回执判真。",
+    "落盘阻塞：审查者写侧无 docs/governance/receipts/ allow-list 权限（write_target_not_in_allow_list），本回执由父代理按其原文搬入该目录（仅补 reviewer=真实 child id、post-merge 回填 main_sha_after）。"
+  ]
+}
