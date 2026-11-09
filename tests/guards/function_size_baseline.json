@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "6c50af960",
+    "head_commit": "8fff7d183",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1126,7 +1126,7 @@
     "src/llm_loop/llm/client.py::chat_stream": 167,
     "src/llm_loop/llm/errors.py::classify_llm_error": 127,
     "src/llm_loop/llm/providers.py::_parse_providers_dict": 158,
-    "src/llm_loop/memory/extractor.py::extract_session": 127,
+    "src/llm_loop/memory/extractor.py::extract_session": 126,
     "src/llm_loop/memory/retriever.py::_two_stage_rerank": 123,
     "src/llm_loop/memory/retriever.py::rank_cached_candidates": 145,
     "src/llm_loop/memory/retriever.py::rank_texts": 133,
@@ -1221,7 +1221,7 @@
     "src/llm_loop/cli.py::application_main": 323,
     "src/llm_loop/config.py::load_settings": 370,
     "src/llm_loop/core/history.py::build_history_messages": 745,
-    "src/llm_loop/core/loop/engine.py::_run_stream_inner": 2194,
+    "src/llm_loop/core/loop/engine.py::_run_stream_inner": 2192,
     "src/llm_loop/core/loop/lifecycle.py::run_stream": 312,
     "src/llm_loop/factory.py::build_engine": 2153,
     "src/llm_loop/llm/client.py::_stream_openai": 433,
