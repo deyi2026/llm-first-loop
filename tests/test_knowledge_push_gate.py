@@ -13,8 +13,10 @@
 3. 闸脚本缺失 → fail-closed 拒：看不见的闸等于没有闸（RULE-AI-35）。
 """
 
+import json
 import shutil
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -126,4 +128,105 @@ def test_fail_closed_when_gate_script_missing(repo: Path) -> None:
     out = _run_hook(repo)
     assert out.returncode == 1, out.stdout + out.stderr
     assert "知识闸脚本缺失" in out.stderr
+
+
+# --- EVO-20261109-b1dad92e P4: flush 也尊重 lane 主写门 ---
+def _lane_row(status: str, owner: str, *, minutes_ago: float = 0.0, **extra) -> dict:
+    ts = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat()
+    row = {
+        "lane_id": "lane-probe",
+        "branch": "feat/probe",
+        "worktree": "/nonexistent",
+        "goal_id": "GOAL-T",
+        "owner_session_id": owner,
+        "status": status,
+        "closing_since": ts,
+        "last_activity": ts,
+    }
+    row.update(extra)
+    return row
+
+
+def _ledger(repo: Path, rows: list[dict]) -> None:
+    path = repo / "data/audit/lanes.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def _run_flush(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["python3", str(repo / "scripts" / "knowledge_flush.py"), *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def test_flush_blocked_while_other_lane_live(repo: Path) -> None:
+    """有他人 live lane → 内部 commit 提前拒绝，不把知识卡写进提交后才发现推不出去。"""
+    _make_card(repo, "data/methods/card-c/METHOD.md")
+    _ledger(repo, [_lane_row("verifying", "sess-other")])
+    out = _run_flush(repo)
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "他人 live lane" in out.stderr
+    # 闸的承诺是「拦住」，不是「写一半」：卡片仍在工作区，hook 仍然拒推
+    assert _run_hook(repo).returncode == 1
+
+
+def test_flush_allows_own_lane(repo: Path) -> None:
+    _make_card(repo, "data/methods/card-d/METHOD.md")
+    _ledger(repo, [_lane_row("verifying", "sess-me")])
+    out = _run_flush(repo, "--session-id", "sess-me")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert _run_hook(repo).returncode == 0, "自己的 lane 被误判为他人"
+
+
+def test_flush_reclaims_stale_clean_lane(repo: Path, tmp_path: Path) -> None:
+    """空闲超时 + worktree 干净 → 按失效回收（与命令闸同口径的保守子集）。"""
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    _git(clean, "init", "-q", "-b", "main")
+    _git(clean, "config", "user.email", "t@example.com")
+    _git(clean, "config", "user.name", "t")
+    (clean / "x.txt").write_text("x\n", encoding="utf-8")
+    _git(clean, "add", ".")
+    _git(clean, "commit", "-q", "-m", "x")
+    _make_card(repo, "data/methods/card-e/METHOD.md")
+    _ledger(
+        repo,
+        [_lane_row("active", "sess-other", minutes_ago=300, worktree=str(clean))],
+    )
+    out = _run_flush(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_flush_fail_closed_on_corrupt_ledger(repo: Path) -> None:
+    _make_card(repo, "data/methods/card-f/METHOD.md")
+    path = repo / "data/audit/lanes.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json\n", encoding="utf-8")
+    out = _run_flush(repo)
+    assert out.returncode != 0
+    assert "lane 账本" in out.stderr
+
+
+# --- EVO-20261109-b1dad92e P5: hook 扫描回执占位 ---
+def test_hook_blocks_placeholder_receipt(repo: Path) -> None:
+    receipt = repo / "docs/governance/receipts/merge-probe.md"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text("| main_sha_after | 待回填 |\n", encoding="utf-8")
+    out = _run_hook(repo)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "回执" in out.stderr and "待回填" in out.stderr
+
+
+def test_hook_allows_backfilled_receipt(repo: Path) -> None:
+    receipt = repo / "docs/governance/receipts/merge-probe.md"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text("| main_sha_after | 4866ffa36 |\n", encoding="utf-8")
+    out = _run_hook(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
 

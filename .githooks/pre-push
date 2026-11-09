@@ -45,14 +45,63 @@ elif [[ "$FLUSH_RC" -ne 0 ]]; then
   exit 1
 fi
 
+# 回执完整性闸（EVO-20261109-b1dad92e P5）：回执是交付证据，正文仍写「待回填」
+# 说明交付链没闭合（本次合并回执曾因此卡住 push）。口径与知识闸一致：判定异常
+# fail-closed（看不见的闸等于没有闸）。
+RECEIPT_DIR="docs/governance/receipts"
+receipt_hit=0
+check_receipt_content() {
+  local label="$1" body="$2" hits
+  hits="$(printf '%s\n' "$body" | grep -n '待回填' || true)"
+  if [[ -n "$hits" ]]; then
+    echo "[pre-push] 拒绝：回执 ${label} 仍含「待回填」占位。" >&2
+    printf '%s\n' "$hits" | head -5 | sed 's/^/    /' >&2
+    receipt_hit=1
+  fi
+}
+
+# 工作区未跟踪回执：合并回执常先生成、后随推送入库，这类最容易被漏。
+if ! untracked_receipts="$(git ls-files --others --exclude-standard -- "$RECEIPT_DIR")"; then
+  echo "[pre-push] 拒绝：无法枚举未跟踪回执（fail-closed）。" >&2
+  exit 1
+fi
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  check_receipt_content "${f}（未跟踪）" "$(cat "$f")"
+done <<< "$untracked_receipts"
+
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" =~ ^0+$ ]] && continue
   if [[ "$remote_sha" =~ ^0+$ ]]; then
     RANGE_ARGS=(--commit "$local_sha")   # 首推：扫待推提交可达的完整历史（逐提交，非仅 tip 树）
+    if ! changed_receipts="$(git ls-tree -r --name-only "$local_sha" -- "$RECEIPT_DIR")"; then
+      echo "[pre-push] 拒绝：无法枚举首推回执（fail-closed）。" >&2
+      exit 1
+    fi
   else
     RANGE_ARGS=(--range "$remote_sha" "$local_sha")
+    if ! changed_receipts="$(git diff --name-only --diff-filter=AM "$remote_sha" "$local_sha" -- "$RECEIPT_DIR")"; then
+      echo "[pre-push] 拒绝：无法计算回执变更集（fail-closed）。" >&2
+      exit 1
+    fi
   fi
+  # 本次 range 新增/修改的回执：逐文件读 blob，命中占位即拒推。
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    if ! body="$(git show "${local_sha}:${f}" 2>/dev/null)"; then
+      echo "[pre-push] 拒绝：无法读取回执 ${f}@${local_sha:0:12}（fail-closed）。" >&2
+      receipt_hit=1
+      continue
+    fi
+    check_receipt_content "$f@${local_sha:0:12}" "$body"
+  done <<< "$changed_receipts"
   echo "[pre-push] $local_ref -> $remote_ref  (${RANGE_ARGS[*]})"
   bash "$SCAN" "${RANGE_ARGS[@]}" || exit 1
 done
+
+if [[ "$receipt_hit" -ne 0 ]]; then
+  echo "[pre-push] 修复：回填 main_sha_after / verify_receipt_id 等占位字段后重试推送。" >&2
+  echo "[pre-push] 说明：回执占位不阻断本地提交，只阻断推送（避免带着未闭合证据发布）。" >&2
+  exit 1
+fi
 exit 0

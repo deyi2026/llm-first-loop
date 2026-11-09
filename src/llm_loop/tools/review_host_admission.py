@@ -919,6 +919,12 @@ _KNOWLEDGE_ASSET_ROOTS = ("data/methods", "experiences")
 _KNOWLEDGE_CARD_MIN_BYTES = 40
 _KNOWLEDGE_SAMPLE_LIMIT = 10
 
+# --- 回执完整性（EVO-20261109-b1dad92e P5）---------------------------------
+# 回执是交付证据；正文仍写「待回填」= 交付链没闭合。机械兜底在 .githooks/pre-push，
+# 这一层只是把同一事实提前到 git_push 准入最前面（早发现，别白烧一个审查周期）。
+_RECEIPT_DIR = "docs/governance/receipts"
+_RECEIPT_PLACEHOLDER_MARKERS = ("待回填",)
+
 
 def _porcelain_rows(raw: bytes) -> list[tuple[str, str]]:
     """解析 ``git status --porcelain -z``：[(XY, path)]（重命名条目跳过原路径）。"""
@@ -1005,10 +1011,91 @@ def _knowledge_gate_receipt(workdir: str) -> dict[str, Any] | None:
     }
 
 
+def _receipt_placeholder_receipt(workdir: str) -> dict[str, Any] | None:
+    """git_push 准入前置：待推/未跟踪回执仍含「待回填」→ 拒绝回执；干净 → None。
+
+    口径（EVO-20261109-b1dad92e P5）：工作区未跟踪/已修改的回执 + 本地
+    ``origin/main..HEAD`` 变更/新增的回执（best-effort，不做网络）。扫描本身
+    失败按 fail-closed 拒绝（RULE-AI-30）。
+    """
+    if not workdir:
+        return None
+    try:
+        top = _git(Path(workdir), "rev-parse", "--show-toplevel")
+        root = Path(top.decode("utf-8", "surrogateescape").strip())
+        hits = _receipt_placeholder_hits(root)
+    except (ValueError, OSError):
+        return {
+            "accepted": False,
+            "reason": "receipt_placeholder_scan_unavailable",
+            "fix": "git status --porcelain -- docs/governance/receipts",
+        }
+    if not hits:
+        return None
+    return {
+        "accepted": False,
+        "reason": "receipt_placeholder_pending",
+        "files": hits[:_KNOWLEDGE_SAMPLE_LIMIT],
+        "files_truncated": len(hits) > _KNOWLEDGE_SAMPLE_LIMIT,
+        "fix": (
+            "回填 main_sha_after / verify_receipt_id 等占位字段后再 start"
+            "（只阻断推送准入，不阻断本地提交）"
+        ),
+    }
+
+
+def _receipt_placeholder_hits(root: Path) -> list[str]:
+    """返回 ``file:line`` 命中；git 读失败抛 ValueError（调用方 fail-closed）。"""
+    paths: set[str] = set()
+    raw = _git(
+        root,
+        "status",
+        "--porcelain",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        _RECEIPT_DIR,
+    )
+    for _status, path in _porcelain_rows(raw):
+        if path.startswith(_RECEIPT_DIR + "/"):
+            paths.add(path)
+    try:
+        origin_main = _git(root, "rev-parse", "--verify", "--quiet", "origin/main")
+    except ValueError:
+        origin_main = b""
+    if origin_main:
+        raw_range = _git(
+            root,
+            "diff",
+            "--name-only",
+            "--diff-filter=AM",
+            "origin/main..HEAD",
+            "--",
+            _RECEIPT_DIR,
+        )
+        for line in raw_range.decode("utf-8", "surrogateescape").splitlines():
+            if line.startswith(_RECEIPT_DIR + "/"):
+                paths.add(line)
+    hits: list[str] = []
+    for rel in sorted(paths):
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="surrogateescape")
+        except OSError as exc:
+            raise ValueError(f"receipt_unreadable:{rel}:{exc}") from exc
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if any(marker in line for marker in _RECEIPT_PLACEHOLDER_MARKERS):
+                hits.append(f"{rel}:{lineno}")
+    return hits
+
+
 def _start_preconditions(
     kind: str, scope: str, paths: Sequence[str] | None, workdir: str
 ) -> tuple[dict[str, Any], tuple[str, ...], dict[str, Any] | None]:
-    """start 的前置判定：scope 解析错误 → 拒；git_push 再有未入库知识资产 → 拒。
+    """start 的前置判定：scope 解析错误 → 拒；git_push 再有未入库知识资产/回执
+    占位 → 拒。
 
     独立成助手是为了不让 start 本身体积增长（function-lines 棘轮，2026-11-09）。
     """
@@ -1017,6 +1104,9 @@ def _start_preconditions(
         return scope_receipt, scope_paths, {"accepted": False, "reason": scope_error}
     if kind == "git_push":
         blocked = _knowledge_gate_receipt(workdir)
+        if blocked is not None:
+            return scope_receipt, scope_paths, blocked
+        blocked = _receipt_placeholder_receipt(workdir)
         if blocked is not None:
             return scope_receipt, scope_paths, blocked
     return scope_receipt, scope_paths, None
@@ -4648,6 +4738,41 @@ class HostReviewAdmission:
                 )
         return "no_pending_qualification: 无覆盖当前 (parent, kind, target, sha) 的待消费资格"
 
+    def _lane_push_precheck(
+        self, parent: str, command: str, workdir: str
+    ) -> AdmissionDecision | None:
+        """P2（EVO-20261109-b1dad92e）：消费资格审查前先做只读 lane 判定。
+
+        资格是一次性的：先消费、再被命令闸用同一个 lane 事实拒绝，会让模型
+        白烧一整轮审查（2026-11-09 实测）。这里只读账本、不做 ls-remote；读
+        不到账本/判定异常时放行，由命令闸与 hook 兜底（拒绝须基于已证事实）。
+        """
+        try:
+            from llm_loop.config import load_settings
+
+            audit_dir = str(load_settings().audit_dir)
+        except Exception:  # noqa: BLE001 — Host 配置异常不改变命令闸语义
+            return None
+        try:
+            from llm_loop.core.lane_main_write_guard import check_push_lane_block
+
+            decision = check_push_lane_block(
+                command,
+                audit_dir=audit_dir,
+                session_id=parent,
+                workdir=workdir,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if decision is None:
+            return None
+        code = str(decision.get("reason_code") or decision.get("reason") or "lane_blocked")
+        detail = str(decision.get("detail") or "他人 lane 尚未终态")
+        return self._deny(
+            f"[lane 门·{code}] {detail}",
+            hint="资格未被消费；等 lane 终态后原样重试同一命令即可。",
+        )
+
     def check_shell(self, parent: str, command: str, workdir: str) -> AdmissionDecision:
         kind = classify_host_shell(command)
         if kind is None:
@@ -4673,6 +4798,11 @@ class HostReviewAdmission:
             )
         binding_error = ""
         drift_error = ""
+        if kind == "git_push":
+            # P2：lane 门先判，命中则不消费资格（一次性）。
+            lane_denial = self._lane_push_precheck(parent, command, workdir)
+            if lane_denial is not None:
+                return lane_denial
         for scope_paths, recorded_digest, tier in scopes:
             try:
                 # Re-resolves the push base (ls-remote) too: if the remote ref

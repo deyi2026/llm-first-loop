@@ -19,6 +19,8 @@
   改动不会被卷进来。
 - 不 amend / 不 rebase / 不改写历史。
 - 合并/变基进行中直接拒绝（0 副作用），避免把别人的冲突解算混进知识提交。
+- 不绕过 lane 主写门：commit 前自检 ``data/audit/lanes.jsonl``，存在他人 live
+  lane 直接拒绝（0 副作用）；``--session-id`` 用于排除自己的 lane。
 
 用法
 ----
@@ -36,9 +38,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 MIN_CARD_BYTES = 40
@@ -161,7 +164,103 @@ def _in_progress(root: Path) -> str | None:
     return None
 
 
-def flush(root: Path, *, dry_run: bool = False) -> dict[str, object]:
+_LANE_TERMINAL = frozenset({"merged", "closed", "abandoned"})
+# 与 lane_main_write_guard.STALE_AFTER_S 同步：空闲超时 + worktree 干净 → 失效回收。
+_LANE_STALE_AFTER_S = 4 * 3600.0
+
+
+def _lane_is_stale(row: dict[str, object], root: Path, now: datetime) -> bool:
+    """空闲超时且 worktree 干净 → 按失效回收（命令闸 stale 判定的保守子集）。"""
+    raw = str(row.get("last_activity") or row.get("created_at") or "").strip()
+    wt = str(row.get("worktree") or "").strip()
+    if not raw or not wt:
+        return False
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        return False
+    if (now - ts).total_seconds() <= _LANE_STALE_AFTER_S:
+        return False
+    path = Path(wt)
+    if not path.is_absolute():
+        path = root / path
+    try:
+        run = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return run.returncode == 0 and not run.stdout.strip()
+
+
+def _live_other_lanes(
+    rows: list[object], root: Path, *, session_id: str
+) -> list[str]:
+    """返回阻塞 flush 的他人 live lane 标识；账本结构不可读 → fail-closed。"""
+    now = datetime.now(timezone.utc)  # noqa: UP017 — hook 跑系统 python3（3.9）
+    out: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise FlushError("lane 账本存在非对象记录，按 fail-closed 拒绝入库")
+        status = str(row.get("status") or "")
+        if status in _LANE_TERMINAL:
+            continue
+        owner = str(row.get("owner_session_id") or "")
+        if owner and session_id and owner == session_id:
+            continue
+        if _lane_is_stale(row, root, now):
+            continue
+        out.append(str(row.get("lane_id") or row.get("branch") or "?"))
+    return out
+
+
+def _lane_gate(root: Path, *, session_id: str = "") -> None:
+    """入库前的 main 直写自检（EVO-20261109-b1dad92e P4）。
+
+    本工具的 ``git commit`` 也是 main 直写，但不能走 execute_command 的命令闸
+    （它由系统 cron/agent 直接调脚本）。口径与 lane 主写门一致：账本存在他人
+    live lane → 拒绝（0 副作用）；账本不存在 → 视为无 lane；账本损坏/读不懂 →
+    fail-closed。``session_id`` 用于排除自己的 lane（默认取 ``LFL_SESSION_ID``）。
+    """
+    audit = root / "data" / "audit"
+    common = _git(root, "rev-parse", "--git-common-dir", check=False)
+    if common.returncode == 0 and common.stdout.strip():
+        common_dir = Path(common.stdout.strip())
+        if not common_dir.is_absolute():
+            common_dir = root / common_dir
+        # linked worktree 的 data/ 是空的；账本在主仓 <common-parent>/data/audit
+        candidate = common_dir.parent / "data" / "audit"
+        if candidate.is_dir():
+            audit = candidate
+    ledger = audit / "lanes.jsonl"
+    if not ledger.exists():
+        return
+    try:
+        rows = [
+            json.loads(line)
+            for line in ledger.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FlushError(
+            f"lane 账本不可读/损坏，按 fail-closed 拒绝入库: {ledger}: {exc}"
+        ) from exc
+    blockers = _live_other_lanes(rows, root, session_id=session_id)
+    if blockers:
+        raise FlushError(
+            "存在他人 live lane，知识入库的内部 commit 暂不执行（避免与他人合并闸"
+            f"竞争）：{'、'.join(blockers[:5])}。等对方 lane 终态后重试"
+            "（自己的 lane 用 --session-id 排除）。"
+        )
+
+
+def flush(root: Path, *, dry_run: bool = False, session_id: str = "") -> dict[str, object]:
     marker = _in_progress(root)
     if marker:
         raise FlushError(f"仓库处于进行中的操作（{marker}），先收尾再入库")
@@ -187,6 +286,9 @@ def flush(root: Path, *, dry_run: bool = False) -> dict[str, object]:
     if dry_run:
         receipt["paths"] = pending_paths
         return receipt
+
+    # P4：入库的 commit 也是 main 直写；他人 live lane 存在时先不提交（0 副作用）。
+    _lane_gate(root, session_id=session_id)
 
     # 只 add 本次要提交的精确文件集：跳过的半成品/过小卡不留在索引里，避免后续误提交
     _git(root, "add", "-A", "--", *pending_paths)
@@ -238,11 +340,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="有待入库资产时退出码 3（发布前置闸）")
     parser.add_argument("--json", action="store_true", help="输出 JSON 回执")
     parser.add_argument("--quiet", action="store_true", help="无事可做时不输出")
+    parser.add_argument(
+        "--session-id",
+        default=os.environ.get("LFL_SESSION_ID", ""),
+        help="当前会话 id（lane 自检时排除自己的 lane；默认取 LFL_SESSION_ID）",
+    )
     args = parser.parse_args(argv)
 
     try:
         root = repo_root(Path(args.root).resolve())
-        receipt = flush(root, dry_run=args.dry_run or args.check)
+        receipt = flush(
+            root,
+            dry_run=args.dry_run or args.check,
+            session_id=args.session_id,
+        )
     except FlushError as exc:
         print(f"❌ knowledge_flush: {exc}", file=sys.stderr)
         return 2

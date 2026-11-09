@@ -32,6 +32,9 @@ _FALLBACK_LOCK = threading.Lock()
 
 LANE_STATUSES = ("open", "active", "verifying", "merging", "merged", "closed", "abandoned")
 TERMINAL_STATUSES = ("merged", "closed", "abandoned")
+# 收口态：进入时记 closing_since（供 push 门的 30min 收口截止判定），离开或
+# 终态时清除。last_activity 每次更新都会刷新，不能拿它当收口计时。
+_CLOSING_STATUSES = frozenset({"verifying", "merging"})
 LANE_ROLES = ("main", "sub")
 PRIORITIES = ("normal", "hotfix")
 
@@ -117,6 +120,7 @@ class Lane:
     base_is_broken: bool = False
     verify_ref: str = ""
     close_reason: str = ""
+    closing_since: str = ""  # 进入 verifying/merging 的时刻（push 收口截止锚点）
     version: int = 1
     created_at: str = ""
     last_activity: str = ""
@@ -242,6 +246,15 @@ class LaneStore:
                         )
 
             now = system_local_now().isoformat()
+            target_status = str(fields.get("status") or current_status)
+            if target_status != current_status:
+                if (
+                    target_status in _CLOSING_STATUSES
+                    and current_status not in _CLOSING_STATUSES
+                ):
+                    entry["closing_since"] = now
+                elif target_status not in _CLOSING_STATUSES:
+                    entry.pop("closing_since", None)
             for key, value in fields.items():
                 if key in {"paths", "contract_changes"}:
                     entry[key] = _normalize_paths(value)  # type: ignore[arg-type]
@@ -302,6 +315,7 @@ class LaneStore:
             now = system_local_now().isoformat()
             entry["status"] = status
             entry["close_reason"] = reason
+            entry.pop("closing_since", None)
             entry["version"] = current_version + 1
             entry["last_activity"] = now
             rows[idx] = entry

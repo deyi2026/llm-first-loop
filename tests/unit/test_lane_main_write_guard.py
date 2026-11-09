@@ -7,7 +7,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from llm_loop.core import lane_main_write_guard as guard_module
-from llm_loop.core.lane_main_write_guard import check_git_main_write
+from llm_loop.core.lane_main_write_guard import (
+    check_git_main_write,
+    check_push_lane_block,
+)
 
 
 def _git_repo(path: Path, branch: str = "main") -> Path:
@@ -889,3 +892,157 @@ def test_git_dir_env_prefix_via_env_command(tmp_path):
         workdir=str(feat),
     )
     assert out is not None and out["operation"] == "commit"
+
+
+# --- EVO-20261109-b1dad92e P1: 收口截止只豁免 push ---
+def _closing_lane(lane_id: str, status: str, owner: str, minutes_ago: float) -> dict:
+    ts = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat()
+    row = _lane(lane_id, status, owner)
+    row["closing_since"] = ts
+    row["last_activity"] = ts
+    return row
+
+
+def test_push_closing_lane_within_deadline_blocks(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(
+        tmp_path / "audit", [_closing_lane("lane-close", "verifying", "other", 29)]
+    )
+    out = check_git_main_write(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None
+    assert out["reason_code"] == "main_push_closing_lane"
+
+
+def test_push_closing_lane_past_deadline_reclaimed(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(
+        tmp_path / "audit", [_closing_lane("lane-close", "verifying", "other", 31)]
+    )
+    out = check_git_main_write(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is None
+
+
+def test_commit_closing_lane_past_deadline_still_blocks(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(
+        tmp_path / "audit", [_closing_lane("lane-close", "verifying", "other", 31)]
+    )
+    out = check_git_main_write(
+        "git commit -m x", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None
+    assert out["reason_code"] == "main_commit_other_lane"
+
+
+def test_push_closing_deadline_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard_module, "CLOSING_BLOCK_MAX_S", 0)
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(
+        tmp_path / "audit", [_closing_lane("lane-close", "verifying", "other", 31)]
+    )
+    out = check_git_main_write(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None
+
+
+def test_push_naive_closing_since_fail_closed(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    row = _closing_lane("lane-close", "verifying", "other", 31)
+    row["closing_since"] = "2026-11-09T12:00:00"  # naive → 无法判定 → 仍挡
+    audit = _ledger(tmp_path / "audit", [row])
+    out = check_git_main_write(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None
+    assert out["reason_code"] == "main_push_closing_lane"
+
+
+# --- EVO-20261109-b1dad92e P3: docs/回执窄通道 ---
+def test_commit_docs_receipts_allowed_with_other_live_lane(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m 'receipt' -- docs/governance/receipts/x.md",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo),
+    )
+    assert out is None
+
+
+def test_commit_docs_plus_code_paths_blocked(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x -- docs/governance/receipts/x.md src/app.py",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+def test_commit_without_pathspec_still_blocked(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+def test_commit_docs_parent_traversal_blocked(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -m x -- docs/../src/app.py",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+def test_commit_docs_with_all_flag_blocked(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "other")])
+    out = check_git_main_write(
+        "git commit -am x -- docs/governance/receipts/x.md",
+        audit_dir=audit,
+        session_id="me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason_code"] == "main_commit_other_lane"
+
+
+# --- EVO-20261109-b1dad92e P2: push 只读预检 ---
+def test_push_lane_block_detects_closing_lane(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-m", "verifying", "other")])
+    out = check_push_lane_block(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is not None and out["reason_code"] == "main_push_closing_lane"
+
+
+def test_push_lane_block_ignores_open_lane(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-o", "open", "other")])
+    out = check_push_lane_block(
+        "git push origin main", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is None
+
+
+def test_push_lane_block_ignores_non_push(tmp_path):
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-m", "verifying", "other")])
+    out = check_push_lane_block(
+        "git commit -m x", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert out is None

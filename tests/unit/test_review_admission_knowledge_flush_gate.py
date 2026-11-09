@@ -18,8 +18,10 @@ import subprocess
 from pathlib import Path
 
 from llm_loop.tools.review_host_admission import (
+    AdmissionDecision,
     HostReviewAdmission,
     _knowledge_gate_receipt,
+    _receipt_placeholder_receipt,
 )
 
 CARD_BODY = "# 测试卡\n" + "这是用于回归测试的临时方法卡正文，必须超过四十字节的入库阈值。" * 2
@@ -150,3 +152,69 @@ def test_full_test_kind_is_not_gated(tmp_path: Path, monkeypatch) -> None:
     )
     assert receipt["accepted"] is False
     assert receipt["reason"] == "sentinel_target_reached"
+
+
+def _receipt(repo: Path, body: str) -> Path:
+    path = repo / "docs/governance/receipts/merge-probe.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    return path
+
+
+def test_untracked_placeholder_receipt_blocks_start(tmp_path: Path, monkeypatch) -> None:
+    """未跟踪回执仍有「待回填」→ 在 _target/审查拉起之前拒（P5）。"""
+    repo = _repo(tmp_path)
+    _receipt(repo, "| main_sha_after | 待回填 |\n")
+
+    def _sentinel(*args, **kwargs):  # pragma: no cover - 顺序错时才会走到
+        raise AssertionError("回执占位闸必须先于 _target 判定")
+
+    monkeypatch.setattr(HostReviewAdmission, "_target", staticmethod(_sentinel))
+    receipt = _host().start(
+        "author-1", "git_push", workdir=str(repo), command="git push origin main",
+    )
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "receipt_placeholder_pending"
+    assert receipt["files"] and "merge-probe.md:1" in receipt["files"][0]
+
+
+def test_backfilled_receipt_passes(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _receipt(repo, "| main_sha_after | 4866ffa36 |\n")
+    assert _receipt_placeholder_receipt(str(repo)) is None
+
+
+def test_receipt_scan_failure_is_fail_closed(tmp_path: Path) -> None:
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    receipt = _receipt_placeholder_receipt(str(plain))
+    assert receipt is not None
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "receipt_placeholder_scan_unavailable"
+
+
+def test_git_push_lane_precheck_runs_before_consume(monkeypatch, tmp_path: Path) -> None:
+    """P2：lane 门命中时不得消费一次性资格（不得走到 _target/_consume）。"""
+    host = HostReviewAdmission()
+    monkeypatch.setattr(
+        HostReviewAdmission,
+        "_pending_scopes",
+        staticmethod(lambda parent, kind: [((), "", (0, 0))]),
+    )
+    monkeypatch.setattr(
+        HostReviewAdmission,
+        "_lane_push_precheck",
+        staticmethod(
+            lambda parent, command, workdir: AdmissionDecision(
+                False, "lane_precheck_denied"
+            )
+        ),
+    )
+
+    def _sentinel(*args, **kwargs):  # pragma: no cover - 顺序错时才会走到
+        raise AssertionError("lane 预检必须先于资格消费")
+
+    monkeypatch.setattr(HostReviewAdmission, "_target", staticmethod(_sentinel))
+    decision = host.check_shell("parent", "git push origin main", str(tmp_path))
+    assert decision.allowed is False
+    assert "lane_precheck_denied" in decision.reason

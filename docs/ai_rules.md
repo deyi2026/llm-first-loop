@@ -592,6 +592,12 @@ k3（Kimi，经 model_catalog 回执核验）"。
    - **失效回收**：他人 lane 的 `last_activity` 超 4h（模块常量 `STALE_AFTER_S`，<=0 关闭；缺失回退 `created_at`；本轮不新增 env 读取，维持 env 访问单向棘轮）且（head 已并入 main 或 worktree 无未提交改动）→ 不再计入 blocker，拒绝回执以 `stale_lanes` 标注依据与闲置时长（只读投影，不改写账本；睡眠会话的未合并分支不被作废）。浅克隆里远端对象本地缺失不判非快进（无法判定放行）。
    应拦/放行双向实测见 `tests/unit/test_lane_main_write_guard.py`（RULE-AI-35）。
 3. **统一 push 收敛**：多方在 main 排队时，本地合并为线性历史后一次性 push（单次整树审查），不在他人合并闸在途时抢推。
+4. **push 闸机械层扩展（2026-11-09 EVO-20261109-b1dad92e，人工批准 21:01）**：
+   - **收口截止**：`verifying`/`merging` 进入收口态超过 `CLOSING_BLOCK_MAX_S`（30min）仍未终态 → 不再阻断 `push`，拒绝回执以 `stale_lanes[].reclaim_basis=closing_deadline` 标注依据与已收口分钟数；`commit` 仍被任意 live lane 挡。计时只看进入收口态时记录的 `closing_since`，不看每次更新都会刷新的 `last_activity`；缺失/naive 时间按仍阻断处理（fail-closed）。
+   - **回执窄通道**：`git commit ... -- <paths>` 显式列出且路径全部落在 `docs/` 下时，不受他人 live lane 阻挡（只追加证据，改不到代码）；无 `--`、含 `-a/--amend`、绝对路径、`..`、通配或反斜杠一律按宽判据处理。
+   - **资格消费顺序**：`review_admission(action=start, kind=git_push)` 在消费一次性资格**之前**先做同一账本的只读 lane 预检；命中即拒（`reason=main_push_closing_lane`）且**不消费**，lane 终态后可原样重试同一命令。读不到账本/判定异常时放行，由命令闸与 `pre-push` hook 兜底。
+   - **知识入库同门**：`scripts/knowledge_flush.py` 在内部 commit 前自检 lane 账本；有他人 live lane 即非 0 退出并给指引，账本损坏按 fail-closed 拒绝；自己的 lane 用 `--session-id` 排除。空闲超时（4h）且 worktree 干净的 lane 按失效回收（与命令闸同口径的保守子集）。
+   - **回执占位闸**：`review_admission(git_push)` 前置与 `.githooks/pre-push` 双重扫描待推/未跟踪回执，正文仍含「待回填」（如 `main_sha_after`/`verify_receipt_id` 未回填）即拒（`reason=receipt_placeholder_pending`）；只阻断推送，不阻断本地提交。
 
 ---
 

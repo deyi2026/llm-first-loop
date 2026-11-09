@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 import subprocess
@@ -56,6 +57,15 @@ _PUSH_CLOSING = frozenset({"verifying", "merging"})
 # 单向棘轮（tests/unit/test_runtime_env_access_gate.py）；需要运行时可调时由
 # config/Settings 统一引入，而不是在 core 里开新口子。
 STALE_AFTER_S = 4 * 3600.0
+# push 收口截止（EVO-20261109-b1dad92e，人工批准 2026-11-09 21:01）：
+# verifying/merging 超过该时长仍未终态 → 不再阻断 push。只豁免 push；commit
+# 仍被任意 live lane 挡（共享 worktree 直写会落错分支）。0 或负数=关闭豁免。
+CLOSING_BLOCK_MAX_S = 30 * 60.0
+# docs/回执窄通道：`git commit ... -- <paths>` 显式列出且全部落在该前缀时，不受
+# 他人 live lane 阻挡（回执是只追加证据，改不到代码）。其他任何形态按宽判据处理。
+_DOC_COMMIT_PREFIX = "docs/"
+
+logger = logging.getLogger(__name__)
 # git 全局选项里带值、且会影响目标仓库的选项：
 # - ``-C`` 会被链式解析成实际目标仓库（见 _chained_cwd）；无法解析按 main 保守处理；
 # - ``--git-dir``/``--work-tree`` 会重定向仓库且不做路径语义跟随 → 标记目标仓库
@@ -377,6 +387,29 @@ def _idle_seconds(row: dict[str, Any], now: datetime) -> float | None:
     return (now - ts).total_seconds()
 
 
+def _closing_seconds(row: dict[str, Any], now: datetime) -> float | None:
+    """进入 verifying/merging 后的秒数（closing_since；旧行回退 last_activity）。
+
+    与 :func:`_idle_seconds` 同一时区口径：naive/不可解析 → None（调用方按
+    live 处理，不因坏时间戳放行）。旧账本行没有 closing_since 时用
+    last_activity/created_at 作锚，避免升级瞬间把既有收口 lane 全部豁免。
+    """
+    raw = str(row.get("closing_since") or "").strip()
+    if not raw:
+        # 旧账本行没有 closing_since：用 last_activity/created_at 作锚，
+        # 避免升级瞬间把既有 verifying/merging 全部豁免（保守：仍按 live 挡）。
+        raw = str(row.get("last_activity") or row.get("created_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        return None
+    return (now - ts).total_seconds()
+
+
 def _repo_root(workdir: str | None) -> str | None:
     if not workdir:
         return None
@@ -482,6 +515,36 @@ def _split_stale_lanes(
     return live, stale
 
 
+def _split_closing(
+    live: list[dict[str, Any]], now: datetime
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """把 live 中的收口 lane 分成 (仍阻断, 已过收口截止)。
+
+    只对 ``verifying``/``merging`` 生效；``open``/``active`` 本来就不挡 push，
+    这里直接跳过。截止时长 ``CLOSING_BLOCK_MAX_S`` <=0 时关闭豁免。无法判定
+    closing_since（缺失/naive/坏格式）的行按仍阻断处理（fail-closed）。
+    """
+    if CLOSING_BLOCK_MAX_S <= 0:
+        return [r for r in live if str(r.get("status") or "") in _PUSH_CLOSING], []
+    blockers: list[dict[str, Any]] = []
+    expired: list[dict[str, Any]] = []
+    for row in live:
+        if str(row.get("status") or "") not in _PUSH_CLOSING:
+            continue
+        elapsed = _closing_seconds(row, now)
+        if elapsed is None or elapsed <= CLOSING_BLOCK_MAX_S:
+            blockers.append(row)
+            continue
+        expired.append(
+            {
+                **row,
+                "_reclaim_basis": "closing_deadline",
+                "_closing_minutes": int(elapsed // 60),
+            }
+        )
+    return blockers, expired
+
+
 def _push_remote(refspecs: list[str]) -> str:
     """push 的 remote：第一个位置参数；缺省 origin（``--repo`` 形式不建模）。"""
     args, _flags = _push_positional(refspecs)
@@ -581,11 +644,17 @@ def _lanes_note(rows: list[dict[str, Any]]) -> str:
     )
 
 
+def _stale_age_note(row: dict[str, Any]) -> str:
+    if row.get("_closing_minutes") is not None:
+        return f"收口 {row.get('_closing_minutes')}min"
+    return f"闲置 {row.get('_idle_hours')}h"
+
+
 def _stale_note(stale: list[dict[str, Any]]) -> str:
     if not stale:
         return ""
     items = "、".join(
-        f"{row.get('lane_id')}(闲置 {row.get('_idle_hours')}h, "
+        f"{row.get('lane_id')}({_stale_age_note(row)}, "
         f"依据 {row.get('_reclaim_basis')})"
         for row in stale[:3]
     )
@@ -599,6 +668,7 @@ def _stale_payload(stale: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "branch": row.get("branch"),
             "status": row.get("status"),
             "idle_hours": row.get("_idle_hours"),
+            "closing_minutes": row.get("_closing_minutes"),
             "reclaim_basis": row.get("_reclaim_basis"),
         }
         for row in stale[:5]
@@ -622,16 +692,71 @@ def _deny(
     }
 
 
+_COMMIT_SAFE_FLAGS = frozenset({"-q", "--quiet", "--no-verify"})
+_COMMIT_SAFE_VALUE_FLAGS = frozenset({"-m", "--message"})
+
+
+def _commit_pathspecs(refs: list[str]) -> list[str] | None:
+    """从 ``git commit`` 参数取显式 pathspec；不满足窄通道形态返回 None（宽判据）。
+
+    窄通道只认严格形态：``-m/--message <msg>``（可叠加 -q/--quiet/--no-verify）
+    + ``--`` + 至少一个路径。任何其他选项（``-a/--all/--amend``、
+    ``--pathspec-from-file``、未知 flag）一律 None：宁可多挡，不可少挡。
+    路径本身做静态校验：相对、无 ``..``、无通配/反斜杠、非空。
+    """
+    if "--" not in refs:
+        return None
+    idx = refs.index("--")
+    i = 0
+    while i < idx:
+        tok = refs[i]
+        if tok in _COMMIT_SAFE_VALUE_FLAGS:
+            if i + 1 >= idx:
+                return None
+            i += 2
+            continue
+        if tok.startswith("--message=") or tok.startswith("-m="):
+            i += 1
+            continue
+        if tok in _COMMIT_SAFE_FLAGS:
+            i += 1
+            continue
+        return None
+    paths = [p for p in refs[idx + 1 :] if p]
+    if not paths:
+        return None
+    out: list[str] = []
+    for raw in paths:
+        path = raw.rstrip("/")
+        if not path or path.startswith("-") or path.startswith("/"):
+            return None
+        if "\\" in path or any(ch in path for ch in "*?["):
+            return None
+        parts = path.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            return None
+        out.append(path)
+    return out
+
+
 def _collect_main_write_hits(
     verbs: list[tuple[str, list[str], str | None]], workdir: str | None
-) -> tuple[bool, list[tuple[str, str | None, str | None, str]], bool, bool, str | None]:
+) -> tuple[
+    list[list[str] | None],
+    list[tuple[str, str | None, str | None, str]],
+    bool,
+    bool,
+    str | None,
+]:
     """扫描已解析的 git 段，收集「直写 main」命中。
 
-    返回 ``(commit_hit, pushes, push_all, push_delete_main, basis_workdir)``：
-    ``pushes`` 每项为 ``(目标分支, 被推 src, 目标仓库, remote)``，src="" 表示
-    删除型 refspec；``basis_workdir`` 为首个可解析的目标仓库（供闲置判定）。
+    返回 ``(commit_hits, pushes, push_all, push_delete_main, basis_workdir)``：
+    ``commit_hits`` 每项是该次 commit 的显式 pathspec 列表；``None`` = 宽判据
+    （无 ``--``、含 -a/--amend 等）。``pushes`` 每项为 ``(目标分支, 被推 src,
+    目标仓库, remote)``，src="" 表示删除型 refspec；``basis_workdir`` 为首个
+    可解析的目标仓库（供闲置判定）。
     """
-    commit_hit = False
+    commit_hits: list[list[str] | None] = []
     # (目标分支, 被推 src, 目标仓库, remote)；src="" 表示删除型 refspec
     pushes: list[tuple[str, str | None, str | None, str]] = []
     push_all = False
@@ -652,7 +777,7 @@ def _collect_main_write_hits(
         if not branches:
             continue
         if verb == "commit":
-            commit_hit = True
+            commit_hits.append(_commit_pathspecs(refs))
             continue
         push_all = push_all or is_all
         if _push_is_delete(refs) and any(name in _MAIN_BRANCHES for name in branches):
@@ -667,7 +792,72 @@ def _collect_main_write_hits(
             )
             if entry not in pushes:
                 pushes.append(entry)
-    return commit_hit, pushes, push_all, push_delete_main, basis_workdir
+    return commit_hits, pushes, push_all, push_delete_main, basis_workdir
+
+
+def _push_lane_denial(
+    pushes: list[tuple[str, str | None, str | None, str]],
+    push_all: bool,
+    push_delete_main: bool,
+    live: list[dict[str, Any]],
+    stale: list[dict[str, Any]],
+    now: datetime,
+) -> dict[str, Any] | None:
+    """push 的 lane 阻断判定（命令闸与 review 预检共用）。
+
+    不含 ``ls-remote`` 快进校验（那是命令闸的补充层，需要网络）。收口截止
+    豁免（P1）只在这里生效：``verifying``/``merging`` 超过
+    ``CLOSING_BLOCK_MAX_S`` 不再阻断 push，明细追加进 stale_lanes 并写审计
+    日志；账本本身不改写。
+    """
+    if any(entry[0] == "__REPO_OPTION__" for entry in pushes):
+        if live:
+            return _deny(
+                "main_push_repo_option_unmodeled",
+                "push",
+                live,
+                stale,
+                "命令用 --repo 指定远端：本闸不建模该形式（远端不在位置参数里，"
+                f"选项值也不可信），存在他人 live lane 时按 fail-closed 拒绝："
+                f"{_lanes_note(live)}。改写为 `git push <remote> <refspec>` 后重试。",
+            )
+        pushes = [p for p in pushes if p[0] != "__REPO_OPTION__"]
+    if push_delete_main:
+        blockers = live
+        code = "main_push_delete_other_lane"
+        why = (
+            "命令删除远端 main（删除型 refspec 无法用快进证明安全），"
+            "且存在他人 live lane"
+        )
+    elif push_all:
+        blockers = live
+        code = "main_push_all_other_lane"
+        why = (
+            "命令含 git push --all/--mirror（会推他人分支），"
+            "且存在他人 live lane"
+        )
+    else:
+        blockers, expired = _split_closing(live, now)
+        if expired:
+            logger.warning(
+                "lane 收口截止豁免（只放行 push，账本未改写）：%s",
+                _lanes_note(expired),
+            )
+            stale = [*stale, *expired]
+        code = "main_push_closing_lane"
+        why = (
+            "命令含 git push 目标 main，且存在他人 live 收口 lane"
+            "（verifying/merging，即将改写 main）"
+        )
+    if not blockers:
+        return None
+    return _deny(
+        code,
+        "push",
+        blockers,
+        stale,
+        f"{why}：{_lanes_note(blockers)}。先等对方落定再推。",
+    )
 
 
 def check_git_main_write(
@@ -687,10 +877,10 @@ def check_git_main_write(
     verbs = _git_verbs(command, workdir)
     if not verbs:
         return None
-    commit_hit, pushes, push_all, push_delete_main, basis_workdir = (
+    commit_hits, pushes, push_all, push_delete_main, basis_workdir = (
         _collect_main_write_hits(verbs, workdir)
     )
-    if not commit_hit and not pushes:
+    if not commit_hits and not pushes:
         return None
     others = _active_other_lanes(audit_dir, session_id)
     if not others:
@@ -698,65 +888,41 @@ def check_git_main_write(
     # 宿主本地时区墙钟（RULE-AI-26 时间标注口径；仅用于计算闲置时长）。
     now = datetime.now().astimezone()
     live, stale = _split_stale_lanes(others, workdir=basis_workdir, now=now)
-    if commit_hit and live:
-        return _deny(
-            "main_commit_other_lane",
-            "commit",
-            live,
-            stale,
-            "命令含 git commit 目标 main，且存在他人 live lane："
-            f"{_lanes_note(live)}。"
-            "并行会话期间 main 直写会与他人合并闸竞争（2026-11-05/06 两次事故）。"
-            "建议: 先 lane_open 登记并在分支提交，或等对方 lane 合并后再动 main；"
-            "合并建议可用 lane_merge_advice。",
+    if commit_hits and live:
+        # docs/回执窄通道（P3）：每次 commit 都显式 ``-- <paths>`` 且全部落在
+        # docs/ 下 → 只追加证据，改不到代码，不占他人合并窗口。
+        narrow = all(
+            paths is not None
+            and all(p.startswith(_DOC_COMMIT_PREFIX) for p in paths)
+            for paths in commit_hits
         )
-    if pushes:
-        if any(entry[0] == "__REPO_OPTION__" for entry in pushes):
-            if live:
-                return _deny(
-                    "main_push_repo_option_unmodeled",
-                    "push",
-                    live,
-                    stale,
-                    "命令用 --repo 指定远端：本闸不建模该形式（远端不在位置参数里，"
-                    f"选项值也不可信），存在他人 live lane 时按 fail-closed 拒绝："
-                    f"{_lanes_note(live)}。改写为 `git push <remote> <refspec>` 后重试。",
-                )
-            # 无他人 live lane → 闸本就不拦，去掉标记继续（无可判定目标）。
-            pushes = [p for p in pushes if p[0] != "__REPO_OPTION__"]
-        if push_delete_main:
-            blockers = live
-            code = "main_push_delete_other_lane"
-            why = (
-                "命令删除远端 main（删除型 refspec 无法用快进证明安全），"
-                "且存在他人 live lane"
-            )
-        elif push_all:
-            blockers = live
-            code = "main_push_all_other_lane"
-            why = (
-                "命令含 git push --all/--mirror（会推他人分支），"
-                "且存在他人 live lane"
+        if narrow:
+            logger.info(
+                "docs 窄 commit 放行（存在他人 live lane，pathspec 全在 %s 下）：%s",
+                _DOC_COMMIT_PREFIX,
+                _lanes_note(live),
             )
         else:
-            blockers = [
-                row
-                for row in live
-                if str(row.get("status") or "") in _PUSH_CLOSING
-            ]
-            code = "main_push_closing_lane"
-            why = (
-                "命令含 git push 目标 main，且存在他人 live 收口 lane"
-                "（verifying/merging，即将改写 main）"
-            )
-        if blockers:
             return _deny(
-                code,
-                "push",
-                blockers,
+                "main_commit_other_lane",
+                "commit",
+                live,
                 stale,
-                f"{why}：{_lanes_note(blockers)}。先等对方落定再推。",
+                "命令含 git commit 目标 main，且存在他人 live lane："
+                f"{_lanes_note(live)}。"
+                "并行会话期间 main 直写会与他人合并闸竞争（2026-11-05/06 两次事故）。"
+                "建议: 先 lane_open 登记并在分支提交，或等对方 lane 合并后再动 main；"
+                "合并建议可用 lane_merge_advice。"
+                "（仅 `git commit -m <msg> -- docs/...` 这类显式 docs/回执单文件"
+                "提交可豁免。）",
             )
+    if pushes:
+        denial = _push_lane_denial(
+            pushes, push_all, push_delete_main, live, stale, now
+        )
+        if denial is not None:
+            return denial
+        pushes = [p for p in pushes if p[0] != "__REPO_OPTION__"]
         for branch, local_ref, target_workdir, remote in pushes:
             if local_ref == "":  # 删除型 refspec：无"快进"语义（前面已按删除判定）
                 continue
@@ -774,3 +940,34 @@ def check_git_main_write(
                     "stale_lanes": [],
                 }
     return None
+
+
+def check_push_lane_block(
+    command: str,
+    *,
+    audit_dir: str,
+    session_id: str,
+    workdir: str | None,
+) -> dict[str, Any] | None:
+    """review 资格消费前的只读 lane 预检（EVO-20261109-b1dad92e P2）。
+
+    与 :func:`check_git_main_write` 的 lane 判定同源，但**不做 ls-remote**：
+    预检只回答「现在 push 会不会被 lane 门挡」，把一次性资格留给真正可能成功
+    的窗口。读不到账本/无 audit_dir 返回 None（下游命令闸仍会兜底）。
+    """
+    if not command or not audit_dir:
+        return None
+    verbs = _git_verbs(command, workdir)
+    if not verbs:
+        return None
+    _commit_hits, pushes, push_all, push_delete_main, basis_workdir = (
+        _collect_main_write_hits(verbs, workdir)
+    )
+    if not pushes:
+        return None
+    others = _active_other_lanes(audit_dir, session_id)
+    if not others:
+        return None
+    now = datetime.now().astimezone()
+    live, stale = _split_stale_lanes(others, workdir=basis_workdir, now=now)
+    return _push_lane_denial(pushes, push_all, push_delete_main, live, stale, now)
