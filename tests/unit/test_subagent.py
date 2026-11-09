@@ -67,7 +67,12 @@ def test_runner_success_executes_tool_and_returns(build_test_engine):
 
 
 def test_runner_does_not_inject_last_round_forced_close(build_test_engine):
-    """max_rounds 是资源边界，不得在倒数轮偷偷追加“必须收口”程序提示。"""
+    """EVO-20261108-b5fead21 ①（human-approved）修订：预算将尽时允许一次
+    显式标注来源的运行时收敛提醒；仍禁止伪造"必须给出最终回答"式收口命令。
+
+    原护栏保留的部分：runtime 不得伪造父级/真人指令抢占模型最终裁决；
+    新增契约：软提醒必须带【运行时收敛提醒·非真人/父级新授权】标注。
+    """
     engine, fake = build_test_engine([])
     runner = SubAgentRunner(
         llm=fake, registry=engine.registry, session_store=engine.session, max_iterations=2
@@ -90,10 +95,17 @@ def test_runner_does_not_inject_last_round_forced_close(build_test_engine):
     assert result.outcome == "truncated"
     assert len(fake.calls) == 2
     second_wire = fake.calls[1]["messages"]
-    # 没有父级 steer 时，第二轮只应有初始 task user + 上一轮完整 tool 协议；
-    # 不允许 max_rounds-1 再注入额外 user/system 收口命令。
-    assert [m["role"] for m in second_wire] == ["user", "assistant", "tool"]
-    assert all("必须给出最终回答" not in str(m.get("content") or "") for m in second_wire)
+    roles = [m["role"] for m in second_wire]
+    assert roles[:3] == ["user", "assistant", "tool"]
+    extra_user = [m for m in second_wire[3:] if m["role"] == "user"]
+    assert len(extra_user) == 1, roles
+    reminder = str(extra_user[0].get("content") or "")
+    # 只允许显式标注来源的运行时收敛提醒；任何未标注的收口命令都不允许。
+    assert "运行时收敛提醒" in reminder
+    assert "非真人/父级新授权" in reminder
+    assert all(
+        "必须给出最终回答" not in str(m.get("content") or "") for m in second_wire
+    )
 
 
 def test_acceptance_is_guidance_not_programmatic_early_termination(build_test_engine):
@@ -162,14 +174,25 @@ def test_llm_exception_does_not_create_orphan_tool_frame(build_test_engine):
     def _boom(calls):
         raise RuntimeError("provider-down")
 
-    fake._responses = [
-        _boom,
-        LLMResponse(content="恢复后完成", tool_calls=[], provider="fake"),
-    ]
+    fake._responses = [_boom, LLMResponse(content="恢复后完成", tool_calls=[], provider="fake")]
     result = runner.run(task="先失败一次再恢复", depth=0)
     assert result.outcome == "completed"
     assert len(fake.calls) == 2
-    assert [m["role"] for m in fake.calls[1]["messages"]] == ["user"]
+    # EVO-20261108-b5fead21 ①: 2 轮预算的第 2 轮会注入一次运行时收敛提醒；
+    # 本测试的护栏是"无 orphan tool"，对显式标注的运行时提示放行。
+    roles = [m["role"] for m in fake.calls[1]["messages"]]
+    assert roles[0] == "user"
+    extras = [m for m in fake.calls[1]["messages"][1:]]
+    assert all(
+        m["role"] != "tool" for m in extras
+    ), "transport 异常不得伪造 tool result"
+    labeled = [
+        m
+        for m in extras
+        if m["role"] == "user"
+        and "运行时收敛提醒" in str(m.get("content") or "")
+    ]
+    assert len(extras) == len(labeled) and len(labeled) == 1, roles
 
 
 def test_terminal_assistant_is_persisted_in_child_session(build_test_engine):

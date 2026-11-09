@@ -2941,7 +2941,14 @@ def build_engine(
     _wire_coordination_sources(correction_ctx, engine, subagent_runner, _job_registry)
     registry.add_session_cancel_hook(subagent_runner.cancel_parent)
     registry.add_async_obligation_hook(subagent_runner.pending_obligations)
-    registry.register(SpawnSubAgentTool(subagent_runner))
+    registry.register(
+        # EVO-20261108-b5fead21 ③: 注入本地 skills 目录提供器，spawn 派单时对
+        # 引用了被完整性门禁隐藏技能的任务文本做前置披露警告（纯披露不拦截）。
+        SpawnSubAgentTool(
+            subagent_runner,
+            skills_dir_provider=lambda: str(getattr(_runtime_paths, "skills_dir", "") or ""),
+        )
+    )
     # E5, EVO-20261012-65475c5a: child 只读墙钟等待原语（可取消 + 每 child 累计预算）。
     registry.register(WaitTool())
     # Agent Communication Contract：统一 agent↔agent 通信 + 显式 child result 查询。

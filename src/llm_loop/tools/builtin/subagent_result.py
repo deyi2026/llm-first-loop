@@ -111,6 +111,22 @@ class SubAgentResultTool:
             f"tokens_in={getattr(result, 'tokens_in', 0)} tokens_out={getattr(result, 'tokens_out', 0)}",
         ]
         result_reports = list(getattr(result, "reports", []) or [])
+        truncation_detail = str(getattr(result, "truncation_detail", "") or "")
+        if outcome == "truncated":
+            # EVO-20261108-b5fead21 ②: 截断细分给父级可程序化消费的处置口径。
+            if truncation_detail == "completed_with_verdict":
+                detail_hint = (
+                    "completed_with_verdict：transcript 已含三态结论标记——结论已在、"
+                    "收尾未完成；父级可读取既有结论整合，无需机械重派。"
+                )
+            elif truncation_detail == "exhausted_without_verdict":
+                detail_hint = (
+                    "exhausted_without_verdict：子代理未收敛出结论——父级应重派、"
+                    "补预算或改用更窄的任务书，不要把本次输出当结论用。"
+                )
+            else:
+                detail_hint = "未知（旧版本结果，无截断细分字段）。"
+            parts.append(f"[截断细分] {detail_hint}")
         if result_reports:
             parts.append(f"[中途报告 {len(result_reports)} 条]")
             for report in result_reports[-5:]:

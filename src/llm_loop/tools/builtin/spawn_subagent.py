@@ -7,9 +7,11 @@ LLM 自主拆解复杂任务 → 启动非阻塞子代理（独立会话隔离 +
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.introspection.tools_skill_files import _require_manifest_gate
 from llm_loop.subagent.runner import child_spawn_grant_allowed
 
 
@@ -91,6 +93,60 @@ def _required_write_scope_kwargs(reqs: Any, declared: bool) -> dict:
     放在模块级 helper 而非 execute 内联：同 _parse_requirements 的 R9 棘轮约束。
     """
     return {"required_write_scope": reqs.write_scope} if declared else {}
+
+
+# EVO-20261108-b5fead21 ③: 派单文本引用了 skills/<name>（或 skill_load('<name>')）
+# 而该技能当前被完整性门禁隐藏时，spawn 回执前置披露——child 启动后注定
+# skill_load 拒载，宁可父级 spawn 当场知情（今晚审查闸技能被隐藏的盲区）。
+# 纯披露不拦截派单：披露面失败按无警告处理（fail-open，派单主路径不因此挂）。
+_SKILL_REF_PATTERNS = (
+    re.compile(r"skills/([A-Za-z0-9][A-Za-z0-9_.\-]*)"),
+    re.compile(r"skill_load\(\s*['\"]([^'\"]+)['\"]"),
+)
+
+
+def _referenced_skill_names(task_text: str) -> list[str]:
+    """从派单文本机械抽取被引用的本地技能名（保序去重，不猜未写出的名字）。"""
+    names: list[str] = []
+    for pattern in _SKILL_REF_PATTERNS:
+        for match in pattern.finditer(task_text or ""):
+            name = match.group(1).strip().strip("/")
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def _hidden_skill_warnings(
+    task_text: str, skills_dir_provider
+) -> list[str]:
+    """返回任务文本引用、且当前被完整性门禁隐藏的技能警告行（无则空）."""
+    # R9 环境访问单向棘轮：门禁判定复用既有基线内访问器，不新增裸
+    # os.environ 读（spawn 侧与 skill_list/skill_load 同一真值源）。
+    if not _require_manifest_gate():
+        return []  # 门禁未开＝不存在"被隐藏"状态，零噪声
+    names = _referenced_skill_names(task_text)
+    if not names:
+        return []
+    try:
+        from llm_loop.skills.loader import INTEGRITY_OK, scan_skills_dir
+
+        skills_dir = (
+            str(skills_dir_provider()) if callable(skills_dir_provider) else ""
+        )
+        if not skills_dir:
+            return []
+        by_name = {meta.name: meta for meta in scan_skills_dir(skills_dir)}
+    except Exception:  # noqa: BLE001 — 披露失败不拦截派单（fail-open）
+        return []
+    warnings: list[str] = []
+    for name in names:
+        meta = by_name.get(name)
+        if meta is not None and meta.integrity != INTEGRITY_OK:
+            warnings.append(
+                f"{name}({meta.integrity})——child 启动后 skill_load 将被完整性门禁"
+                f"拒载；请先重跑基线登记（approve_skills.py）或改派不依赖该技能的任务"
+            )
+    return warnings
 
 
 class SpawnSubAgentTool:
@@ -243,8 +299,11 @@ class SpawnSubAgentTool:
         "required": ["task"],
     }
 
-    def __init__(self, runner) -> None:
+    def __init__(self, runner, skills_dir_provider=None) -> None:
         self._runner = runner
+        # EVO-20261108-b5fead21 ③: 可选的本地 skills 目录提供器，用于派单时
+        # 技能健康度前置披露。缺省（旧测试/旧装配）完全不影响派单主路径。
+        self._skills_dir_provider = skills_dir_provider
 
     def terminate_session(self, session_id: str, *, run_generation: str = "") -> None:
         """父会话 Stop 向正在运行的 child/descendants 传播取消。"""
@@ -393,6 +452,8 @@ class SpawnSubAgentTool:
         child_id = str(started.get("child_id", ""))
         tool_scope = str(started.get("tool_scope", "") or "")
         worktree = str(started.get("worktree", "") or "")
+        # EVO-20261108-b5fead21 ③: 派单引用被隐藏技能时的前置披露（不拦截派单）。
+        skill_warnings = _hidden_skill_warnings(task, self._skills_dir_provider)
         parts = [
             f"[状态: success] child_state=running child_id={child_id} "
             f"depth={started.get('depth', depth)} model={started.get('model', '') or 'legacy_default'}",
@@ -406,6 +467,11 @@ class SpawnSubAgentTool:
                 "非安全沙箱：execute_command 经绝对路径/跨目录操作仍可越界；"
                 "终态不自动合并，合并是父会话显式动作）"
                 if worktree
+                else ""
+            ),
+            (
+                "[技能披露警告] " + "; ".join(skill_warnings)
+                if skill_warnings
                 else ""
             ),
             "子代理已在后台启动；本回执不是任务结算。",

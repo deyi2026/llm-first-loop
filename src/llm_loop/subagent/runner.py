@@ -225,6 +225,11 @@ class SubAgentResult:
     # 异步 start() 两条路径都必须带上（第三轮审查 P2-1：只在一侧出现＝消费方
     # 按另一侧口径理解，会静默失效）。
     write_scope_command_guard: str = ""
+    # EVO-20261108-b5fead21 ②: truncated ≠ 一律“没做完”。transcript 已含三态
+    # 结论 token 时记 completed_with_verdict（结论已在、收尾未完成），否则
+    # exhausted_without_verdict（未收敛）。两者对父级处置（整合 vs 重派）不同；
+    # 非 truncated 恒为空串，legacy outcome/truncated 语义不变。
+    truncation_detail: str = ""
 
     def __post_init__(self) -> None:
         """保持 legacy flags 与结构化 outcome 一致，禁止构造“截断但 completed”。"""
@@ -237,6 +242,33 @@ class SubAgentResult:
             self.refused = True
         if self.outcome == "truncated":
             self.truncated = True
+
+
+# EVO-20261108-b5fead21 ①②: 子代理收敛提醒与截断判决细分的机械判据。
+# 三态结论契约（审查类派单）使用独立大写 PASS/FAIL/BLOCK token；词边界匹配
+# 避免 FAILED/passing/blocked 之类误报。这是“是否已出现结论标记”的机械判定，
+# 不证明结论真伪、不构成对子代理完成度的人工裁决。
+_VERDICT_TOKEN_RE = re.compile(r"\b(PASS|FAIL|BLOCK)\b")
+
+
+def assistant_verdict_marker(messages: list[Message]) -> str:
+    """返回对话中 assistant 已写出的首个三态结论 token（无则空串）."""
+    for message in messages:
+        if getattr(message, "role", "") != "assistant":
+            continue
+        match = _VERDICT_TOKEN_RE.search(str(getattr(message, "content", "") or ""))
+        if match:
+            return match.group(1)
+    return ""
+
+
+def convergence_reminder_threshold(total_rounds: int) -> int:
+    """收敛提醒触发阈值: 剩余轮次 ≤ max(3, 25% 预算取整) 时注入一次."""
+    try:
+        total = int(total_rounds)
+    except (TypeError, ValueError):
+        return 0
+    return max(3, int(total * 0.25))
 
 
 @dataclass
@@ -615,6 +647,7 @@ class SubAgentRunner:
             "reports": list(result.reports),
             "truncated": result.truncated,
             "refused": result.refused,
+            "truncation_detail": result.truncation_detail,
             "depth": result.depth,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
@@ -648,6 +681,7 @@ class SubAgentRunner:
             else [],
             truncated=bool(payload.get("truncated")),
             refused=bool(payload.get("refused")),
+            truncation_detail=str(payload.get("truncation_detail") or ""),
             depth=_int_value("depth"),
             tokens_in=_int_value("tokens_in"),
             tokens_out=_int_value("tokens_out"),
@@ -3142,6 +3176,7 @@ class SubAgentRunner:
         same_error_streak = 0
         active_llm = llm_client or self.llm
         archived_once: set[int] = set()
+        convergence_reminder_sent = False  # EVO-20261108-b5fead21 ①: 只注入一次
 
         while rounds < effective_rounds:
             if cancel_event is not None and cancel_event.is_set():
@@ -3178,6 +3213,44 @@ class SubAgentRunner:
                 # 非首轮 LLM 决策前再扫一次，缩小消息恰好在上个 boundary 后到达
                 # 的竞态窗口。首轮不注入，避免 task user 后连续 user wire。
                 self._inject_pending_agent_messages(sess, sess.session_id)
+            # EVO-20261108-b5fead21 ①: 轮次预算将尽且三态结论 token 尚未出现时，
+            # 运行时注入一次收敛提醒。软提示：不改变授权边界、不伪造父级/真人
+            # 新指令；review_isolated 独立审查 child 同样适用（它只催收敛与给出
+            # 格式事实，不注入任何内容导向）。首轮不注入（rounds>=2）。
+            if (
+                rounds >= 2
+                and not convergence_reminder_sent
+                and effective_rounds - rounds
+                <= convergence_reminder_threshold(effective_rounds)
+                and not assistant_verdict_marker(sess.messages)
+            ):
+                convergence_reminder_sent = True
+                sess.messages.append(
+                    Message(
+                        role="user",
+                        content=(
+                            "【运行时收敛提醒·非真人/父级新授权】\n"
+                            "轮次预算即将耗尽。请停止发起新的取证动作，基于已有证据"
+                            "在下一轮给出最终结论：审查/评审类任务按三态结论格式收口"
+                            "（PASS/FAIL/BLOCK；事实不足以判定时按 fail-closed 给 BLOCK "
+                            "并列明缺口），其他任务直接给出当前任务的最终交付文本。"
+                            "本提醒不改变任何授权边界。"
+                        ),
+                        source=MessageSource.SYSTEM,
+                        metadata=origin_metadata(
+                            InjectionLayer.PROGRAM_RECOVERY,
+                            injection_kind="convergence_reminder",
+                        ),
+                    )
+                )
+                try:
+                    self.session_store.save(sess)
+                except Exception:  # noqa: BLE001 — 提醒持久化失败不阻断主循环
+                    logging.getLogger(__name__).warning(
+                        "convergence_reminder session persist failed child=%s",
+                        sess.session_id,
+                        exc_info=True,
+                    )
             # ── LLM 决策 ──
             # Full lazy registry by default; an explicit parent discovery scope is
             # inherited through contextvars and therefore cannot be expanded by child.
@@ -3672,7 +3745,19 @@ class SubAgentRunner:
 
         # 轮数超限截断（如实标注）
         truncated = True
-        answer = "（子代理已达轮数上限，结果未完整收敛——请父级基于已有工具反馈整合）"
+        # EVO-20261108-b5fead21 ②: 截断 ≠ 一律“没做完”。transcript 中已出现三态
+        # 结论 token 时，父会话拿到的是“结论已在、收尾未完成”而非“审查未收敛”；
+        # 两者对父级处置（整合既有结论 vs 重派/补预算）完全不同。机械判定见
+        # assistant_verdict_marker，不证明结论真伪。
+        truncation_detail = (
+            "completed_with_verdict"
+            if assistant_verdict_marker(sess.messages)
+            else "exhausted_without_verdict"
+        )
+        answer = (
+            "（子代理已达轮数上限，结果未完整收敛——请父级基于已有工具反馈整合）"
+            f"［truncation_detail: {truncation_detail}］"
+        )
         with suppress(Exception):
             self.session_store.save(sess)
         return SubAgentResult(
@@ -3681,6 +3766,7 @@ class SubAgentRunner:
             rounds=rounds,
             tool_calls=tool_trace,
             truncated=truncated,
+            truncation_detail=truncation_detail,
             depth=depth,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
