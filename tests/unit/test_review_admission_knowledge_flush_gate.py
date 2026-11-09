@@ -17,6 +17,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from llm_loop.tools import review_host_admission as admission_module
 from llm_loop.tools.review_host_admission import (
     AdmissionDecision,
     HostReviewAdmission,
@@ -266,3 +267,19 @@ def test_renamed_receipt_placeholder_in_range_blocks_start(tmp_path: Path) -> No
     assert receipt["accepted"] is False
     assert receipt["reason"] == "receipt_placeholder_pending"
     assert any("merge-renamed.md" in f for f in receipt["files"])
+
+
+def test_untracked_directory_row_enumerates_files(tmp_path: Path, monkeypatch) -> None:
+    """审查 P2（full_test 复审）：status 折叠成目录行时不得因 IsADirectoryError 误拒。"""
+    repo = _repo(tmp_path)
+    _receipt(repo, "| main_sha_after | 待回填 |\n")  # 未跟踪回执（含占位）
+    monkeypatch.setattr(
+        admission_module,
+        "_porcelain_rows",
+        lambda raw: [("??", "docs/governance/receipts/")],
+    )
+    receipt = _receipt_placeholder_receipt(str(repo))
+    assert receipt is not None
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "receipt_placeholder_pending"
+    assert any("merge-probe.md" in f for f in receipt["files"])

@@ -1071,13 +1071,24 @@ def _receipt_placeholder_hits(root: Path) -> list[str]:
             # 已跟踪的工作区改动不随本次推送走（是否被推取决于已提交 blob），
             # 与钩子口径一致，避免 admission 比 hook 更严造成无谓拒绝。
             continue
-        try:
-            text = (root / path).read_text(encoding="utf-8", errors="surrogateescape")
-        except OSError as exc:
-            raise ValueError(f"receipt_unreadable:{path}:{exc}") from exc
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if any(marker in line for marker in _RECEIPT_PLACEHOLDER_MARKERS):
-                hits.append(f"{path}:{lineno}")
+        # -uall 已展开未跟踪目录为逐文件行；仍防御目录行（审查 P2：老 git/
+        # 异常形态下 read_text(目录) 抛 IsADirectoryError 会造成无占位也误拒）。
+        target = root / path
+        untracked_files = (
+            sorted(
+                p.relative_to(root).as_posix() for p in target.rglob("*") if p.is_file()
+            )
+            if target.is_dir()
+            else [path]
+        )
+        for rel in untracked_files:
+            try:
+                text = (root / rel).read_text(encoding="utf-8", errors="surrogateescape")
+            except OSError as exc:
+                raise ValueError(f"receipt_unreadable:{rel}:{exc}") from exc
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if any(marker in line for marker in _RECEIPT_PLACEHOLDER_MARKERS):
+                    hits.append(f"{rel}:{lineno}")
     # 2) 待推 range：origin/main..HEAD（与钩子的 RANGE 一致；无 origin/main → 首推
     #    空集，与钩子对 remote_sha 全零的降级一致）。读 HEAD blob 而非工作区副本。
     try:
