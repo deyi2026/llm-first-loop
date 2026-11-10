@@ -1,0 +1,39 @@
+{
+  "gate": "merge",
+  "reviewer": "独立只读合并审查 subagent（RULE-AI-34 merge-review-gate，未参与该分支任何产出；会话 id 未暴露于本会话 env，见 disclosures）",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261110-770a4230",
+  "branch": "feat/lane-zombie-close-20261110",
+  "based_on_main": true,
+  "commits": ["7971f568718577141beda0c002684a60fd5a342b"],
+  "merge_mode": "merge-commit（非 ff：审查时 main 已前移 36e314c87→89ac9647，ff 不再可能；git -C .worktrees/lane-zombie-close-20261110 merge-tree --write-tree --name-only main HEAD → 树 075513c97、exit 0，无冲突；docs/ai_rules.md 未见 ff-only 强制规则）",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "定向复跑（审查者独立执行）：cd .worktrees/lane-zombie-close-20261110 && .venv/bin/python -m pytest tests/unit/test_lane_close_governance.py tests/unit/test_review_admission_knowledge_flush_gate.py -q -p no:randomly → 24 passed in 1.23s，exit 0（8 治理例 + 16 闸例；stderr 58 处 base_url 告警为既有 test-side-effect 审计、低风险不阻断，非本分支引入）",
+    "分支卫生：git -C .worktrees/lane-zombie-close-20261110 status --porcelain 为空（复跑 pytest 前后两验均空、exit 0）；git log --oneline main..HEAD 恰 1 条 7971f5687",
+    "基线：merge-base(main,HEAD)=36e314c87=声明基线；但当前 main=89ac9647（其后 2 提交与本分支 6 文件零重叠：761ace9c9=.githooks/pre-commit+scripts/install_security_hooks.sh+scripts/r9_commit.sh+tests/unit/test_githooks_exec_bit.py，89ac9647d=docs/governance/receipts/merge-review-lane-3e94a8a0-*.json）——「零漂移」在审查时刻不成立，如实记入 disclosures，merge-tree 证无冲突",
+    "合并可合性：git merge-tree --write-tree main HEAD exit 0（无冲突）；因 main≠merge-base，ff 不可，需 merge-commit",
+    "diff 与 a-d 一致、无夹带（git diff --numstat 36e314c87..HEAD 恰 6 文件）：a) src/llm_loop/introspection/lane.py:335-381 close_if_live（幂等 already/missing/conflict 如实返回、CAS 冲突重读重试、reason 必填、status 仅终态）；b) src/llm_loop/introspection/tools_merge_queue.py:353-382 _autosweep_lane_after_merge + done 分支 :418-420（store.mark_merged 成功后才 sweep，失败不连坐 done、回执转人工 lane_close 兜底）；c) src/llm_loop/introspection/tools_lane.py:304-351 _close_authorization（无属主/本人放行；非属主仅认「queue.status=merged」或「闲置≥STALE_AFTER_S=4h」两类可证事实，tools_lane.py:19 引入）+ :372-379 close_not_authorized 接线；d) src/llm_loop/tools/review_host_admission.py:4831-4841 消费口知识闸（_knowledge_gate_receipt 只读预检，非消费性拒绝）",
+    "测试固化真实：test_lane_close_governance.py 8 例（:69 幂等收口、:89 missing、:100 done 自动收口、:122 队列孤儿、:148 非属主无事实拒、:165 queue merged 放行、:180 闲置超时放行、:206 属主/无属主不设限）均真实构造 LaneStore+merge_queue.jsonl 调 run_lane_close/run_lane_queue_confirm（非 mock SUT）；test_review_admission_knowledge_flush_gate.py:290-321 新增消费口用例以 _target 哨兵断言闸必须先于资格消费判定且 consumed=False",
+    "反例 i 结论（不构成提前锁死）：close_if_live 唯一生产调用点在 store.mark_merged 成功之后（tools_merge_queue.py:418-420），queue.merged 事实先落账才收口；close 仅推进 status 至 merged、不改写 head/verify_ref（与 2026-11-09 人工代收口先例同口径，data/audit/lane_events.jsonl:197 自述）；账本终态后 update 被拒（lane.py:233）但 verify_ref 于 verify 阶段已记、合并后回执是文件而非账本写；收口失败三态均不阻断 done、转人工兜底",
+    "反例 ii 结论（与「拒绝须基于已证事实」一致）：store.get 异常→放行（:314-316，后续 store.close 对同一坏账本在写入时 fail-closed，CAS+终态不可逆+reason 必填仍兜底）；队列文件/审计目录不可读→不构成放行依据（:336-339），转看闲置事实，闲置不可判定且队列事实未证才拒——授权闸 fail-closed 方向正确；nit：该场景拒因文案仍写「队列未 merged」（未证断言，仅文案精度，见 disclosures）",
+    "反例 iii 结论（仅 git_push，无误伤）：新闸位于 check_shell 的 if kind == \"git_push\" 块内（review_host_admission.py:4825 起）、_lane_push_precheck 之后、scope 消费循环之前；full_test 走 :4816-4819 derived 分支不经过该块，既有 test_full_test_kind_is_not_gated（:142）随本次复跑通过",
+    "反例 iv 结论（无破坏性变更）：run_lane_close 签名未变，registry_lane.py:27-29 调用点未动；store.close 本体未改、close_if_live 纯新增 API；done 回执仅增量新增 lane_autoclose 键；唯一行为变更为「非属主且无可证事实的 close 被拒」——即本分支要修的治理缺口本身（:148 固化契约），属主/无属主/两类事实路径行为不变（:206/:165/:180 固化）",
+    "背景缺陷复核（对症性）：data/audit/lane_events.jsonl:197（2026-11-09T20:49:45 人工代收口自述：mq-beeb3222 于 20:37:54 queue.merged、lane-f2f8b2ae 停 merging v9、owner_session_id 为空、曾卡死全部 main push）+ data/audit/lanes.jsonl:36（终态 merged）——缺陷真实，b/c 机制直接封堵该复现路径",
+    "ruff/pyright/ci_gate/full_test：父会话声明（child subagent_d5192003f556 full_test PASS + job-bacafc6f6ee945a49d95 exit0），本审查按引用计不入复跑，见 disclosures"
+  ],
+  "main_sha_after": "9da8e58ef4de9f54484dd8e1ff8555774fbac341",
+  "branch_disposition": "kept（worktree/branch 保留；本分支合并后其自身 done 将首次实测 queue.merged→lane 自动收口行为）",
+  "verify_receipt_id": "lane-0d9ad8e0:36e314c8",
+  "lane_id": "lane-0d9ad8e0",
+  "base_main_sha": "36e314c87f3488f61e948f4dcfdd872ef96620d4",
+  "branch_head_sha": "7971f568718577141beda0c002684a60fd5a342b",
+  "diff_reviewed": "6 文件 +435/-1（git diff --numstat 36e314c87..HEAD）：src/llm_loop/introspection/lane.py +47、src/llm_loop/introspection/tools_lane.py +74、src/llm_loop/introspection/tools_merge_queue.py +42/-1、src/llm_loop/tools/review_host_admission.py +12、tests/unit/test_lane_close_governance.py +224、tests/unit/test_review_admission_knowledge_flush_gate.py +36",
+  "disclosures": [
+    "未复跑（按引用计）：ruff / pyright / scripts/ci_gate.sh / 全量 full_test——父会话声明 child subagent_d5192003f556 full_test PASS + job-bacafc6f6ee945a49d95 exit0；本审查仅独立复跑定向 24 例（全绿）",
+    "基线漂移（非阻断，如实记录）：委派称 main=36e314c87 零漂移、ff 可合；实测 main=89ac9647（分支切出后合入 lane-3e94a8a0 的 761ace9c9+89ac9647d，与本分支 6 文件零重叠）。merge-tree 干净无冲突 → 建议 merge-commit 直合；不建议 rebase（会改写 7971f5687 并使已声明的 full_test PASS 失效、需按新 sha 重跑全量门禁）",
+    "reviewer 会话 id 不可得：本会话 env 无 session/agent id（仅 WEB_SESSION_* 产品配置项）；先例格式要求 child id，此处如实标注而非伪造",
+    "非阻断 nit×2：① _close_authorization 在队列不可读且闲置不可判定时，拒因文案仍断言「队列未 merged」（该断言未被证明，行为方向 fail-closed 正确）；② 「队列文件不可读」分支无直接单测覆盖（现有 4 例授权测试覆盖正常材料路径）",
+    "方法论检索：search_records 工具在本审查会话不可用；以 search_files 对记录库做 ≤5 条有界等价检索，命中均为 eval 轨迹、无相关 method 卡 → 按纪律直接开始审查"
+  ]
+}
