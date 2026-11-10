@@ -317,14 +317,14 @@
       "tree_sha256": "7d7bba4c14f893a8ae2e56ef8c86bab7b83473624d4bc172bcbd433bac591b85"
     },
     "merge-review-gate": {
-      "approved_at": "2026-11-01T11:37:25+08:00",
+      "approved_at": "2026-11-10T08:09:47+08:00",
       "approved_by": "baseline",
       "files": {
-        "SKILL.md": "97eccd877c365f3572f22aecf7be2bb6aeb6823cdcd1e55661ed55d39cb3fc7e"
+        "SKILL.md": "37111ca9104e95eab19ccaa8a4c729d21b9f4ed0df58b93b317f2efe4eef8b2e"
       },
-      "sha256": "97eccd877c365f3572f22aecf7be2bb6aeb6823cdcd1e55661ed55d39cb3fc7e",
+      "sha256": "37111ca9104e95eab19ccaa8a4c729d21b9f4ed0df58b93b317f2efe4eef8b2e",
       "source": "local",
-      "tree_sha256": "9721490ceef91f67136f22da47aa270af6b283f02f58b5e09e27e1307b3a8472"
+      "tree_sha256": "8dc606f6b61293b5aac727530b884f466a490cca0b82bf1fcfc5b9bbb11e6818"
     },
     "method-ab-experiment": {
       "approved_at": "2026-11-01T11:37:25+08:00",

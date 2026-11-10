@@ -315,6 +315,113 @@ class TestApproveScript:
         assert proc.returncode == 1
         assert "不存在" in proc.stderr
 
+    def test_only_scopes_rebaseline_to_named_skill(self, tmp_path):
+        """--only 只批准点名技能：其余漂移条目保持 modified，不被顺带洗白."""
+        skills = tmp_path / "skills"
+        f_target = _mk_skill(skills, "target")
+        f_bystander = _mk_skill(skills, "bystander")
+        write_manifest(skills)
+        _flip_body_byte(f_target)
+        _flip_body_byte(f_bystander)  # 两个都漂移，但只有 target 拿到授权
+        assert scan_skills_dir(skills)[0].integrity == INTEGRITY_MODIFIED
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "approve_skills.py"),
+                str(skills),
+                "--only",
+                "target",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "本版仅重建: target" in proc.stdout
+        metas = scan_skills_dir(skills)
+        assert _state(metas, "target").integrity == INTEGRITY_OK
+        assert _state(metas, "bystander").integrity == INTEGRITY_MODIFIED
+        # 未批准项必须显式告知，且给出下一句可粘贴的授权命令
+        assert "未被本次写入批准" in proc.stdout
+        assert "--only bystander" in proc.stdout
+
+    def test_only_unknown_skill_fails_without_writing(self, tmp_path):
+        skills = tmp_path / "skills"
+        f = _mk_skill(skills, "target")
+        write_manifest(skills)
+        _flip_body_byte(f)
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "approve_skills.py"),
+                str(skills),
+                "--only",
+                "ghost",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 1
+        assert "ghost" in proc.stderr
+        # 失败即不写入：原 modified 保持原样（被点名的技能也没被顺手批准）
+        assert scan_skills_dir(skills)[0].integrity == INTEGRITY_MODIFIED
+
+    def test_only_matches_frontmatter_name_not_dir_name(self, tmp_path):
+        """--only 按 frontmatter name 匹配：目录名与 name 不同也能命中（实例 gzh-design-skill）."""
+        skills = tmp_path / "skills"
+        d = skills / "dir-name"
+        d.mkdir(parents=True)
+        f = d / "SKILL.md"
+        f.write_text(
+            "---\nname: logical-name\ndescription: d\n---\n正文步骤 A。",
+            encoding="utf-8",
+        )
+        write_manifest(skills)
+        _flip_body_byte(f)
+
+        def _run(*args: str):
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts" / "approve_skills.py"),
+                    str(skills),
+                    *args,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+        by_dir = _run("--only", "dir-name")  # 目录名不是清单键 → 拒绝且不写入
+        assert by_dir.returncode == 1
+        assert "frontmatter" in by_dir.stderr
+        assert scan_skills_dir(skills)[0].integrity == INTEGRITY_MODIFIED
+
+        by_name = _run("--only", "logical-name")
+        assert by_name.returncode == 0, by_name.stderr
+        assert _state(scan_skills_dir(skills), "logical-name").integrity == INTEGRITY_OK
+
+    def test_only_without_manifest_fails(self, tmp_path):
+        skills = tmp_path / "skills"
+        _mk_skill(skills, "target")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "approve_skills.py"),
+                str(skills),
+                "--only",
+                "target",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 1
+        assert "需要既有基线" in proc.stderr
+
 
 # ── 真实仓库目录零回归（无 manifest 时不影响现有技能可用性）─────────────────
 

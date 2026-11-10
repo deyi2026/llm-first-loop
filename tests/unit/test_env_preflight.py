@@ -63,11 +63,22 @@ def test_find_missing_imports_reports_only_missing(cf, monkeypatch):
 
 
 # ── S4-a: 预检主流程 ──
-def test_preflight_exit_on_missing_dep_single_diagnostic(cf, monkeypatch):
-    """缺依赖 → pytest.exit(10)；单条诊断一次列全缺失 + 双解释器 + reason_code + 修复命令."""
+def test_preflight_exit_on_missing_dep_single_diagnostic(cf, monkeypatch, tmp_path):
+    """缺依赖 → pytest.exit(10)；单条诊断一次列全缺失 + 双解释器 + reason_code + 修复命令.
+
+    「实测版本」分支必须与开发机环境解耦：把 _PROJECT_ROOT 指到含 .venv/bin/python
+    的临时目录并固定实测值。旧写法直接断言 msg 含「实测版本 N.N」——该分支只在
+    <repo>/.venv 存在时才走到，于是在无 .venv 的检出（R9 PROBE 隔离 worktree /
+    全新 clone / CI）恒红，而被测的预检代码行为完全正常（2026-11-10 修复：
+    假红源于断言耦合了开发机环境）；占位分支另由下面的 without_venv 用例锁定。
+    """
     monkeypatch.setattr(
         cf, "_required_dist_names", lambda _p: ["lfl-missing-b", "lfl-missing-a"]
     )
+    monkeypatch.setattr(cf, "_PROJECT_ROOT", tmp_path)
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    (tmp_path / ".venv" / "bin" / "python").touch()
+    monkeypatch.setattr(cf, "_measure_venv_version", lambda _p: "3.12.9")
     with pytest.raises(pytest.exit.Exception) as ei:
         cf._run_env_preflight()
     assert ei.value.returncode == cf._ENV_PREFLIGHT_EXIT_CODE == 10  # 不与测试失败(1)混淆
@@ -80,8 +91,27 @@ def test_preflight_exit_on_missing_dep_single_diagnostic(cf, monkeypatch):
     # 当前解释器路径+版本 / 期望 .venv 解释器+实测版本 / 可直接粘贴修复命令
     assert sys.executable in msg
     assert ".venv/bin/python" in msg
-    assert _re.search(r"实测版本 \d+\.\d+", msg)
+    assert "实测版本 3.12.9" in msg  # 已固定；不再依赖开发机 .venv 是否存在
     assert "python -m pytest" in msg
+
+
+def test_preflight_diagnostic_without_venv_reports_absence(cf, monkeypatch, tmp_path):
+    """无 .venv 的检出（R9 PROBE / 全新 clone / CI）→ 诊断如实写「(.venv 不存在)」.
+
+    锁定此前无断言的占位分支：缺 .venv 时既不得拿当前解释器版本冒充「期望版本」，
+    也不得让预检自身抛错。PROBE 隔离 worktree 正是这一形态——probe 检出无 .venv，
+    解释器由 ci_gate 回落到主检出 .venv，所以「期望 .venv 不存在」是合法运行态，
+    不是故障。
+    """
+    monkeypatch.setattr(cf, "_required_dist_names", lambda _p: ["lfl-missing-a"])
+    monkeypatch.setattr(cf, "_PROJECT_ROOT", tmp_path)  # 空目录：确无 .venv
+    with pytest.raises(pytest.exit.Exception) as ei:
+        cf._run_env_preflight()
+    assert ei.value.returncode == cf._ENV_PREFLIGHT_EXIT_CODE
+    msg = ei.value.msg
+    assert "(实测版本 (.venv 不存在))" in msg
+    assert not _re.search(r"实测版本 \d+\.\d+", msg)
+    assert ".venv/bin/python" in msg  # 修复命令仍可直接粘贴
 
 
 def test_preflight_skip_valve(cf, monkeypatch):
