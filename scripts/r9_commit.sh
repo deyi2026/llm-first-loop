@@ -3,6 +3,9 @@
 # 用法: bash scripts/r9_commit.sh "<commit message>"
 #   message 可含多行（$'...' 传入）；等价性回执行 wire-fixtures: PASS 由提交者
 #   跑 fixtures 对照后自附（refactor(r9) 前缀时机检强制）。
+#   提交前无条件打印暂存清单（供目视核对"本次到底提交什么"）；可选环境变量
+#   R9_STAGED_ALLOW（每行一个路径）声明本次允许的条目——索引中出现名单外条目
+#   即拒绝，用于隔离他人暂存残留。
 #
 # 设计（§0.5 裁量）：本脚本不装 .git/hooks、不管理 core.hooksPath——机检以本脚本
 # 承载，钩子统一由 scripts/install_security_hooks.sh 安装。历史：原裁量理由是
@@ -26,6 +29,14 @@ if git diff --cached --quiet; then
   echo "❌ 暂存区为空——先精确 git add 目标文件（B1 模式，隔离外部混合层）" >&2
   exit 1
 fi
+
+# ── [0] 暂存清单（无条件打印；不阻断、不改变提交内容）──
+# 事故教训（详见 [0a]）：本脚本最后是裸 git commit，提交的是整个索引。
+# R9_STAGED_ALLOW 只在显式传值时拦截；未传值的调用方靠这几行目视核对，
+# 让"混入他人暂存残留"在提交瞬间可见，而不是事后在历史里发现。
+STAGED_LIST="$(git -c core.quotePath=false diff --cached --name-only)"
+echo "── 暂存区：本次提交将包含 $(printf '%s\n' "$STAGED_LIST" | wc -l | tr -d ' ') 项 ──" >&2
+printf '%s\n' "$STAGED_LIST" | sed 's/^/   /' >&2
 
 # ── [0a] 暂存区白名单（R9_STAGED_ALLOW）：隔离他人暂存残留 ──
 # 背景（2026-11-10 事故）：本脚本最后是裸 `git commit`，提交的是**整个索引**。
