@@ -1,0 +1,57 @@
+{
+  "gate": "merge",
+  "recorded_at": "2026-11-10T21:33:00+08:00",
+  "reviewer": {
+    "child_id": "subagent_8664e2859861",
+    "model": "glm-5.3",
+    "spawn_path": "spawn_subagent direct (skills/merge-review-gate/SKILL.md; NOT review_admission kind=merge)",
+    "read_only_enforced": "write_scope paths=[docs/governance/receipts/] declared, but reviewer session 实际被运行时按只读处理：5 个写入路径全部被拒",
+    "participation": "reviewer 未参与本分支任何产出",
+    "terminal": {"child_state": "completed", "child_outcome": "completed", "rounds": 26, "tools": 39, "tokens_in": 825357, "tokens_out": 33340}
+  },
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "goal_id": "GOAL-20261110-d58f9914",
+  "lane_id": "lane-aab32b1d",
+  "branch": "fix/ci-gate-flaky-exemption-coupling-20261110",
+  "worktree": ".worktrees/ci-gate-flaky-20261110（仓库相对路径；绝对前缀按安全扫描规则移除）",
+  "based_on_main": true,
+  "main_before": "e3d0a5b5553b0262ba44f6bcb4fe6a0d4ae50198",
+  "commits": ["c381c39e97c2231adfc22b368cc167cf2945452f"],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "diffstat": "scripts/ci_gate.sh | 22 insertions(+), 5 deletions(-)",
+  "change_intent": "ci_gate 的 xdist 假红降级（D-B2-09）原判据为 serial 单跑复核绿即放行；该判据对负载相关回归无判别力（串行复核移除并发负载，而负载本身可能是红的诱因；--dist loadfile 下同文件在单 worker 内串行，子集复跑同样还原不了全局并发）。改为 serial 绿后再用同一并行选择集跑一次全量：仍红则阻断，转绿才判为 worker 分布抖动放行。",
+  "focused_gates": [
+    "RULE-AI-35 应拦输入三段物证（审查者独立复核，非采信父代理）：(1) 首轮并行红 /tmp/ci_gate.tqa9yf/report.xml 21:01 含 test_zz_ci_gate_probe_temp.py:15 AssertionError；(2) serial 单点复核绿 /tmp/ci_gate_ser.h5AK7B.xml 21:01:35 junit failures=0 + 文本 1 passed in 8.35s（旧判据在此放行）；(3) 并行同构复跑仍红 /tmp/ci_gate.tqa9yf/retry.log 21:07 FAILED + 1 failed, 14425 passed, 189 skipped, 3 xfailed in 336.21s -> 门禁 exit=1；retry.log 的存在本身即证明新版复跑分支被执行（旧代码不产此文件）",
+    "应放回归：/tmp/r9_gate_last.log 21:17（PROBE 隔离树 /tmp/r9probe.nnVnuh，探针计数 0）含 xdist 全量绿 + ci_gate 全链路通过，与提交 c381c39e9 21:17:42 及 /tmp/ci_gate.XHP1gX/report.xml 21:17（0 failure）互证",
+    "RULE-AI-28 代码闸：R1 subagent_838c7c6cd832 REVISE（P1=可执行位丢失）-> 修复核验 git ls-files -s scripts/ci_gate.sh = 100755 -> R2 subagent_393e823fb8f3 PASS（P0=0 P1=0 P2=2）；R2 answer 中 diff 头 index d8888154e..7562d4306 100755 与审查者独立取到的分支 diff 头逐字一致"
+  ],
+  "checklist": {
+    "1_completion_evidence": "PASS（带 2 项保留，见 reviewer_findings）",
+    "2_branch_hygiene": "PASS：git status --porcelain 为空；main..HEAD 仅 1 提交；无夹带",
+    "3_baseline_fresh": "PASS：merge-base == main == e3d0a5b5, behind=0 ahead=1",
+    "4_test_surface": "PASS（含 1 项程序性偏差，见 reviewer_findings deviation-1）",
+    "5_merge_mode": "PASS：ff-only 可行，无冲突",
+    "6_post_merge": "父会话执行项：main 冒烟 + 分支/worktree 删除"
+  },
+  "independent_code_review": "审查者独立审阅（不依赖 R1/R2）：新判据对旧判据严格单调收紧，无逃逸路径——所有放行出口均需全量级证据（首轮全量绿 / serial 红+known-reds 存量对账 / serial 绿+并行同构复跑绿）；set -euo pipefail 下三个测试调用均在 if 条件位、grep 有 || true 兜底、对账段 set +e/-e 包裹、fail_files 空集 fail-closed",
+  "reviewer_findings": {
+    "deviations": [
+      {"id": "dev-1", "severity": "process", "detail": "父代理声称 R2 报告在 data/review_admission/ 下——审查者核实不成立：该目录无 subagent_393e823fb8f3 文件，全仓库无 R2 指纹 536b15b860886adb 落盘。R2 判定真实性由审查者经 event_logs 原始记录 + 指纹比对独立证实。", "parent_action": "已在父会话确认该目录无 R2 文件；补落盘重建归档"},
+      {"id": "dev-2", "severity": "info", "detail": "goal_id GOAL-20261110-d58f9914 在 data/ 常规登记位置未找到独立记录", "parent_action": "Goal 由 create_goal 创建并返回 goal_id，属运行时账本而非 data/ 文件；如实记录为未在 data/ 落盘"},
+      {"id": "dev-3", "severity": "info", "detail": "探针已删，其仅靠 PYTEST_XDIST_WORKER 分叉的源码无法复核；行为已被三段物证完整印证", "parent_action": "记录；探针本就不得提交"},
+      {"id": "dev-4", "severity": "info", "detail": "审查者会话的 search_records 工具不存在，以 search_files 命中 SKILL.md 作为替代背景", "parent_action": "记录"}
+    ],
+    "non_blocking_notes": [
+      "临时文件不清理系改动前既有行为（成功豁免分支原本就不 rm）",
+      "复跑红不做 known-reds 对账系从严方向",
+      "GATE_RETRY_XML 写而不消费（junit 产物仅落盘未解析）"
+    ]
+  },
+  "write_attribution": "本回执由父会话代为落盘：审查者会话为运行时只读沙箱，5 个写入路径均被拒。JSON 内容据审查者最终答复整理；sha256 由父会话落盘后计算，与审查者自报值不保证一致（审查者未完整传来 JSON 全文）。",
+  "main_sha_after": "c381c39e97c2231adfc22b368cc167cf2945452f（ff-only 合并，实测回填）",
+  "branch_disposition": "deleted（建议）",
+  "verify_receipt_id": "lane-aab32b1d:e3d0a5b5（待签发，禁止预签）"
+}
