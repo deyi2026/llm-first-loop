@@ -1,0 +1,327 @@
+{
+  "gate": "merge",
+  "written_at_local": "2026-11-09T20:34:09+08:00",
+  "receipt_path": "/private/tmp/deepin-0646-merge-20261109.receipt.json",
+  "scope": "Independent merge review snapshot plus separately attributed actual operator integration/deployment completion; no master Goal mutation.",
+  "reviewer": {
+    "parent_role": "independent merge-review parent session; parent did not participate in any branch output; no Goal/Lane writes; no commit/merge/push/publish/restart by parent or child",
+    "merge_reviewer_child_id": "subagent_193a15ec73e5",
+    "spawn": "direct spawn_subagent (merge-review-gate SKILL.md entry; no review_admission kind=merge exists)",
+    "model": "glm/glm-5.3",
+    "inherit": false,
+    "tool_whitelist_readonly": [
+      "execute_command",
+      "read_file",
+      "search_files"
+    ],
+    "write_scope": {
+      "paths": [],
+      "mode": "allow"
+    },
+    "child_state": "completed",
+    "child_outcome": "completed",
+    "rounds": 4,
+    "provider_proof": "data/event_logs/subagent_193a15ec73e5.jsonl: provider.transport.settled x4, all attempt_kind=primary, provider_id=glm, model_id=glm-5.3, provider_observed_model=glm-5.3, outcome=success, status settled; no fallback attempt; verified by parent via read-only grep",
+    "independence": "reviewer spawned fresh by this parent session, never involved in branch implementation, prior code review, or R9 execution"
+  },
+  "verdict": "PASS",
+  "checklist": {
+    "1_completion_evidence": "PASS - upstream real GLM-5.3 code review child=subagent_9633dd26f279 (previous subagent_a0a7cb102630): PASS, P0=0 P1=0 P2=5, Host qualification=PASS, artifact_reviewed=true, fresh full 18 paths, paths_ignored=false, candidate_sha256=026af37f42848a1e00e16fd5232e1cfed8f4ba6152d8a2dda65050a7652547a7; real R9 revision4 via authorized build operator argv [bash, scripts/ci_gate.sh] same workdir outside nested LFL sandbox: exit 0, tier0 341 passed/2 skipped, full 14378 passed/158 skipped/3 xfailed/0 failed, final guard_report 1 passed, ruff/env-pin/pyright complete no new errors; log sha256=1e4a7813cb9c51630d0c23c7eaf95ebf057e621a9ceeaa79f8c68736983c3362 (101280B, independently re-hashed by reviewer); before/after staged_tree=af982e31cf03599bb709eba2302e84bcbc4b8e08 and commit tree byte-equals R9-tested tree; rev1-3 historical failures retained honestly (no known-reds, no assertion weakening); final R9 = operator-r9-revision4.result.json, not old evidence.json nested-R9 fields",
+    "2_branch_hygiene": "PASS - GIT_OPTIONAL_LOCKS=0 git status --porcelain empty; exactly 1 commit main..HEAD, 0 behind; changed paths exactly 18 and byte-matched against authorization.json allowed_code_files; patch 40283B sha256=7d6b9d1bf111079cf6b55f69761d7460e9133987d1b43cefa830c6e3023f14ab (parent and reviewer independently re-hashed); diff content sampled within declared repair scope: guard.py production-parity blob, security_guard PEM whole-block redaction, feishu requester full-lease two-phase restart + deferred-effect receipt, engine guard/interrupt-recovery notices, 0.6.46 version surfaces, uv.lock version-only; no smuggling, no baseline/known-reds relaxation, no new controller, no model/permission/data-migration/Mac-service change",
+    "3_baseline_freshness": "PASS - merge-base(HEAD,main) == main head == 5594e48981fd1020170e2e654b19f8d13e267008; 27caf3bf..5594e489 adds only 4 data/methods METHOD.md cards, zero overlap with the 18 files; branch realigned then full GLM-5.3 review and full R9 redone on final base",
+    "4_test_surface": "PASS - cited existing receipts not re-run: focused 149 passed in 19.76s on current main (115 repair/guards + 34 sandbox/restore) via authorized build/operator entry, plus full R9 above; full-suite obligation belongs to RULE-AI-28 code gate",
+    "5_merge_mode": "PASS - git merge-base --is-ancestor main HEAD exit 0: ff-only possible; merge_mode=ff; conflicts_resolved=[] (none)",
+    "6_post_merge": "PLAN ONLY, NOT EXECUTED - main smoke after merge: pytest -q tests/unit/test_deepin_privacy_preservation.py tests/unit/test_service_control_two_phase_restart.py tests/unit/test_service_control_argument_contract.py + 0.6.46 version-surface consistency (pyproject/CHANGELOG/both README) + ci_gate guard_report marker; branch disposition kept:<reason>"
+  },
+  "branch_disposition": "kept: deployed frozen source and exact review/R9 traceability; no public push/release by this task",
+  "p0": 0,
+  "p1": 0,
+  "p2_reviewer_notes": [
+    "guard.py/security_guard.py are substantive hardening relative to main (guard check window widened to full messages with unified redaction mode source); controlled production switch must deploy them together to avoid a mixed-version window",
+    "upstream code-review P2=5 items are accepted; any future touch of those items requires narrow re-review",
+    "LFL execute_command sandbox blocks /dev/null redirection and for-loops (two reviewer commands rewritten); unrelated to branch artifacts"
+  ],
+  "commit": "4ec8f279bd7a67facebe8b8f5e7a6143f4275f87",
+  "tree": "af982e31cf03599bb709eba2302e84bcbc4b8e08",
+  "base_main": "5594e48981fd1020170e2e654b19f8d13e267008",
+  "branch": "fix/deepin-feishu-requester-exit-20261109",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/deepin-feishu-requester-exit-20261109",
+  "lane_id": "lane-f2f8b2ae",
+  "goal_id_reference_only": "GOAL-20261107-59104e61 (other owner; this session performed no Goal/Lane writes)",
+  "patch_bytes": 40283,
+  "patch_sha256": "7d6b9d1bf111079cf6b55f69761d7460e9133987d1b43cefa830c6e3023f14ab",
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/unit/test_deepin_privacy_preservation.py",
+    "tests/unit/test_service_control_two_phase_restart.py",
+    "tests/unit/test_service_control_argument_contract.py",
+    "version-surface consistency 0.6.46",
+    "ci_gate guard_report marker"
+  ],
+  "main_sha_after": "4ec8f279bd7a67facebe8b8f5e7a6143f4275f87",
+  "verify_receipt_id": "lane-f2f8b2ae:5594e489",
+  "governance_receipt_note": "per merge-review-gate SKILL.md the canonical receipt belongs in docs/governance/receipts/ and verify signing follows PASS; both steps are outside this session's authorization (parent/child forbidden to write tracked code), left to the authorized owner session; this private receipt records the real PASS",
+  "authorization": "/private/tmp/deepin-0646-controlled-self-restart-20261109.authorization.json (user-authorized same-scope revisions and merge review to GLM-5.3 at https://open.bigmodel.cn)",
+  "evidence_files": [
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.verified-final-gate.json",
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.operator-r9-revision4.result.json",
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.review-ready.json",
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.commit.json",
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.provider-proof.json",
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.operator-r9-revision4.log",
+    "/private/tmp/deepin-0646-controlled-self-restart-20261109.authorization.json"
+  ],
+  "production_status": "completed: Deepin0.6.46 generation10, selected three services Desired/Live/Stable aligned",
+  "canonical_receipt_path": "~/Project/llm-first-loop-mirror/docs/governance/receipts/merge_deepin_privacy_self_restart_20261109.json",
+  "private_source_receipt_sha256": "89421d2a2906a6f4b842af89d07676b890326d6923f87191307489fa73229ca5",
+  "queue_entry": {
+    "queue_id": "mq-beeb3222",
+    "lane_id": "lane-f2f8b2ae",
+    "branch": "fix/deepin-feishu-requester-exit-20261109",
+    "head_sha": "4ec8f279bd7a67facebe8b8f5e7a6143f4275f87",
+    "base_main_sha": "5594e48981fd1020170e2e654b19f8d13e267008",
+    "paths": [
+      "CHANGELOG.md",
+      "README.en.md",
+      "README.md",
+      "docs/governance/submissions/20261109-feishu-requester-exit.json",
+      "pyproject.toml",
+      "src/llm_loop/cache_guard/guard.py",
+      "src/llm_loop/core/loop/engine.py",
+      "src/llm_loop/feishu/handlers.py",
+      "src/llm_loop/memory/extractor.py",
+      "src/llm_loop/runtime/service_control.py",
+      "src/llm_loop/security_guard.py",
+      "src/llm_loop/tools/builtin/read_file.py",
+      "src/llm_loop/tools/builtin/service_control.py",
+      "src/llm_loop/web/routes.py",
+      "tests/unit/test_deepin_privacy_preservation.py",
+      "tests/unit/test_service_control_argument_contract.py",
+      "tests/unit/test_service_control_two_phase_restart.py",
+      "uv.lock"
+    ],
+    "verify_ref": "lane-f2f8b2ae:5594e489",
+    "status": "merged",
+    "stale": false,
+    "stale_reasons": [],
+    "stale_since_main": "",
+    "last_preflight": {
+      "ts": "2026-11-09T20:37:10.686065+08:00",
+      "main_head": "5594e48981fd1020170e2e654b19f8d13e267008",
+      "verdict": "pass",
+      "checks": [
+        {
+          "check": "base_main_current",
+          "verdict": "pass",
+          "reason_code": "",
+          "evidence": {
+            "entry_base": "5594e48981fd1020170e2e654b19f8d13e267008",
+            "main_head": "5594e48981fd1020170e2e654b19f8d13e267008"
+          }
+        },
+        {
+          "check": "merge_tree_clean",
+          "verdict": "pass",
+          "reason_code": "",
+          "evidence": {
+            "main_head": "5594e48981fd1020170e2e654b19f8d13e267008",
+            "head_sha": "4ec8f279bd7a67facebe8b8f5e7a6143f4275f87"
+          }
+        },
+        {
+          "check": "paths_disjoint",
+          "verdict": "pass",
+          "reason_code": "",
+          "evidence": {
+            "checked_against": []
+          }
+        },
+        {
+          "check": "verify_covers_base",
+          "verdict": "pass",
+          "reason_code": "",
+          "evidence": {
+            "verify_ref": "lane-f2f8b2ae:5594e489",
+            "base_sha": "5594e48981fd1020170e2e654b19f8d13e267008",
+            "scope": "Deepin 0.6.46 privacy preservation and requester-exit repair; exact committed tree and real R9 exit0; independent merge PASS"
+          }
+        }
+      ],
+      "reason_codes": []
+    },
+    "failure_reasons": [],
+    "close_reason": "merged",
+    "slot_acquired_at": "",
+    "slot_owner": "Deepin-0646-authorized-operator",
+    "version": 5,
+    "created_at": "2026-11-09T20:37:10.671597+08:00",
+    "updated_at": "2026-11-09T20:37:54.659914+08:00",
+    "merge_commit": "4ec8f279bd7a67facebe8b8f5e7a6143f4275f87",
+    "merge_commit_source": "reported"
+  },
+  "operator_merge_at": "2026-11-09T20:37:54.661659+08:00",
+  "root_other_untracked_preserved_count": 8,
+  "post_merge_smoke": {
+    "exit_code": 0,
+    "summary": [
+      "40 passed in 2.45s"
+    ],
+    "source": "actual operator subprocess, main worktree",
+    "log": "/private/tmp/deepin-0646-controlled-self-restart-20261109.post-merge-smoke.log"
+  },
+  "review_scope_at_review_time": "Deepin 0.6.46 code-integration merge gate only (lane-f2f8b2ae, branch fix/deepin-feishu-requester-exit-20261109); production remains 0.6.45 gen9, 0.6.46 not deployed; this gate claims no production switch, no push, and no total-Goal completion",
+  "production_status_at_review_time": "production unchanged at 0.6.45 gen9; no restart/publish/deploy performed or claimed by this gate",
+  "branch_disposition_at_review_time": "kept: production still 0.6.45 gen9 and controlled switch to 0.6.46 not yet performed, branch not yet pushed - retain fix/deepin-feishu-requester-exit-20261109 and its worktree as production-reconciliation baseline until controlled switch completes",
+  "operator_production_result": {
+    "accepted_at": "2026-11-09T20:56:19.493137+08:00",
+    "host": "<lan-host>",
+    "status": "completed",
+    "version": "0.6.46",
+    "generation": 10,
+    "source_commit": "4ec8f279bd7a67facebe8b8f5e7a6143f4275f87",
+    "wheel_sha256": "60ded59f7471e0f544d9f2cd78d98469369753d312aa8de72c2d48d3a612cc6c",
+    "services": {
+      "web": {
+        "pid": 846733,
+        "model_ref": "MiniMax-M3.1-Flash",
+        "version": "0.6.46",
+        "data_dir": "~/.local/share/lfl/data",
+        "stable_action": "svc-1b6645535ca04e299c8f5589a13dfdec",
+        "stable_generation": 10
+      },
+      "feishu": {
+        "pid": 847664,
+        "model_ref": "glm/glm-5.3",
+        "version": "0.6.46",
+        "data_dir": "~/.local/share/lfl/data",
+        "stable_action": "svc-7bb4fe8c687d427695177a0b84874cae",
+        "stable_generation": 10
+      },
+      "learning": {
+        "pid": 846990,
+        "model_ref": "glm/glm-5.3",
+        "version": "0.6.46",
+        "data_dir": "~/.local/share/lfl/data",
+        "stable_action": "svc-a372f97868594deeae54088f230300b7",
+        "stable_generation": 10
+      }
+    },
+    "units": {
+      "lfl.service": {
+        "MainPID": "846733",
+        "NRestarts": "0",
+        "ActiveState": "active",
+        "UnitFileState": "enabled"
+      },
+      "lfl-feishu.service": {
+        "MainPID": "847664",
+        "NRestarts": "0",
+        "ActiveState": "active",
+        "UnitFileState": "enabled"
+      },
+      "lfl-learning.service": {
+        "MainPID": "846990",
+        "NRestarts": "0",
+        "ActiveState": "active",
+        "UnitFileState": "enabled"
+      },
+      "lfl-recovery.service": {
+        "MainPID": "0",
+        "NRestarts": "0",
+        "ActiveState": "active",
+        "UnitFileState": "enabled"
+      }
+    },
+    "linger": true,
+    "config_files_byte_preserved": 5,
+    "profile_files_byte_preserved": 6,
+    "learning_before_ids": 64,
+    "learning_current_ids": 64,
+    "all_previous_learning_ids_preserved": true,
+    "recovered_session_id": "130d1c7d-09c7-4c92-bd75-c5936e60a1ef",
+    "recovered_messages": 714,
+    "model_override": "minimax/MiniMax-M3.1-Flash",
+    "private_binding_preserved": true,
+    "recovered_guard": [
+      {
+        "profile": "web",
+        "verdict": "ALLOW",
+        "scope": "full recovered stored message content with local service sensitive-env values, no provider/system-prompt call"
+      },
+      {
+        "profile": "feishu",
+        "verdict": "ALLOW",
+        "scope": "full recovered stored message content with local service sensitive-env values, no provider/system-prompt call"
+      }
+    ],
+    "web": {
+      "port": 8903,
+      "health": 200,
+      "ui": 200,
+      "assets_checked": 2,
+      "served_bytes_equal_wheel": true
+    },
+    "installed_four_security_sources_equal_wheel": true,
+    "feishu_connected": true,
+    "feishu_self_restart_action": "svc-7bb4fe8c687d427695177a0b84874cae",
+    "held_lease_preserved_live_pids": true,
+    "provider_calls_by_acceptance": 0,
+    "channel_messages_sent_by_acceptance": 0,
+    "no_wecom_or_macos_activation": true,
+    "original_release_0645_retained": true,
+    "manual_stop_for_installer_record": "~/lfl-deploy-20261109/controlled-self-restart-0646-130555/install-prepared.json",
+    "stability_readback": {
+      "observed_at": "2026-11-09T20:57:37.197937+08:00",
+      "status": "stable",
+      "since_final_native_action_seconds": 372.768,
+      "pids": {
+        "web": 846733,
+        "feishu": 847664,
+        "learning": 846990
+      },
+      "version": "0.6.46",
+      "generation": 10,
+      "wheel_sha256": "60ded59f7471e0f544d9f2cd78d98469369753d312aa8de72c2d48d3a612cc6c",
+      "models_unchanged": true,
+      "pids_unchanged_after_acceptance": true,
+      "units": {
+        "web": {
+          "MainPID": "846733",
+          "NRestarts": "0",
+          "ActiveState": "active"
+        },
+        "feishu": {
+          "MainPID": "847664",
+          "NRestarts": "0",
+          "ActiveState": "active"
+        },
+        "learning": {
+          "MainPID": "846990",
+          "NRestarts": "0",
+          "ActiveState": "active"
+        }
+      },
+      "feishu_connected": true,
+      "private_binding_preserved": true,
+      "five_config_files_byte_unchanged": true,
+      "http": {
+        "/health": 200,
+        "/ui/v2/": 200
+      },
+      "service_identity_reasons_empty": true,
+      "selected_maintenance_barriers_empty": true
+    }
+  },
+  "own_lane_final": {
+    "lane_id": "lane-f2f8b2ae",
+    "version": 10,
+    "status": "merged",
+    "verify_ref": "lane-f2f8b2ae:5594e489",
+    "already_merged_when_operator_finalized": true,
+    "existing_close_reason_unchanged": true
+  },
+  "operator_completed_at": "2026-11-09T21:00:31.599484+08:00",
+  "main_at_operator_finalization_after_parallel_work": "4866ffa3669681c5250653b736a3a3a961eb70f1",
+  "deployed_commit_still_ancestor_of_main": true
+}

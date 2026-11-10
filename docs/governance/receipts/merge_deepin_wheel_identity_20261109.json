@@ -1,0 +1,177 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_587e7fdf5b8a (GLM-5.3 independent merge reviewer, RULE-AI-34; spawned by parent, not involved in any branch production)",
+  "reviewer_model": "glm/glm-5.3",
+  "parent_session": "1a1d683a-be50-400d-9eeb-90ee0d613c46",
+  "goal_id": "GOAL-20261107-59104e61",
+  "branch": "fix/deepin-wheel-identity-r2-20261109",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/deepin-wheel-identity-r2-20261109",
+  "based_on_main": true,
+  "baseline_facts": {
+    "local_main": "ad0ac4856f112eeb2721c8059a5501373254ffb5",
+    "origin_main": "75ed7eb3a3397f8cd85b48b09020a05f79db9004",
+    "merge_base_main_origin": "e6051f341a95452fcdadcb4be4d95042c3cd7139",
+    "candidate_parents_in_order": [
+      "75ed7eb3a3397f8cd85b48b09020a05f79db9004 (origin/main)",
+      "ad0ac4856f112eeb2721c8059a5501373254ffb5 (local main)"
+    ],
+    "main_is_ancestor_of_candidate": "verified: git merge-base --is-ancestor main HEAD -> true (ff-only possible; rebase demand would be incorrect, ad0ac485 is already a parent)",
+    "commits_ahead_of_main": 28
+  },
+  "commits": [
+    "0186841657bfb980abb22956d6ab81ed2dcaf816 (candidate merge commit)",
+    "75ed7eb3a3397f8cd85b48b09020a05f79db9004 (origin-side tip, feat(r9) review_terminal)",
+    "dd2454dd1 (merge: PEER P0 lane-bf158530 / mq-8bf3edf9)",
+    "34ef2c705 (feat(linux) Stage2 systemd units / wheel identity / journal)",
+    "840358629 (fix(linux) Stage3-C journal gate fail-closed, lane-38371d72)",
+    "cd60332a5/6e91ab674/4dfd1514b/55379be3e/adfc9fd4a (peer review P1 chain: D15 plaintext ban, O_EXCL, pairing identity, lease priority, enabled_kinds+effect_id charset)",
+    "a6b3e2918/1b668a0f5 (knowledge_flush)"
+  ],
+  "candidate": {
+    "commit": "0186841657bfb980abb22956d6ab81ed2dcaf816",
+    "tree": "9f2b80d1601a1ec2e3edcbbecb3ae52b66f6ad7e"
+  },
+  "merge_mode": "ff",
+  "conflicts_resolved": [
+    {
+      "file": "docs/peer-implementation-brief.md",
+      "origin_to_cand": "+17/-3",
+      "main_to_cand": "+2/-2",
+      "verdict": "PASS",
+      "evidence": "-3 lines are superseded T8/T9 checklist text replaced by T9c completion docs; both sides present"
+    },
+    {
+      "file": "scripts/peer_serve.py",
+      "origin_to_cand": "+17",
+      "main_to_cand": "+25/-8",
+      "verdict": "PASS",
+      "evidence": "origin gained main T9c wiring (--write-root/--enabled-kinds, lines 40/44/70/71/130/135/152-153); main weak node_id-keyed secret lookup (-8) replaced by origin requester-keyed _secret_for(controller node id) + D15 loopback ban + fail-fast unpaired startup; security direction correct"
+    },
+    {
+      "file": "src/llm_loop/peer/executor.py",
+      "origin_to_cand": "+122/-4",
+      "main_to_cand": "0",
+      "verdict": "PASS",
+      "evidence": "resolution = main T9c superset; -4 = stale read-only-slice docstring + old narrow __init__ superseded by write_root-aware signature (60/66, require_write_target 125/141); fs.write without write_root fails closed (dedicated test)"
+    },
+    {
+      "file": "src/llm_loop/peer/service.py",
+      "origin_to_cand": "+48/-19",
+      "main_to_cand": "+59/-4",
+      "verdict": "PASS",
+      "evidence": "origin -19 = old local concurrency counting/old lease ordering superseded by quota gate (policy.py:68, consume_grant CAS :289) and refined _select_grant live-or-usable + _selectable (:471-492) preserving 4th-round P1-1 active-priority; main -4 = weak effect_id len-only check replaced by strict charset entry (service.py:528-533) + enabled_kinds-enforcing _validate_submit (:514,:540); enabled_kinds dual enforcement (:84,:103,:138,:168-171)"
+    },
+    {
+      "file": "src/llm_loop/peer/store.py",
+      "origin_to_cand": "+20/-1",
+      "main_to_cand": "+53",
+      "verdict": "PASS",
+      "evidence": "-1 = put_task docstring rewrite only; O_EXCL atomic placeholder intact (247-268), quota_concurrency_exceeded :355; T9c +53 retained"
+    },
+    {
+      "file": "tests/peer/test_peer_executor.py",
+      "origin_to_cand": "+15/-1",
+      "main_to_cand": "0",
+      "verdict": "PASS",
+      "evidence": "-1 = parametrize split fs.write/shell.exec -> shell.exec only; fs.write moved into stronger dedicated test_fs_write_without_write_root_fails_closed (sandbox_denied + write_root_not_configured); no silent deletion"
+    },
+    {
+      "file": "tests/peer/test_peer_service.py",
+      "origin_to_cand": "+75/-1",
+      "main_to_cand": "+107",
+      "verdict": "PASS",
+      "evidence": "union of both sides; only removed origin line is an import-line rewrite; R9 full 14251 passed corroborates"
+    }
+  ],
+  "specialty_checks": {
+    "A_origin_security_retained": "PASS: D15 non-loopback plaintext guard in _mount_peer_routes (web/__init__.py:66-87, refuses mount w/o typed peer_allow_plaintext_bind) and peer_serve; enabled_kinds dual enforcement (manifest + _validate_submit :540); effect_id O_EXCL (store.py:268, admission.py:45, service.py:206); requester-keyed auth PeerAuthenticator(secret_for=_secret_for(candidate)) keyed by requesting controller node id in main app and peer_serve (peer_routes.py:70-111)",
+    "B_local_T9c_retained": "PASS: write_root (executor.py:60/66/125/141, config peer_write_root, peer_serve --write-root, web/__init__.py:119 pass-through); quota (policy.py:56-68, store.py:355, errors.py:42); recovery (service.py:451 recover_interrupted, invoked web/__init__.py:137 and peer_serve.py:75)",
+    "C_tests_union": "PASS: see conflicts_resolved tests entries",
+    "D_typed_env_fields": "PASS: config.py:919 peer_allow_plaintext_bind strict escape==1; peer_bind_host/peer_write_root typed; _mount_peer_routes typed getattr only; origin 75ed7eb3:79 direct _os.environ read REMOVED (diff -6/+3 drops import os as _os and both env reads); residual WEB_HOST reads web/__init__.py:241/626 pre-exist in BOTH parents (75ed7eb3:244,629; ad0ac485:219,604) - not a merge regression; env-pin PASS 1153 files / 0 undeclared on this tree per final R9 receipt",
+    "E_factory_order": "PASS: _mount_peer_routes extraction preserved verbatim except env-to-typed swap + write_root kwarg (origin-to-cand 3+/6-); order PeerStore -> PeerService(...enabled_kinds, write_root) -> _secret_for -> PeerAuthenticator -> install_peer_error_handler -> include_router -> recover_interrupted; peer_serve isomorphic; no baseline amplification (ruff new=0, pyright new=0)",
+    "F_peer_default_off": "PASS: config peer_enabled default False (config.py:521,911); create_app mounts peer only when peer_enabled (web/__init__.py:429-432); empty peer_kinds opens no kind; peer_serve requires explicit run + completed pairing"
+  },
+  "checklist": [
+    {
+      "item": 1,
+      "name": "完成证据",
+      "verdict": "PASS",
+      "evidence": "Goal GOAL-20261107-59104e61 read back: active, v59, 58 checkpoints; merge advances code-integration phase only, Goal NOT declared complete (production 3-service cutover pending). result.json chain: review r1 subagent_9594586d1165 PASS -> R9 run1 job-00346155fcc745c98573 exit 1 (env-ratchet: _mount_peer_routes direct PEER_ALLOW_PLAINTEXT_BIND/WEB_HOST) -> fix tree 9f2b80d1601a1ec2e3edcbbecb3ae52b66f6ad7e (patch 1b528b10, 42 paths incl new tests/peer/test_peer_routes.py) -> narrow re-review subagent_07731a5a8165 PASS (62cbaab1, 37 decl / all 42 files) -> final R9 job-24fc840eaa2c4458b501 exit 0. fix tree == candidate tree independently re-verified via git rev-parse. Phase label is parent-attested, corroborated by branch subjects"
+    },
+    {
+      "item": 2,
+      "name": "分支卫生",
+      "verdict": "PASS",
+      "evidence": "porcelain=0; count main-to-HEAD=28 = 27 origin-side (peer P0 lane + review fixes, linux Stage2/3-C, r9 EVOs, knowledge_flush) + merge commit; subjects attributable, no smuggling; diff --check only test_service_control_wheel_identity.py:107 EOF blank line (P2)"
+    },
+    {
+      "item": 3,
+      "name": "基线新鲜",
+      "verdict": "PASS",
+      "evidence": "parents in order (75ed7eb3=origin/main, ad0ac485=local main), divergence reconciled inside candidate; is-ancestor main-to-HEAD true; ff-only advance possible, no rebase needed"
+    },
+    {
+      "item": 4,
+      "name": "测试面",
+      "verdict": "PASS",
+      "evidence": "full suite = RULE-AI-28 duty, cited: result.json final R9 job-24fc840eaa2c4458b501 bash scripts/ci_gate.sh exit 0, 14251 passed/158 skipped/3 xfailed/0 failed, ruff new=0, env-pin 1153/0, pyright new=0, tier0 341 passed. focused 281 / knowledge_flush 0 pending / no untracked / git security 42 files: parent-attested (rerun forbidden here)"
+    },
+    {
+      "item": 5,
+      "name": "合并方式",
+      "verdict": "PASS",
+      "evidence": "merge_mode=ff (ff-only; main is ancestor, verified); 7 conflict files examined two-sided with removed-line semantic-drop audit, see conflicts_resolved + specialty_checks A-F; both sides survive, no security weakening"
+    },
+    {
+      "item": 6,
+      "name": "合并后",
+      "verdict": "PASS (pre-merge declarations)",
+      "evidence": "main_sha_after expected 0186841657bfb980abb22956d6ab81ed2dcaf816; merge NOT yet performed, measured=N/A (pre-merge review); branch kept (Deepin production traceability); post-merge smoke belongs to parent"
+    }
+  ],
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "tests/unit/test_service_control_wheel_identity.py:107",
+      "evidence": "git diff --check main-to-HEAD: new blank line at EOF (sole whitespace finding)",
+      "suggestion": "optional cleanup in follow-up commit; non-functional, previously adjudicated"
+    },
+    {
+      "id": "info-1",
+      "severity": "info",
+      "file": "src/llm_loop/web/__init__.py:241,626",
+      "evidence": "residual WEB_HOST direct reads pre-exist identically in BOTH parents (75ed7eb3:244,629; ad0ac485:219,604); unrelated to peer-mount path; env-pin 1153/0 green on this tree",
+      "suggestion": "none required for this merge"
+    },
+    {
+      "id": "info-2",
+      "severity": "info",
+      "file": "receipt/attribution",
+      "evidence": "focused 281 pass, knowledge_flush 0 pending, no-untracked, git-security-42 are parent-attested, not independently re-verified (rerun forbidden)",
+      "suggestion": "none; attribution recorded honestly"
+    }
+  ],
+  "verdict": "PASS",
+  "main_sha_after": "expected:0186841657bfb980abb22956d6ab81ed2dcaf816 (merge not yet performed, measured=N/A - this receipt is a pre-merge review)",
+  "branch_disposition": "kept:Deepin 生产包可追溯",
+  "verify_receipt_id": "lane-e1ed40f0:ad0ac485",
+  "reviewed_at": "2026-11-09T02:39:21+0800",
+  "read_only_attestation": "zero repo writes; only write action = this receipt file; no commit/merge/push/publish/restart/Goal/Lane/queue mutation; no full R9/ci_gate rerun (RULE-AI-28 receipt cited); evidence: git rev-parse/log/status/merge-base/diff(--stat,-U0/-U3 bounded)/grep on HEAD and both parents + file reads",
+  "observed_reviewer_parent_session": "fdbebef2-d5fd-4bbb-aa9a-36ef1acf0768",
+  "attribution_correction": "authored parent_session=1a1d683a is prior full_test/R9 evidence parent; actual merge-review parent independently read from completed child session metadata is fdbebef2",
+  "observed_child_terminal": "completed/completed",
+  "execution": {
+    "state": "merged",
+    "base_main_sha": "ad0ac4856f112eeb2721c8059a5501373254ffb5",
+    "expected_main_sha_after": "0186841657bfb980abb22956d6ab81ed2dcaf816",
+    "main_sha_after_measured": "0186841657bfb980abb22956d6ab81ed2dcaf816",
+    "mode": "ff-only",
+    "root_wip_preserved": {
+      "backup": "/private/tmp/deepin-main-wip-preserved-20261109",
+      "other_staged_blobs_byte_identical": 7,
+      "factory_staged_skills_provider_patch_reapplied": true,
+      "legacy_untracked_test_preserved": "/private/tmp/deepin-main-wip-preserved-20261109/original-untracked-test_review_terminal_predicate.py"
+    }
+  }
+}

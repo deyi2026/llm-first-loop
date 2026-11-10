@@ -1,0 +1,49 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_5f6d5f36fed2",
+  "reviewer_role": "独立只读子代理（未参与本分支任何产出；首个子代理 subagent_e99b6f6d80d5 因上下文耗尽未出判定，不计入证据）",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261110-6c9b66a4",
+  "branch": "fix/r9-probe-env-preflight-20261110",
+  "based_on_main": true,
+  "base_main_sha": "9da8e58ef4de9f54484dd8e1ff8555774fbac341",
+  "commits": [
+    "81e59a5f8"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "A --only 越权面: entries=dict(current) 后仅覆盖点名项，写盘唯一入口 write_manifest；未点名只进 drifted 名单并打印；未知名字 return 1 不落盘 = pass",
+    "B 断言保真: 主用例未被弱化成永真——负例1（占位改成 platform.python_version）→ 新用例红；负例2（改成 0.0.0 if exists）→ 主用例硬失败于 assert \"实测版本 3.12.9\"，两次均 git checkout -- 还原 = pass",
+    "C 清单粒度: skills/.manifest.json 仅动 merge-review-gate 4 个键（8 行）；复核 HEAD 磁盘值 sha256/tree 与新基线一致 = pass",
+    "D 执行位不变量: 双向负例实测均红（索引降 644 / 磁盘丢位）；索引模式直方图 8641×100644 + 88×100755，无子模块/符号链接 → 当前无误报面 = pass",
+    "E 越界面: git diff --stat 89ac9647d..08e94614a 恰 5 文件（+269/−14）；全 diff grep pdb/breakpoint/key/secret/token 无命中 = pass",
+    "F 合并面: merge-base --is-ancestor 退出 0；本提交无 src/llm_loop/introspection/* 路径，与在途 lane-0d9ad8e0 无路径重叠 = pass"
+  ],
+  "rule_ai_35_negative_probe": {
+    "conftest_placeholder_to_python_version": "tests/unit/test_env_preflight.py 1 failed, 12 passed（新用例 without_venv 拦住）",
+    "conftest_placeholder_to_fixed_version": "主用例硬失败于 实测版本 3.12.9 断言，证明断言与 monkeypatch 因果绑定",
+    "git_update_index_chmod_minus_x_scripts": "test_index_exec_bit_matches_disk_repo_wide 红（磁盘可执行但索引 100644）",
+    "chmod_minus_x_on_disk": "同名用例红（索引 755 但磁盘不可执行）"
+  },
+  "r9_probe_closure": {
+    "problem": "tests/unit/test_env_preflight.py:83 断言 实测版本 N.N 只在该检出存在 <repo>/.venv 时成立；PROBE 隔离 worktree 无 .venv（ci_gate 回落主检出解释器）→ r9_commit.sh 恒红",
+    "fix_layer": "改断言（与开发机环境解耦 + 锁定占位分支），不改预检行为——预检在无 .venv 时如实写 (.venv 不存在) 是设计内行为",
+    "end_to_end": "本提交即经 bash scripts/r9_commit.sh 落地：ci_gate 全链路 EXIT=0（PROBE 隔离态，PROBE=9b124a5ab）"
+  },
+  "test_surface": "分支树 3 个测试文件 45 passed（独立复核方实跑）；ci_gate 全链路在 PROBE 隔离态 exit=0",
+  "review_admission": "review_admission full_test PASS（candidate=032996385278cddf314ccc7cd64f9c4da23801222050b5c490808e09c239fc38，child=subagent_002bb5b28cf9）",
+  "verify_receipt_id": "lane-557db454:9da8e58e（PASS 后由 scripts/issue_verify_receipt.py --apply 签发）",
+  "non_blocking_observations": [
+    "article-review-gate / code-review-gate 仍与磁盘漂移（pre-existing）；本分支按授权未顺带批准，合并后完整性扫描仍报这 2 条 modified",
+    "全仓执行位不变量用例未来引入子模块（目录 os.access 恒真）或指向可执行目标的符号链接时会误报——当前索引无此类条目",
+    "tests/test_skills_integrity.py 依赖 llm_loop.introspection.tools_skill_files.run_skill_load，与在途 lane-0d9ad8e0 属语义耦合（非路径重叠），若其改签名需同步"
+  ],
+  "rebased_from": {
+    "commit": "08e94614ac14113fb34e71678f8059b3bba3921a",
+    "old_base": "89ac9647d247247e372a3c416315c067727a13d9",
+    "reason": "main 前进到 9da8e58ef（他人 lane-0d9ad8e0 合入，路径零重叠）；旧 base 的队列机检报 base_stale",
+    "patch_identity": "git diff 89ac9647d..08e94614a 与 git diff 9da8e58ef..81e59a5f8 均为 5 文件 +269/-14 且逐 hunk 一致；审查判定按 patch 迁移"
+  },
+  "revalidation_after_rebase": "review_admission full_test 重审 PASS（candidate=c032508a23d22dfec03c529060b8f2d915133a3331f86ccd780c2293dde1a7ac，child=subagent_a9a821f179ad）；ci_gate 全链路 exit=0（job-341aebbc6690465d965a，树 81e59a5f8）；4 测试文件 53 passed"
+}

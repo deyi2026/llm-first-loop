@@ -1,0 +1,295 @@
+{
+  "gate": "merge",
+  "recorded_at": "2026-11-09T07:38:38+08:00",
+  "reviewer": {
+    "child_id": "subagent_f2ecc3373d5f",
+    "model": "glm/glm-5.3",
+    "endpoint_base_url": "https://open.bigmodel.cn",
+    "spawn_path": "spawn_subagent direct (skills/merge-review-gate/SKILL.md; NOT review_admission kind=merge)",
+    "read_only_enforced": "write_scope paths=[] (deny-all); tool whitelist: execute_command/read_file/search_files; no test/build/network run",
+    "participation": "reviewer 未参与本分支任何产出",
+    "terminal": {
+      "child_state": "completed",
+      "child_outcome": "completed",
+      "rounds": 4,
+      "tools": 11,
+      "tokens_in": 39776,
+      "tokens_out": 8761
+    }
+  },
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "non_blocking_notes": [
+    "任务书细粒度子回执（focused 50 passed / 修复 pin 后 10 passed / A5 staged 10 paths PASS / diff-check clean / knowledge_flush --check 0 pending / git security 10 files）未在两个 /private/tmp 证据文件中逐字落盘，但与 reviewer git 实测（树干净、恰 10 文件）及全量 R9 绿一致，不计级"
+  ],
+  "goal_id": "GOAL-20261107-59104e61",
+  "goal_note": "其他 owner；本合并审查父会话与 child 均未写 Goal/Lane/task",
+  "lane_id": "lane-e1ed40f0",
+  "branch": "fix/deepin-wheel-identity-r2-20261109",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/deepin-wheel-identity-r2-20261109",
+  "based_on_main": true,
+  "main_before": "0186841657bfb980abb22956d6ab81ed2dcaf816",
+  "commits": [
+    "41bbd40a4d3c89bbd773ad21cd5676cf7ff71769"
+  ],
+  "commit_tree": "38426bd1d28096012f7dbea9ab8835d4dd1ee033",
+  "patch": {
+    "files": 10,
+    "bytes": 9920,
+    "sha256": "73213df979f9d555e9212afa86679bf7dbe504b2a431a7f653769f6255c361dc",
+    "within_original_authorization": "rev0 11 files / 13181B / sha256 7b3717b8ba01c00048fa57068f70f805bc92d7f83685cd1fae04fbc1dce6e04a；rev1 仅移除 scripts/verify_install_distribution.py 的 staged 修改（恢复原字节），无新增私有文件"
+  },
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "R9 full gate job-8f2fa182205a4ba29991 exit=0, bash scripts/ci_gate.sh（ruff+env-pin+pyright+tier0 341 passed + 全量 14252 passed / 158 skipped / 3 xfailed / 0 failed）— 引用真实回执，未重跑",
+    "RULE-AI-28 Host full_test qualification PASS：review child=subagent_ae9709f7e3dd（前置 rev0 全审 subagent_87c8249d0be2），coverage incremental_delta=true / 10 paths / paths_ignored=false，candidate sha256 0c8cc35d78d505ff09ab212af93abac0829b01dd8c0e3a35aa8256ff4c8679da，artifact_reviewed=true"
+  ],
+  "checklist": [
+    {
+      "item": 1,
+      "name": "完成证据",
+      "verdict": "满足",
+      "evidence": "两个 /private/tmp 证据文件（R9 job/exit=0/tree/patch_sha256 + rev0→run1 red→rev1→窄复审→run2 全链）与 reviewer git 实测 tree 38426bd1/patch sha 73213df9 逐一相符；diff 实证全部声明改动（_bundled glob、两夹具、missing-bundle 不推进 CAS 回归、0.6.43 版本一致性、A5 提交单）"
+    },
+    {
+      "item": 2,
+      "name": "分支卫生",
+      "verdict": "满足",
+      "evidence": "git status --porcelain 空；41bbd40a 单提交单亲（parent=0186841657）；--name-only | wc -l = 10；diff | wc -c = 9920；diff | shasum -a 256 = 73213df9...；文件列表恰为声明 10 文件且 ⊆ rev0 11 文件授权集，无夹带、无私有/.env/凭据文件"
+    },
+    {
+      "item": 3,
+      "name": "基线新鲜",
+      "verdict": "满足",
+      "evidence": "git merge-base main HEAD = git rev-parse main（worktree）= git -C 主仓 rev-parse main = 0186841657...；root 主仓其他会话 WIP 不在本候选（候选仅存在于隔离 worktree 已提交树）"
+    },
+    {
+      "item": 4,
+      "name": "测试面",
+      "verdict": "满足（引用真实 R9 未重跑）",
+      "evidence": "R9 job-8f2fa182205a4ba29991 exit=0 全链绿；失败→修复→窄复审→复绿链完整真实；R9 实测 tree/patch sha 与 git 实测逐字节一致"
+    },
+    {
+      "item": 5,
+      "name": "合并方式",
+      "verdict": "满足（ff-only 可行）",
+      "evidence": "单提交且 merge-base==main，git merge --ff-only 可将 main 从 0186841657 前进到 41bbd40a，无 merge commit、无冲突解决点"
+    },
+    {
+      "item": 6,
+      "name": "合并后",
+      "verdict": "按规输出，不预写实测",
+      "evidence": "main_sha_after=N/A；合并后冒烟与分支处置由 lane owner 父会话执行，不在本审查内；branch_disposition=kept: Deepin production package traceability"
+    }
+  ],
+  "special_checks": {
+    "a_verify_install_distribution_restored": "git diff 0186841657..41bbd40a -- scripts/verify_install_distribution.py | wc -c = 0；git show 41bbd40a:scripts/verify_install_distribution.py | shasum -a 256 = fb00b6c1fa83dd4d13041b497ee1403586a7f016e1d69f2340ff9f502945a1f9（与 main 同文件相同）→ 恢复原字节属实，断言/阈值/豁免/known-reds 零改动",
+    "b_commit_tree_matches_r9_staged_tree": "git rev-parse 41bbd40a^{tree} = 38426bd1d28096012f7dbea9ab8835d4dd1ee033 == evidence repair_rev1.index_tree（逐字节一致）",
+    "c_no_peer_model_permission_changes": "10 文件列表 + 逐 hunk 通读：仅版本号、文档、A5 提交单、一处 glob 路径、两处测试夹具/新增回归测试、锁文件；无 peer/模型配置/权限变更"
+  },
+  "main_sha_after": "41bbd40a4d3c89bbd773ad21cd5676cf7ff71769",
+  "branch_disposition": "kept: Deepin production package traceability",
+  "verify_receipt_id": "lane-e1ed40f0:01868416",
+  "scope_discipline": "本 PASS 仅覆盖本次 0.6.43 代码集成阶段；不宣告 Linux 总 Goal 完成、不宣告生产切换完成；生产当前 0.6.41，Desired gen6 未变",
+  "authorization": "用户已明确授权将本轮冻结修订及必要上下文发送至智谱 open.bigmodel.cn 由 GLM-5.3 独立复审与合并审查；全程未读取或发送 .env/provider 配置/凭据",
+  "parent_session": "89744d2b-208c-439c-a769-c6da9ba4abcd",
+  "parent_constraints_honored": "本合并审查父会话未修改代码、未 commit/merge/push、未发布/重启、未写 Goal/Lane/task；PASS 后 queue/ff 及相关 smoke 由 lane owner 父会话执行",
+  "evidence_refs": [
+    "/private/tmp/deepin-0643-verified-gate-facts-20261109.json",
+    "/private/tmp/deepin-0643-publish-path-gate-20261109.evidence.json",
+    "evidence://v1/656aab1859b7426e900c1493b28a1b02e2bcc6b019f5784cd834f462ac56bfe7（child 完整报告，blob_sha256=b28756e43e8d5d1c319d723cd140e9c8b7c235605dd3b567561169a4520a7e26）"
+  ],
+  "execution": {
+    "state": "merged",
+    "main_sha_after_measured": "41bbd40a4d3c89bbd773ad21cd5676cf7ff71769",
+    "expected_main": "41bbd40a4d3c89bbd773ad21cd5676cf7ff71769",
+    "post_merge_smoke": "50 passed in 2.45s",
+    "other_root_wip_preserved_exactly": true
+  },
+  "production_execution": {
+    "host": "<lan-host>",
+    "operation_dir": "~/lfl-deploy-20261109/deepin-three-service-0643-20261109-065921",
+    "acceptance": {
+      "status": "PASS",
+      "operation_id": "deepin-three-service-0643-20261109-065921",
+      "action_id": "svc-4d5beee34c174e41aaa4964e43fd2ee1",
+      "native_action_status": "succeeded",
+      "generation": 7,
+      "version": "0.6.43",
+      "source_commit": "41bbd40a4d3c89bbd773ad21cd5676cf7ff71769",
+      "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+      "services": {
+        "web": {
+          "pid": 68220,
+          "version": "0.6.43",
+          "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+          "data_dir": "~/.local/share/lfl/data",
+          "model_ref": "MiniMax-M3.1-Flash",
+          "provider_id": "MiniMax-M3.1-Flash",
+          "python_executable": "~/.local/share/lfl/releases/LFL-0.6.43/venv/bin/python",
+          "restart_required": false,
+          "stable": {
+            "action_id": "svc-4d5beee34c174e41aaa4964e43fd2ee1",
+            "target": "all",
+            "generation": 7,
+            "succeeded_at": "2026-11-09T07:54:10.423858+08:00",
+            "created_at": "2026-11-09T07:53:54.467758+08:00",
+            "git_head": "",
+            "matches_desired_generation": true,
+            "verify_verdict": "confirmed_ok",
+            "verify_evidence": "verify=confirmed_ok web[ok pid=68220 head=unknown] feishu[ok pid=68300 head=3f233585d961] learning[ok pid=68335 head=3f233585d961]",
+            "artifact_kind": "wheel_release",
+            "version": "0.6.43",
+            "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+            "release_dir": "~/.local/share/lfl/releases/LFL-0.6.43",
+            "lag_generations": 0
+          },
+          "NRestarts": 0
+        },
+        "feishu": {
+          "pid": 68300,
+          "version": "0.6.43",
+          "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+          "data_dir": "~/.local/share/lfl/data",
+          "model_ref": "glm/glm-5.3",
+          "provider_id": "glm",
+          "python_executable": "~/.local/share/lfl/releases/LFL-0.6.43/venv/bin/python",
+          "restart_required": false,
+          "stable": {
+            "action_id": "svc-4d5beee34c174e41aaa4964e43fd2ee1",
+            "target": "all",
+            "generation": 7,
+            "succeeded_at": "2026-11-09T07:54:10.423858+08:00",
+            "created_at": "2026-11-09T07:53:54.467758+08:00",
+            "git_head": "",
+            "matches_desired_generation": true,
+            "verify_verdict": "confirmed_ok",
+            "verify_evidence": "verify=confirmed_ok web[ok pid=68220 head=unknown] feishu[ok pid=68300 head=3f233585d961] learning[ok pid=68335 head=3f233585d961]",
+            "artifact_kind": "wheel_release",
+            "version": "0.6.43",
+            "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+            "release_dir": "~/.local/share/lfl/releases/LFL-0.6.43",
+            "lag_generations": 0
+          },
+          "NRestarts": 0
+        },
+        "learning": {
+          "pid": 68335,
+          "version": "0.6.43",
+          "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+          "data_dir": "~/.local/share/lfl/data",
+          "model_ref": "glm/glm-5.3",
+          "provider_id": "glm",
+          "python_executable": "~/.local/share/lfl/releases/LFL-0.6.43/venv/bin/python",
+          "restart_required": false,
+          "stable": {
+            "action_id": "svc-4d5beee34c174e41aaa4964e43fd2ee1",
+            "target": "all",
+            "generation": 7,
+            "succeeded_at": "2026-11-09T07:54:10.423858+08:00",
+            "created_at": "2026-11-09T07:53:54.467758+08:00",
+            "git_head": "",
+            "matches_desired_generation": true,
+            "verify_verdict": "confirmed_ok",
+            "verify_evidence": "verify=confirmed_ok web[ok pid=68220 head=unknown] feishu[ok pid=68300 head=3f233585d961] learning[ok pid=68335 head=3f233585d961]",
+            "artifact_kind": "wheel_release",
+            "version": "0.6.43",
+            "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+            "release_dir": "~/.local/share/lfl/releases/LFL-0.6.43",
+            "lag_generations": 0
+          },
+          "NRestarts": 0
+        }
+      },
+      "health_http": 200,
+      "ui_http": 200,
+      "served_assets": [
+        {
+          "path": "assets/index-BENOIboL.js",
+          "sha256": "922e9cdf3b2f1c4f321665df9022b7f325a7574ceabc1e1e5d18ea0aae5ace49"
+        },
+        {
+          "path": "assets/index-BNbBDZdW.css",
+          "sha256": "5bf1364cd25cbe2f785ce529a22650fa9aa0562d1180a6647aefd792440211c1"
+        }
+      ],
+      "feishu_connected": true,
+      "feishu_heartbeat_age_s": 0.8,
+      "learning_original_jobs": 58,
+      "learning_current_jobs": 58,
+      "learning_original_ids_retained": true,
+      "original_provider_files_unchanged": true,
+      "all_four_units_enabled": true,
+      "linger": "yes",
+      "owned_barriers_released": true,
+      "quota_timer_resumed": true,
+      "accepted_at": 1794182087.7736027
+    },
+    "final_readback": {
+      "verified_at": "2026-11-09T07:57:41.911917+08:00",
+      "status": "PASS",
+      "action_id": "svc-4d5beee34c174e41aaa4964e43fd2ee1",
+      "native_action_status": "succeeded",
+      "generation": 7,
+      "version": "0.6.43",
+      "wheel_sha256": "5a9df379bf9dd7a450e2d04c4f0af5dd3a8befeb1835a215ed29041e73e5a856",
+      "services": {
+        "web": {
+          "pid": 68220,
+          "active": true,
+          "NRestarts": 0,
+          "version": "0.6.43",
+          "model_ref": "MiniMax-M3.1-Flash",
+          "stable_generation": 7,
+          "restart_required": false
+        },
+        "feishu": {
+          "pid": 68300,
+          "active": true,
+          "NRestarts": 0,
+          "version": "0.6.43",
+          "model_ref": "glm/glm-5.3",
+          "stable_generation": 7,
+          "restart_required": false
+        },
+        "learning": {
+          "pid": 68335,
+          "active": true,
+          "NRestarts": 0,
+          "version": "0.6.43",
+          "model_ref": "glm/glm-5.3",
+          "stable_generation": 7,
+          "restart_required": false
+        }
+      },
+      "health_http": 200,
+      "feishu_connected": true,
+      "feishu_heartbeat_age_s": 29.9,
+      "learning_original_jobs": 58,
+      "learning_current_jobs": 58,
+      "learning_original_ids_retained": true,
+      "provider_hashes_unchanged": true,
+      "both_roots_barriers_empty": true,
+      "quota_timer": [
+        "lfl-quota-watch.timer                 loaded active waiting LFL MiniMax quota/rate-limit watch (periodic)"
+      ],
+      "units_enabled": {
+        "lfl.service": "enabled",
+        "lfl-feishu.service": "enabled",
+        "lfl-learning.service": "enabled",
+        "lfl-recovery.service": "enabled"
+      },
+      "linger": "yes",
+      "observed_seconds_after_acceptance": 174.1
+    }
+  },
+  "execution_lane": {
+    "lane_id": "lane-e1ed40f0",
+    "status": "merged",
+    "version": 9,
+    "verify_ref": "lane-e1ed40f0:01868416",
+    "close_reason": "Merged locally at 41bbd40a4d3c89bbd773ad21cd5676cf7ff71769 after independent GLM-5.3 PASS and original full R9 exit0; Deepin <lan-host> Web/Feishu/Learning generation7 wheel0.6.43 native action svc-4d5beee34c174e41aaa4964e43fd2ee1 succeeded, acceptance and independent readback PASS. Master Goal owned by another Host is unchanged."
+  }
+}

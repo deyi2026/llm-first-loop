@@ -1,0 +1,20 @@
+{
+ "gate": "RULE-AI-28 git_push 独立审查闸 + pre-push 机械层（知识闸/隐私扫描）",
+ "pushed_at": "2026-11-10T10:35+08:00",
+ "repo": "$HOME/Project/llm-first-loop-mirror",
+ "remote": "origin (github.com/deyi2026/llm-first-loop)",
+ "remote_before": "36e314c87f3488f61e948f4dcfdd872ef96620d4",
+ "final_remote_main": "0e4fd06476ff2f70498074818e8a8b2b68c3a208",
+ "commits": 8,
+ "content": "收口治理③（7971f5687 queue.merged 自动收口 + lane_close 非属主授权 + 消费口知识闸预检）+ 他线 r9 钩子执行位守卫（761ace9c9/89ac9647d/81e59a5f8/9da8e58ef）+ 知识入库三批（9 方法+8 经验→0b5e7577b；1 方法→0e4fd0647）+ 本 Goal 合并审查回执 2 张（408153b05）",
+ "stages": [
+  {"round": 1, "reviewer_child": "subagent_2689349cefd6", "qualification": "PASS (10:22)", "outcome": "消费被 pre-push 知识闸拒：审查窗口内学习管线新落 1 张方法卡（pending-edit-claims…）→ fail-closed 拒推，资格一次性已耗；照设计行为，非闸缺陷", "pushed": false},
+  {"round": 2, "reviewer_child": "subagent_3227d9dcf0ce", "qualification": "PASS (10:33)", "outcome": "原样单命令执行成功", "pushed": true}
+ ],
+ "hook_scan": "git_security_scan PASS（47 文件）；knowledge_flush --check rc=0（拒推时 rc=3 实测一次，fail-closed 语义现场验证）",
+ "notes": [
+  "round1 的白烧是『审查-消费窗口内工作区变化』又一变体（本次为知识卡生成而非并发提交）——支持 EVO-20261110-a5d3b8f6（push 串行化/意图锁）尽快审批",
+  "本回执为 untracked，待下次自然推送窗口顺带入库"
+ ],
+ "verify": "ls-remote 实测（10:36）：origin/main = 0e4fd06476ff2f70498074818e8a8b2b68c3a208 = 本地 main"
+}
