@@ -12,7 +12,7 @@
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 20 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 40（2026-11-01 补 RULE-AI-36 后按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：37 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **36 条**（2026-10-21 新增 RULE-AI-35，2026-11-01 新增 RULE-AI-36），对应本台账 36 个正式规则行，另有 3 个 scope 登记项，共 **39 条真实登记项**。脚本观测 40 不得误称“正式规则 40”或“真实登记项 40”。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留、Rule34 于 2026-10-17 机械补登、Rule35 于 2026-10-21 CI 红灯修复机械补登、Rule36 于 2026-11-01 机械补登；gaps=3、uncovered=0） |
+| `records` | 41（2026-11-10 补 RULE-AI-37 后按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：38 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **37 条**（2026-10-21 新增 RULE-AI-35，2026-11-01 新增 RULE-AI-36，2026-11-10 新增 RULE-AI-37），对应本台账 37 个正式规则行，另有 3 个 scope 登记项，共 **40 条真实登记项**。脚本观测 41 不得误称“正式规则 41”或“真实登记项 41”。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留、Rule34 于 2026-10-17 机械补登、Rule35 于 2026-10-21 CI 红灯修复机械补登、Rule36 于 2026-11-01、Rule37 于 2026-11-10 机械补登；gaps=3、uncovered=0） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -116,6 +116,7 @@
 | RULE-AI-35 | 门槛/护栏类变更的验收硬性要求——宣称“生效”前必须实测“应拦输入”（SoT 2026-10-21） | 在库未注入 | EVO-20261021-031db968（2026-10-21 人工批准）新增：拦截判据/阻断清单/正则/阈值等门槛护栏类变更，宣称“已生效”前必须构造应拦输入实测拦截，未实测只可称“代码已提交”；程序承载=execute_command/review_host_admission 工具契约提示（68d117dac/f68fcb0d2）。〔2026-10-21 CI 红灯修复机械补登：RULE-AI-35 入库会话未同步台账，登记缺口非本任务引入；存在性按 scripts/rule_presence_audit.py 实测（records=39），与既有规则行同档〕 |
 
 | RULE-AI-36 | 命令闸推荐姿势——一次性脚本先落盘再执行（SoT 2026-11-01） | 在库未注入 | 2026-11-01 用户指示新增（SoT docs/ai_rules.md L600）：一次性脚本/多行 shell 一律「先落盘、再执行」，不用 here-doc 喂解释器、不用管道直连解释器、不以引号拼装或 bash -c 套壳绕过；引号字面量属数据不参与结构判定（EVO-20261101-366cf6cd），不可判定时 fail-closed 给 reason_code=unverifiable_quoted_data；确需被拦形态走 escalation_request 人工审批；判据变更按 RULE-AI-35 实测应拦输入。程序承载=execute_command 灾难命令硬阻断判据 + 细则 docs/PLAYBOOK-20261101-command-gate-postures.md。〔2026-11-01 机械补登：新增规则会话未同步台账，登记缺口非本条引入；存在性按 SoT 正式标题实测〕 |
+| RULE-AI-37 | 事故修复必须落在动作层（SoT 2026-11-10） | 在库未注入 | 2026-11-10 用户确认新增（SoT docs/ai_rules.md「规则三十七」）：造成实际损害的故障，修复必须在触发该损害的动作提交路径上落地硬拦截，且该拦截可被实测应拦输入触发；测试只作第二道防线，不得作为唯一防线。与 RULE-AI-35 分工——35 管“有没有测应拦输入”，37 管“测的是不是同一层”，不重复授权、不改三闸审查者/执行者分离。程序承载=scripts/r9_commit.sh 提交动作层守卫（暂存清单无条件打印 + R9_STAGED_ALLOW 白名单 + 钩子模式/执行位硬拦）。〔2026-11-10 机械补登：新增规则会话未同步台账，登记缺口非本条引入；存在性按 SoT 正式标题实测〕
 
 > RULE-AI-22 同时出现在 §2.2（B3 子缺口：discover→hydrate 触发时机）与本节（主条款设计性零注入），二者不冲突：本特性只补"触发时机"子语义，不改主条款。
 
@@ -166,6 +167,7 @@
 | 重新盘点（2026-10-12）：RULE-AI-28 台账补登 + RULE-AI-29 入库 | EVO-20261012-19f88338（人工批准）执行；`rule_presence_audit.py` 实测 `records=33`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677` 未变、lite v19 未变（hydration kind 计数为运行时数据自然增长：memory/memory_extract=70/70、method=24，非本次改动所致）；`test_ledger_covers_all_sot_rules` 覆盖 28/29 后绿 |
 | 重新盘点（2026-10-15）：Rule31 当前 main 精确整合与库存口径核对 | 以 `main@2ad0bc06d55aefa3496bdf8c26bad1a4dc2963b2` 的 SoT 为源只读盘点：脚本 `records=37`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677`、lite v19；交叉核验 SoT 正式 H2 Rule=33（00–20、22–33），正式台账行=33、附属 scope=3（合计36）；脚本使用全文 `RULE-AI-\d{2}` 去重，额外把正文中的空缺号 RULE-AI-21 记入，故报告 37。该差异已显式披露为盘点口径问题，未调整盘点算法、未新增/删除规则、未放宽测试；测试与审查资格以各自正式回执为准，不得由本盘点行代替。 |
 | 已知红处置 | 无新增已知红；既有已知红仍为"修复 或 显式接受"，**未扩基线** |
+| 重新盘点（2026-11-10）：RULE-AI-37 入库补登记。用户确认新增 RULE-AI-37「事故修复必须落在动作层」（SoT「规则三十七」）：真实损害类故障的修复必须落在触发该损害的动作提交路径上（硬拦截），测试只作第二道防线。`scripts/rule_presence_audit.py` 实测 `records=41`（38 个文本编号 + 附则/子规则/方法层 3 条）、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677` 未变、lite version=20 未变；台账补 Rule37 正式行并同步 §0 `records`=40→41。`tests/unit/test_rule_presence_contract.py` 25 passed。 |
 
 ## 6. 重新盘点触发条件
 
