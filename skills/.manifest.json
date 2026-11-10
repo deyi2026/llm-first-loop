@@ -16,14 +16,14 @@
       "upstream": "ShaishavMaisuria/research-paper-lifecycle-skills@f9a0ed8"
     },
     "article-review-gate": {
-      "approved_at": "2026-11-01T11:37:25+08:00",
-      "approved_by": "baseline",
+      "approved_at": "2026-11-10T10:13:22+08:00",
+      "approved_by": "ai:lfl-first-loop",
       "files": {
-        "SKILL.md": "3de8f79a175c2aca2c496523d557697e9976e0ce3d07e8ef55bf83fef43f8101"
+        "SKILL.md": "5f37c4c54b13e1dc521fa1f8d0a3e360f663ca4a0f0dd0521f1f7b730d7ea60c"
       },
-      "sha256": "3de8f79a175c2aca2c496523d557697e9976e0ce3d07e8ef55bf83fef43f8101",
+      "sha256": "5f37c4c54b13e1dc521fa1f8d0a3e360f663ca4a0f0dd0521f1f7b730d7ea60c",
       "source": "local",
-      "tree_sha256": "ade29e4c3211ecd1a49215799e10d1f217377158e6d00b2282582fa24e2a9230"
+      "tree_sha256": "39167b447616eec7b7fe1f657e8ca1c649cdefe43c83f579ff0cb223665e2616"
     },
     "assess-paper": {
       "approved_at": "2026-11-01T11:37:25+08:00",
@@ -68,14 +68,14 @@
       "tree_sha256": "2c51b0f73cae5cafdf81e9cea030b71bb5c93ac42e1332ee61cf54868516bfd4"
     },
     "code-review-gate": {
-      "approved_at": "2026-11-01T11:37:25+08:00",
-      "approved_by": "baseline",
+      "approved_at": "2026-11-10T10:13:22+08:00",
+      "approved_by": "ai:lfl-first-loop",
       "files": {
-        "SKILL.md": "c7b1317172b56812217674240d1221847c87de49419da70fbcc76466487a70af"
+        "SKILL.md": "aaedb23f47a58f22c675b0e04fa78fa097493bc6989e08668c9e43427b303d76"
       },
-      "sha256": "c7b1317172b56812217674240d1221847c87de49419da70fbcc76466487a70af",
+      "sha256": "aaedb23f47a58f22c675b0e04fa78fa097493bc6989e08668c9e43427b303d76",
       "source": "local",
-      "tree_sha256": "4aaa9bbe548ef0ac59532bb42e6d5155589a8ee414c839229bf08482c1c3ef8a"
+      "tree_sha256": "c2a985e66e0454e6633bacc3cd50fe5f3777feca95860c4c057f9b7005de4045"
     },
     "fit-page-limit": {
       "approved_at": "2026-11-01T11:37:25+08:00",

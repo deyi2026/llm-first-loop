@@ -254,6 +254,29 @@ _fail() {
   exit 1
 }
 
+# ── 规则 6: 执行位降级（2026-11-10 事故新增）──
+# git 对「没有执行位的钩子」是静默跳过：不报错、不提示。已跟踪的 100755 文件
+# 被降为 100644 时，测试层（tests/unit/test_githooks_exec_bit.py）只在被跑时
+# 发现；本条把同一不变量放在**提交动作处**：只要暂存区含 100755 => 100644 的
+# 模式变更即拒绝。新增文件没有旧模式，不属降级（由测试层覆盖新增需可执行的场景）。
+# 逃生口：LFL_MODE_DOWNGRADE_ALLOW=<路径1>:<路径2>（显式确认后放行并打印告警；
+# 仅放行点名的路径，未点名路径仍硬拦）。
+MODE_DOWNGRADE_ALLOW="${LFL_MODE_DOWNGRADE_ALLOW:-}"
+_check_mode_downgrade() {
+  local summary line path
+  summary="$(git diff --cached --summary 2>/dev/null || true)"
+  [[ -z "$summary" ]] && return 0
+  while IFS= read -r line; do
+    [[ "$line" =~ ^\ *mode\ change\ 100755\ =\>\ 100644\ (.*)$ ]] || continue
+    path="${BASH_REMATCH[1]}"
+    if [[ -n "$MODE_DOWNGRADE_ALLOW" ]] && [[ ":$MODE_DOWNGRADE_ALLOW:" == *":$path:"* ]]; then
+      echo "⚠️  [git_security_scan] 执行位降级已显式豁免: $path" >&2
+      continue
+    fi
+    _fail "执行位降级 100755 => 100644（git 会静默跳过钩子/丢失可执行位；chmod +x 后 git add 重试；确属有意请设 LFL_MODE_DOWNGRADE_ALLOW）" "$path"
+  done <<< "$summary"
+}
+
 main() {
   # --range B H / --commit SHA：解析模式参数
   if [[ "$MODE" == "--range" ]]; then
@@ -268,6 +291,9 @@ main() {
   # （首推/CI 初始 push 推的是全历史，仅扫 tip 树会漏中间提交泄露）；tree=工作区
   local files=() f_line c list
   if [[ "$MODE" == "--staged" ]]; then
+    # 规则 6 先于目标集解析：模式降级与文件内容无关，且必须在任何内容规则之前
+    # 失败（钩子被降权后，本钩子本身将不再被 git 调用）。
+    _check_mode_downgrade
     while IFS= read -r f_line; do files+=("$f_line"); done \
       < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACM 2>/dev/null)
   elif [[ "$MODE" == "--range" || "$MODE" == "--commit" ]]; then

@@ -27,6 +27,42 @@ if git diff --cached --quiet; then
   exit 1
 fi
 
+# ── [0a] 暂存区白名单（R9_STAGED_ALLOW）：隔离他人暂存残留 ──
+# 背景（2026-11-10 事故）：本脚本最后是裸 `git commit`，提交的是**整个索引**。
+# 上文「先精确 git add」只是流程约定，没有任何机制检测索引里是否多了不属于本次
+# 的条目——他人 add 后离场留下的 staged 项会被静默混进本次提交（事故现场：2 个
+# 他人 staged 回执混入）。设 R9_STAGED_ALLOW 后，索引中出现名单外条目即拒绝。
+# 格式：每行一个路径，与 `git diff --cached --name-only` 输出一致；空行忽略。
+# 未设该变量 = 行为与旧版完全一致（不改变他人调用姿势）。
+if [ -n "${R9_STAGED_ALLOW:-}" ]; then
+  ALLOW_LIST="$(mktemp /tmp/r9allow.XXXXXX)"
+  printf '%s\n' "$R9_STAGED_ALLOW" | sed '/^[[:space:]]*$/d' | sort -u > "$ALLOW_LIST"
+  UNEXPECTED="$(git diff --cached --name-only | sort -u | comm -23 - "$ALLOW_LIST")"
+  rm -f "$ALLOW_LIST"
+  if [ -n "$UNEXPECTED" ]; then
+    echo "❌ 暂存区含 R9_STAGED_ALLOW 白名单外条目——拒绝提交（可能混入他人暂存残留）：" >&2
+    printf '%s\n' "$UNEXPECTED" | sed 's/^/   /' >&2
+    echo "   处置: 把这些条目移出暂存区（git restore --staged <path>），或加入 R9_STAGED_ALLOW 后重试" >&2
+    exit 1
+  fi
+fi
+
+# ── [0b] 钩子执行位守卫（动作层）──
+# git 对「没有执行位的钩子」是静默跳过：不报错、不提示，钩子等于不存在。
+# tests/unit/test_githooks_exec_bit.py 覆盖同一不变量，但只在被跑时生效；
+# 本检查在**每次提交路径**上生效——否则钩子丢执行位后，pre-commit 里的
+# 安全扫描（规则 1-6）与 pre-push 闸全部静默失效。
+# 只校验索引模式：工作区 chmod 不随 clone 传播，索引 100755 才是历史事实。
+for _hook in .githooks/pre-commit .githooks/pre-push; do
+  [ -e "$_hook" ] || continue
+  _hook_mode="$(git ls-files -s -- "$_hook" 2>/dev/null | awk '{print $1}')"
+  if [ "$_hook_mode" != "100755" ]; then
+    echo "❌ 钩子索引模式非 100755（${_hook}: ${_hook_mode:-未跟踪}）——git 会静默跳过该钩子，拒绝提交" >&2
+    echo "   修复: chmod +x ${_hook} && git add ${_hook}" >&2
+    exit 1
+  fi
+done
+
 # ── [0] 提交队列锁（B3-PREP-06，先于机检/门禁/提交全段）──
 # 兜底链（沿 1f0c6e7 PY 回落链设计语言）：flock 二进制（Linux/CI）→ python fcntl
 # （macOS 无 flock；coproc 持锁 holder，EOF/kill/父亡孤儿自释三路释放）
