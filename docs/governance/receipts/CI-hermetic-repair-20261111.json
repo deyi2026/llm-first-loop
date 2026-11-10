@@ -1,0 +1,48 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_fda1c5af547c",
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 2,
+  "branch": "fix/github-ci-hermetic-20261110",
+  "based_on_main": true,
+  "base_main_sha": "e915bdb134d5a4a88015ba139745de8becc818fb",
+  "commits": [
+    "cc94ac81bfee27f8b71ea4b17f2649be2545fd62"
+  ],
+  "scope_files": [
+    ".github/workflows/ci.yml",
+    "pyproject.toml",
+    "scripts/ci_gate.sh",
+    "tests/test_sandbox_scope_roots.py",
+    "tests/unit/test_ci_gate_conclusion_line.py",
+    "tests/unit/test_linux_installer_scripts.py",
+    "tests/unit/test_smc_browser_typed_wait_v06.py",
+    "uv.lock"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "code_review": {
+    "reviewer": "subagent_a05eb0f32ffa",
+    "verdict": "PASS",
+    "artifact_sha256": "22326cfe139d4812b3ea8d755da756862d3e3401b9e52c799162ad743565b52c"
+  },
+  "full_r9": {
+    "head": "cc94ac81bfee27f8b71ea4b17f2649be2545fd62",
+    "exit_code": 0,
+    "elapsed_seconds": 426.08,
+    "execution_mode": "managed_native_process_no_tmux"
+  },
+  "summary_lines": [
+    "341 passed, 2 skipped, 14306 deselected, 2 warnings in 24.36s",
+    "7 passed, 2 skipped, 14640 deselected, 2 warnings in 3.77s",
+    "1 passed, 2 skipped, 14646 deselected, 2 warnings in 50.35s",
+    "14463 passed, 158 skipped, 3 xfailed, 13 warnings in 222.54s (0:03:42)",
+    "1 passed, 51 deselected in 10.60s",
+    "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）"
+  ],
+  "main_sha_after": "cc94ac81bfee27f8b71ea4b17f2649be2545fd62",
+  "branch_disposition": "kept: pending remote CI verification",
+  "verify_receipt_id": "lane-0495df87:e915bdb1"
+}
