@@ -171,9 +171,15 @@ if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_si
   cat "$GATE_OUT"
   echo "（xdist 全量绿）"
 else
-  # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——
-  # serial 绿 = xdist worker 分布假红（呈现不阻断 + 登记观察）；仍红 = 真回归（阻断）。
-  # 不登记永久 flaky 豁免（假红清单会烂账）；门禁语义 = serial 可复现红才阻断。
+  # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——仍红 = 真回归（阻断）。
+  # 2026-11-10 加固（判别力缺口，用户授权）：serial 绿**不再**单独构成放行依据。
+  # 串行复核把并发负载整个移除，而被移除的负载本身可能就是红的诱因：`--dist loadfile`
+  # 下同一文件在单 worker 内串行执行，"只复跑失败文件"同样还原不了全局并发。两种子集
+  # 复跑都对「负载相关回归」无判别力。实测反例（同日）：合并树改坏 agent completion 的
+  # 超时语义 → 并行红 / 串行绿，被旧判据原样放行。故 serial 绿后必须用**同一并行选择集
+  # 再跑一次全量**：仍红 → 并行条件下可复现 → 阻断；转绿 → 才是 D-B2-09 所指的 worker
+  # 分布抖动 → 放行并登记观察。
+  # 不登记永久 flaky 豁免（假红清单会烂账）。
   # With set -euo pipefail, a zero-match grep would exit the gate before the
   # actual pytest error was surfaced. ERROR fixture/setup nodes matter just
   # as much as FAILED assertions; collect both without masking other failures.
@@ -187,8 +193,19 @@ else
   cat "$GATE_OUT"
   if "$PY" -m pytest $fail_files -q --junitxml="$GATE_SER.xml" >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
     cat "$GATE_SER"
-    echo "⚠️ serial 复核绿 = xdist 分布假红（不阻断；文件清单如下，登记观察）"
-    echo "$fail_files"
+    echo "── serial 复核绿 → 并行同构复跑（保持原 xdist 条件；串行绿不构成放行依据）──"
+    GATE_RETRY_XML="$GATE_TMP/retry.xml"; GATE_RETRY_OUT="$GATE_TMP/retry.log"
+    if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_RETRY_XML" >"$GATE_RETRY_OUT" 2>&1; then
+      cat "$GATE_RETRY_OUT"
+      echo "⚠️ serial 绿 + 并行复跑绿 = xdist 分布抖动（不阻断；首轮文件清单如下，登记观察）"
+      echo "$fail_files"
+    else
+      cat "$GATE_RETRY_OUT"
+      echo "❌ 并行复跑仍红：串行单跑绿不足以证明改动无害（负载相关回归形态），阻断" >&2
+      echo "   首轮红文件清单：" >&2
+      echo "$fail_files" >&2
+      exit 1
+    fi
   else
     cat "$GATE_SER"
     # 2026-10-23（P1 出口判据③）：真回归（serial 复现红）→ 先做红数对账。
