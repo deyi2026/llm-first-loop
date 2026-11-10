@@ -1,0 +1,42 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_8f7a8d24c53c",
+  "reviewer_role": "独立只读子代理（merge-review-gate，RULE-AI-34；未参与本分支产出，glm-5.3）",
+  "verdict": "PASS",
+  "p0_count": 0,
+  "p1_count": 0,
+  "goal_id": "GOAL-20261110-9f642e4a",
+  "branch": "fix/review-findings-none-placeholder-20261109",
+  "based_on_main": true,
+  "base_main_sha": "e64d67b9237c4a3f76695c4d3c6f2db1942a5650",
+  "commits": [
+    "b98c9a446e85b4dbd603b925515919d0da5fbbec"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "分支态 pytest test_review_report_persistence + test_review_host_admission + test_review_gate + test_review_terminal_predicate = 300 passed in 35.46s（审查者独立复跑）",
+    "合并后 main 同 4 文件 = 300 passed in 34.64s（父会话）",
+    "应拦/应放双向实测（RULE-AI-35 精神）：9 个占位形态（none./N/A/(none)/—/-/:/nothing here/no findings/none.()）旧正则均可捕获正文、新 extract_findings 全部空桶；真实 finding 含 race on none-match path 与 none of the retries are bounded 均零误杀",
+    "ci_gate 全链路 exit=0（job-011e1eaa00f947a6b393，树 270581ea7）：ruff + 测试环境声明门禁 + pyright + tier0 + 全量并行集 + serial_signal 串行补跑，末行 全链路通过"
+  ],
+  "review_admission_full_test": "PASS；candidate=245f3a6d846b4f6868ce9cf723d2d398f372e8034a1105537a4e7d16203e96bd，child=subagent_ed0a7f445c78",
+  "main_sha_after": "b98c9a446e85b4dbd603b925515919d0da5fbbec",
+  "branch_disposition": "kept：保留作审计锚点（与 main 同树），未删除",
+  "verify_receipt_id": "lane-db7b3d28:e64d67b9",
+  "lane_id": "lane-db7b3d28",
+  "rebased_from": {
+    "old_commit": "cd6bdec65",
+    "old_base": "75ed7eb3a",
+    "reason": "main 已前进到 e64d67b92",
+    "patch_id": "273d4d7e5b3bcbd6a00ca7a405bb3293d65a0884",
+    "patch_identity": "rebase 前后 diff patch-id 完全一致，2 文件 +70 未变，审查结论可平移"
+  },
+  "non_blocking_observations": [
+    "P2-1 新增测试未覆盖中文占位（无/暂无/没有），回归钉缺口",
+    "P2-2 混合场景测试未含 P0=/P1= 计数行；counts 与 findings 一致性无回归钉（parse_counts 未改，风险低）",
+    "P2-3 commit message 称修复 previous_findings 对账，实际该面在 review_host_admission.py 的 _finding_digest 路径（digest 仍含占位），行文超实际修复面；不影响本次合并判定",
+    "P2-4 剥标点循环未含 U+2026（…），全角省略号占位仍会逃逸"
+  ],
+  "note": "回执在合并后落盘；reviewer 的 PASS 来自其独立复核（含自跑 focused 测试），父会话仅执行 merge 与落盘。"
+}
