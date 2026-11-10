@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import ipaddress
 import sys
 from pathlib import Path
@@ -30,6 +31,59 @@ from llm_loop.peer.pair import secret_key_from_store  # noqa: E402
 from llm_loop.peer.service import PeerService  # noqa: E402
 from llm_loop.peer.store import PeerStore  # noqa: E402
 from llm_loop.web.peer_routes import create_peer_app  # noqa: E402
+
+
+def _construct_peer_service(**kwargs: object) -> PeerService:
+    try:
+        parameters = inspect.signature(PeerService).parameters
+    except (TypeError, ValueError) as exc:
+        raise PeerError("executor_internal_error", f"无法核验 PeerService API: {exc}") from exc
+    has_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+    required = {"store", "admissions", "artifacts", "node_id"}
+    if kwargs.get("supervision_enabled") is True:
+        required.update({"supervision_enabled", "supervision_ttl_s"})
+    if kwargs.get("write_root") is not None:
+        required.update({"write_root", "supervision_enabled", "supervision_ttl_s"})
+    if kwargs.get("enabled_kinds") is not None:
+        required.add("enabled_kinds")
+    if kwargs.get("max_concurrency", 1) != 1:
+        required.add("max_concurrency")
+    if kwargs.get("display_protocol", "none") != "none":
+        required.add("display_protocol")
+    if kwargs.get("health") is not None:
+        required.add("health")
+    # Only skip a kwarg when it is an explicitly known, behavior-neutral default.
+    # Never silently discard an unsupported non-default (even display_name),
+    # because future optional fields may be security relevant.
+    safe_legacy_defaults: dict[str, object] = {
+        "display_name": None,
+        "role": "executor",
+        "supervision_enabled": False,
+        "supervision_ttl_s": 300,
+        "write_root": None,
+        "enabled_kinds": None,
+        "max_concurrency": 1,
+        "display_protocol": "none",
+        "health": None,
+        "audit_watermark_pct": 90,
+    }
+    # **kwargs only accepts parameters; it cannot prove security capabilities exist.
+    # Always require explicit named parameters for every requested capability.
+    for name, value in kwargs.items():
+        if name not in parameters and (
+            name not in safe_legacy_defaults or value != safe_legacy_defaults[name]
+        ):
+            required.add(name)
+    missing = sorted(name for name in required if name not in parameters)
+    if missing:
+        raise PeerError(
+            "executor_internal_error",
+            "peer_runtime_incompatible: 当前安装 wheel 不支持所请求的 Peer 能力: "
+            + ", ".join(missing)
+            + "；拒绝降级启动，请安装与 peer_serve.py 同版本的 LFL wheel。",
+        )
+    accepted = kwargs if has_kwargs else {k: v for k, v in kwargs.items() if k in parameters}
+    return PeerService(**accepted)
 
 
 def build_app(
@@ -60,7 +114,7 @@ def build_app(
             f"未配对：{data_dir / 'secrets'} 下没有任何 <controller>.key。"
             " 先完成 PAIR-OFFER/PAIR-CONFIRM 落盘对端 link_secret，再启动。"
         )
-    service = PeerService(
+    service = _construct_peer_service(
         store=store,
         admissions=AdmissionStore(data_dir),
         artifacts=ArtifactStore(data_dir / "artifacts"),
@@ -79,11 +133,11 @@ def build_app(
         recovered = service.recover_interrupted()
         if recovered:
             print(
-                f"[peer] 恢复中断任务 {len(recovered)} 条：" + ", ".join(
-                    f"{t.task_id}={t.state}({t.reason_code})" for t in recovered
-                ),
+                f"[peer] 恢复中断任务 {len(recovered)} 条："
+                + ", ".join(f"{t.task_id}={t.state}({t.reason_code})" for t in recovered),
                 file=sys.stderr,
             )
+
     def _secret_for(candidate: str):
         # P1-2（2026-11-08）：与主 app _mount_peer_routes._secret_for 同构——
         # 按请求方（controller）node id 解 secrets/<candidate>.key。
@@ -169,19 +223,23 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    app = build_app(
-        data_dir=args.data_dir,
-        node_id=args.node_id,
-        display_name=args.display_name,
-        display_protocol=args.display_protocol,
-        audit_watermark_pct=args.audit_watermark_pct,
-        max_concurrency=args.max_concurrency,
-        enabled_kinds=enabled,
-        write_root=args.write_root,
-        health=args.health,
-        supervision_enabled=args.supervision,
-        supervision_ttl_s=args.supervision_ttl,
-    )
+    try:
+        app = build_app(
+            data_dir=args.data_dir,
+            node_id=args.node_id,
+            display_name=args.display_name,
+            display_protocol=args.display_protocol,
+            audit_watermark_pct=args.audit_watermark_pct,
+            max_concurrency=args.max_concurrency,
+            enabled_kinds=enabled,
+            write_root=args.write_root,
+            health=args.health,
+            supervision_enabled=args.supervision,
+            supervision_ttl_s=args.supervision_ttl,
+        )
+    except PeerError as exc:
+        print(f"拒绝启动：{exc.reason_code}（{exc.detail}）", file=sys.stderr)
+        return 2
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

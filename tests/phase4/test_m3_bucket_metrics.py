@@ -79,13 +79,13 @@ def _bucket(build_test_engine, n=5, mode="interruptible"):
             responses.append({"content": "final"})
             inject_delay = 0.3
         elif mode == "natural_boundary":
-            # sleep 1.55：完成落在判定片 (1.4,1.6) 内部——到达无论早晚均自然完成
-            # （1.6 会与判定唤醒对齐成刀刃，负载下翻转到打断分支）
+            # 不可中断工具确保插话不会因调度抖动变成 tool interrupt；
+            # 在工具运行中入队，工具自然完成后由下一轮轮首消费。
             responses.append({"content": "go",
-                              "tool_calls": [ToolCall(id=f"m3n-{i}", name="execute_command",
-                                                      arguments={"command": "sleep 1.55"})]})
+                              "tool_calls": [ToolCall(id=f"m3n-{i}", name="phase4_locked_sleep",
+                                                      arguments={"seconds": 1.55})]})
             responses.append({"content": "final"})
-            inject_delay = 1.45
+            inject_delay = 0.3
         elif mode == "llm_stream":
             from llm_loop.llm.client import LLMResponse
 
@@ -114,7 +114,7 @@ def _bucket(build_test_engine, n=5, mode="interruptible"):
 
     inject_on_llm = 2 if mode == "llm_stream" else None
     engine, fake = build_test_engine(responses)
-    if mode == "idle":
+    if mode in {"idle", "natural_boundary"}:
         from tests.phase4.test_m0_scenarios import _LockedSleepTool
         engine.registry.register(_LockedSleepTool())
     runner = BackgroundRunner(engine)
@@ -127,7 +127,7 @@ def _bucket(build_test_engine, n=5, mode="interruptible"):
             print(f"[m3dbg] sample {mode}#{i+1} llm_before={len(fake.calls)}", flush=True)
             it = _sample_run(engine, client, runner, sid, inject_delay=inject_delay,
                              inject_on_llm_call=inject_on_llm, fake=fake,
-                             anchor_locked=(mode == "idle"))
+                             anchor_locked=(mode in {"idle", "natural_boundary"}))
             print(f"[m3dbg] sample {mode}#{i+1} ok llm_after={len(fake.calls)} via={it.get('consumed_via')}", flush=True)
             items.append(it)
     finally:

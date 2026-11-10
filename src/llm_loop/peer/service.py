@@ -530,7 +530,13 @@ class PeerService:
             self._store.put_task(task, max_running=grant.max_concurrency)
         except PeerError as exc:
             return self._deny(task, None, exc)
-        return self.receipt(self._transition(task, "awaiting_supervision"))
+        ttl_s = min(max(1, int(task.deadline_s)), self._supervision_ttl_s)
+        expires_at = iso(self._clock() + timedelta(seconds=ttl_s))
+        return self.receipt(
+            self._transition(
+                task, "awaiting_supervision", supervision_expires_at=expires_at
+            )
+        )
 
     def list_supervised(self) -> list[dict[str, Any]]:
         """本节点等待人工确认的任务；顺带收敛过期等待（懒回收，不依赖常驻定时器）。"""
@@ -563,13 +569,20 @@ class PeerService:
         for task in self._store.list_tasks(
             node_id=self._node_id, state="awaiting_supervision", limit=10_000
         ):
-            deadline = self._supervision_deadline(task)
-            if deadline > now:
-                continue
             try:
-                self._transition(task, "failed", reason_code="supervision_timeout")
+                deadline = self._supervision_deadline(task)
+            except PeerError as exc:
+                # Legacy waiting records have no persisted deadline. Never infer one
+                # from this process's local TTL; close them without executing a write.
+                reason = exc.reason_code
+            else:
+                if deadline > now:
+                    continue
+                reason = "supervision_timeout"
+            try:
+                self._transition(task, "failed", reason_code=reason)
             except PeerError:
-                # 并发确认先一步把任务推进到 admitted/queued/running：不覆盖，跳过。
+                # Concurrent confirmation may already have advanced the task; never overwrite it.
                 continue
             self._operator.discard(task.task_id)
             expired.append(task.task_id)
@@ -582,15 +595,21 @@ class PeerService:
         task = self._get_waiting(task_id)
         if not self._supervision_ready(force=True):
             raise PeerError("supervision_channel_unavailable", "监督三条件未同时成立")
+        deadline = self._supervision_deadline(task)
+        now = self._clock()
+        if deadline <= now:
+            raise PeerError("supervision_timeout", iso(deadline))
         digest = task.params_digest or ""
         try:
-            # 未消费且未过期的票据可复用：确认因瞬时前提失败（如 executor_unhealthy）
-            # 后重试，不必"先删票再签票"，也不撞 issue 的存在性检查（审查 P2-7）。
-            return self._operator.load(task_id, params_digest=digest)
+            existing = self._operator.load(task_id, params_digest=digest)
+            if existing.expires_at == iso(deadline):
+                return existing
+            # A ticket minted by an older CLI/config is not authoritative for this task.
+            self._operator.discard(task_id)
         except PeerError as exc:
-            if exc.reason_code == "supervision_ticket_expired":
+            if exc.reason_code in {"supervision_ticket_expired", "supervision_ticket_missing"}:
                 self._operator.discard(task_id)
-            elif exc.reason_code != "supervision_ticket_missing":
+            else:
                 raise
         return self._operator.issue(
             task_id=task.task_id,
@@ -598,7 +617,7 @@ class PeerService:
             kind=task.kind,
             params_digest=digest,
             issued_by=issued_by,
-            ttl_s=min(int(task.deadline_s), self._supervision_ttl_s),
+            expires_at=iso(deadline),
         )
 
     def reject_supervised(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
@@ -638,7 +657,12 @@ class PeerService:
         # 票先验后用：load 只校验存在/未过期/摘要匹配（不搬文件）。真正的一次性消费
         # 放到额度 CAS 与状态转换全部成功之后（_execute 内），避免"票烧了、任务没跑"。
         try:
-            self._operator.load(task_id, params_digest=task.params_digest or "")
+            ticket = self._operator.load(task_id, params_digest=task.params_digest or "")
+            if ticket.expires_at != task.supervision_expires_at:
+                raise PeerError(
+                    "supervision_ticket_mismatch",
+                    "票据 expires_at 与任务持久化监督截止时间不一致",
+                )
         except PeerError as exc:
             return self._fail_waiting(task, exc, decided_by=decided_by)
         admission = self._write_admission(
@@ -676,8 +700,18 @@ class PeerService:
         return self.receipt(self._execute(task))
 
     def _supervision_deadline(self, task: TaskRecord) -> datetime:
-        """等待态超龄时刻：进入等待态时落 ``updated_at``，TTL 从那时起算。"""
-        return parse_ts(task.updated_at) + timedelta(seconds=self._supervision_ttl_s)
+        """唯一权威监督截止时间：在进入等待态时已写入 TaskRecord。"""
+        if not task.supervision_expires_at:
+            raise PeerError(
+                "supervision_timeout",
+                "旧等待任务缺少持久化截止时间；因无法核实有效期而保守超时拒绝",
+            )
+        try:
+            return parse_ts(task.supervision_expires_at)
+        except (TypeError, ValueError) as exc:
+            raise PeerError(
+                "supervision_timeout", "任务持久化截止时间无效，拒绝监督确认"
+            ) from exc
 
     def _fail_waiting(
         self, task: TaskRecord, exc: PeerError, *, decided_by: str

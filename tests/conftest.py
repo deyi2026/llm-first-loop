@@ -84,22 +84,29 @@ SERIAL_SIGNAL_TESTS = (
     "tests/unit/test_terminal_cli.py::test_sigterm_during_runner_start_is_reported_as_termination_pending",
 )
 
+# Wall-clock performance assertions run alone so unrelated xdist workers cannot
+# inflate the measured latency. This preserves the original acceptance limits.
+SERIAL_PERF_TESTS = (
+    "tests/phase5/test_m3_metrics.py::test_m3_g1_g2_metrics",
+)
+
 
 def pytest_collection_modifyitems(config, items):
-    """tier0/serial_signal 单点打标（清单驱动，不侵入测试文件；tier0 文件级、serial_signal 函数级）."""
+    """tier0/serial_signal/serial_perf 单点打标（清单驱动，不侵入测试文件）."""
     tier0_marker = pytest.mark.tier0
     for item in items:
         fpath = str(item.path).replace(str(Path(__file__).resolve().parent.parent) + "/", "")
         if fpath in TIER0_FILES:
             item.add_marker(tier0_marker)
     serial_signal_marker = pytest.mark.serial_signal
+    serial_perf_marker = pytest.mark.serial_perf
     for item in items:
-        # 审查修订 P1-1：serial_signal 改函数级粒度。item.nodeid 是相对 repo root 的
-        # "路径::函数名"形式，参数化用例带 [params] 后缀，故对清单条目做 startswith
-        # 前缀匹配；仅物理发信号的 4 个函数被打标，同文件其余用例保持门禁全覆盖。
+        # 清单按函数级粒度打标；参数化用例带 [params] 后缀，故使用前缀匹配。
         nodeid = str(item.nodeid)
         if any(nodeid.startswith(entry) for entry in SERIAL_SIGNAL_TESTS):
             item.add_marker(serial_signal_marker)
+        if any(nodeid.startswith(entry) for entry in SERIAL_PERF_TESTS):
+            item.add_marker(serial_perf_marker)
 
 
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──

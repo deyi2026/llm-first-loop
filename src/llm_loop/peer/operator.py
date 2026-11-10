@@ -4,7 +4,7 @@
 
 - 绑定 ``task_id + params_digest + kind + node_id``：参数一改就失效；
 - 一次性：``consume`` 用 ``os.replace`` 原子认领，第二个消费者必然找不到源文件；
-- TTL：签发时取 ``min(task.deadline_s, --supervision-ttl)``（TTL 缺省 300s），过期不可用；
+- TTL：任务进入等待态时持久化绝对 ``supervision_expires_at``；服务与 CLI 共用同一截止时间；
 - 属主：数据目录必须属于当前 uid，避免别人替你批准。
 
 HTTP 面没有签发票据的入口（D3）；票据只能由本机 CLI 产生。
@@ -106,7 +106,8 @@ class OperatorChannel:
         kind: str,
         params_digest: str,
         issued_by: str,
-        ttl_s: int,
+        ttl_s: int | None = None,
+        expires_at: str | None = None,
     ) -> SupervisionTicket:
         if not params_digest:
             raise PeerError("supervision_ticket_missing", "任务缺少 params_digest，拒绝签票")
@@ -118,6 +119,16 @@ class OperatorChannel:
         if path.exists() or self._consumed_path(task_id).exists():
             raise PeerError("idempotency_conflict", f"任务 {task_id} 已有票据记录")
         now = self._clock()
+        if expires_at is not None and ttl_s is not None:
+            raise PeerError("supervision_ticket_missing", "只能指定 expires_at 或 ttl_s 之一")
+        if expires_at is None:
+            if ttl_s is None:
+                raise PeerError("supervision_ticket_missing", "缺少权威票据截止时间")
+            expiry = now + timedelta(seconds=max(1, int(ttl_s)))
+        else:
+            expiry = parse_ts(expires_at)
+            if expiry <= now:
+                raise PeerError("supervision_ticket_expired", expires_at)
         ticket = SupervisionTicket(
             task_id=task_id,
             node_id=node_id,
@@ -125,7 +136,7 @@ class OperatorChannel:
             params_digest=params_digest,
             issued_by=issued_by,
             issued_at=iso(now),
-            expires_at=iso(now + timedelta(seconds=max(1, int(ttl_s)))),
+            expires_at=iso(expiry),
         )
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
