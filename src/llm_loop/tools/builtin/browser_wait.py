@@ -368,24 +368,13 @@ class BrowserPredicateWaiter:
                         error_type=type(exc).__name__,
                         error_detail=str(exc),
                     )
-                sample_completed_at = time.monotonic()
-                if sample_completed_at >= deadline_mono:
-                    # A slow capture/evaluation may finish after the total budget.
-                    # Preserve its diagnostic facts, but never accept a late sample
-                    # as a successful predicate or as the end of an absence window.
-                    observation = {
-                        **observation,
-                        "result": "indeterminate",
-                        "reason": "deadline_exceeded",
-                    }
+                if (sample_completed_at := time.monotonic()) >= deadline_mono:
+                    observation = dict(observation, result="indeterminate", reason="deadline_exceeded")
                     break
-                if settle is None:
-                    if observation.get("result") == "satisfied":
-                        break
-                elif settle.step(
-                    satisfied=observation.get("result") == "satisfied",
-                    now=sample_completed_at,
-                ):
+                satisfied = observation.get("result") == "satisfied"
+                if settle is None and satisfied:
+                    break
+                if settle and settle.step(satisfied=satisfied, now=sample_completed_at):
                     settled = True
                     break
 
