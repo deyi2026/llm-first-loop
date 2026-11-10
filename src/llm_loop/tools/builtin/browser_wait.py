@@ -263,6 +263,18 @@ def _compile_object_predicate(
     return predicate
 
 
+def _downgrade_late_satisfaction(observation: dict[str, Any]) -> dict[str, Any]:
+    """截止之后才完成的样本：只降级「satisfied」，不动「unsatisfied」。
+
+    迟到的 satisfied 不足以支撑「窗口内已满足」，故降为 indeterminate；而
+    unsatisfied 是窗口内已观测到的事实，超时仍应报 unsatisfied——否则慢样本
+    会把 timeout 语义改写成 indeterminate，同一用例随机器负载时红时绿。
+    """
+    if observation.get("result") != "satisfied":
+        return observation
+    return dict(observation, result="indeterminate", reason="deadline_exceeded")
+
+
 class BrowserPredicateWaiter:
     """Canonical read-only polling engine for an already-compiled Browser Predicate."""
 
@@ -369,7 +381,7 @@ class BrowserPredicateWaiter:
                         error_detail=str(exc),
                     )
                 if (sample_completed_at := time.monotonic()) >= deadline_mono:
-                    observation = dict(observation, result="indeterminate", reason="deadline_exceeded")
+                    observation = _downgrade_late_satisfaction(observation)
                     break
                 satisfied = observation.get("result") == "satisfied"
                 if settle is None and satisfied:

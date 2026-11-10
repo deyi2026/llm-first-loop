@@ -692,3 +692,71 @@ def test_wait_never_starts_a_poll_sample_at_or_after_deadline(
     assert payload["predicate_result"]["sample_count"] == 1
     assert backend.calls == 1
     assert clock["now"] == 0.01
+
+
+def _deadline_crossing_tool(
+    tmp_path: Path,
+    monkeypatch: Any,
+    *,
+    value: str,
+) -> tuple[_CanonicalWaitTool, dict[str, float], dict[str, Any]]:
+    """构造「样本跨过 deadline 才完成」的等待：时钟冻结，capture 完成后推进 20ms。"""
+    adapter = _adapter(tmp_path)
+    seed = adapter.snapshot("s1", FIXTURES["base"])
+    submit = _dom_object_named(seed, "Submit")
+    predicate = _predicate(
+        scope_ref=submit["scope_ref"],
+        target=submit["id"],
+        property_name="name",
+        operator="eq",
+        value=value,
+    )
+    backend = _SequenceBackend([FIXTURES["base"]])
+    tool = _CanonicalWaitTool(
+        adapter=adapter,
+        backend=backend,
+        session_id_getter=lambda: "s1",
+    )
+    clock = {"now": 0.0}
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(browser_wait_module.time, "sleep", lambda seconds: None)
+    original_capture = backend.capture
+
+    def capture_after_deadline() -> dict[str, Any]:
+        raw = original_capture()
+        clock["now"] += 0.02  # timeout_ms=10 → 该样本在截止后 10ms 才完成
+        return raw
+
+    monkeypatch.setattr(backend, "capture", capture_after_deadline)
+    return tool, clock, predicate
+
+
+def test_wait_does_not_report_satisfied_from_sample_completed_after_deadline(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    tool, clock, predicate = _deadline_crossing_tool(tmp_path, monkeypatch, value="Submit")
+
+    result = tool.execute(action="wait", predicate=predicate, timeout_ms=10, interval_ms=1)
+
+    assert result.status.value == "success"
+    payload = json.loads(result.content)
+    assert payload["predicate_result"]["result"] == "indeterminate"
+    assert payload["predicate_result"]["sample_count"] == 1
+    assert clock["now"] == 0.02
+
+
+def test_wait_reports_unsatisfied_when_slow_sample_completes_after_deadline(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    tool, clock, predicate = _deadline_crossing_tool(
+        tmp_path, monkeypatch, value="Never this name"
+    )
+
+    result = tool.execute(action="wait", predicate=predicate, timeout_ms=10, interval_ms=1)
+
+    assert result.status.value == "success"
+    payload = json.loads(result.content)
+    # timeout 的契约是 unsatisfied：慢样本不得把「窗口内未满足」改写成 indeterminate。
+    assert payload["predicate_result"]["result"] == "unsatisfied"
+    assert payload["predicate_result"]["sample_count"] == 1
+    assert clock["now"] == 0.02
