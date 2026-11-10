@@ -93,6 +93,15 @@ def linux_shell(tmp_path: Path) -> dict[str, str]:
         "printf '%s\\n' \"${FAKE_PS_LINES:-}\"\n",
         encoding="utf-8",
     )
+    # A fake wheel/uv transaction must never discover the host user manager.
+    (bin_dir / "systemctl").write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "$HOME/systemctl.calls"\n'
+        'if [ "$*" = "--user show-environment" ]; then exit 1; fi\n'
+        'echo "unexpected fake systemctl arguments: $*" >&2\n'
+        "exit 97\n",
+        encoding="utf-8",
+    )
     real_hash = shutil.which("sha256sum") or shutil.which("shasum")
     assert real_hash, "a SHA-256 command is required to test the installer"
     hash_name = Path(real_hash).name
@@ -363,6 +372,8 @@ def test_install_upgrade_rollback_failed_upgrade_and_uninstall_preserve_user_dat
 
     first = _install(env, wheel31, sha31)
     assert first.returncode == 0, first.stderr
+    assert "systemd --user manager unavailable; skipping user units" in first.stdout
+    assert (home / "systemctl.calls").read_text().splitlines() == ["--user show-environment"]
     active = root / ".LFL-active-version"
     previous = root / ".LFL-previous-version"
     launcher = home / ".local/bin/lfl"

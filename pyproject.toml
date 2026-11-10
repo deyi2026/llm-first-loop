@@ -34,6 +34,7 @@ dev = [
     "ruff>=0.15",
     "pyright>=1.1.390",
     "reportlab>=4.0",
+    "jsonschema>=4.0",  # Peer manifest schema tests run in clean frozen environments.
 ]
 
 [build-system]

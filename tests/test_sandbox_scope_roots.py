@@ -29,7 +29,6 @@ from llm_loop.core.write_scope import (
     scope_allows,
 )
 from llm_loop.tools import sandbox as sbx
-from tests import env_channel
 
 WS = "/tmp/ws-t05"  # 判定用 workspace_root：realpath 不要求存在，无需真实建目录
 
@@ -195,14 +194,14 @@ def _enable_sandbox_exec(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(sbx.os.path, "isfile", lambda p: p == sbx._SANDBOX_EXEC)
     monkeypatch.setattr(sbx.os, "access", lambda p, m: True)
+    # These tests construct argv; real profile application has its own tests.
+    monkeypatch.setattr(
+        sbx, "_sandbox_exec_applicable", lambda: (True, "synthetic profile applied", "")
+    )
     monkeypatch.delenv("EXEC_SANDBOX_MACOS_WRITABLE", raising=False)
     monkeypatch.delenv("EXEC_SANDBOX_STRICT", raising=False)
 
 
-@pytest.mark.skipif(
-    env_channel.nested_sandbox_exec(),
-    reason="嵌套 sandbox-exec 内无法自证套用；真实宿主环境照常运行",
-)
 def test_sandbox_argv_default_roots_identical_to_legacy(monkeypatch):
     """默认 writable_roots=() 与改动前字节等价：产物逐元素等于既有构造公式."""
     _enable_sandbox_exec(monkeypatch)
@@ -228,10 +227,6 @@ def test_sandbox_argv_default_roots_identical_to_legacy(monkeypatch):
     assert "/extra" not in argv[2]
 
 
-@pytest.mark.skipif(
-    env_channel.nested_sandbox_exec(),
-    reason="嵌套 sandbox-exec 内无法自证套用；真实宿主环境照常运行",
-)
 def test_sandbox_argv_passthrough_writable_roots(monkeypatch):
     """显式 writable_roots → 原样透传进 sandbox-exec profile 的 allow subpath."""
     _enable_sandbox_exec(monkeypatch)
@@ -258,10 +253,6 @@ def test_sandbox_argv_passthrough_writable_roots(monkeypatch):
     assert '(allow file-write* (subpath "/r2"))' in argv_list[2]
 
 
-@pytest.mark.skipif(
-    env_channel.docker_cli_available() or env_channel.nested_sandbox_exec(),
-    reason="auto 后端在 docker 存在或嵌套 sandbox 下会解析到 docker/none，非本用例断言路径",
-)
 def test_sandbox_argv_auto_backend_passthrough(monkeypatch):
     """auto 解析到 sandbox-exec 时同样透传（mode 被改写为 backend 后走同一分支）."""
     _enable_sandbox_exec(monkeypatch)

@@ -20,7 +20,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
+ROOT="$(pwd -P)"
 
 # 并行底座自足化（R9-B3 前置/用户原则：阻碍并行执行的环境陷阱要修）：
 # 1) PY 解析——worktree 自带 .venv 优先；无则回落主检出区 .venv（worktree 共享 venv 可用，
@@ -33,6 +33,12 @@ if [[ ! -x "$PY" ]]; then
 fi
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 MODE="${1:-full}"
+
+# Fail before long analysis when a clean environment lacks test-only dependencies.
+if ! "$PY" -c 'import jsonschema, pytest, xdist'; then
+  echo "❌ CI test dependencies unavailable; run uv sync --locked --extra dev" >&2
+  exit 1
+fi
 
 echo "═══ [1/5] Ruff 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══"
 # 2026-10-08 CI contract: immutable gen201 baseline, every full-tree error visible.

@@ -35,14 +35,16 @@ def _make_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _run_gate(tmp_path: Path, pyright_output: str) -> subprocess.CompletedProcess[str]:
+def _run_gate(
+    tmp_path: Path, pyright_output: str, *, python_script: str = _FAKE_PYTHON,
+) -> subprocess.CompletedProcess[str]:
     root = tmp_path / "root"
     (root / "scripts").mkdir(parents=True)
     shutil.copy2(GATE_SCRIPT, root / "scripts" / "ci_gate.sh")
 
     fake_python = root / ".venv" / "bin" / "python"
     fake_python.parent.mkdir(parents=True)
-    fake_python.write_text(_FAKE_PYTHON, encoding="utf-8")
+    fake_python.write_text(python_script, encoding="utf-8")
     _make_executable(fake_python)
 
     (root / "webui" / "node_modules").mkdir(parents=True)
@@ -78,3 +80,10 @@ def test_complete_pyright_keeps_full_pass_line(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "✅ ci_gate 全链路通过" in result.stdout
     assert "pyright=UNKNOWN" not in result.stdout
+
+
+def test_missing_test_dependency_stops_before_long_analysis(tmp_path: Path) -> None:
+    result = _run_gate(tmp_path, "", python_script="#!/bin/sh\nexit 1\n")
+    assert result.returncode != 0
+    assert "CI test dependencies unavailable" in result.stderr
+    assert "Ruff 全树" not in result.stdout

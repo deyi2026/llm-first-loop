@@ -481,8 +481,15 @@ def test_typed_object_wait_preserves_timeout_unsatisfied(tmp_path: Path) -> None
 
 
 def test_typed_object_wait_preserves_complete_absence_vs_partial_indeterminate(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: Any,
 ) -> None:
+    # Coverage semantics must not depend on snapshot I/O fitting in a real 1ms.
+    clock = {"now": 0.0}
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        browser_wait_module.time, "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
     adapter = _adapter(tmp_path)
     seed = adapter.snapshot("s1", FIXTURES["base"])
     submit = _by_name(seed, "Submit")
