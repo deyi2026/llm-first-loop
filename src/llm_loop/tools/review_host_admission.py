@@ -30,7 +30,7 @@ from llm_loop.core.run_context import current_session_id
 from llm_loop.security_guard import has_strong_secret, is_template_name, sensitive_path_reason
 from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
-from llm_loop.tools.review_report import rejected_receipt
+from llm_loop.tools.review_report import is_placeholder_finding, rejected_receipt
 
 
 @dataclass(frozen=True)
@@ -2787,6 +2787,10 @@ def _finding_digest(answer: str) -> str:
         if not stripped:
             continue
         core = _MD_PREFIX_RE.sub("", stripped).strip() or stripped
+        # 占位行（"P0: none." / "**P1** N/A" / "### P2 —"）不是上一轮的问题：
+        # 拼进 narrow re-review 任务书只会让 reviewer 去核不存在的问题。
+        if is_placeholder_finding(core):
+            continue
         if len(severity) < 40 and _SEVERITY_LINE_RE.search(core[:160]):
             severity.append(core[:400])
         elif len(labelled) < 40 and _FINDING_LINE_RE.match(core):

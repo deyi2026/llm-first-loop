@@ -71,15 +71,20 @@ _COUNT_RE = re.compile(r"(?m)^[ \t>]*P0=(\d+) P1=(\d+) P2=(\d+)[ \t]*$")
 _NONE_PLACEHOLDERS = frozenset(
     {"none", "n/a", "na", "-", "--", "—", "–", ":", "::", "()", "(none)",
      "nothing", "nothing here", "no findings", "no issues", "not applicable",
-     "无", "无发现"}
+     "无", "无发现", "无问题", "暂无", "暂无发现", "没有", "没有发现"}
 )
 
+# 外围剥除集：ASCII 标点 + 全角标点 + 破折号/省略号。U+2026（…）必须在内，
+# 否则 "P2: none…" 归一后仍是 "none…"，逃逸占位判定。
+_STRIP_CHARS = " \t.,;:!()[]{}<>\u2014\u2013\u2026-\"'“”‘’（）【】《》、。，；："
 
-def _is_none_placeholder(text: str) -> bool:
+
+def is_none_placeholder(text: str) -> bool:
+    """True 表示这段正文是「无发现」占位，而不是一条真实 finding。"""
     normalized = text.strip().lower()
     # 反复剥外围成对标点与空白："(none).", "-none-", "—（无）—" 等形态归一。
     for _ in range(4):
-        stripped = normalized.strip(" \t.,;:!()[]{}<>\u2014\u2013-\"'“”‘’（）【】《》、。，；：")
+        stripped = normalized.strip(_STRIP_CHARS)
         if stripped == normalized:
             break
         normalized = stripped
@@ -87,6 +92,29 @@ def _is_none_placeholder(text: str) -> bool:
     if not normalized:
         return True
     return normalized in _NONE_PLACEHOLDERS
+
+
+# markdown 标题/引用前缀（"### P2 —"、"> P1: none."）：列表与加粗前缀已由
+# _FINDING_RE 自身容忍，这里只补它不认的两种，避免调用方必须先剥前缀。
+_MD_HEADING_PREFIX_RE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+|>[ \t]*)")
+
+
+def is_placeholder_finding(line: str) -> bool:
+    """整行判定：severity 标签 + 空占位正文 → True。
+
+    与 extract_findings 共用同一套 _FINDING_RE / is_none_placeholder 口径，
+    供 review_host_admission._finding_digest 复用——那里此前按「行内出现 P
+    标签」收集整行，占位行会被拼进 narrow re-review 的上一轮问题清单。
+    无法按 finding 形态解析的行返回 False（fail-open：宁可留噪音，不误删
+    真实 finding）。
+    """
+    core = line.strip()
+    match = _FINDING_RE.match(core)
+    if match is None:
+        match = _FINDING_RE.match(_MD_HEADING_PREFIX_RE.sub("", core))
+    if match is None:
+        return False
+    return is_none_placeholder(" ".join(match.group(2).split()))
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -162,7 +190,7 @@ def extract_findings(answer: str) -> dict[str, Any]:
         text = " ".join(match.group(2).split())
         if not text:
             continue
-        if _is_none_placeholder(text):
+        if is_none_placeholder(text):
             continue
         key = level + "\x00" + text[:160].lower()
         if key in seen:

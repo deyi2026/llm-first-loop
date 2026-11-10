@@ -273,3 +273,77 @@ def test_none_placeholder_is_not_a_finding() -> None:
     assert not findings.get("P0"), findings
     assert findings.get("P1") == ["`src/x.py` real defect one"], findings
     assert findings.get("P2") == ["2. real defect two"], findings
+
+
+def test_none_placeholder_covers_chinese_and_ellipsis() -> None:
+    """P2 follow-up（b40115bc8 审查遗留）：占位口径补中文与 U+2026。
+
+    旧剥除集缺 ``…``，``P2: none…`` 归一后仍是 ``none…`` 而逃逸判定；中文侧
+    只认 ``无``/``无发现``，``暂无``/``没有`` 仍被当成 finding。
+    """
+    probes_none = [
+        "P0: 无\n",
+        "P1: 暂无\n",
+        "P1: 没有\n",
+        "P2: 暂无发现\n",
+        "P0: 无问题\n",
+        "P1: none…\n",
+        "P2: —…\n",
+        "P0: n/a …\n",
+    ]
+    for probe in probes_none:
+        parsed = rr.extract_findings(probe)
+        assert not any(parsed["findings"].values()), (
+            f"占位行不得产生 finding: {probe!r} -> {parsed['findings']}"
+        )
+
+    # 应放：正文里出现这些词，整体不是占位，必须保留（精确匹配语义）。
+    probes_finding = [
+        ("P1: 没有处理超时\n", "没有处理超时"),
+        ("P1: 暂无超时保护\n", "暂无超时保护"),
+        ("P0: race on none-match path\n", "race on none-match path"),
+        ("P2: none of the retries are bounded\n", "none of the retries are bounded"),
+        ("P1: 无锁读路径存在竞态\n", "无锁读路径存在竞态"),
+    ]
+    for probe, expected in probes_finding:
+        parsed = rr.extract_findings(probe)
+        collected = [item for items in parsed["findings"].values() for item in items]
+        assert collected == [expected], (
+            f"真实 finding 不得被占位口径吞掉: {probe!r} -> {collected}"
+        )
+
+
+def test_placeholder_line_detection_for_digest() -> None:
+    """is_placeholder_finding：整行口径供 _finding_digest 复用。
+
+    digest 只需整行判定；解析不出 finding 形态的行 fail-open（保留原行）。
+    """
+    assert rr.is_placeholder_finding("P0: none.")
+    assert rr.is_placeholder_finding("**P1** N/A")
+    assert rr.is_placeholder_finding("### P2 —")
+    assert rr.is_placeholder_finding("P1: 暂无…")
+    assert not rr.is_placeholder_finding("P1-1：切片外内容未绑定")
+    assert not rr.is_placeholder_finding("P1: none of the retries are bounded")
+    # 行内出现标签但行首不是 finding 形态：fail-open 保留。
+    assert not rr.is_placeholder_finding("severity: P1 — none.")
+    assert not rr.is_placeholder_finding("普通说明文字")
+
+
+def test_count_line_and_findings_agree_on_a_clean_answer() -> None:
+    """P2 follow-up：计数行不得进 findings，干净答案上 counts 与解析数一致。
+
+    一致性只在「无重复行、未触每级上限」的答案上成立——那是 reviewer 规范
+    输出的形态；去重/超限时 counts 是 reviewer 自报，findings 是解析视图。
+    """
+    answer = (
+        "P0: none.\n"
+        "P1: `src/x.py` real defect one\n"
+        "P2: `src/y.py` real defect two\n"
+        "P0=0 P1=1 P2=1\n"
+    )
+    counts = rr.parse_counts(answer)
+    findings = rr.extract_findings(answer)["findings"]
+    assert counts == {"P0": 0, "P1": 1, "P2": 1}
+    for level in ("P0", "P1", "P2"):
+        assert len(findings[level]) == counts[level], (level, findings)
+    assert not any("P0=" in item for items in findings.values() for item in items)

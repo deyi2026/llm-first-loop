@@ -3760,3 +3760,35 @@ def test_full_test_remote_really_moved_keeps_drift_denial(
     assert ("sha_mismatch" in d.reason) or ("sha" in d.reason.lower()), (
         f"deny 应指名 sha 维度: {d.reason}"
     )
+
+
+def test_finding_digest_skips_none_placeholders() -> None:
+    """P2 follow-up（b40115bc8 审查遗留）：digest 不得把占位行当上一轮问题.
+
+    narrow re-review 的任务书会带上上一轮 findings；"P0: none." / "P1: N/A"
+    原样进入会让 reviewer 去核不存在的问题。
+    """
+    answer = "\n".join([
+        "P0: none.",
+        "P1: N/A",
+        "### P2 —",
+        "P1-1：切片外内容未绑定",
+        "P2: real defect",
+        "VERDICT: REVISE P0=0 P1=1 P2=1",
+    ])
+    digest = rha._finding_digest(answer)
+    assert "P1-1" in digest
+    assert "real defect" in digest
+    assert "none" not in digest.lower()
+    assert "N/A" not in digest
+    assert "—" not in digest
+
+
+def test_finding_digest_fails_open_on_unparsed_lines() -> None:
+    """解析不出 finding 形态的行保持原样：宁可留噪音，不误删真实 finding."""
+    digest = rha._finding_digest("\n".join([
+        "Blocked by P1: none.",
+        "P1: none of the retries are bounded",
+    ]))
+    assert "Blocked by P1" in digest
+    assert "none of the retries are bounded" in digest
