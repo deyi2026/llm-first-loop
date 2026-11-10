@@ -127,13 +127,12 @@ echo "═══ [5/5] pytest 全量门禁（xdist loadfile 并行；提交门禁
 # collected test cases, turn off xdist, or reinterpret resource failures as
 # passing tests. Operators may explicitly override the worker budget.
 export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
-echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (parallel subset only; serial_signal 走下面的串行补跑)"
+echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (parallel subset only; serial_signal/serial_perf 走下面的串行补跑)"
 # 2026-11-09（P0-1 选择集口径统一，用户授权）：此前并行集合只排 real_llm——
-# pyproject 的 addopts 是 `-m "not real_llm"`，不含 serial_signal；而 marker 定义、
-# scripts/verify_serial_signal_stability.sh 与 scripts/verify_ambient_gate_mutation.sh
-# 都以「并行排除 serial_signal + 串行补跑」为前提。这里补齐两半：
-#   ① 并行集合显式排除 serial_signal（见下方 pytest 命令行）；
-#   ② 被排除的用例在此串行补跑——只排不跑 = 静默丢失覆盖，故失败即阻断。
+# pyproject 的 addopts 是 `-m "not real_llm"`，不含 serial_signal/serial_perf；
+# 两类时序敏感用例必须在 xdist 前单独串行执行。这里补齐两半：
+#   ① 并行集合显式排除 serial_signal 与 serial_perf（见下方 pytest 命令行）；
+#   ② 被排除的用例在此分别串行补跑——只排不跑 = 静默丢失覆盖，故失败即阻断。
 # 注意：命令行 -m 覆盖 addopts 的 -m，条件必须写全，否则 real_llm 会被收进来。
 # 位置：放在并行全量之前 = 便宜且高信号的补集先跑，红了不必等整轮全量。
 echo "── serial_signal 串行补跑（并行集合的补集；物理信号时序敏感，失败即阻断）──"
@@ -148,6 +147,18 @@ if [[ "$SERIAL_RC" -eq 5 ]]; then
   exit 1
 fi
 [[ "$SERIAL_RC" -eq 0 ]] || exit "$SERIAL_RC"
+
+# Wall-clock performance gates run alone; parallel workers can inflate their
+# measured latency without changing the code path. Thresholds remain unchanged.
+echo "── serial_perf 串行性能门（隔离 xdist CPU 竞争，阈值不降级）──"
+SERIAL_PERF_RC=0
+"$PY" -m pytest -m "not real_llm and serial_perf" -q || SERIAL_PERF_RC=$?
+if [[ "$SERIAL_PERF_RC" -eq 5 ]]; then
+  echo "❌ serial_perf 选择集为空：性能门未执行，按 fail-closed 阻断" >&2
+  exit 1
+fi
+[[ "$SERIAL_PERF_RC" -eq 0 ]] || exit "$SERIAL_PERF_RC"
+
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 # 2026-10-23（P1 出口判据③ CI 红数对账）：产出 junitxml 供红数对账脚本消费。
 # 实测红项与登记基线 eval/rules/known_reds_current.json 对账：超出登记项 = 新红 = 阻断。
@@ -156,7 +167,7 @@ GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_se
 # 后续每次运行都挂（2026-10-23 14:01 实测：2 个 ci_gate 结论行测试因此变红）。
 # 改为"独立临时目录 + 固定文件名"，跨平台且可反复运行。
 GATE_TMP="$(mktemp -d /tmp/ci_gate.XXXXXX)"; GATE_XML="$GATE_TMP/report.xml"
-if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal" --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
+if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
   cat "$GATE_OUT"
   echo "（xdist 全量绿）"
 else

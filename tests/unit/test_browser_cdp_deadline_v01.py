@@ -41,7 +41,11 @@ class _ScriptedWs:
         if kind == "event":
             return json.dumps({"method": head[1], "params": {}})
         if kind == "sleep_event":
-            time.sleep(head[2])
+            delay = float(head[2])
+            if timeout is not None and delay > max(0.0, timeout):
+                time.sleep(max(0.0, timeout))
+                raise TimeoutError("scripted recv timed out")
+            time.sleep(delay)
             return json.dumps({"method": head[1], "params": {}})
         if kind == "late":
             return json.dumps({"id": head[1], "result": {"stale": True}})

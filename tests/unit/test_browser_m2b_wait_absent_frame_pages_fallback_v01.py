@@ -12,6 +12,7 @@ effects (no polling / no dispatch / no binding change) - RULE-AI-35.
 from __future__ import annotations
 
 import json
+import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -46,12 +47,15 @@ class _Backend:
     exhaustion.
     """
 
-    def __init__(self, items: list[dict[str, Any]]) -> None:
+    def __init__(self, items: list[dict[str, Any]], *, capture_delay_s: float = 0.0) -> None:
         self.items = [deepcopy(item) for item in items]
+        self.capture_delay_s = capture_delay_s
         self.calls = 0
 
     def capture(self) -> dict[str, Any]:
         self.calls += 1
+        if self.capture_delay_s:
+            time.sleep(self.capture_delay_s)
         return deepcopy(self.items[min(self.calls - 1, len(self.items) - 1)])
 
 
@@ -167,7 +171,7 @@ def test_b7_jittering_page_never_settles(tmp_path: Path) -> None:
         kind="object_absent",
         grounding_ref=ref,
         settle_ms=80,
-        within_ms=300,
+        within_ms=900,
     )
     payload = json.loads(result.content)
     # Every absence sample is followed by a re-appearance: the window resets
@@ -180,11 +184,10 @@ def test_b7_jittering_page_never_settles(tmp_path: Path) -> None:
 def test_b7_default_settle_window_gates_first_sample_success(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     ref = _seed_snapshot(adapter)
-    # Element absent from the FIRST sample, but with the DEFAULT 300ms window
-    # and a 250ms poll cadence inside a 350ms budget the last confirmable
-    # absence span is ~250ms: the default window must hold the verdict at
-    # "present" (a settle-less exists=false wait would succeed on sample 1).
-    backend = _Backend([_without_submit_fixture()])
+    # The first absence sample opens the default 300ms window. The second
+    # capture is deliberately slow enough to finish after the 350ms total
+    # deadline; a late sample must not confirm absence.
+    backend = _Backend([_without_submit_fixture()], capture_delay_s=0.06)
     tool = _perceive_tool(adapter, backend)
     result = tool.execute(
         action="wait",
