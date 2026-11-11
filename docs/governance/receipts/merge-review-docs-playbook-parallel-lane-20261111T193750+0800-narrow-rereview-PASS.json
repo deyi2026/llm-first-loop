@@ -15,8 +15,8 @@
   "conflicts_resolved": [],
   "focused_gates": [],
   "main_sha_at_review": "7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693",
-  "main_sha_after": "PENDING-合并后回填",
-  "branch_disposition": "PENDING-合并后回填",
+  "main_sha_after": "fa7f836ab714d23b2543a34fc970e48a9fda3080",
+  "branch_disposition": "ff 合入 main（fa7f836ab）；worktree/分支合并后清理",
   "verify_receipt_id": "lane-f3610b93:7a496abe3（PASS 后按 SKILL 合并执行纪律签发，禁止预签）",
   "checks": {
     "revision_semantics": "L24 锚点改为 verify 凭证 base-sha、L26 改为『队首→merge-review→PASS 签发→立即带凭证 submit』，与 merge_queue.py check_verify_covers_base(L291-369: verify_required/专属/pass/TTL/base==verify_stale)、run_preflight failed 终态(L617-622)、tools_merge_queue.py submit 即跑四检(L234/257/264)及工具描述『无凭证重试只会再消耗一条不可逆的 failed 队列项』、SKILL.md L33-36 合并执行纪律全部一致；机检 a 于 submit 时复核 base==当前 main 的括注属实（L589/593）；未发现新引入事实错误",

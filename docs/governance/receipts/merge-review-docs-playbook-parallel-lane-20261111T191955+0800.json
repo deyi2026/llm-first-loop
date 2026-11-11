@@ -12,8 +12,8 @@
   "conflicts_resolved": [],
   "focused_gates": [],
   "main_sha_at_review": "7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693",
-  "main_sha_after": "PENDING-合并后回填（REVISE：未批准合并）",
-  "branch_disposition": "PENDING-合并后回填（REVISE：分支保留待修订，修订后走窄复审）",
+  "main_sha_after": "fa7f836ab714d23b2543a34fc970e48a9fda3080",
+  "branch_disposition": "已修订（e2ec9af50）并经窄复审 PASS（supersedes 本回执）后 ff 合入 main（fa7f836ab）；worktree/分支合并后清理",
   "verify_receipt_id": "不签发（REVISE 非真实 PASS，禁止预签；PASS 复审通过后按 SKILL 签发，预期 id=lane-f3610b93:7a496abe3）",
   "checks": {
     "goal_and_lane": "get_goal GOAL-20261111-d72baf37 active（①②=本分支，③④=EVO 与本次无关）；data/audit/lanes.jsonl 实核 lane-f3610b93：branch/worktree/goal_id/base_main_sha=7a496abe3==当前 main/paths 吻合/status=active；merge_queue.jsonl 无记录（未入队）",
