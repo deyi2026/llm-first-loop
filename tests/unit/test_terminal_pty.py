@@ -611,6 +611,9 @@ def test_sigterm_while_waiting_for_next_draft_after_run_settled_restores_termina
         receive_until("你".encode())
         receive_until(b"RUN_SETTLED_WAITING_DRAFT")
         os.write(master, b"unfinished after run settled")
+        # PTY writes enqueue input; wait until the editor has consumed/displayed
+        # the draft before testing that SIGTERM preserves it.
+        receive_until(b"unfinished after run settled")
         os.kill(process.pid, signal.SIGTERM)
         receive_until(b"EXIT:143")
         receive_until(b"STASHED:unfinished after run settled")

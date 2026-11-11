@@ -47,6 +47,10 @@ def _run_gate(
     fake_python.write_text(python_script, encoding="utf-8")
     _make_executable(fake_python)
 
+    fake_pytest = fake_python.with_name("pytest")
+    fake_pytest.write_text("#!/bin/sh\necho 'chosen venv pytest'\n", encoding="utf-8")
+    _make_executable(fake_pytest)
+
     (root / "webui" / "node_modules").mkdir(parents=True)
     fake_npm = root / "stub-bin" / "npm"
     fake_npm.parent.mkdir(parents=True)
@@ -87,3 +91,16 @@ def test_missing_test_dependency_stops_before_long_analysis(tmp_path: Path) -> N
     assert result.returncode != 0
     assert "CI test dependencies unavailable" in result.stderr
     assert "Ruff 全树" not in result.stdout
+
+
+def test_gate_exposes_selected_venv_tools_to_child_commands(tmp_path: Path) -> None:
+    python_script = _FAKE_PYTHON.replace("esac\nexit 0", """esac
+case "$*" in
+  *"-m pytest"*)
+    [ "$(command -v pytest)" = "$(dirname "$0")/pytest" ] || exit 37
+    pytest --version ;;
+esac
+exit 0""")
+    result = _run_gate(tmp_path, "R9 pyright status=complete", python_script=python_script)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "chosen venv pytest" in result.stdout

@@ -820,6 +820,9 @@ class HostCapabilityGrantStore:
         fd = self._open_private(path, os.O_RDONLY)
         try:
             with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                # consume/revoke rewrite this inode under LOCK_EX. Readers must
+                # join that lock domain before observing its JSON snapshot.
+                fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
                 data = json.loads(stream.read())
         except (OSError, ValueError) as exc:
             raise HostGrantError("invalid_grant: unreadable") from exc

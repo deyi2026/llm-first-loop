@@ -533,6 +533,57 @@ def test_grant_concurrent_consume_single_winner(tmp_path: Path) -> None:
     assert results.count(True) == 1  # 仅一个成功，另一个 deny(consumed)
 
 
+def test_grant_reader_waits_for_in_place_consume_write(tmp_path: Path, monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "target.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    writer_store = esc.HostCapabilityGrantStore(home)
+    reader_store = esc.HostCapabilityGrantStore(home)
+    grant = writer_store.issue(tool_name="read_file", canonical_path=target,
+                               operation="read", requester_session_id="s",
+                               max_uses=1, ttl_s=600)
+    gid = grant["grant_id"]
+    grant_path = home / "grants" / f"{gid}.json"
+    truncated, release_writer, reader_started = Event(), Event(), Event()
+    native_truncate = esc.os.ftruncate
+    native_read = reader_store._read_grant
+
+    def pause_after_truncate(fd, length):
+        native_truncate(fd, length)
+        if length == 0 and esc.os.fstat(fd).st_ino == grant_path.stat().st_ino:
+            truncated.set()
+            assert release_writer.wait(5), "writer was not released"
+
+    def read_grant(grant_id):
+        reader_started.set()
+        return native_read(grant_id)
+
+    monkeypatch.setattr(esc.os, "ftruncate", pause_after_truncate)
+    monkeypatch.setattr(reader_store, "_read_grant", read_grant)
+
+    def consume(store):
+        return store.consume(gid, tool_name="read_file", canonical_path=target,
+                             operation="read", requester_session_id="s")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(consume, writer_store)
+        try:
+            assert truncated.wait(5), "writer did not reach the locked rewrite"
+            reader = pool.submit(consume, reader_store)
+            assert reader_started.wait(5)
+            with pytest.raises(TimeoutError):
+                reader.result(timeout=0.1)
+        finally:
+            release_writer.set()
+        assert writer.result(timeout=5)["status"] == "consumed"
+        assert reader.result(timeout=5) is None
+
+
 def test_grant_survives_process_restart_and_rechecks_path(tmp_path: Path) -> None:
     import llm_loop.tools.escalation as esc
 

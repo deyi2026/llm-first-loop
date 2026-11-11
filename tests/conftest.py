@@ -88,6 +88,8 @@ SERIAL_SIGNAL_TESTS = (
 # inflate the measured latency. This preserves the original acceptance limits.
 SERIAL_PERF_TESTS = (
     "tests/phase5/test_m3_metrics.py::test_m3_g1_g2_metrics",
+    "tests/perf/test_build_leak_detection_bench.py::test_clean_history_within_budget",
+    "tests/perf/test_build_leak_detection_bench.py::test_findings_path_within_budget",
 )
 
 

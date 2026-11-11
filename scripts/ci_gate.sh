@@ -40,6 +40,11 @@ if ! "$PY" -c 'import jsonschema, pytest, xdist'; then
   exit 1
 fi
 
+# Match uv run for child commands such as ExecuteCommandTool's pytest --version.
+# Keep the selected interpreter's environment, including the worktree fallback.
+PY_BIN="$(cd "$(dirname "$(command -v "$PY")")" && pwd -P)"
+export PATH="$PY_BIN:$PATH"
+
 echo "═══ [1/5] Ruff 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══"
 # 2026-10-08 CI contract: immutable gen201 baseline, every full-tree error visible.
 # Fail on any new fingerprint/additional occurrence; all modified Python files

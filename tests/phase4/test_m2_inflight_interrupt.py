@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from llm_loop.core.loop.runner import BackgroundRunner
-from llm_loop.core.message import ToolCall
+from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.web import build_app
 from tests.phase4.test_m0_scenarios import (
     INTERJECT_TEXT,
@@ -183,21 +183,12 @@ def test_b_s14_conservative_wait(build_test_engine):
     )
 
 
-def test_c_s15_race_two_branches(build_test_engine):
-    """竞速双分支：事件序判定=回执标注真值；构造上分支可控（τ=200ms 量化）."""
+def test_c_s15_race_two_branches(build_test_engine, monkeypatch):
+    """Use explicit completion/decision barriers for both event orderings."""
     samples = []
-    # 分支 B（interrupt_first）：注入 +1.25s 落在首个判定片（1.4s）之前；
-    # sleep 2.0，判定片 1.4s 命中时尚有 0.6s 余量 → 工具被终止（总余量 0.75s）
-    for i in range(3):
-        samples.append(_race_sample(build_test_engine, i, "B", inject_delay=1.25,
-                                    tool_sleep=2.0))
-    # 分支 A（natural_first，终局加固）：sleep 1.55 + 注入 +1.45s——完成时刻落在
-    # 判定片 (1.4,1.6) 内部：到达无论何时（轻载 1.46-1.51 / 重载 >1.55），下一
-    # 判定唤醒 1.6s 均晚于完成 1.55s，future.result 先返自然结果，双侧确定性
-    # 落入自然完成分支（不与判定片边界对齐——1.6 会在完成点与唤醒点赛跑）。
-    for i in range(3):
-        samples.append(_race_sample(build_test_engine, i, "A", inject_delay=1.45,
-                                    tool_sleep=1.55))
+    for construct in ("B", "A"):
+        for i in range(3):
+            samples.append(_race_sample(build_test_engine, i, construct, monkeypatch))
     for s in samples:
         assert s["final"] == "done"
         assert s["item_status"] == "interject_received"
@@ -214,15 +205,19 @@ def test_c_s15_race_two_branches(build_test_engine):
     )
 
 
-def _race_sample(build_test_engine, i: int, construct: str, inject_delay: float,
-                 tool_sleep: float = 1.5) -> dict:
+
+def _race_sample(build_test_engine, i: int, construct: str, monkeypatch) -> dict:
+    completed, release_result, natural_decision = (
+        threading.Event(), threading.Event(), threading.Event()
+    )
+    command = "sleep 0.05" if construct == "A" else "sleep 30"
     engine, fake = build_test_engine(
         [
             {
                 "content": "跑竞速命令",
                 "tool_calls": [
                     ToolCall(id=f"s15m2-{construct}-{i}-c1", name="execute_command",
-                             arguments={"command": f"sleep {tool_sleep}"}),
+                             arguments={"command": command}),
                 ],
             },
             {"content": "final-race"},
@@ -232,19 +227,46 @@ def _race_sample(build_test_engine, i: int, construct: str, inject_delay: float,
     engine.runner = runner
     client = TestClient(build_app(engine=engine))
     sid = engine.session.create()
+    if construct == "A":
+        tool = engine.registry.get("execute_command")
+        execute = tool.execute
+        terminate = engine.registry._terminate_for_interjection
+
+        def held_natural_result(**kwargs):
+            result = execute(**kwargs)
+            completed.set()
+            assert release_result.wait(10), "natural result was not released"
+            return result
+
+        def complete_before_decision(**kwargs):
+            # The HTTP interjection has arrived while the run is active. Make
+            # the successful future complete before the real race decision.
+            release_result.set()
+            result = kwargs["future"].result(timeout=5)
+            assert result.status == ToolResultStatus.SUCCESS
+            natural_decision.set()
+            return terminate(**kwargs)
+
+        monkeypatch.setattr(tool, "execute", held_natural_result)
+        monkeypatch.setattr(engine.registry, "_terminate_for_interjection", complete_before_decision)
     try:
         _h, q = runner.start(sid, "请执行命令")
-        assert _wait_tool_started(engine, "execute_command", "_active_procs")
-        time.sleep(inject_delay)
+        if construct == "A":
+            assert completed.wait(10), "natural command did not finish"
+        else:
+            assert _wait_tool_started(engine, "execute_command", "_active_procs")
         gen = (runner.get_handle(sid) or {}).get("run_generation")
         r1 = client.post(
             "/api/v1/chat/queue",
             json={"session_id": sid, "message": INTERJECT_TEXT},
         )
+        assert r1.status_code == 202
         queue_id = r1.json()["queue_id"]
         r2 = _interject(client, sid, queue_id, gen)
         assert r2.status_code == 202
         final = _wait_run_done(q, timeout=30)
+        if construct == "A":
+            assert natural_decision.is_set(), "natural-first decision was not exercised"
         item = _hq_item(_hq_of(client, engine), sid, queue_id) or {}
         c, r = item.get("created_at"), item.get("received_at")
         sess = engine.session.load(sid)
@@ -252,15 +274,16 @@ def _race_sample(build_test_engine, i: int, construct: str, inject_delay: float,
         interrupted = any("interrupted_for_interjection" in t for t in texts)
         return {
             "construct": construct, "tag": f"S15M2-{construct}-{i+1}",
-            "inject_delay_s": inject_delay,
+            "ordering": "completion_before_decision" if construct == "A" else "interrupt_before_completion",
             "t_effect_ms": round((r - c) * 1000, 1) if c and r else None,
             "final": final.get("type"), "item_status": item.get("status"),
             "interrupted_receipt": interrupted,
-            # 事件序判定：回执标注即真值（registry 同线程串行判定）
             "branch": "interrupt_first" if interrupted else "natural_first",
         }
     finally:
+        release_result.set()
         runner.cancel(sid)
+
 
 
 def test_d_gate_conservative_matrix(build_test_engine):
