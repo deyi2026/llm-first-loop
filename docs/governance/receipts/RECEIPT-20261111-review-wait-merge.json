@@ -1,0 +1,103 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_bd489c0418eb",
+  "model": "glm/glm-5.3",
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 3,
+  "goal_id": "GOAL-20261111-0ba8a809",
+  "lane_id": "lane-216d6ead",
+  "branch": "fix/review-await-terminal-20261111",
+  "candidate": "5913296431bba31c13145b8dbe460be619a9e341",
+  "base_main_sha": "6d3caa52dd579a07d8026e2f66da9ddf63950601",
+  "based_on_main": true,
+  "commits": [
+    "5913296431bba31c13145b8dbe460be619a9e341"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "19 passed (final knowledge-only rebase)",
+    "359 passed (initial rebase verification)"
+  ],
+  "full_r9": {
+    "validated_candidate": "575cb1c941cda80362fd0127e7cad89492a13948",
+    "exit_code": 0,
+    "parallel_passed": 14538,
+    "parallel_skipped": 158,
+    "parallel_xfailed": 3,
+    "log": "data/review-wait-approved-r9.log"
+  },
+  "r9_carryover": {
+    "old_candidate": "575cb1c941cda80362fd0127e7cad89492a13948",
+    "new_candidate": "5913296431bba31c13145b8dbe460be619a9e341",
+    "old_base": "d5009527d0042c25b91c5e70754e2c620579d3b9",
+    "base": "6d3caa52dd579a07d8026e2f66da9ddf63950601",
+    "merge_base": "6d3caa52dd579a07d8026e2f66da9ddf63950601",
+    "branch_clean": true,
+    "range_diff": "1:  575cb1c94 = 1:  591329643 fix(review): await live completion and return current admission status",
+    "assessment": {
+      "eligible": true,
+      "reason": "",
+      "patch_ids_match": true,
+      "paths_disjoint": true,
+      "commit_count": 1,
+      "base_advance_paths": [
+        "data/methods/opaque-id-provenance-copy-child-id-and-full-sha-from-producing-receipt-170c1bd1e615/METHOD.md"
+      ],
+      "lane_paths": [
+        "docs/playbooks/review-waiting.md",
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/tools/registry.py",
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_review_wait_completion.py"
+      ]
+    },
+    "changed_after_rebase": [
+      "data/methods/opaque-id-provenance-copy-child-id-and-full-sha-from-producing-receipt-170c1bd1e615/METHOD.md"
+    ],
+    "only_method_card_change": true,
+    "files": [
+      {
+        "path": "docs/playbooks/review-waiting.md",
+        "sha256": "054af553b503127fd88f93c1ee0787ba5f33e8ddb7d241379a31a3b8a49c9bcf",
+        "identical": true
+      },
+      {
+        "path": "src/llm_loop/subagent/runner.py",
+        "sha256": "3533910a52694bca6b1b940050f58137c02bd9cb17b053e6825e70fde9bdd08d",
+        "identical": true
+      },
+      {
+        "path": "src/llm_loop/tools/registry.py",
+        "sha256": "85acce188d721e13bdbafc3d3988bce5f5d1aae8a12bc60f226e27a038b0fcb8",
+        "identical": true
+      },
+      {
+        "path": "src/llm_loop/tools/review_host_admission.py",
+        "sha256": "85fcf222d934618680fa440a57dcf4de15377d5e37e8551e8831a065b2ea5fc3",
+        "identical": true
+      },
+      {
+        "path": "tests/unit/test_review_wait_completion.py",
+        "sha256": "997a5535de5bf9e5411504b3a0c477a9b81827742aab1e85bfd37fe4bcab966f",
+        "identical": true
+      }
+    ]
+  },
+  "coverage_carryover": "ACCEPTED",
+  "r9_carryover_verdict": "ACCEPTED",
+  "bundle_sha256": "76726d48ced2aca1892883a666031c3223acf773e6c7252e704ac2eeb42f4864",
+  "main_sha_after": "5913296431bba31c13145b8dbe460be619a9e341",
+  "branch_disposition": "kept: independent review and R9 audit evidence retained",
+  "verify_receipt_id": "lane-216d6ead:6d3caa52",
+  "review_answer": "# 窄复审报告 — 知识卡基线推进（GLM-5.3 独立复审）\n\n前置纪律：本会话无工具、单轮、只读，`search_records` 有界检索不可执行，按其回退条款直接开始审查；本审查者未参与该分支任何产出，不写、不合并。\n\n**一、源码等价 → ACCEPTED**：机器证据 `assess_rebase_replay` eligible=true、patch-id 等同、路径不相交、单提交；五个审查文件 SHA256 逐一一致；old/new 候选 diff 仅一张 `data/methods/…/METHOD.md` 知识卡（非执行资产，不影响代码行为）。源码、测试、门禁脚本、运行配置全部字节等同 → 前审 P0=0 P1=0 结论原样迁移，P2 三项非阻断承继（显示投影、wait_seconds 宽容、30 秒上限三处重复）。\n\n**二、R9 承继 → ACCEPTED**：旧精确候选 `575cb1c9` 完整 R9 exit 0（14538 passed/158 skipped/3 xfailed），原 C1 在该旧提交上已实际满足；叠加字节等价机器证明与已批准 EVO-20261111-c273f61c 纯重放承继政策，足以支撑不在新候选重跑同一代码套件。据此证据，“新精确候选须重跑完整 R9”的严格精确提交条件**正式取代**为：旧完整 R9 ＋ 字节等价机器证明 ＋ 新候选 focused 19 项回归。\n\n**三、替代合并条件（缺一即本 PASS 失效）**：\n- N1 新候选 focused 回归 `data/review-wait-knowledge-focused.log` exit 0（当前未完成，不得虚构，父代理合并前强制）；\n- N2 合并时树干净、无夹带；\n- N3 main 仍为 `6d3caa52…`，前进则凭证 stale 须重审重签；\n- N4 ff-only 合并，父代理落盘 merge 回执。\n\n任何代码字节变化、基线前进、focused 失败或新发现 → 本 PASS 作废，回 REVISE/BLOCK。\n\n---\nVERDICT: PASS\nP0=0 P1=0 P2=3\nSOURCE_EQUIVALENCE: ACCEPTED\nR9_CARRYOVER: ACCEPTED\ncandidate: 5913296431bba31c13145b8dbe460be619a9e341\nbase: 6d3caa52dd579a07d8026e2f66da9ddf63950601\nbundle SHA256: 76726d48ced2aca1892883a666031c3223acf773e6c7252e704ac2eeb42f4864",
+  "queue_id": "mq-16ff318f",
+  "unrelated_main_diff_sha256": "6380e6303f17dec735527b71ccc62a2bcef68cd3ae7d94fea780970c4a5f1efc",
+  "main_smoke": {
+    "exit_code": 0,
+    "result": "2 passed, 17 deselected",
+    "log": "data/review-wait-main-smoke.log"
+  }
+}
