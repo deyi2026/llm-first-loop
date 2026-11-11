@@ -78,5 +78,14 @@
   "github_before": {
     "run_id": 42946332720,
     "conclusion": "success after one full parallel retry; residual semantic timing failure motivated this repair"
-  }
+  },
+  "goal_id": "task-github-ci-hermetic-20261110",
+  "lane_id": "lane-2697c46d",
+  "based_on_main": true,
+  "applied": [
+    "P2-1 exact-head and docs-only R9 coverage verified",
+    "P2-2 main fast-forward performed before receipt and knowledge commits",
+    "P2-3 lane/task and verify receipt metadata recorded"
+  ],
+  "rejected": []
 }
