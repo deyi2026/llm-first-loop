@@ -6,6 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.predicate import PREDICATE_SPECS, predicate_parameter_schema
 from llm_loop.tools.builtin import browser_wait as browser_wait_module
@@ -485,8 +487,20 @@ def test_object_count_uses_lower_bound_logic_under_incomplete_coverage(tmp_path:
     assert "coverage" in str(unknown["reason"])
 
 
+@pytest.fixture
+def poll_clock(monkeypatch: Any) -> dict[str, float]:
+    # Polling semantics must not depend on snapshot I/O fitting in a real 100ms.
+    clock = {"now": 0.0}
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        browser_wait_module.time, "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    return clock
+
+
 def test_wait_polls_observation_until_satisfied_and_returns_bspec_predicate_result(
-    tmp_path: Path,
+    tmp_path: Path, poll_clock: dict[str, float],
 ) -> None:
     adapter = _adapter(tmp_path)
     seed = adapter.snapshot("s1", _disabled_submit_fixture())
@@ -513,7 +527,9 @@ def test_wait_polls_observation_until_satisfied_and_returns_bspec_predicate_resu
     assert _bspec_errors(predicate_result, "predicate_result") == []
     assert predicate_result["result"] == "satisfied"
     assert predicate_result["evaluation_mode"] == "polling"
-    assert predicate_result["sample_count"] >= 2
+    assert predicate_result["sample_count"] == 2
+    assert backend.calls == 2
+    assert poll_clock["now"] == 0.001
     assert predicate_result["observer_error_count"] == 0
     assert predicate_result["interval_ms"] == 1
     assert predicate_result["deadline"] is not None
@@ -548,7 +564,9 @@ def test_wait_timeout_unsatisfied_is_successful_observation_not_tool_failure(tmp
     assert payload["predicate_result"]["sample_count"] >= 1
 
 
-def test_wait_observer_error_is_counted_and_later_valid_sample_can_recover(tmp_path: Path) -> None:
+def test_wait_observer_error_is_counted_and_later_valid_sample_can_recover(
+    tmp_path: Path, poll_clock: dict[str, float],
+) -> None:
     adapter = _adapter(tmp_path)
     seed = adapter.snapshot("s1", FIXTURES["base"])
     submit = _dom_object_named(seed, "Submit")
@@ -572,7 +590,9 @@ def test_wait_observer_error_is_counted_and_later_valid_sample_can_recover(tmp_p
     payload = json.loads(result.content)
     assert payload["predicate_result"]["result"] == "satisfied"
     assert payload["predicate_result"]["observer_error_count"] == 1
-    assert payload["predicate_result"]["sample_count"] >= 2
+    assert payload["predicate_result"]["sample_count"] == 2
+    assert backend.calls == 2
+    assert poll_clock["now"] == 0.001
 
 
 def test_wait_with_only_observer_failures_returns_indeterminate_not_error(tmp_path: Path) -> None:
