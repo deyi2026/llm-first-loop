@@ -236,7 +236,10 @@ class NonceCache:
     def _persistent_check_and_store(
         self, node_id: str, nonce: str, now_ts: float, generation: str
     ) -> bool:
-        gen_dir = self._persist_root / _safe_segment(node_id) / _safe_segment(generation)
+        persist_root = self._persist_root
+        if persist_root is None:  # pragma: no cover - 由 check_and_store 分流保证
+            raise PeerError("executor_internal_error", "nonce persistence requires persist_dir")
+        gen_dir = persist_root / _safe_segment(node_id) / _safe_segment(generation)
         index = int(now_ts // self._bucket_seconds)
         with self._fs_lock(gen_dir):
             for back in range(self._lookback + 1):
