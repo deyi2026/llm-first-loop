@@ -1,0 +1,64 @@
+{
+  "lane_id": "lane-7385153f",
+  "branch": "evo/replay-degraded-reverify-20261111",
+  "worktree": "<repo>/.worktrees/evo-replay-reverify-20261111",
+  "base_sha": "0512f6b7456a11d7c41d83c5ba36754f5e8c1bbe",
+  "head_sha": "de49787c5f939841ed7f9c8b78f68b5355dc32bd",
+  "commits": ["c0b1aba15", "196dcbea8", "071979808", "71dfc04d2", "1e74f1715", "8a9158d5e", "de49787c5"],
+  "verdict": "PASS",
+  "review_kind": "RULE-AI-34 independent read-only merge-review 窄复审 r2（R1 findings 逐项处置 + R5/R7 后续修复未被破坏抽查）",
+  "prior_review": "docs/governance/receipts/merge-review-lane-7385153f-20261111T2155+0800.json（VERDICT REVISE, P1=1 P2=1；注：委派文书写 T2117，仓内实际文件名时间戳为 T2155）",
+  "reviewer": "merge-review-independent-subagent-r2",
+  "review_gate": "PASS da48a655",
+  "full_test_receipt": "job-e81d8dd04a264dec8e57（在途，按委派上下文记录，结果落地前不视作已确认；本审查已独立重跑定向单测）",
+  "prior_findings_disposition": [
+    {
+      "id": "P1-1", "severity": "P1", "disposition": "ACCEPTED",
+      "evidence": "playbook §5.1.a @HEAD（docs/playbooks/parallel-lane-development.md L41）判据 a 现写 `git patch-id --verbatim`（位级严格：空白参与 hash，Python 缩进即语义）；_patch_id_series docstring 首行（src/llm_loop/introspection/merge_queue.py L396）同步为「git patch-id --verbatim，位级严格」。4 个变更文件全文 grep '--stable' 仅剩 merge_queue.py L405 一处「与 --stable/--unstable 互斥，单用即位级严格」——互斥性说明属正确文档，非旧判据残留。修复 commit 71dfc04d2（一词级，2 文件各 1 行）。"
+    },
+    {
+      "id": "P2-1", "severity": "P2", "disposition": "ACCEPTED",
+      "evidence": "_validate_carryover（merge_queue.py L605-609）：src_head = str(src.get(\"head_sha\") or \"\")；为空即 raise ValueError('carryover 源凭证 head_sha 缺失（范围不可判定，fail-closed）')，原「空值静默跳过绑定」窗口关闭，且 raise 在 TTL/判据复跑/写入之前。钉死回归测试 test_carryover_refused_when_source_head_missing（tests/unit/test_merge_queue_verify_replay.py L390-408，pytest.raises match='head_sha 缺失'）。修复 commit 1e74f1715。"
+    }
+  ],
+  "spot_checks": [
+    {
+      "id": 1, "target": "merge 提交 ⇒ fail_closed:merge_unverifiable（R5 修复未被破坏）",
+      "evidence": "assess_rebase_replay（merge_queue.py L518-540）：patch-id 序列与路径判据通过后，对 (old,new) 两段各跑 git rev-list --merges，范围内存在 merge ⇒ eligible=False reason='fail_closed:merge_unverifiable:<label>'，rev-list 自身失败 ⇒ 'fail_closed:merge_check_failed:<label>'。live check（tmp/live_r2_7385153f/live_check.py，worktree 模块实跑）：合成仓 new 段含 --no-ff merge ⇒ {eligible: false, reason: 'fail_closed:merge_unverifiable:new'}。"
+    },
+    {
+      "id": 2, "target": "空白判别性测试（行尾空格）未被破坏",
+      "evidence": "test_whitespace_only_change_is_not_replay（test L353-372）：fixture 原 lane 内容 'lane change\\n'（L56），测试改写为 'lane change \\n'（L361，仅行尾一空格、无新文本），断言 eligible is False 且 patch_ids_match is False——裸 patch-id（忽略空白）会判同，--verbatim 判异，确为判别性测试；本次独立重跑 16 passed 含此例。"
+    },
+    {
+      "id": 3, "target": "strict 解码回 None 契约（_patch_id_series/_diff_paths 无 text=True）",
+      "evidence": "_patch_id_series（L418-445）三处 subprocess.run 均 capture_output 无 text=True，rev-list/patch-id 输出 stdout.decode('utf-8', errors='strict')，except UnicodeDecodeError ⇒ return None（L444-445）；_diff_paths（L454-464）同构，strict 解码失败 ⇒ None。grep text=True 在两函数体内零命中（L163 属既有只读 git 白名单 runner，base 代码未触碰）。live check（core.quotepath=false + mktree 注入 bad_\\xff.txt 路径）：_diff_paths ⇒ None，assess ⇒ {eligible: false, reason: 'fail_closed:paths_unavailable'}；同仓 _patch_id_series ⇒ list[1]（patch 文本以 bytes 过 patch-id stdin，不解码，契约边界正确）。"
+    },
+    {
+      "id": 4, "target": "读侧 check_verify_covers_base 零改动（R1 item2 未被后续 4 commits 破坏）",
+      "evidence": "git show base 版与 HEAD 版函数体 awk 抽取 diff -u 为空（CVB_IDENTICAL，81 行）；merge_queue.py 累积 -6 删除行全部为 issue_verify_receipt 旧 docstring（8a9158d5e docstring 精简），无逻辑删除；carryover 闸全在签发侧 _validate_carryover（L571-637，校验链 raise 顺序：repo/base/head 齐备→源存在同 lane→pass→base_sha==old_base→head_sha 必填且==old_head→TTL→assess_rebase_replay eligible）。"
+    },
+    {
+      "id": 5, "target": "范围与无夹带（R1 item1/6 复核）",
+      "evidence": "git diff --name-status 0512f6b7..de49787c5 恰 4 文件（M playbook/M issue_verify_receipt.py/M merge_queue.py/A test_merge_queue_verify_replay.py），与 data/audit/lanes.jsonl L60 lane-7385153f paths v1 精确一致；numstat playbook +11/-4、script +21/-0（新增 --carryover-from/--old-base/--old-head/--repo，缺参 exit 2 fail-closed）、merge_queue +272/-6、test +408/-0；无 CI/gate/白名单/无关模块触碰；git status --porcelain 为空。"
+    }
+  ],
+  "tests_independent_rerun": "主仓 .venv（py3.13）、worktree @de49787c5f939841ed7f9c8b78f68b5355dc32bd、-p no:cacheprovider、PYTHONDONTWRITEBYTECODE=1：tests/unit/test_merge_queue_verify_replay.py → 16 passed in 4.39s（R1 15 例 + 新增 test_carryover_refused_when_source_head_missing），树保持干净。",
+  "live_checks": {
+    "merge_unverifiable": "合成仓 new 段含 merge ⇒ eligible=false, reason=fail_closed:merge_unverifiable:new",
+    "strict_decode_none": "quotepath=false + 非 UTF-8 路径（mktree plumbing 注入）⇒ _diff_paths=None ⇒ fail_closed:paths_unavailable；_patch_id_series 不受影响（list[1]）",
+    "script": "tmp/live_r2_7385153f/live_check.py（module_file 确认导入 worktree src）"
+  },
+  "observations_non_blocking": [
+    "fail_closed:merge_unverifiable 与 strict 解码 None 契约暂无钉死回归测试（16 例不含 merge/非 UTF-8 用例）；本审查已以 live check 补证，建议后续各补 1 例（非 UTF-8 工作区文件名在本机沙箱 EPERM，需走 mktree plumbing 姿势）",
+    "playbook §5.1「测试」句仍列「replay/非replay/路径相交/坏 ref/过期源/CLI 应拦全分支」，未枚举后续审查修复新增的空白/空rev/源head缺失用例——实际测试覆盖为该句超集（安全方向），备查不阻塞",
+    "review_gate PASS da48a655 与 full_test job-e81d8dd04a264dec8e57 未在仓内检索到落盘原文，按委派上下文记录；full ci_gate 在途，落地结果为并入前的独立确认点"
+  ],
+  "p0": [],
+  "p1": [],
+  "p2": [],
+  "verdict_line": "VERDICT: PASS (P0=0 P1=0 P2=0；非阻塞备查 3 条)",
+  "methodology_search": "methods/ 有界检索（grep -il 'merge-review|RULE-AI-34'，≤5）无命中——无相关卡，按纪律直接开工；search_records 工具不在本代理工具集（仅 read_file/execute_command/search_files），以文件检索代替。",
+  "next_action": "R1 两项 findings 全 ACCEPTED、R5/R7 后续修复完好未破坏——可并入 main（ff 优先）；并入前/后等待在途 full ci_gate job-e81d8dd04a264dec8e57 结果确认，合并后按 RULE-AI-34 记录 main_sha_after 与分支处置。",
+  "ts": "2026-11-11T22:50:00+08:00"
+}

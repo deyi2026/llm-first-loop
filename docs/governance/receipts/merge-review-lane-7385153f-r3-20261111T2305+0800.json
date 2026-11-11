@@ -1,0 +1,40 @@
+{
+  "lane_id": "lane-7385153f",
+  "branch": "evo/replay-degraded-reverify-20261111",
+  "worktree": "<repo>/.worktrees/evo-replay-reverify-20261111",
+  "head_sha": "a18bd3aa6",
+  "head_sha_full": "a18bd3aa6f48b23132fb9d957b0c4a1f7b90f439",
+  "base_sha": "c635762a6517",
+  "old_head_sha": "de49787c5f93",
+  "old_base_sha": "0512f6b7456a11d7c41d83c5ba36754f5e8c1bbe",
+  "verdict": "PASS",
+  "findings": {"p0": 0, "p1": 0, "p2": 0},
+  "scope": "RULE-AI-34 窄复审 r3：仅审 rebase（de49787c5f93 -> a18bd3aa6, onto c635762a6517）引入的变化；r2 已 PASS 全量清单",
+  "rebase_delta_review": {
+    "manual_section5_merge": {
+      "status": "PASS",
+      "evidence": "三方核对：HEAD §5 vs 新 base（c635762a6517）仅引言行+第1项（carryover 降级重验，机械判据 a/b/c 含 git patch-id --verbatim 位级严格）为 lane 版；第2项与 main 已落地版（EVO-20261111-8c5b88df）逐字相同。HEAD §5 vs 旧 head（de49787c5f93）仅第2项由 lane 占位文案替换为 main 已落地版；引言+第1项与 lane 原版逐字相同。与委派声明『第1项 lane-1 版 + 第2项取 main 已落地版』完全一致",
+      "no_conflict_markers": true,
+      "no_duplicate_sections": "『## 5.』标题全文唯一，无重复段落",
+      "other_sections_untouched": "c635762a6517..a18bd3aa6 手册 diff 仅 §5 单 hunk（@@ -34,9 +34,16 @@），其余章节未动"
+    },
+    "code_replay_confirmation": {
+      "status": "PASS",
+      "detail": "git diff de49787c5f93 a18bd3aa6 -- src/ scripts/ tests/ 非空（4 文件 +673/-2：mechanical_diff.py / review_host_admission.py / test_mechanical_diff.py / test_review_host_admission.py），经字节级比对与 base 前进段 diff（0512f6b7456a11d7c41d83c5ba36754f5e8c1bbe..c635762a6517 同路径）完全相同——代码差异 100% 来自 main 落地 8c5b88df，lane 自身代码改动零漂移（纯 replay）；另 commit1（c0b1aba15 vs b081d8870）代码 patch 逐字节相同",
+      "head_code_patch_equals_base_forward_patch": true,
+      "commit1_code_patch_identical_pre_post_rebase": true
+    }
+  },
+  "spot_checks": [
+    {"check": "HEAD/分支/base 祖先核验", "result": "PASS", "detail": "HEAD=a18bd3aa6f48b23132fb9d957b0c4a1f7b90f439 @ evo/replay-degraded-reverify-20261111；c635762a6517 为 HEAD 祖先；c635762a6517..HEAD 恰 7 commits"},
+    {"check": "range-diff 抽查 replay 一致性", "result": "PASS", "detail": "commits 2-7 全部 '='（patch 级一致）；commit 1 为 '!' 仅因手册 §5 手工合并（interdiff 中 scripts/issue_verify_receipt.py 空 context hunk 经 patch 字节比对证实代码一致，属展示噪声）——与预期一致"},
+    {"check": "独立重跑 tests/unit/test_merge_queue_verify_replay.py", "result": "PASS", "detail": "Python 3.13.13（主仓 .venv，符合 requires-python>=3.13）+ pytest -p no:cacheprovider 于工作树运行：16 passed in 4.26s，exit=0；pyproject pythonpath=[src]（相对 rootdir=工作树）+ carryover/--carryover-from 为 lane 独有 API 双重保证被测代码为工作树版本；运行前后 git status --porcelain 均空（零写入）"},
+    {"check": "手册冲突标记/重复段落扫描", "result": "PASS", "detail": "grep ^(<<<<<<<|=======|>>>>>>>) 于 HEAD 手册无命中；§5 结构完整：引言 + 第1项（判据a/b/c、签发侧闸、降级范围、测试）+ 第2项（机械判据、接入点、测试）"}
+  ],
+  "reviewer": "merge-review-independent-subagent-r3",
+  "review_gate": "PASS 4b519936",
+  "full_test": "job-7850f10b77484cc5ac8e exit0 CLEAN",
+  "prior": "r2 PASS",
+  "reviewed_at": "2026-11-11T23:05+08:00",
+  "methodology_search": "本会话无 search_records 工具；以 search_files 对 docs/ 做 ≤5 条 *method* 有界替代检索，命中 5 条通用方法论文档、无 merge-review 专用方法卡，按回退条款直接开始任务"
+}

@@ -1,0 +1,70 @@
+{
+  "lane_id": "lane-465751a0",
+  "branch": "evo/mechanical-fix-rereview-20261111",
+  "evo": "EVO-20261111-8c5b88df",
+  "worktree": "<repo>/.worktrees/evo-mechanical-rereview-20261111",
+  "base_sha": "0512f6b7456a11d7c41d83c5ba36754f5e8c1bbe",
+  "head_sha": "c635762a651733bf159946243ec0592d9bca269f",
+  "commits": ["87072bb01", "c0c3db2c6", "22c8dcad1", "c635762a6"],
+  "verdict": "PASS",
+  "reviewer": "merge-review-independent-subagent-r2",
+  "review_kind": "RULE-AI-34 independent read-only merge-review（窄复审 r2：R1 findings 处置 + 已 PASS 项抽查）",
+  "prior_review": "docs/governance/receipts/merge-review-lane-465751a0-20261111T2155+0800.json（VERDICT REVISE, P1=1 P2=3）",
+  "methodology_search": "docs/ 方法卡有界检索：命中 RULE-AI-34 定义（docs/ai_rules.md L569-584）与 REPORT-20261111-parallel-lane-development-m1 的 merge-review 流程描述，作背景对齐；search_records 工具不在本代理工具集，以 search_files 代替。",
+  "full_test_receipt": "job-a1b564f3fcff48a89c52 exit0 CLEAN",
+  "review_gate": "PASS 9fa4d3c0",
+  "prior_findings_disposition": [
+    {
+      "id": "P1-1", "severity": "P1", "disposition": "ACCEPTED",
+      "evidence": "playbook §5#2 @HEAD（docs/playbooks/parallel-lane-development.md L41/L43，commit c635762a6）三处失真全纠：①测试数 12→16 例且列应拦分支（Call 注解/未知名/控制流/字面量/签名/新增语句/非py/语法错/越出切片/坏ref 等），与独立实跑 16 passed 对上；②not-mechanical 枚举补第 5 触发条件「急切求值风险（eager_annotation_risk）」；③无条件论断改条件论断——「annotation_only＝注解消除归一后 AST 相等，且过急切求值安全闸: 有 from __future__ import annotations 或新注解为不可执行结构且裸名为内建/旧代码已知名字——无 future import 时注解在 import/def 时急切求值，注解无运行时语义不是无条件成立的」。mechanical_diff.py 模块 docstring L10-15 同步限定（不满足安全闸判 eager_annotation_risk，注明 2026-11-11 审查 P1）。"
+    },
+    {
+      "id": "P2-2", "severity": "P2", "disposition": "ACCEPTED",
+      "evidence": "mechanical_diff.py L262-275：_blob 新旧两调用纳入 per-file try，except UnicodeDecodeError → fail_closed:decode_error:<path>（旧位置死分支删除）。本审查 live check（合成 git 仓库+非 UTF-8 blob 实测）：assess_mechanical_fix → reason=fail_closed:decode_error:m.py；宿主 _mechanical_preflight_section → NOT MECHANICAL 同 reason，分支确已生效非死代码。NUL 边界实测 fail_closed:syntax_error:m.py（本 venv 解释器 ast.parse 对 NUL 抛 SyntaxError 被 L284 捕获——R1 担心的 ValueError 逃逸未复现）。"
+    },
+    {
+      "id": "P2-3", "severity": "P2", "disposition": "ACCEPTED",
+      "evidence": "review_host_admission.py L3891-3901：previous_row 非空分支整段 try/except Exception（noqa BLE001，预检绝不因自身故障阻断审查）——_head_commit_of 参数求值不再绕过预检 try（注释自证 merge-review P2-3）；_mechanical_preflight_section 内部 try（L2906-2913）保留未动。修复 commit 对该文件仅 1 个 hunk（@@ -3888,14 +3888,17），_same_admission/_cached_pass/_consume 零触碰。"
+    },
+    {
+      "id": "P2-4", "severity": "P2", "disposition": "ACCEPTED",
+      "evidence": "data/audit/lanes.jsonl L61：lane-465751a0 version=2，paths=5 文件（含此前漏登记的 tests/unit/test_review_host_admission.py）；lane_events.jsonl L277：lane.updated changed=[paths,status] version=2 @2026-11-11T21:30:32（修复 commit 21:30:31 落地后即时补登）。"
+    },
+    {
+      "item": 1, "title": "六项清单 item1：变更文件与 lane paths 一致无越界", "disposition": "PASS（复核成立）",
+      "evidence": "git diff --name-status 0512f6b74..HEAD 恰好 5 文件（M docs/playbooks/parallel-lane-development.md；A src/llm_loop/tools/mechanical_diff.py；M src/llm_loop/tools/review_host_admission.py；A tests/unit/test_mechanical_diff.py；M tests/unit/test_review_host_admission.py），与 lane paths v2 逐一相等；git status --porcelain 为空（worktree 干净）；HEAD 全 sha c635762a651733bf159946243ec0592d9bca269f 与委派一致，区间 4 commits。"
+    }
+  ],
+  "spot_checks": [
+    {
+      "id": 1, "target": "item2 资格判定零语义变化（未被新 commit 破坏）",
+      "evidence": "c635762a6 对 review_host_admission.py 仅 1 hunk 且全部落在 compose 预检注入路径（grep -c ^@@ == 1）；_Frozen.head_commit bookkeeping、_same_admission、_cached_pass、_consume 均未再触碰。"
+    },
+    {
+      "id": 2, "target": "item3 机械判据 fail-closed（未被新 commit 破坏）",
+      "evidence": "mechanical_diff.py 全文复读（L1-307）：判定逻辑（_future_annotations_active/_known_names/_annotation_eagerly_safe/_classify，L117-205）与 R1 已验证版本同构，c635762a6 仅改 docstring 限定与 _blob try 重排；行为锚＝16 例单测全绿（含 eager 应拦 4 例）+ 本审查 decode/NUL 两个 live check 均 fail_closed 且 reason 精确。"
+    },
+    {
+      "id": 3, "target": "item4 测试覆盖（独立重跑）",
+      "evidence": "主仓 .venv 解释器、worktree @c635762a6517 独立实跑：tests/unit/test_mechanical_diff.py → 16 passed in 1.91s；tests/unit/test_review_host_admission.py -k mechanical_preflight → 2 passed, 271 deselected in 0.96s（均 -p no:cacheprovider 保持树干净）。"
+    },
+    {
+      "id": 4, "target": "item6 无夹带（未被新 commit 破坏）",
+      "evidence": "c635762a6 仅触碰 3 文件（playbook/mechanical_diff/review_host_admission），全在 lane paths 内；无 CI/gate/白名单/回执/无关模块搭车；累积 diff 仍为声明的 5 文件，worktree 干净。"
+    }
+  ],
+  "live_checks": {
+    "decode_error_branch": "合成仓库非 UTF-8 blob → reason=fail_closed:decode_error:m.py，宿主段 NOT MECHANICAL 同 reason（P2-2 验收句「decode_error 分支有效」实测成立）",
+    "nul_boundary": "NUL 源 → fail_closed:syntax_error:m.py（SyntaxError 被 L284 捕获，无逃逸）"
+  },
+  "observations_non_blocking": [
+    "strip_annotations docstring（mechanical_diff.py L80）括注「新增/收窄/删除注解均不影响运行时语义」仍为无限定表述——R1 范围外且本次未触碰；模块级 docstring L10-15 与 _classify docstring L185-189 已带限定，误导面小，备查不阻塞",
+    "decode_error 分支暂无钉死回归测试（test_mechanical_diff.py 16 例不含非 UTF-8 用例）；本次审查已以 live check 补证，建议后续加 1 例",
+    "review_gate 9fa4d3c0 与 full_test job-a1b564f3fcff48a89c52 未在仓内检索到落盘原文，按委派上下文记录；本审查已独立覆盖定向测试面（16+2 全绿）与两个 live check"
+  ],
+  "p0": [],
+  "p1": [],
+  "p2": [],
+  "verdict_line": "VERDICT: PASS (P0=0 P1=0 P2=0；3 项非阻塞备查)",
+  "next_action": "R1 五项 findings 全部 ACCEPTED、已 PASS 项未被破坏——可并入 main（ff 优先），合并后按 RULE-AI-34 记录 main_sha_after 与分支处置。"
+}
