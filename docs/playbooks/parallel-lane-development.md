@@ -1,6 +1,6 @@
 # PLAYBOOK | 并行 lane 开发运行手册（M1 实测提炼）
 
-- 依据: docs/REPORT-20261111-parallel-lane-development-m1.md §3（11 项全实测）+ GOAL-20261111-3cb818eb 三线合入
+- 依据: docs/REPORT-20261111-parallel-lane-development-m1.md §3（11 项全实测）+ GOAL-20261111-3cb818eb 三线合入 + EXPERIENCE-20261109（未提交 dirty 树门禁假绿，见 §4 末条）
 - 适用: 同仓多 lane 并行开发（主会话调度 + 子代理执行体），含开发、验证、审查、合并全链路
 - 性质: 流程纪律沉淀；机制类改进（门禁增量、机械修复快速通道）走演进提案，见 §5
 
@@ -21,9 +21,10 @@
 
 ## 3. 终审时序：排队首再派发（建议①落地）
 
-- merge-review 在 **lane 成为队首**（lane_queue_status 无前序待合并项）时才派发，终审锚点以 **lane_queue_submit 入队 preflight 的 main_head** 为准，不以审查者读到的即时值为准。
+- merge-review 在 **lane 确认队首**（lane_queue_status 无前序待合并项）时才派发，终审锚点以 **verify 凭证的 base-sha**（签发时 issue_verify_receipt 显式传入的当前 main）为准，不以审查者读到的即时值为准。
 - 实测依据（§3#8）: 两次 base 卫生竞态窗口——终审者在 main 前进窗口内读到旧值误判"未前进"；排队首再派发同时消掉竞态与重复终审两类成本。
-- 操作序: 全量门禁 PASS → 入队（取 preflight main_head）→ 成为队首 → 派 merge-review → verify 凭证 → confirm/ff/done。门禁可提前并行跑，终审不提前。
+- 操作序: 全量门禁 PASS → 确认队首 → 派 merge-review → PASS 后签发 verify 凭证 → **立即**带凭证 lane_queue_submit → confirm/ff/done。门禁可提前并行跑，终审不提前。
+  - 顺序约束来自机检而非偏好: submit 的机检 d 要求**提交时已持**本 lane 专属、pass、TTL 内、base 匹配的 verify 凭证，而凭证只能 merge-review PASS 后由 issue_verify_receipt 签发——先入队再终审的字面顺序会烧掉一条不可逆 failed 队列项。签发与 submit 之间不插入其它动作，竞态窗口压到最小（机检 a 在 submit 时复核 base==当前 main）。
 
 ## 4. 提交姿势与查询失效
 

@@ -1,0 +1,39 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_3c19bc363cbc",
+  "verdict": "REVISE",
+  "goal_id": "GOAL-20261111-d72baf37",
+  "branch": "docs/playbook-parallel-lane-20261111",
+  "based_on_main": true,
+  "commits": [
+    "3516131a8020d852ba153124507380e822431a71"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [],
+  "main_sha_at_review": "7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693",
+  "main_sha_after": "PENDING-合并后回填（REVISE：未批准合并）",
+  "branch_disposition": "PENDING-合并后回填（REVISE：分支保留待修订，修订后走窄复审）",
+  "verify_receipt_id": "不签发（REVISE 非真实 PASS，禁止预签；PASS 复审通过后按 SKILL 签发，预期 id=lane-f3610b93:7a496abe3）",
+  "checks": {
+    "goal_and_lane": "get_goal GOAL-20261111-d72baf37 active（①②=本分支，③④=EVO 与本次无关）；data/audit/lanes.jsonl 实核 lane-f3610b93：branch/worktree/goal_id/base_main_sha=7a496abe3==当前 main/paths 吻合/status=active；merge_queue.jsonl 无记录（未入队）",
+    "worktree_clean": "git status --porcelain（.worktrees/docs-playbook-20261111）为空",
+    "commit_list": "git log --oneline main..HEAD 仅 3516131a8 一条，与声明一致",
+    "merge_base": "git merge-base main HEAD == git rev-parse main == 7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693，无需 rebase",
+    "diff_scope": "git diff --name-status main..HEAD 仅 A docs/playbooks/parallel-lane-development.md（+39/-0）",
+    "ci_gate_docs_item": "直读 scripts/ci_gate.sh 267 行：五步=ruff/测试环境声明/pyright/tier0/pytest 全量，无 docs 检查项；doc-only 无受影响可执行 gate；全量义务归 RULE-AI-28 代码闸，doc-only 不触发",
+    "ff_possible": "git merge-base --is-ancestor main HEAD exit=0；分支 tip == worktree HEAD；main 工作区在 main@7a496abe3",
+    "content_anchoring": {
+      "anchored_pass": "§1←报告§3#5/#11+§1；§2←§3#6+§4建议②（_atomic_write/u5_child/白名单外后果面逐字对上）；§3 派发原则←§3#8 对策原文；§4←§3#9/#10/#6；§5←§4.3/4.4+Goal 记录 EVO-20261111-c273f61c/8c5b88df；L9←EXPERIENCE-20261106 feedback 原文；L32 假绿句←EXPERIENCE-20261109（verified，真实非虚构，L3 依据行未标注出处）",
+      "revise_finding": "手册 §3 L26 操作序（入队→队首→派 merge-review→verify→confirm）与现行机检冲突：merge_queue.py check_verify_covers_base（L291-360）要求 submit 时携带本 lane 专属、pass、TTL 内、base 匹配的 verify 凭证，而凭证只能 merge-review PASS 后由 issue_verify_receipt 签发（EVO-20261106-7782d438，verify_layer_status L258-288）；tools_merge_queue.py 工具描述明示『先 PASS 签发再带凭证 submit；无凭证重试只会再消耗一条不可逆的 failed 队列项』；run_preflight 任一不过→failed 终态（L617-622）。按字面顺序 submit 必烧 failed 队列项。修订：改为『队首→merge-review→签发 verify→立即 submit』，或注明需演进调整机检 d 时序后方可按字面执行"
+    }
+  },
+  "notes": [
+    "verdict=REVISE 唯一阻断项：L26 操作序与 lane_queue_submit 机检 d 前置链冲突；其余清单项全过（树干净/单提交无夹带/基于当前 main/ff 可行/doc-only 无受影响 gate）。",
+    "非阻断建议：L3 依据行补注 L32 出处 EXPERIENCE-20261109。",
+    "本回执为合并前审查：审查者未动 main、未执行合并、未修改分支内容；除本回执外未写任何文件。",
+    "落盘说明：审查子会话写侧白名单为空（主仓根/receipts//tmp/worktree/.tmp-ci 五处探测均被拒），本 JSON 由审查者定稿、父会话代为落盘，内容与审查报告一致。",
+    "审查者独立性：未参与该分支任何产出，全部事实只读独立取证。",
+    "父会话落盘注记（2026-11-11T19:28+0800）：①reviewer 字段由审查者草稿的 'merge-review-gate-subagent-r35' 更正为真实 child_id subagent_3c19bc363cbc；②落盘位置为分支 worktree docs/governance/receipts/（main 直写受他人 live lane 门限制），回执随分支合并进 main；其余字段与审查者定稿一致。"
+  ]
+}
