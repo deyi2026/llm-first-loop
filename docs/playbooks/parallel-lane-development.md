@@ -38,7 +38,7 @@
 
 1. **门禁增量/降级重验通道（已落地）**: rebase 为零冲突纯 replay 且 paths 与前进提交不相交时，原 base 的 verify 凭证可 **carryover** 到新 base，免除全量套件重跑。
    - **机械判据**（全部机检、fail-closed，任一判不了即走原全量通道）:
-     a. 纯 replay——rebase 前后 lane 提交序列的 `git patch-id --stable` 序列逐位相等（任何冲突解决、内容微调、新增提交都会破坏序列）;
+     a. 纯 replay——rebase 前后 lane 提交序列的 `git patch-id --verbatim`（位级严格：空白参与 hash，Python 缩进即语义）序列逐位相等（任何冲突解决、内容微调、空白变化、新增提交都会破坏序列）;
      b. 路径不相交——base 前进段（old_base..new_base）触碰路径与 lane 在新 base 上的改动路径（new_base..new_head）无交集;
      c. lane 提交序列非空。
    - **闸在签发侧，读侧零放宽**: `check_verify_covers_base` / 机检 d 语义不变。carryover 由 `issue_verify_receipt` 的 `carryover_of` 参数签发，签发时**内部强制复跑**上述判据（不接受调用方自述），源凭证必须同 lane、pass、TTL 内，判据不过直接抛错。CLI: `scripts/issue_verify_receipt.py --carryover-from <旧凭证id> --old-base <旧base> --old-head <旧head> --repo <repo> --apply`。

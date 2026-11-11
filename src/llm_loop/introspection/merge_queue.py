@@ -393,7 +393,7 @@ def load_receipts(path: Path) -> dict[str, dict]:
 
 
 def _patch_id_series(repo: Path, base: str, head: str) -> list[str] | None:
-    """``base..head`` 逐提交 patch-id 序列（git patch-id --stable）。
+    """``base..head`` 逐提交 patch-id 序列（git patch-id --verbatim，位级严格）。
 
     返回 ``None`` 表示判不了（git 失败 / ref 不可解析 / git 版本不支持
     ``--verbatim``）——调用方按 fail-closed 处理，绝不把"读不出来"当成
