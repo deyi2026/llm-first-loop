@@ -110,9 +110,9 @@ _SAFE_ANN_NODES = (
 )
 
 
-def _future_annotations_active(tree: ast.AST) -> bool:
+def _future_annotations_active(module: ast.Module) -> bool:
     """模块级 ``from __future__ import annotations`` ⇒ 所有注解惰性化为字符串。"""
-    for node in tree.body:
+    for node in module.body:
         if (
             isinstance(node, ast.ImportFrom)
             and node.module == "__future__"
