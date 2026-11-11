@@ -345,3 +345,36 @@ class TestCarryoverSourceBinding:
                 old_base=replay_repo["old_base"],
                 old_head=replay_repo["new_base"],  # 伪造 old_head
             )
+
+
+class TestWhitespaceVerbatim:
+    """审查 P1（2026-11-11 第三轮）：裸 patch-id 忽略空白，Python 缩进即语义。"""
+
+    def test_whitespace_only_change_is_not_replay(self, replay_repo):
+        """rebase 后缩进变化（语义变化）必须判非 replay（--verbatim 应拦实测）。"""
+        repo = replay_repo["repo"]
+        _git(repo, "checkout", "lane")
+        (repo / "lane_file.txt").write_text("lane change\n\tindented tail\n", encoding="utf-8")
+        _git(repo, "commit", "-am", "whitespace change")
+        ws_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        r = assess_rebase_replay(
+            repo,
+            old_base=replay_repo["old_base"],
+            old_head=replay_repo["old_head"],
+            new_base=replay_repo["new_base"],
+            new_head=ws_head,
+        )
+        assert r["eligible"] is False
+        assert r["patch_ids_match"] is False
+
+    def test_empty_head_fail_closed(self, replay_repo):
+        """空 rev 前置校验：new_head 空串不得把范围解析成 HEAD。"""
+        r = assess_rebase_replay(
+            replay_repo["repo"],
+            old_base=replay_repo["old_base"],
+            old_head=replay_repo["old_head"],
+            new_base=replay_repo["new_base"],
+            new_head="",
+        )
+        assert r["eligible"] is False
+        assert "fail_closed" in r["reason"]

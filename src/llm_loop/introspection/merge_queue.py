@@ -395,10 +395,19 @@ def load_receipts(path: Path) -> dict[str, dict]:
 def _patch_id_series(repo: Path, base: str, head: str) -> list[str] | None:
     """``base..head`` 逐提交 patch-id 序列（git patch-id --stable）。
 
-    返回 ``None`` 表示判不了（git 失败 / ref 不可解析）——调用方按 fail-closed
-    处理，绝不把"读不出来"当成"相等"。空 diff 提交（rebase 后内容为空）无
-    patch-id，跳过：无内容即无语义变化。
+    返回 ``None`` 表示判不了（git 失败 / ref 不可解析 / git 版本不支持
+    ``--verbatim``）——调用方按 fail-closed 处理，绝不把"读不出来"当成
+    "相等"。空 diff 提交（rebase 后内容为空）无 patch-id，跳过：无内容即无
+    语义变化。
+
+    ``--verbatim``（审查 P1，2026-11-11）：裸 ``git patch-id`` 忽略空白
+    差异——而 Python 缩进即语义，空白级变化必须判非 replay。``--verbatim``
+    保留空白原样参与 hash（与 --stable/--unstable 互斥，单用即位级严格）；
+    git < 2.32 不支持该开关 ⇒ patch-id 报错 ⇒ 本函数返回 None ⇒
+    fail-closed 走原全量通道。
     """
+    if not base or not head:
+        return None  # 空 rev 会让 base.. 解析为 HEAD——误导性范围，直接判不了
     revs = subprocess.run(
         ["git", "-C", str(repo), "rev-list", "--reverse", "--no-merges", f"{base}..{head}"],
         capture_output=True, text=True, check=False,
@@ -414,7 +423,7 @@ def _patch_id_series(repo: Path, base: str, head: str) -> list[str] | None:
         if show.returncode != 0:
             return None
         pid = subprocess.run(
-            ["git", "-C", str(repo), "patch-id", "--stable"],
+            ["git", "-C", str(repo), "patch-id", "--verbatim"],
             input=show.stdout, capture_output=True, text=True, check=False,
         )
         if pid.returncode != 0:
