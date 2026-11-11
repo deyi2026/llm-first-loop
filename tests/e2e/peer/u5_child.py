@@ -1,6 +1,6 @@
 """U5 子进程：经监督通道执行一次非幂等 fs.write，在副作用落盘后卡住，等父进程 kill -9。
 
-``Executor._atomic_write`` 先真实写入并 ``os.replace``，再 sleep——这精确模拟
+``Executor._atomic_write`` 先真实写入并原子发布（link/replace），再 sleep——这精确模拟
 「副作用已经发生、回执尚未落盘」的崩溃窗口。父进程看到目标文件后立即 SIGKILL。
 """
 
@@ -28,8 +28,8 @@ def main() -> int:
     root = Path(write_root)
     original = Executor._atomic_write
 
-    def write_then_hang(target_path: str, payload: bytes) -> None:
-        original(target_path, payload)
+    def write_then_hang(target_path: str, payload: bytes, *, replace_existing: bool) -> None:
+        original(target_path, payload, replace_existing=replace_existing)
         time.sleep(120)
 
     Executor._atomic_write = staticmethod(write_then_hang)
