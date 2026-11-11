@@ -1,0 +1,26 @@
+{
+  "gate": "merge",
+  "reviewer": "merge-review-gate/subagent_c4f241165d56",
+  "verdict": "PASS",
+  "goal_id": "lane-3e9d1b73（未绑定 durable Goal，按 lane 记账）",
+  "branch": "fix/github-ci-followup-20261111",
+  "based_on_main": true,
+  "commits": ["91d15c230 fix(ci): restore tool PATH and remove observed concurrency races"],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "RULE-AI-28 full_test: PASS (candidate_sha256=69b7af30475ec79aa1160441860346a0d97cd4c38d03ffbecd769f9df12af1f4, 7 路径切片, child subagent_20e1d308449e)",
+    "scripts/ci_gate.sh 全量门禁: exit=0 (job-b511d86a885e40809576; ruff/pyright changed_file_diagnostics=0; tier0 3p2s; serial 1p)",
+    "focused gate 未由审查者独立重跑（任务书标注可选；由上述两项覆盖，缺口已披露）"
+  ],
+  "main_sha_after": null,
+  "branch_disposition": "kept:pending merge+push 授权；ff 合并后按分支卫生契约处置",
+  "verify_receipt_id": "lane-3e9d1b73:b054a3d2",
+  "integrity": "ok",
+  "notes": [
+    "diff 实际 7 文件 +126/-22；提交信息自称 +106/-22 不符（措辞瑕疵，不影响产物指纹）",
+    "PATH 契约修复落在 scripts/ci_gate.sh + tests/unit/test_ci_gate_conclusion_line.py 回归断言",
+    "首轮审查 subagent_23e4867a48cb 因证据跨会话不可读判 BLOCK；已将两条证据导出为工作区文件后由 subagent_c4f241165d56 复审 PASS",
+    "审查者引用的 candidate_sha256 短写 6d3768c… 与回执原文不符，本文件以 review_admission 返回原文 69b7af30… 为准"
+  ]
+}

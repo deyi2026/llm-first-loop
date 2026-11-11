@@ -1,0 +1,32 @@
+{
+  "note": "父会话 ccfcc676 导出：RULE-AI-28 代码全量测试前置审查的 Host 回执原文（review_admission action=status child_id=subagent_20e1d308449e 的返回 JSON 原样抄录），供独立审查者只读核验。",
+  "exported_by": "ccfcc676",
+  "exported_at": "2026-11-11T08:50+08:00",
+  "review_admission_status": {
+    "artifact_reviewed": true,
+    "candidate_sha256": "69b7af30475ec79aa1160441860346a0d97cd4c38d03ffbecd769f9df12af1f4",
+    "consumable_scope": {
+      "authorizes": "整树执行面（pytest / git push 的物理对象是整棵树）",
+      "kind": "full_test",
+      "material_tiers": {
+        "bound_unreviewed": "切片外 tracked=0 untracked=0，内容未下发、只绑内容摘要，仅允许存在性核对",
+        "reviewed_slice": "7 条声明路径，内容随材料下发，逐条判定"
+      },
+      "not_covered": "切片之外只绑定未审；签发后改动即失效",
+      "paths": [
+        "scripts/ci_gate.sh",
+        "src/llm_loop/tools/escalation.py",
+        "tests/conftest.py",
+        "tests/phase4/test_m2_inflight_interrupt.py",
+        "tests/unit/test_ci_gate_conclusion_line.py",
+        "tests/unit/test_escalation.py",
+        "tests/unit/test_terminal_pty.py"
+      ],
+      "revalidated_on_use": "切片外 tracked（含新提交）与未跟踪文件的内容摘要",
+      "scope": "patch"
+    },
+    "qualification": "PASS"
+  },
+  "target": "full_test:worktree=github-ci-followup-20261111:command=bash scripts/ci_gate.sh",
+  "how_to_verify": "以上字段与父会话 review_admission(action=status, child_id=subagent_20e1d308449e) 的返回逐字一致；审查者如需二次确认，可要求父会话现场重取并对照 candidate_sha256。"
+}
