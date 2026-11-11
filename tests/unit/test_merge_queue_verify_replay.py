@@ -311,3 +311,37 @@ class TestCliCarryoverSmoke:
             "--receipts-path", str(receipts), "--apply",
         )
         assert bad.returncode != 0
+
+
+class TestCarryoverSourceBinding:
+    """P1（2026-11-11 审查）：源凭证必须绑定到被评估的 commit 范围。"""
+
+    def test_carryover_refused_when_source_base_mismatches(self, tmp_path, replay_repo):
+        """源凭证 base 与 old_base 不符（凭证不覆盖被评估范围）⇒ 拒绝。"""
+        path, rid = _seed_old_receipt(tmp_path, replay_repo)
+        with pytest.raises(ValueError, match="base_sha 与 old_base 不符"):
+            issue_verify_receipt(
+                path,
+                lane_id="lane-x",
+                base_sha=replay_repo["new_base"],
+                head_sha=replay_repo["new_head"],
+                carryover_of=rid,
+                repo_path=replay_repo["repo"],
+                old_base=replay_repo["new_base"],  # 伪造：评估范围不是源凭证覆盖的范围
+                old_head=replay_repo["old_head"],
+            )
+
+    def test_carryover_refused_when_source_head_mismatches(self, tmp_path, replay_repo):
+        """源凭证记录了 head 时必须与 old_head 一致 ⇒ 拒绝不符。"""
+        path, rid = _seed_old_receipt(tmp_path, replay_repo)
+        with pytest.raises(ValueError, match="head_sha 与 old_head 不符"):
+            issue_verify_receipt(
+                path,
+                lane_id="lane-x",
+                base_sha=replay_repo["new_base"],
+                head_sha=replay_repo["new_head"],
+                carryover_of=rid,
+                repo_path=replay_repo["repo"],
+                old_base=replay_repo["old_base"],
+                old_head=replay_repo["new_base"],  # 伪造 old_head
+            )

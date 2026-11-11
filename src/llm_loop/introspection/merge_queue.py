@@ -574,6 +574,21 @@ def issue_verify_receipt(
             raise ValueError(f"carryover 源凭证不存在或不属于该 lane: {carryover_of}")
         if str(src.get("result") or "").strip().lower() != "pass":
             raise ValueError(f"carryover 源凭证不是 pass: {carryover_of}")
+        # 源凭证必须绑定到被评估的 commit 范围（P1，2026-11-11 审查）:
+        # base 必须精确等于 old_base；head_sha 在源凭证有记录时也必须等于
+        # old_head——否则"carryover"可以指向同 lane 针对完全不同范围的旧
+        # pass，replay 判据评估的却不是那张凭证覆盖的内容。
+        if str(src.get("base_sha") or "") != str(old_base):
+            raise ValueError(
+                f"carryover 源凭证 base_sha 与 old_base 不符: "
+                f"{src.get('base_sha')} != {old_base}（凭证不覆盖被评估范围）"
+            )
+        src_head = str(src.get("head_sha") or "")
+        if src_head and src_head != str(old_head):
+            raise ValueError(
+                f"carryover 源凭证 head_sha 与 old_head 不符: "
+                f"{src_head} != {old_head}（凭证不覆盖被评估范围）"
+            )
         created = _parse_iso(src.get("created_at"))
         src_ttl = src.get("ttl_s")
         if created is None or not src_ttl:
