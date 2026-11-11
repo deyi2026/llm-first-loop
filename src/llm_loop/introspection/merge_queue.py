@@ -491,6 +491,29 @@ def assess_rebase_replay(
             "base_advance_paths": adv or [],
             "lane_paths": lane_paths or [],
         }
+    # merge 提交对 patch-id 序列不可见（--no-merges 只 hash 非merge提交）：
+    # 范围内含 merge ⇒ 其 resolution 变化逃过判据，整段判不了（R5 审查 P2）。
+    for label, base, head in (("old", old_base, old_head), ("new", new_base, new_head)):
+        merges = subprocess.run(
+            ["git", "-C", str(repo), "rev-list", "--merges", f"{base}..{head}"],
+            capture_output=True, text=True, check=False,
+        )
+        if merges.returncode != 0 or merges.stdout.strip():
+            return {
+                "eligible": False,
+                "reason": (
+                    f"fail_closed:merge_unverifiable:{label}"
+                    if merges.returncode == 0
+                    else f"fail_closed:merge_check_failed:{label}"
+                ),
+                "patch_ids_match": old_ids == new_ids,
+                "paths_disjoint": None if merges.returncode != 0 else not (
+                    set(adv) & set(lane_paths)
+                ),
+                "commit_count": len(new_ids),
+                "base_advance_paths": adv,
+                "lane_paths": lane_paths,
+            }
     patch_ids_match = old_ids == new_ids
     overlap = sorted(set(adv) & set(lane_paths))
     paths_disjoint = not overlap
@@ -592,8 +615,15 @@ def issue_verify_receipt(
                 f"carryover 源凭证 base_sha 与 old_base 不符: "
                 f"{src.get('base_sha')} != {old_base}（凭证不覆盖被评估范围）"
             )
+        # 源 head_sha 缺失即拒（R5 审查 P1）：空值静默跳过绑定会让旧格式
+        # 凭证（无 head 记录）携带未知范围——有效性不可判定按未通过处理，
+        # 与 ttl_s 缺失的 D3/F8 口径一致。
         src_head = str(src.get("head_sha") or "")
-        if src_head and src_head != str(old_head):
+        if not src_head:
+            raise ValueError(
+                f"carryover 源凭证 head_sha 缺失（范围不可判定，fail-closed）: {carryover_of}"
+            )
+        if src_head != str(old_head):
             raise ValueError(
                 f"carryover 源凭证 head_sha 与 old_head 不符: "
                 f"{src_head} != {old_head}（凭证不覆盖被评估范围）"

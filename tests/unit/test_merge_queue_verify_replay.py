@@ -351,11 +351,15 @@ class TestWhitespaceVerbatim:
     """审查 P1（2026-11-11 第三轮）：裸 patch-id 忽略空白，Python 缩进即语义。"""
 
     def test_whitespace_only_change_is_not_replay(self, replay_repo):
-        """rebase 后缩进变化（语义变化）必须判非 replay（--verbatim 应拦实测）。"""
+        """纯空白变化（R5 审查 P2：无新文本）必须判非 replay。
+
+        行尾空格差异：裸 git patch-id（忽略空白）认为 patch 相同，
+        --verbatim 判不同——这是 --verbatim 生效与否的判别性测试。
+        """
         repo = replay_repo["repo"]
         _git(repo, "checkout", "lane")
-        (repo / "lane_file.txt").write_text("lane change\n\tindented tail\n", encoding="utf-8")
-        _git(repo, "commit", "-am", "whitespace change")
+        (repo / "lane_file.txt").write_text("lane change \n", encoding="utf-8")
+        _git(repo, "commit", "-am", "whitespace only")
         ws_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
         r = assess_rebase_replay(
             repo,
@@ -378,3 +382,27 @@ class TestWhitespaceVerbatim:
         )
         assert r["eligible"] is False
         assert "fail_closed" in r["reason"]
+
+
+class TestCarryoverSourceHeadRequired:
+    """R5 审查 P1：源凭证 head_sha 缺失即拒（不留静默跳过窗口）。"""
+
+    def test_carryover_refused_when_source_head_missing(self, tmp_path, replay_repo):
+        rr = replay_repo
+        path = tmp_path / "receipts.jsonl"
+        row = issue_verify_receipt(
+            path, lane_id="lane-x", base_sha=rr["old_base"],
+            # head_sha 留空（旧格式凭证）
+            reviewer="merge-review",
+        )
+        with pytest.raises(ValueError, match="head_sha 缺失"):
+            issue_verify_receipt(
+                path,
+                lane_id="lane-x",
+                base_sha=rr["new_base"],
+                head_sha=rr["new_head"],
+                carryover_of=row["receipt_id"],
+                repo_path=rr["repo"],
+                old_base=rr["old_base"],
+                old_head=rr["old_head"],
+            )
