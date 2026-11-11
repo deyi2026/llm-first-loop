@@ -27,7 +27,25 @@ def main() -> int:
     ap.add_argument("--ttl-s", type=int, default=86400)
     ap.add_argument("--receipts-path", default="data/audit/verify_receipts.jsonl")
     ap.add_argument("--apply", action="store_true", help="真正追加（默认干跑只打印）")
+    ap.add_argument(
+        "--carryover-from",
+        default="",
+        help="EVO-20261111-c273f61c：replay 型 rebase 降级重验。指向同 lane 原 base 的 pass 凭证 id",
+    )
+    ap.add_argument("--old-base", default="", help="carryover 用：rebase 前的 base sha")
+    ap.add_argument("--old-head", default="", help="carryover 用：rebase 前的 lane head sha")
+    ap.add_argument("--repo", default=".", help="carryover 用：git 仓路径（判据机检复跑）")
     args = ap.parse_args()
+
+    carry = {
+        "carryover_of": args.carryover_from,
+        "repo_path": args.repo if args.carryover_from else "",
+        "old_base": args.old_base,
+        "old_head": args.old_head,
+    }
+    if args.carryover_from and (not args.old_base or not args.old_head):
+        print("carryover 需要 --old-base/--old-head（fail-closed：判据必须机检复跑）", file=sys.stderr)
+        return 2
 
     if args.apply:
         row = issue_verify_receipt(
@@ -39,8 +57,11 @@ def main() -> int:
             evidence=args.evidence,
             reviewer=args.reviewer,
             ttl_s=args.ttl_s,
+            **carry,
         )
         print(f"ISSUED {row['receipt_id']} -> {args.receipts_path}")
+        if row.get("carryover_of"):
+            print(f"CARRYOVER of {row['carryover_of']} (EVO-20261111-c273f61c)")
         return 0
     print(
         "[dry-run] would append:",

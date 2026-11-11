@@ -34,9 +34,16 @@
 
 ## 5. 机制类改进（未批准前不降级）
 
-以下两项为演进提案通道，现行纪律不变（rebase 后全量重验、任何树变更整轮重审）:
+以下两项演进已获人工批准（EVO-20261111-c273f61c / EVO-20261111-8c5b88df，2026-11-11 19:40 web 面板）。第 1 项已落地（本节操作序），第 2 项落地到审查闸侧（见其自身文档）:
 
-1. **门禁增量/降级重验通道**: rebase 为零冲突纯 replay 且 paths 与前进提交不相交时，全量重验成本（实测 3×10min）高于增量风险——降级通道需机械判据 + fail-closed（见 EVO 提案，人工审阅中）。
+1. **门禁增量/降级重验通道（已落地）**: rebase 为零冲突纯 replay 且 paths 与前进提交不相交时，原 base 的 verify 凭证可 **carryover** 到新 base，免除全量套件重跑。
+   - **机械判据**（全部机检、fail-closed，任一判不了即走原全量通道）:
+     a. 纯 replay——rebase 前后 lane 提交序列的 `git patch-id --stable` 序列逐位相等（任何冲突解决、内容微调、新增提交都会破坏序列）;
+     b. 路径不相交——base 前进段（old_base..new_base）触碰路径与 lane 在新 base 上的改动路径（new_base..new_head）无交集;
+     c. lane 提交序列非空。
+   - **闸在签发侧，读侧零放宽**: `check_verify_covers_base` / 机检 d 语义不变。carryover 由 `issue_verify_receipt` 的 `carryover_of` 参数签发，签发时**内部强制复跑**上述判据（不接受调用方自述），源凭证必须同 lane、pass、TTL 内，判据不过直接抛错。CLI: `scripts/issue_verify_receipt.py --carryover-from <旧凭证id> --old-base <旧base> --old-head <旧head> --repo <repo> --apply`。
+   - **降级范围**: 仅免除全量套件重跑。merge-review 终审不豁免（RULE-AI-34 硬闸照走；纯 replay 下 lane diff 未变，终审通常很快）。机检 a（base==当前 main）在 submit 时照常复核。
+   - **测试**: `tests/unit/test_merge_queue_verify_replay.py`——replay/非replay/路径相交/坏 ref/过期源/CLI 应拦全分支。
 2. **机械修复快速通道（已落地，EVO-20261111-8c5b88df）**: 切片内机械修复（仅注解/纯格式，无语义/控制流/签名变化）触发轻量复审而非全新审查轮。
    - **机械判据**（`src/llm_loop/tools/mechanical_diff.py`，全部机检、fail-closed）: 触碰文件全为 `.py` 且解析成功; 每文件判为 `format_only`（AST 完全相等）或 `annotation_only`（注解消除归一后 AST 相等，且过急切求值安全闸: 有 `from __future__ import annotations` 或新注解为不可执行结构且裸名为内建/旧代码已知名字——无 future import 时注解在 import/def 时急切求值，"注解无运行时语义"不是无条件成立的）; 非 .py、语法错误、越出切片、任何语义变化、急切求值风险（`eager_annotation_risk`）⇒ not mechanical，按全新变更整轮重审。
    - **接入点**: `review_admission.start(previous_child_id=...)` 续审时，宿主自动用两轮冻结 HEAD 做 git diff 预检，结论（MECHANICAL/NOT MECHANICAL + 逐文件类别）注入任务书; 预检是**信息注入**，不改变任何资格判定——判不了按 NOT MECHANICAL 披露。

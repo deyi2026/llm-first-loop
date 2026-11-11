@@ -392,6 +392,126 @@ def load_receipts(path: Path) -> dict[str, dict]:
     return out
 
 
+def _patch_id_series(repo: Path, base: str, head: str) -> list[str] | None:
+    """``base..head`` 逐提交 patch-id 序列（git patch-id --stable）。
+
+    返回 ``None`` 表示判不了（git 失败 / ref 不可解析）——调用方按 fail-closed
+    处理，绝不把"读不出来"当成"相等"。空 diff 提交（rebase 后内容为空）无
+    patch-id，跳过：无内容即无语义变化。
+    """
+    revs = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--reverse", "--no-merges", f"{base}..{head}"],
+        capture_output=True, text=True, check=False,
+    )
+    if revs.returncode != 0:
+        return None
+    series: list[str] = []
+    for sha in revs.stdout.split():
+        show = subprocess.run(
+            ["git", "-C", str(repo), "show", "--pretty=format:", "--no-color", sha],
+            capture_output=True, text=True, check=False,
+        )
+        if show.returncode != 0:
+            return None
+        pid = subprocess.run(
+            ["git", "-C", str(repo), "patch-id", "--stable"],
+            input=show.stdout, capture_output=True, text=True, check=False,
+        )
+        if pid.returncode != 0:
+            return None
+        parts = pid.stdout.split()
+        if parts:
+            series.append(parts[0])
+    return series
+
+
+def _diff_paths(repo: Path, a: str, b: str) -> list[str] | None:
+    """``a..b`` 触碰的路径清单（git diff --name-only）。判不了返回 None。"""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", a, b],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return sorted(line for line in proc.stdout.splitlines() if line.strip())
+
+
+def assess_rebase_replay(
+    repo_path: str | Path,
+    *,
+    old_base: str,
+    old_head: str,
+    new_base: str,
+    new_head: str,
+) -> dict:
+    """EVO-20261111-c273f61c：判定一次 rebase 是否为「纯 replay + 路径不相交」。
+
+    双判据（全部机检，fail-closed）：
+    1. 纯 replay —— rebase 前后 lane 提交序列的 patch-id 序列逐位相等
+       （patch-id 只看 diff 内容，位级相同才算 replay；任何冲突解决、
+       内容微调、新增提交都会改变序列）；
+    2. 路径不相交 —— base 前进段（old_base..new_base）触碰的路径与 lane
+       在新 base 上的改动路径（new_base..new_head）无交集。
+
+    两判据同时成立 ⇒ lane 的 diff 在新 base 上的语义与原验证时完全一致，
+    允许降级重验（carryover 凭证）而非全量重跑。任何一项判不了
+    （git 失败 / ref 不存在 / 空提交序列）⇒ eligible=False，走原全量通道。
+    """
+    repo = Path(repo_path)
+    old_ids = _patch_id_series(repo, old_base, old_head)
+    new_ids = _patch_id_series(repo, new_base, new_head)
+    if old_ids is None or new_ids is None:
+        return {
+            "eligible": False,
+            "reason": "fail_closed:patch_id_unavailable",
+            "patch_ids_match": None,
+            "paths_disjoint": None,
+            "commit_count": 0,
+            "base_advance_paths": [],
+            "lane_paths": [],
+        }
+    adv = _diff_paths(repo, old_base, new_base)
+    lane_paths = _diff_paths(repo, new_base, new_head)
+    if adv is None or lane_paths is None:
+        return {
+            "eligible": False,
+            "reason": "fail_closed:paths_unavailable",
+            "patch_ids_match": old_ids == new_ids,
+            "paths_disjoint": None,
+            "commit_count": len(new_ids),
+            "base_advance_paths": adv or [],
+            "lane_paths": lane_paths or [],
+        }
+    patch_ids_match = old_ids == new_ids
+    overlap = sorted(set(adv) & set(lane_paths))
+    paths_disjoint = not overlap
+    if not new_ids:
+        return {
+            "eligible": False,
+            "reason": "fail_closed:empty_lane_series",
+            "patch_ids_match": patch_ids_match,
+            "paths_disjoint": paths_disjoint,
+            "commit_count": 0,
+            "base_advance_paths": adv,
+            "lane_paths": lane_paths,
+        }
+    eligible = patch_ids_match and paths_disjoint
+    reason = ""
+    if not patch_ids_match:
+        reason = "patch_ids_differ"
+    elif not paths_disjoint:
+        reason = f"paths_overlap:{','.join(overlap)}"
+    return {
+        "eligible": eligible,
+        "reason": reason,
+        "patch_ids_match": patch_ids_match,
+        "paths_disjoint": paths_disjoint,
+        "commit_count": len(new_ids),
+        "base_advance_paths": adv,
+        "lane_paths": lane_paths,
+    }
+
+
 def issue_verify_receipt(
     receipts_path: str | Path,
     *,
@@ -403,6 +523,10 @@ def issue_verify_receipt(
     head_sha: str = "",
     reviewer: str = "",
     evidence: str = "",
+    carryover_of: str = "",
+    repo_path: str | Path = "",
+    old_base: str = "",
+    old_head: str = "",
 ) -> dict:
     """EVO-20261106-7782d438：verify 凭证签发者。
 
@@ -416,6 +540,13 @@ def issue_verify_receipt(
     旧凭证经机检 d 判 ``verify_stale`` 强制重验。append-only JSONL。
     签发面约定：merge-review-gate 审查 PASS 后调用（或 CLI
     ``scripts/issue_verify_receipt.py --apply``），凭证内容须对应真实审查。
+
+    EVO-20261111-c273f61c carryover（replay 型 rebase 降级重验）：
+    ``carryover_of`` 指向同 lane 的一张**未过期** pass 凭证（原 base），
+    签发侧**内部强制复跑** ``assess_rebase_replay``（纯 replay + 路径不相交）
+    ——判据不过直接抛 ValueError，绝不接受调用方自述的"应该没变"。
+    读侧（``check_verify_covers_base``）语义不变：carryover 只是一张
+    base=新 base 的普通凭证行，降级闸全部在签发侧。
     """
     if not lane_id or not base_sha:
         raise ValueError("issue_verify_receipt 需要 lane_id 与 base_sha（fail-closed）")
@@ -432,6 +563,48 @@ def issue_verify_receipt(
         "ttl_s": int(ttl_s),
         "evo": "EVO-20261106-7782d438",
     }
+    if carryover_of:
+        if not repo_path or not old_base or not old_head:
+            raise ValueError(
+                "carryover 签发需要 repo_path/old_base/old_head（fail-closed：判据必须机检复跑）"
+            )
+        existing = load_receipts(Path(receipts_path))
+        src = existing.get(str(carryover_of))
+        if src is None or str(src.get("lane_id") or "") != str(lane_id):
+            raise ValueError(f"carryover 源凭证不存在或不属于该 lane: {carryover_of}")
+        if str(src.get("result") or "").strip().lower() != "pass":
+            raise ValueError(f"carryover 源凭证不是 pass: {carryover_of}")
+        created = _parse_iso(src.get("created_at"))
+        src_ttl = src.get("ttl_s")
+        if created is None or not src_ttl:
+            raise ValueError("carryover 源凭证有效期不可判定（fail-closed）")
+        try:
+            expired = system_local_now() > created + timedelta(seconds=int(src_ttl))
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("carryover 源凭证 ttl 不可解析（fail-closed）") from None
+        if expired:
+            raise ValueError(f"carryover 源凭证已过期: {carryover_of}")
+        assessment = assess_rebase_replay(
+            repo_path,
+            old_base=old_base,
+            old_head=old_head,
+            new_base=str(base_sha),
+            new_head=str(head_sha or ""),
+        )
+        if not assessment.get("eligible"):
+            raise ValueError(
+                "carryover 判据未满足（拒绝签发，走原全量重验）: "
+                f"{assessment.get('reason')}"
+            )
+        row["carryover_of"] = str(carryover_of)
+        row["evo"] = "EVO-20261111-c273f61c"
+        row["replay_evidence"] = {
+            "patch_ids_match": assessment.get("patch_ids_match"),
+            "paths_disjoint": assessment.get("paths_disjoint"),
+            "commit_count": assessment.get("commit_count"),
+            "base_advance_paths": assessment.get("base_advance_paths"),
+            "lane_paths": assessment.get("lane_paths"),
+        }
     path = Path(receipts_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
