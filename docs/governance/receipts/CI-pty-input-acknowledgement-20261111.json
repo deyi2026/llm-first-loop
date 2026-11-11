@@ -70,5 +70,16 @@
   "github_before": {
     "run_id": 42950877997,
     "conclusion": "success after one full parallel retry; residual PTY cooked-mode interruption timing failure motivated this repair"
-  }
+  },
+  "branch_cleanup_trigger": "Delete merged branch and worktree after the matching remote GitHub CI completes successfully.",
+  "applied": [
+    "P2-1 lane verification and closure completed before metadata/knowledge commits; final exact-tree push review follows",
+    "P2-3 explicit matching-remote-CI cleanup trigger recorded"
+  ],
+  "deferred": [
+    {
+      "id": "P2-2",
+      "reason": "Existing main scheduling retry-budget exhaustion branch needs a follow-up regression; outside this pure PTY test delta. Not a P0/P1 finding."
+    }
+  ]
 }
