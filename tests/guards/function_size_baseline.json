@@ -1019,6 +1019,15 @@
         "rationale": "worktree registry 为可覆盖状态并带 guard audit。",
         "status": "observe",
         "tier": "T2"
+      },
+      "peer_nonce_replay_window": {
+        "owner": "peer",
+        "paths": [
+          "src/llm_loop/peer/auth.py"
+        ],
+        "rationale": "nonce 防重放窗口是跨重启必须保留的安全状态（丢了即重开重放窗口，E 断言所指缺陷回归）。本 lane 改造为节点+代际+时间窗分桶持久化：每请求 append+fsync 落盘（实测约 337us/请求），窗口内结构性永不淘汰；换钥过渡双代并验。登记 observe：仅登记已核实写入面，完整合规与容量上限端到端验证见设计 §10/A15 后续。",
+        "status": "observe",
+        "tier": "T2"
       }
     },
     "write_exemptions": {
