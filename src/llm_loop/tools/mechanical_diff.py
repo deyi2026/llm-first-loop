@@ -7,8 +7,12 @@
 
 机械类别（互斥，按严格度递减）：
 - ``format_only``——AST 完全相等（仅排版/空白/括号差异，连注解都没变）；
-- ``annotation_only``——剥离全部注解子树后 AST 相等（仅类型注解差异：
-  新增注解、Any 收窄等。注解不改变 Python 运行时语义）。
+- ``annotation_only``——剥离全部注解子树后 AST 相等，且过急切求值安全闸：
+  有 ``from __future__ import annotations``（注解惰性化）或新注解全为不可
+  执行结构（Name/Attribute/Subscript/Constant/Tuple/List）且裸名为内建
+  或旧代码已知名字（防 NameError）。注意：无 future import 时注解在
+  import/def 时**急切求值**（"注解无运行时语义"不是无条件成立的——
+  2026-11-11 审查 P1），不满足安全闸判 ``eager_annotation_risk``。
 
 其余一切（控制流、字面量、签名参数、新增/删除语句、import、docstring、
 非 .py 文件）都判 not mechanical。
@@ -257,8 +261,18 @@ def assess_mechanical_fix(
             }
     per_file: dict[str, str] = {}
     for path in paths:
-        old_src = _blob(repo, old_sha, path)
-        new_src = _blob(repo, new_sha, path)
+        # blob 获取与解码也在 try 内：非 UTF-8 源抛 UnicodeDecodeError，
+        # except 分支按 fail_closed:decode_error 归因（merge-review P2-2：
+        # 解码在 try 外会让该分支变死代码、reason 退化为 preflight_error）。
+        try:
+            old_src = _blob(repo, old_sha, path)
+            new_src = _blob(repo, new_sha, path)
+        except UnicodeDecodeError:
+            return {
+                "mechanical": False, "category": "",
+                "reason": f"fail_closed:decode_error:{path}",
+                "changed_paths": paths, "per_file": {},
+            }
         if old_src is None or new_src is None:
             return {
                 "mechanical": False, "category": "",
@@ -271,12 +285,6 @@ def assess_mechanical_fix(
             return {
                 "mechanical": False, "category": "",
                 "reason": f"fail_closed:syntax_error:{path}",
-                "changed_paths": paths, "per_file": {},
-            }
-        except UnicodeDecodeError:
-            return {
-                "mechanical": False, "category": "",
-                "reason": f"fail_closed:decode_error:{path}",
                 "changed_paths": paths, "per_file": {},
             }
         if category == "semantic":

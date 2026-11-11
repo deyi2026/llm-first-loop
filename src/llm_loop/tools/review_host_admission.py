@@ -3888,14 +3888,17 @@ class HostReviewAdmission:
         if refusal is not None:
             return refusal
         narrow = _narrow_review_section(previous_row, material) if previous_row else ""
-        mech = (
-            _mechanical_preflight_section(
-                workdir, previous_row.head_commit, _head_commit_of(workdir),
-                allowed_paths=list(scope_paths) or None,
-            )
-            if previous_row is not None
-            else ""
-        )
+        mech = ""
+        if previous_row is not None:
+            # P2-3（merge-review）：_head_commit_of 在参数求值处调用会绕过
+            # 预检函数自身的 try——git 不可用等异常在此兜底，预检绝不断审查。
+            try:
+                mech = _mechanical_preflight_section(
+                    workdir, previous_row.head_commit, _head_commit_of(workdir),
+                    allowed_paths=list(scope_paths) or None,
+                )
+            except Exception:  # noqa: BLE001 —— 预检绝不因自身故障阻断审查
+                mech = ""
         return (
             _compose_review_task(kind, target, sha, material, narrow + mech),
             previous_row, coverage, out_scope, tier_counts,
