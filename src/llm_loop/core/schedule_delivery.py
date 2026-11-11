@@ -153,8 +153,13 @@ class ScheduleWakeDelivery:
             and self.workspace_root
             and os.path.realpath(entry.wake_workdir) != os.path.realpath(self.workspace_root)
         ):
-            # R7：授权时钉死工作目录；换了目录就是另一份代价函数，拒绝执行。
-            return self._degrade(entry, task_grant.degrade_reason("workdir_mismatch"))
+            # R7：授权时钉死工作目录；换了目录就是另一份代价函数，本进程不得代跑。
+            # 同区多进程时工作区会随启动参数漂移（CLI 以临时 goal worktree 启动），
+            # 抢到 claim 的未必是能兑现该目录的进程；直接降级通知会把「谁抢到
+            # claim」变成随机故障——授权被消费掉、排程静默不执行（11-10~11-11
+            # 连续三班次空跑）。改为退避让位：释放 lease、不消耗额度、不发通知，
+            # 让同区能兑现该目录的进程接管；让位预算耗尽仍无人兑现才降级通知。
+            return self._defer(entry, "workdir_not_eligible_owner")
         if standing:
             previous = str(entry.wake_child_session_id or "")
             if previous:

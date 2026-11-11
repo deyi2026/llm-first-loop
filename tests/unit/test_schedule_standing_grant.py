@@ -239,7 +239,12 @@ def test_prompt_carries_effect_id_and_no_replay_instruction(tmp_path):
     assert "不要重复执行" in prompt
 
 
-def test_workdir_mismatch_degrades_instead_of_running(tmp_path):
+def test_workdir_mismatch_defers_instead_of_running(tmp_path):
+    """本进程工作区 ≠ 钉死目录：不得代跑、不得消费授权，退避让位给能兑现的进程。
+
+    事故背景（2026-11-11）：同区 CLI 以临时 goal worktree 启动后抢到 claim，
+    直接把授权降级成通知消费掉 → 排程静默不执行（连续三个班次空跑）。
+    """
     store = ScheduleStore(tmp_path / "schedule.json")
     grant = delegate_ingress(issue_ingress("web"), entry="schedule_wake")
     store.add(
@@ -253,9 +258,13 @@ def test_workdir_mismatch_degrades_instead_of_running(tmp_path):
         new_session=lambda: "child-x", workspace_root=tmp_path.as_posix(),
     )
     entry = store.claim_due("owner")[0]
-    assert delivery(entry) is True
+    assert delivery(entry) is WAKE_DEFERRED
     assert runner.sessions == []
-    assert "工作目录与授权时不一致" in json.dumps(_inbox_files(tmp_path), ensure_ascii=False)
+    row = store.list()[0]
+    assert row["count"] == 0  # 未消耗额度
+    assert row["retry_count"] == 1  # 计入让位退避
+    assert row["lease_owner"] == ""  # 已释放 claim，让同区能兑现的进程接管
+    assert _inbox_files(tmp_path) == []  # 不发通知（不是静默消费）
 
 
 def test_consume_is_idempotent_for_same_occurrence(tmp_path):
