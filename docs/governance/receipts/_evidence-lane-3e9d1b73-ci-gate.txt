@@ -1,25 +1,17 @@
-# 全量门禁回执（父会话 ccfcc676 导出，供独立审查者只读核验）
+# Canonical R9 execution: verified summary, not the full log
+candidate_head: 91d15c23045c63fab1a117db089b770294bf88c1
+command: bash scripts/ci_gate.sh
+job_id: job-b511d86a885e40809576
+terminal: completed, exit_code=0, durable=true, killed=false
+exact_source_sha256: ed5ead14a8b899786a3382c8536a9365be0ba37440ab8f31cadf9ac81e7f2050
+Source: exact immutable job_output snapshot; summaries below preserve original text.
+Phase order: tier0; serial_signal; serial_perf; parallel suite; guard_report.
 
-## 执行事实
-- command: bash scripts/ci_gate.sh
-- workdir: <REPO>/.worktrees/github-ci-followup-20261111
-- job_id: job-b511d86a885e40809576
-- terminal: state=completed, exit=0
-- 原文来源: evidence://v1/2b05228958f45b00b5163fe19ab7d8d6050eece83bbc87b17e40dd5b72b5ff9b
-
-## 关键 stdout 原文摘录（逐字）
-[1/5] R9 ruff: historical=67, current=27, new=0, resolved=40, changed_file_diagnostics=0, changed_python_files=6
-[1/5] R9 ruff: PASS (historical debt visible; no new errors; touched files clean)
-[2/5] PASS test env-pin gate: scanned 1167 test files, 0 undeclared COMPACT_RATIO dependents
-[3/5] R9 pyright: historical=45, current=10, new=0, resolved=35, changed_file_diagnostics=0, changed_python_files=6
-[3/5] R9 pyright: PASS (historical debt visible; no new errors; touched files clean)
-[4/5] tier0 预检: 3 passed, 2 skipped, 14646 deselected, 2 warnings in 50.45s
-[5/5] serial_signal 串行补跑: 1 passed, 51 deselected in 10.03s
+R9 ruff: PASS (historical debt visible; no new errors; touched files clean)
+R9 pyright: PASS (historical debt visible; no new errors; touched files clean)
+341 passed, 2 skipped, 14308 deselected, 2 warnings in 25.31s
+7 passed, 2 skipped, 14642 deselected, 2 warnings in 4.00s
+3 passed, 2 skipped, 14646 deselected, 2 warnings in 50.45s
+14435 passed, 186 skipped, 3 xfailed, 13 warnings in 214.65s (0:03:34)
+1 passed, 51 deselected in 10.03s
 ✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）
-
-## 说明
-- 以上结论行与计数为 job_output 原文逐字摘录；并行集的逐用例汇总行位于 job_output 中段（约 60k-70k 字符区间为进度点阵），如需可再由父会话导出指定区间。
-- 审查者若要求独立证据，可按技能清单第 4 条自行跑 focused gate（7 文件相关集合），命令示例：
-  cd <REPO>/.worktrees/github-ci-followup-20261111 && .venv/bin/python -m pytest tests/unit/test_review_gate.py tests/unit/test_ci_gate_conclusion_line.py tests/unit/test_escalation.py tests/unit/test_terminal_pty.py tests/phase4/test_m2_inflight_interrupt.py -q
-- RULE-AI-28 PASS 回执见同目录 _evidence-lane-3e9d1b73-rua28-full-test.json。
-- 本地仓库绝对路径前缀已脱敏为 <REPO>（隐私闸 RULE-AI-28 第4条 / git_security_scan 规则 3）；仅替换路径前缀，结论行与计数未改。
