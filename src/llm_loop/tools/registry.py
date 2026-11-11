@@ -88,7 +88,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
     "execute_command": "独立shell；fail_fast=true 用bash -e -o pipefail，否则退出码仅代表最后命令。后台返job_id；wait等终态，job_output查输出；灾难命令硬阻断。全量测试/push前按RULE-AI-28对当前产物独立审查PASS；护栏/门槛变更按RULE-AI-35实测应拦输入才可称'已生效'。",
-    "review_admission": "Rule28 Host审核准入：action=start(kind=full_test|git_push|article_publish,workdir,command,target_name)冻结真实产物，启动独立只读 GLM-5.3 reviewer；action=status(child_id)查真实完成、核对精确SHA与P0/P1并签发一次性内存资格，正文PASS/旧回执/不同目标均不能放行；不代替用户授权。等待方式：start 回执带 waiting_protocol——审查是异步 child、没有 execute_command 的 job_id，wait(seconds<=120) 只做配速，每次到期后调 action=status 取终态（status 是唯一完成信号）。",
+    "review_admission": "Rule28 Host审核准入：action=start(kind=full_test|git_push|article_publish,workdir,command,target_name)冻结真实产物，启动独立只读 GLM-5.3 reviewer；action=status(child_id,wait_seconds=0..30)先查状态，仅仍运行时有界等待，返回最新核验结果，核对精确SHA与P0/P1后签发一次性内存资格；多个审查并行查询，pending才继续等待；普通wait返回后立即查status，不连续只等墙钟。正文PASS/旧回执/完成唤醒不能放行，不代替用户授权。",
     "service_control": "共享Web/Feishu/Learning生命周期控制：status只读（快照观察，CAS与受理复检才是权威；默认 view=targets 每服务一行约2KB，view=full 才是完整证据面约13KB，target=<服务> 可再收窄）；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（建议显式带expected_generation=最新status观察值，缺省取当前代）。generation冲突回执即当前事实：直接以回执current重试（存活owner≤一poll可过；死worker由reaper按30s/120s/2100s分档回收后可过），不等待、不询问；终态failed/等待中陈旧action的屏障由等待循环与reaper按档释放，新restart可接管（自恢复）。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
@@ -1463,8 +1463,20 @@ class ToolRegistry:
         修改类工具（写文件/执行命令/调整策略等，可能有副作用）强制串行，避免并发竞争；
         所有 toolResult 严格按传入声明顺序回写（保持模型对工具执行时序的理解，约束 C4）。
         """
-        readonly = [c for c in calls if c.name in self._READONLY_TOOLS]
-        mutating = [c for c in calls if c.name not in self._READONLY_TOOLS]
+        # Independent review status calls may wait together. Keep mixed batches
+        # and duplicate child IDs serial: start/order and one-shot grants retain
+        # their existing sequencing. The ordinary read-only surface is unchanged.
+        review_ids = [
+            str(c.arguments.get("child_id") or "") if isinstance(c.arguments, dict) else ""
+            for c in calls
+        ]
+        review_batch = bool(calls) and all(
+            c.name == "review_admission" and isinstance(c.arguments, dict)
+            and c.arguments.get("action") == "status"
+            for c in calls
+        ) and all(review_ids) and len(set(review_ids)) == len(calls)
+        readonly = [c for c in calls if review_batch or c.name in self._READONLY_TOOLS]
+        mutating = [] if review_batch else [c for c in calls if c.name not in self._READONLY_TOOLS]
         by_id: dict[str, ToolResult] = {}
 
         if readonly:

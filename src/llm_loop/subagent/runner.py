@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
@@ -39,6 +40,7 @@ from llm_loop.core.run_context import (
     current_run_generation,
     current_session_id,
     current_tool_discovery_scope,
+    current_wait_cancel_check,
     current_workspace_root,
     workspace_base,
 )
@@ -2152,6 +2154,40 @@ class SubAgentRunner:
             "worktree": worktree_lease.path if worktree_lease is not None else "",
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
+
+    def review_finished_current(
+        self, child_id: str, parent_id: str, *, wait_seconds: float = 0.0,
+    ) -> bool:
+        """Observe/wait for an owned live reviewer; completion never grants admission.
+
+        Unlike result_current this reads no durable fallback and consumes no reports.
+        Failed/cancelled reviews also wake the parent so status can explain the outcome.
+        """
+        with self._children_guard:
+            handle = self._handles.get(str(child_id))
+            if (
+                handle is None or handle.parent_id != str(parent_id)
+                or not handle.review_isolated or not handle.generation
+            ):
+                return False
+        deadline = time.monotonic() + min(30.0, max(0.0, float(wait_seconds)))
+        while not handle.done_event.is_set():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            stop = current_wait_cancel_check.get()
+            child_stop = child_cancel_event.get()
+            if (stop is not None and stop()) or (
+                child_stop is not None and getattr(child_stop, "is_set", lambda: False)()
+            ):
+                break
+            handle.done_event.wait(min(0.1, left))
+        with self._children_guard:
+            return bool(
+                self._handles.get(str(child_id)) is handle
+                and handle.done_event.is_set()
+                and handle.state not in {"running", "accepted"}
+            )
 
     def review_terminal_current(self, child_id: str, parent_id: str) -> dict[str, str | bool] | None:
         """P0-B: process-local terminal attestation, never a disk-replayed PASS.

@@ -3483,10 +3483,16 @@ class HostReviewAdmission:
         return cls._CURRENT_AUTHORITY
 
     def snapshot_child_state(self, child_id: str) -> str | None:
-        """EVO-20261108-13d53b9c：child 状态只读查询（None=未知 child）。"""
+        """Observe live completion without polling, settling or granting a permit."""
         with self._guard:
             row = self._records.get(str(child_id))
-            return row.state if row is not None else None
+            if row is None or row.state == "settled":
+                return row.state if row is not None else None
+            live_child = row.live_child_id or row.child_id
+        observer = getattr(self._runner, "review_finished_current", None)
+        if observer is not None and observer(live_child, row.parent):
+            return "settled"
+        return row.state
 
     def attach_event_store(self, store: Any) -> None:
         """Attach the factory's audit writer: no event receipt means no new grant."""
@@ -3828,10 +3834,12 @@ class HostReviewAdmission:
         # job_id，wait 的 wake_reason=elapsed 只表示计时到点；把"到期"误读成"未完成"
         # 会白等整轮。status 才是唯一完成信号。
         receipt["waiting_protocol"] = (
-            "审查是异步 child，没有 execute_command 的 job_id："
-            "用 wait(seconds<=120) 配速，每次到期后调 "
-            f"review_admission(action=status, child_id={child}) 取终态；"
-            "status 是唯一完成信号，wait 的 wake_reason=elapsed 只表示计时到点。"
+            f"先用 review_admission(action=status, child_id={child}, wait_seconds=30)"
+            "查询；仅仍运行时工具会有界等待，并在返回时读取最新结果。"
+            "pending 才继续查询或等待；多个审查并行查询。"
+            "如使用普通 wait，每次返回后立即查 status，不连续只等墙钟。"
+            "wake_reason=elapsed 只表示计时到点。"
+            "完成唤醒可绑定 review_terminal；唤醒后仍须 status 核验资格。"
         )
         if kind == "git_push":
             # Mechanical cross-check anchor: the exact remote commit the
@@ -4538,7 +4546,28 @@ class HostReviewAdmission:
                                "PASS", child_id, f"p2={p2}")
         return _granted_receipt(frozen)
 
-    def poll(self, parent: str, child_id: str) -> dict[str, Any]:
+    def _reviewer_snapshot(
+        self, runner: Any, parent: str, live_child: str,
+        wait_seconds: float, deadline_at: float,
+    ) -> tuple[bool, str, dict[str, Any]]:
+        """Wait on the live handle, then read a fresh parent-bound snapshot."""
+        tok = current_session_id.set(parent)
+        try:
+            if wait_seconds > 0:
+                runner.review_finished_current(
+                    live_child, parent,
+                    wait_seconds=min(wait_seconds, max(0.0, deadline_at - time.time())),
+                )
+            ok, _, state = runner.result_current(live_child, wait_seconds=0)
+        except Exception:  # noqa: BLE001 - authentication cannot fail open
+            return False, "review_result_unavailable", {}
+        finally:
+            current_session_id.reset(tok)
+        if not ok or state.get("parent_id") != parent or state.get("child_id") != live_child:
+            return False, "review_child_identity_mismatch", {}
+        return True, "", state
+
+    def poll(self, parent: str, child_id: str, *, wait_seconds: float = 0.0) -> dict[str, Any]:
         with self._guard:
             frozen = self._records.get(child_id)
             if frozen is None or frozen.parent != parent:
@@ -4558,15 +4587,9 @@ class HostReviewAdmission:
         runner = self._runner
         if runner is None:
             return {"qualification": "DENIED", "reason": "review_host_unavailable"}
-        tok = current_session_id.set(parent)
-        try:
-            ok, _, state = runner.result_current(live_child, wait_seconds=0)
-        except Exception:  # noqa: BLE001 - authentication cannot fail open
-            return {"qualification": "DENIED", "reason": "review_result_unavailable"}
-        finally:
-            current_session_id.reset(tok)
-        if not ok or state.get("parent_id") != parent or state.get("child_id") != live_child:
-            return {"qualification": "DENIED", "reason": "review_child_identity_mismatch"}
+        ok, reason, state = self._reviewer_snapshot(runner, parent, live_child, wait_seconds, deadline_at)
+        if not ok:
+            return {"qualification": "DENIED", "reason": reason}
         remaining = deadline_at - time.time()
         if state.get("state") in {"running", "accepted"}:
             if remaining > 0:
@@ -5025,9 +5048,9 @@ class ReviewAdmissionTool:
         "护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前按 RULE-AI-35 "
         "构造应拦输入实测拦截，未实测只可称'代码已提交'。"
         "完整工具描述和参数用 get_tool_schema 精确读取。审查不取代用户对外发布/push授权。"
-        "等待方式：start 回执带 waiting_protocol——审查是异步 child，没有 execute_command"
-        " 的 job_id；wait(seconds<=120) 只做配速，每次到期后调 action=status 取终态，"
-        "status 才是唯一完成信号（wait 的 wake_reason=elapsed 只表示计时到点）。"
+        "等待方式：action=status(child_id,wait_seconds=0..30) 先查状态，仅仍运行时"
+        "有界等待，返回最新结果；pending 才再等，多个审查并行查询。"
+        "普通 wait 返回后立即查 status，不连续只等墙钟；完成唤醒不代替 status 核验。"
     )
     parameters = {
         "type": "object",
@@ -5080,6 +5103,10 @@ class ReviewAdmissionTool:
                 ),
             },
             "child_id": {"type": "string"},
+            "wait_seconds": {
+                "type": "number", "minimum": 0, "maximum": 30,
+                "description": "status 可选：0=立即查询，最多等待30秒；完成提前返回最新核验结果。",
+            },
         },
         "required": ["action"],
         "additionalProperties": False,
@@ -5118,7 +5145,20 @@ class ReviewAdmissionTool:
                 previous_child_id=str(kwargs.get("previous_child_id") or ""),
             )
         elif kwargs.get("action") == "status":
-            data = self._authority.poll(sid, str(kwargs.get("child_id") or ""))
+            raw_wait = kwargs.get("wait_seconds", 0)
+            try:
+                wait_seconds = float(raw_wait)
+            except (TypeError, ValueError, OverflowError):
+                wait_seconds = -1.0
+            if isinstance(raw_wait, bool) or not 0 <= wait_seconds <= 30:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="review_admission wait_seconds 必须为 0..30 的有限数字",
+                    tool_call_id="", tool_name=self.name,
+                )
+            data = self._authority.poll(
+                sid, str(kwargs.get("child_id") or ""), wait_seconds=wait_seconds,
+            )
         else:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
