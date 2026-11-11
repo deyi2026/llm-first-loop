@@ -180,3 +180,57 @@ class TestMixedMechanical:
         assert r["mechanical"] is True
         assert r["per_file"]["a.py"] == "format_only"
         assert r["per_file"]["b.py"] == "annotation_only"
+
+
+class TestEagerAnnotationSafetyGate:
+    """审查 P1（2026-11-11）：无 future import 时注解在 import/def 时急切求值。"""
+
+    def test_callable_annotation_refused(self, repo):
+        """注解含 Call（import 时执行）⇒ not mechanical（应拦核心）。"""
+        old = _commit(repo, {"m.py": "def f(x):\n    return x\n"}, "base")
+        new = _commit(repo, {"m.py": "def f(x: make_ann()):\n    return x\n"}, "call ann")
+        r = assess_mechanical_fix(repo, old_sha=old, new_sha=new)
+        assert r["mechanical"] is False
+        assert "eager_annotation_risk" in r["reason"]
+
+    def test_unknown_name_annotation_refused(self, repo):
+        """注解引用未知名字（import 时 NameError 风险）⇒ not mechanical。"""
+        old = _commit(repo, {"m.py": "def f(x):\n    return x\n"}, "base")
+        new = _commit(repo, {"m.py": "def f(x: NewType):\n    return x\n"}, "unknown name")
+        r = assess_mechanical_fix(repo, old_sha=old, new_sha=new)
+        assert r["mechanical"] is False
+        assert "eager_annotation_risk" in r["reason"]
+
+    def test_future_import_makes_any_annotation_safe(self, repo):
+        """from __future__ import annotations ⇒ 注解惰性化，变化安全。"""
+        src_old = (
+            "from __future__ import annotations\n"
+            "from typing import Any\n\n\n"
+            "def f(x: Any) -> Any:\n    return x\n"
+        )
+        src_new = (
+            "from __future__ import annotations\n"
+            "from typing import Any\n\n\n"
+            "def f(x: str | None) -> str:\n    return x\n"
+        )
+        old = _commit(repo, {"m.py": src_old}, "base")
+        new = _commit(repo, {"m.py": src_new}, "lazy ann")
+        r = assess_mechanical_fix(repo, old_sha=old, new_sha=new)
+        assert r["mechanical"] is True
+        assert r["category"] == "annotation_only"
+
+    def test_builtin_and_imported_names_accepted(self, repo):
+        """内建类型名 + 已 import 名字（Any→str）⇒ 安全（原 REPORT 案例）。"""
+        old = _commit(
+            repo,
+            {"m.py": "from typing import Any\n\n\ndef f(x: Any) -> Any:\n    return x\n"},
+            "base",
+        )
+        new = _commit(
+            repo,
+            {"m.py": "from typing import Any\n\n\ndef f(x: str) -> str:\n    return x\n"},
+            "narrow",
+        )
+        r = assess_mechanical_fix(repo, old_sha=old, new_sha=new)
+        assert r["mechanical"] is True
+        assert r["category"] == "annotation_only"

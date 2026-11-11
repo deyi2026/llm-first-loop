@@ -2889,12 +2889,15 @@ def _head_commit_of(workdir: str) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
-def _mechanical_preflight_section(workdir: str, old_commit: str, new_commit: str) -> str:
+def _mechanical_preflight_section(
+    workdir: str, old_commit: str, new_commit: str, allowed_paths: list[str] | None = None
+) -> str:
     """EVO-20261111-8c5b88df：续审任务书的机械修复预检段（程序机检）。
 
     start 带 previous_child_id 时自动评估 ``old_commit..new_commit`` 是否为
     切片内纯机械修复（仅注解/纯格式），把结论写进任务书——机械时提示复审
     范围可聚焦上一轮 findings 处置；非机械时明示按全新变更全量复审。
+    ``allowed_paths`` 传切片声明（scope paths）时强制机检切片边界。
     预检只是**信息注入**，不改变任何资格判定（fail-closed 闸全部保留在
     别处）；预检自身出错也按"非机械"披露，绝不把判不了说成机械。
     """
@@ -2902,7 +2905,10 @@ def _mechanical_preflight_section(workdir: str, old_commit: str, new_commit: str
     if old_commit and new_commit:
         try:
             from llm_loop.tools.mechanical_diff import assess_mechanical_fix
-            result = assess_mechanical_fix(workdir, old_sha=old_commit, new_sha=new_commit)
+            result = assess_mechanical_fix(
+                workdir, old_sha=old_commit, new_sha=new_commit,
+                allowed_paths=allowed_paths,
+            )
         except Exception:  # noqa: BLE001 —— 预检绝不因自身故障阻断审查
             pass
     if result.get("mechanical"):
@@ -3884,7 +3890,8 @@ class HostReviewAdmission:
         narrow = _narrow_review_section(previous_row, material) if previous_row else ""
         mech = (
             _mechanical_preflight_section(
-                workdir, previous_row.head_commit, _head_commit_of(workdir)
+                workdir, previous_row.head_commit, _head_commit_of(workdir),
+                allowed_paths=list(scope_paths) or None,
             )
             if previous_row is not None
             else ""

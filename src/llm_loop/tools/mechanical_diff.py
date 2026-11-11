@@ -89,26 +89,116 @@ def _diff_paths(repo: Path, old: str, new: str) -> list[str] | None:
 
 
 def _blob(repo: Path, sha: str, path: str) -> str | None:
+    """二进制取 blob 后严格 UTF-8 解码（非 UTF-8 抛 UnicodeDecodeError，
+    调用方按 fail-closed 处理——text 模式会静默替换坏字节，不可接受）。"""
     proc = subprocess.run(
         ["git", "-C", str(repo), "show", f"{sha}:{path}"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, check=False,
     )
     if proc.returncode != 0:
         return None
-    return proc.stdout
+    return proc.stdout.decode("utf-8", errors="strict")
+
+
+_BUILTIN_TYPE_NAMES = frozenset(
+    {"int", "str", "float", "bool", "bytes", "complex", "list", "dict", "set",
+     "tuple", "frozenset", "type", "object", "None"}
+)
+_SAFE_ANN_NODES = (
+    ast.Name, ast.Attribute, ast.Subscript, ast.Constant, ast.Tuple, ast.List,
+    ast.Load, ast.Store, ast.Del,  # ctx 节点（ast.walk 会遍历到，非可执行结构）
+)
+
+
+def _future_annotations_active(tree: ast.AST) -> bool:
+    """模块级 ``from __future__ import annotations`` ⇒ 所有注解惰性化为字符串。"""
+    for node in tree.body:
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "__future__"
+            and any(a.name == "annotations" for a in node.names)
+        ):
+            return True
+    return False
+
+
+def _known_names(stripped_tree: ast.AST) -> set[str]:
+    """剥离注解后的树里可解析的名字：所有 Name.id + import 绑定名。
+
+    旧文件的非注解代码在旧版本已成功求值——这些名字在 import/def 时已知
+    可解析（ruff/运行已验证过）。新注解只引用这些名字或内建类型名时，
+    求值不会新增 NameError 风险。
+    """
+    names: set[str] = set()
+    for node in ast.walk(stripped_tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+    return names
+
+
+def _annotation_subtrees(tree: ast.AST) -> list[ast.AST]:
+    subs: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.returns is not None
+        ):
+            subs.append(node.returns)
+        if isinstance(node, ast.arguments):
+            for arg in [
+                *node.posonlyargs, *node.args, *node.kwonlyargs,
+                *([node.vararg] if node.vararg else []),
+                *([node.kwarg] if node.kwarg else []),
+            ]:
+                if arg.annotation is not None:
+                    subs.append(arg.annotation)
+        if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+            subs.append(node.annotation)
+    return subs
+
+
+def _annotation_eagerly_safe(ann: ast.AST, known: set[str]) -> bool:
+    """注解子树在急切求值（无 future import）下的安全判定（fail-closed）。
+
+    只允许不可执行结构（Name/Attribute/Subscript/Constant/Tuple/List）；
+    任何 Call/BinOp/Lambda/推导/JoinedStr 等可执行结构立即判不安全。
+    裸 Name 必须是内建类型名或旧代码已知可解析的名字（防 NameError）。
+    """
+    for node in ast.walk(ann):
+        if not isinstance(node, _SAFE_ANN_NODES):
+            return False
+        if isinstance(node, ast.Name) and node.id not in known:
+            return False
+    return True
 
 
 def _classify(old_src: str, new_src: str) -> str:
-    """返回 format_only / annotation_only / semantic（fail-closed 由调用方处理异常）。"""
+    """返回 format_only / annotation_only / semantic（fail-closed 由调用方处理异常）。
+
+    annotation_only 额外过"急切求值安全闸"（2026-11-11 审查 P1）：无
+    ``from __future__ import annotations`` 时注解在 import/def 时被求值——
+    新注解必须是不可执行结构且只引用已知名字；否则判
+    ``eager_annotation_risk``（not mechanical）。有 future import 时全部
+    注解惰性化，任意注解变化安全。
+    """
     old_tree = ast.parse(old_src)
     new_tree = ast.parse(new_src)
     if ast.dump(old_tree) == ast.dump(new_tree):
         return "format_only"
-    norm_old = ast.dump(strip_annotations(copy.deepcopy(old_tree)))
-    norm_new = ast.dump(strip_annotations(copy.deepcopy(new_tree)))
-    if norm_old == norm_new:
+    norm_old = strip_annotations(copy.deepcopy(old_tree))
+    norm_new = strip_annotations(copy.deepcopy(new_tree))
+    if ast.dump(norm_old) != ast.dump(norm_new):
+        return "semantic"
+    if _future_annotations_active(new_tree):
         return "annotation_only"
-    return "semantic"
+    known = _known_names(norm_old) | _BUILTIN_TYPE_NAMES
+    for ann in _annotation_subtrees(new_tree):
+        if not _annotation_eagerly_safe(ann, known):
+            return "eager_annotation_risk"
+    return "annotation_only"
 
 
 def assess_mechanical_fix(
@@ -183,10 +273,22 @@ def assess_mechanical_fix(
                 "reason": f"fail_closed:syntax_error:{path}",
                 "changed_paths": paths, "per_file": {},
             }
+        except UnicodeDecodeError:
+            return {
+                "mechanical": False, "category": "",
+                "reason": f"fail_closed:decode_error:{path}",
+                "changed_paths": paths, "per_file": {},
+            }
         if category == "semantic":
             return {
                 "mechanical": False, "category": "",
                 "reason": f"semantic_change:{path}",
+                "changed_paths": paths, "per_file": {},
+            }
+        if category == "eager_annotation_risk":
+            return {
+                "mechanical": False, "category": "",
+                "reason": f"eager_annotation_risk:{path}",
                 "changed_paths": paths, "per_file": {},
             }
         per_file[path] = category
