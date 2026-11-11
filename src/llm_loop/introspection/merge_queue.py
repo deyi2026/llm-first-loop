@@ -405,44 +405,63 @@ def _patch_id_series(repo: Path, base: str, head: str) -> list[str] | None:
     保留空白原样参与 hash（与 --stable/--unstable 互斥，单用即位级严格）；
     git < 2.32 不支持该开关 ⇒ patch-id 报错 ⇒ 本函数返回 None ⇒
     fail-closed 走原全量通道。
+
+    仅含二进制文件的提交无 patch-id（跳过）——此类提交的 replay 等效性
+    由路径不相交判据兜底（R7 审查 P2-3，已在 assess_rebase_replay docstring
+    记录）。全部 git 输出用 errors="strict" 解码，非 UTF-8（如未加引号的
+    坏路径名）抛 UnicodeDecodeError 时按"判不了"返回 None（R7 P2-1：
+    text=True 会把解码异常变成未捕获逃逸，违反本函数 None 契约）。
     """
     if not base or not head:
         return None  # 空 rev 会让 base.. 解析为 HEAD——误导性范围，直接判不了
-    revs = subprocess.run(
-        ["git", "-C", str(repo), "rev-list", "--reverse", "--no-merges", f"{base}..{head}"],
-        capture_output=True, text=True, check=False,
-    )
-    if revs.returncode != 0:
+    try:
+        revs = subprocess.run(
+            ["git", "-C", str(repo), "rev-list", "--reverse", "--no-merges",
+             f"{base}..{head}"],
+            capture_output=True, check=False,
+        )
+        if revs.returncode != 0:
+            return None
+        rev_shas = revs.stdout.decode("utf-8", errors="strict").split()
+        series: list[str] = []
+        for sha in rev_shas:
+            show = subprocess.run(
+                ["git", "-C", str(repo), "show", "--pretty=format:", "--no-color", sha],
+                capture_output=True, check=False,
+            )
+            if show.returncode != 0:
+                return None
+            pid = subprocess.run(
+                ["git", "-C", str(repo), "patch-id", "--verbatim"],
+                input=show.stdout, capture_output=True, check=False,
+            )
+            if pid.returncode != 0:
+                return None
+            parts = pid.stdout.decode("utf-8", errors="strict").split()
+            if parts:
+                series.append(parts[0])
+        return series
+    except UnicodeDecodeError:
         return None
-    series: list[str] = []
-    for sha in revs.stdout.split():
-        show = subprocess.run(
-            ["git", "-C", str(repo), "show", "--pretty=format:", "--no-color", sha],
-            capture_output=True, text=True, check=False,
-        )
-        if show.returncode != 0:
-            return None
-        pid = subprocess.run(
-            ["git", "-C", str(repo), "patch-id", "--verbatim"],
-            input=show.stdout, capture_output=True, text=True, check=False,
-        )
-        if pid.returncode != 0:
-            return None
-        parts = pid.stdout.split()
-        if parts:
-            series.append(parts[0])
-    return series
 
 
 def _diff_paths(repo: Path, a: str, b: str) -> list[str] | None:
-    """``a..b`` 触碰的路径清单（git diff --name-only）。判不了返回 None。"""
+    """``a..b`` 触碰的路径清单（git diff --name-only）。判不了返回 None。
+
+    strict 解码：非 UTF-8 路径名按"判不了"返回 None（R7 审查 P2-1，
+    与 _patch_id_series 的 None 契约一致）。
+    """
     proc = subprocess.run(
         ["git", "-C", str(repo), "diff", "--name-only", a, b],
-        capture_output=True, text=True, check=False,
+        capture_output=True, check=False,
     )
     if proc.returncode != 0:
         return None
-    return sorted(line for line in proc.stdout.splitlines() if line.strip())
+    try:
+        out = proc.stdout.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    return sorted(line for line in out.splitlines() if line.strip())
 
 
 def assess_rebase_replay(
@@ -464,7 +483,12 @@ def assess_rebase_replay(
 
     两判据同时成立 ⇒ lane 的 diff 在新 base 上的语义与原验证时完全一致，
     允许降级重验（carryover 凭证）而非全量重跑。任何一项判不了
-    （git 失败 / ref 不存在 / 空提交序列）⇒ eligible=False，走原全量通道。
+    （git 失败 / ref 不存在 / 空提交序列 / 非 UTF-8 输出 / 范围含 merge
+    提交）⇒ eligible=False，走原全量通道。
+
+    已知边界（R7 审查 P2-3）：仅含二进制文件的提交无 patch-id（跳过），
+    此类提交的 replay 等效性由路径不相交判据兜底——若上游前进段触碰了
+    同一二进制路径，路径判据会拒绝；若不相交，二进制内容未被上游改变。
     """
     repo = Path(repo_path)
     old_ids = _patch_id_series(repo, old_base, old_head)
