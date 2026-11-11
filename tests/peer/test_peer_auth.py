@@ -1,6 +1,8 @@
-"""认证层：四头 HMAC 通过/拒绝路径、时钟窗、nonce 重放、nonce 中毒防护。"""
+"""认证层：四头 HMAC 通过/拒绝路径、时钟窗、nonce 重放、nonce 中毒防护、持久防重放。"""
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 
 import pytest
@@ -24,6 +26,7 @@ from llm_loop.peer.auth import (
 from llm_loop.peer.errors import PeerError
 
 SECRET = b"\x01" * 32
+NEW_SECRET = b"\x0f" * 32
 NOW = 1_800_000_000
 
 
@@ -233,3 +236,154 @@ def test_headers_dict_is_case_insensitive():
     req = _req()
     lower = {k.lower(): v for k, v in req["headers"].items()}
     assert a.verify_request(**dict(req, headers=lower)) == "node-a"
+
+
+# ---- 持久防重放（设计 §6.5 / A09：分桶、窗口内结构性永不淘汰、换钥过渡）----
+# 契约依据（逐字取自设计书，非实现同源）：
+# - R04/A09: 重启及共享状态的多个接收进程统一拒绝已接受的同一 nonce，不以容量淘汰放行。
+# - §6.5: 按「节点+密钥代际+时间窗」三级分桶；窗口整体过期后原子清理整桶，
+#   窗口内记录结构性永不淘汰；换钥时旧代际桶保留至其签名窗（含时钟偏差）完全结束。
+# - §6.5: 每个已验签请求 nonce「先持久、后响应」，每次请求一次持久写（锁+fsync）；
+#   验证垃圾签名不能消耗持久槽位；存储故障不放行。
+
+
+def _persistent_auth(persist, clock=lambda: NOW, secret_for=None):
+    return PeerAuthenticator(
+        secret_for=secret_for or {"node-a": SECRET}.get,
+        nonce_cache=NonceCache(persist_dir=persist, clock=clock),
+        clock=clock,
+    )
+
+
+def test_replay_rejected_across_process_restart(tmp_path):
+    """① 进程重启（重新实例化、持久文件保留）后，时间窗内同一 nonce 重放被拒。"""
+    persist = tmp_path / "peer-store"
+    a = _persistent_auth(persist)
+    assert a.verify_request(**_req()) == "node-a"
+    b = _persistent_auth(persist)  # “重启”：内存态全丢，仅磁盘记录保留
+    with pytest.raises(PeerError) as err:
+        b.verify_request(**_req())
+    assert err.value.reason_code == "peer_replay_detected"
+    # 持久记录覆盖完整签名有效窗（±300s 偏差）：窗内稍后重放仍被拒
+    c = _persistent_auth(persist, clock=lambda: NOW + 299)
+    with pytest.raises(PeerError) as err:
+        c.verify_request(**_req())
+    assert err.value.reason_code == "peer_replay_detected"
+    # 拒绝是重放特有，不是存储整体不可用：新 nonce 正常通过
+    assert c.verify_request(**_req(nonce="c" * 32)) == "node-a"
+
+
+def test_persistent_buckets_by_window_and_generation_no_eviction(tmp_path):
+    """② 按 节点+代际+时间窗 分文件；窗口内结构性永不淘汰（不受 max_entries 影响）。"""
+    persist = tmp_path / "peer-store"
+    cache = NonceCache(
+        persist_dir=persist,
+        max_entries=2,  # 故意配一个远低于流量的容量：持久路径不允许因此放行
+        window_seconds=NONCE_WINDOW_SECONDS,
+        clock=lambda: float(NOW),
+    )
+    for i in range(20):
+        assert cache.check_and_store("node-a", f"{i:032x}", now=float(NOW)) is True
+    assert cache.stats["appends"] == 20  # 每次接受恰好一次持久写（成本可测量）
+    for i in range(20):  # 窗口内重放全部被拒——不因容量淘汰而放行
+        assert cache.check_and_store("node-a", f"{i:032x}", now=float(NOW + 60)) is False
+    # 同一 nonce 不同密钥代际分桶：两代各自首次都应接受
+    assert cache.check_and_store("node-a", "f" * 32, now=float(NOW), key_generation="k1") is True
+    assert cache.check_and_store("node-a", "f" * 32, now=float(NOW), key_generation="k2") is True
+    # 桶文件按时间窗组织：NOW 恰为窗口边界，索引 = NOW // 600
+    window_file = persist / "nonce" / "node-a" / "default" / f"{NOW // NONCE_WINDOW_SECONDS}.jsonl"
+    assert window_file.is_file()
+    assert (persist / "nonce" / "node-a" / "k1").is_dir()
+    assert (persist / "nonce" / "node-a" / "k2").is_dir()
+    # 节点隔离：不同节点各自分桶
+    assert cache.check_and_store("node-b", "f" * 32, now=float(NOW + 60)) is True
+    assert (persist / "nonce" / "node-b" / "default").is_dir()
+    # 跨时间窗重放：上一窗末尾接受、下一窗开头重放必须检出（持久窗 ≥ 签名窗+偏差）
+    assert cache.check_and_store("node-c", "a" * 32, now=NOW + 599.0) is True
+    assert cache.check_and_store("node-c", "a" * 32, now=NOW + 601.0) is False
+
+
+def test_persistent_bucket_cleanup_whole_window_after_expiry(tmp_path):
+    """② 窗口整体过期后原子清理整桶；有效期内不清理（换钥旧代桶同理保留到窗口结束）。"""
+    persist = tmp_path / "peer-store"
+    cache = NonceCache(persist_dir=persist, window_seconds=10, bucket_seconds=10, clock=lambda: 0.0)
+    assert cache.check_and_store("node-a", "f" * 32, now=0.0, key_generation="g1") is True
+    bucket = persist / "nonce" / "node-a" / "g1" / "0.jsonl"
+    assert bucket.is_file()
+    cache.cleanup(now=19.0)  # (0+1)*10+10=20 > 19：签名窗尚未整体结束，不清理
+    assert bucket.is_file()
+    removed = cache.cleanup(now=20.0)
+    assert removed >= 1
+    assert not bucket.exists()
+    assert cache.check_and_store("node-a", "f" * 32, now=20.0, key_generation="g1") is True
+
+
+def test_key_rotation_old_generation_transition_and_replay(tmp_path):
+    """③ 换钥过渡双代并验；重启后旧窗内旧钥签名重放仍被拒（A09 扩展）。"""
+    persist = tmp_path / "peer-store"
+
+    def rotating(clock=lambda: NOW):
+        return PeerAuthenticator(
+            secret_for={"node-a": NEW_SECRET}.get,
+            previous_secret_for={"node-a": SECRET}.get,
+            nonce_cache=NonceCache(persist_dir=persist, clock=clock),
+            clock=clock,
+        )
+
+    a = rotating()
+    old_req = _req(secret=SECRET)  # 旧代密钥签名
+    assert a.verify_request(**old_req) == "node-a"
+    assert a.verify_request(**_req(secret=NEW_SECRET, nonce="b" * 32)) == "node-a"
+    # 旧代与新代按密钥代际分桶（节点+代际+时间窗三级）
+    old_gen = hashlib.sha256(SECRET).hexdigest()[:16]
+    new_gen = hashlib.sha256(NEW_SECRET).hexdigest()[:16]
+    assert old_gen != new_gen
+    assert (persist / "nonce" / "node-a" / old_gen).is_dir()
+    assert (persist / "nonce" / "node-a" / new_gen).is_dir()
+    # “重启”后旧窗内旧钥签名重放仍被拒
+    b = rotating(clock=lambda: NOW + 299)
+    with pytest.raises(PeerError) as err:
+        b.verify_request(**old_req)
+    assert err.value.reason_code == "peer_replay_detected"
+    # 节点仅在旧代密钥可查（当前钥未配置）时仍视为已知节点，按旧代验签
+    only_old = PeerAuthenticator(
+        secret_for=lambda _n: None,
+        previous_secret_for={"node-a": SECRET}.get,
+        nonce_cache=NonceCache(persist_dir=persist, clock=lambda: NOW + 299),
+        clock=lambda: NOW + 299,
+    )
+    assert only_old.verify_request(**_req(secret=SECRET, nonce="d" * 32)) == "node-a"
+
+
+def test_bad_signature_does_not_consume_persistent_slot(tmp_path):
+    """§6.5：验证垃圾签名不能消耗持久槽位（先验签后落账，持久路径同样成立）。"""
+    persist = tmp_path / "peer-store"
+    cache = NonceCache(persist_dir=persist, clock=lambda: NOW)
+    a = PeerAuthenticator(secret_for={"node-a": SECRET}.get, nonce_cache=cache, clock=lambda: NOW)
+    with pytest.raises(PeerError) as err:
+        a.verify_request(**_req(secret=b"\x02" * 32))
+    assert err.value.reason_code == "peer_bad_signature"
+    assert cache.stats["appends"] == 0  # 坏签名未写任何持久记录
+    assert a.verify_request(**_req()) == "node-a"
+    assert cache.stats["appends"] == 1
+
+
+def test_persistent_storage_failure_fails_closed(tmp_path, monkeypatch):
+    """A09：存储故障不放行——fsync 失败抛 PeerError，绝不静默当作已接受。"""
+    persist = tmp_path / "peer-store"
+    cache = NonceCache(persist_dir=persist, clock=lambda: NOW)
+    a = PeerAuthenticator(secret_for={"node-a": SECRET}.get, nonce_cache=cache, clock=lambda: NOW)
+    assert a.verify_request(**_req()) == "node-a"
+
+    def broken_fsync(fd):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fsync", broken_fsync)
+    with pytest.raises(PeerError) as err:
+        a.verify_request(**_req(nonce="c" * 32))
+    assert err.value.reason_code == "executor_internal_error"
+    monkeypatch.undo()
+    # 故障期间未给出“已接受”响应；恢复后该 nonce 不会被第二次接受（先持久后响应的残余是拒绝）
+    with pytest.raises(PeerError) as err:
+        a.verify_request(**_req(nonce="c" * 32))
+    assert err.value.reason_code == "peer_replay_detected"
