@@ -1,0 +1,105 @@
+{
+  "kind": "git_push_posthoc",
+  "receipt_id": "posthoc-push-a96e1c3d7-20261111",
+  "created_at": "2026-11-11T10:58:08+08:00",
+  "repo": "<REPO>",
+  "remote": "origin",
+  "branch": "main",
+  "authorization": "用户 2026-11-11T10:42 授权方案 A：对 a96e1c3d7 补一次 git_push 审查作为事后核验记录入库，不改写已推历史；若查出 P0/P1 再决定 revert；同轮恢复被 cb16c93a9 删除的 evidence ref。",
+  "target": {
+    "reviewed_range": "cc94ac81b..a96e1c3d7",
+    "reviewed_head": "a96e1c3d7",
+    "remote_main_before": "cc94ac81b",
+    "remote_main_after": "a96e1c3d7",
+    "pushed_commits": 7,
+    "already_pushed": true,
+    "range_source": "git reflog show origin/main: @{1} fetch->cc94ac81b, @{0} update by push->a96e1c3d7；push 为 fast-forward"
+  },
+  "why_this_receipt_exists": "该 push 于 2026-11-11T10:24 完成时不存在任何 git_push 类独立审查回执：data/review_admission/ 下最新 git_push 记录为 2026-11-09T22:11，且无记录包含 a96e1c3d7 / cc94ac81b / 91d15c230。08:50 的 full_test PASS 为 scope=patch，自述『切片之外只绑定未审；签发后改动即失效』，对最终被推的树已不构成前置凭据。",
+  "why_not_review_admission": "review_admission(kind=git_push) 冻结的是 origin/main..HEAD 的未推 delta；事后 HEAD == origin/main 则 delta 为空，审查者只能拿到空材料并产出 vacuous PASS，这正是该模块注释记录的失败模式。故本次改用独立只读子代理审查已推 delta，并在此显式披露该替代。此替代不构成、也不追认 push 前置资格。",
+  "reviewer": {
+    "session": "subagent_9580cfcc6de0",
+    "model": "glm-5.3",
+    "mode": "independent_read_only",
+    "rounds": 24,
+    "tool_calls": 26,
+    "independence": "未参与被审提交/回执/知识卡的任何生成；只执行 git log/show/diff/status 与 grep/sed/cat/awk 只读命令，未修改文件",
+    "verdict": "PASS"
+  },
+  "findings": {
+    "p0": [],
+    "p1": [],
+    "p2": [
+      {
+        "id": "P2-1",
+        "title": "cb16c93a9 改写治理回执时删除溯源字段：可审计性退化（内容修正本身正确）",
+        "evidence": "git show 137374804:docs/governance/receipts/_evidence-lane-3e9d1b73-ci-gate.txt 含 evidence://v1/2b052289…、workdir、ruff/pyright ratchet 计数、<REPO> 脱敏声明；cb16c93a9 之后仅剩不透明锚点 exact_source_sha256=ed5ead14…",
+        "why_p2_not_p1": "标签与计数修正是可静态复核的更准确版本（见 assertions_verified），job_id + sha256 + candidate_head 锚点仍在，ratchet 基线代码未动；损失是文档完整度而非正确性，旧版本可从 137374804 对照",
+        "disposition": "本轮恢复 provenance 块（evidence ref / workdir / 脱敏声明 / 改写说明），计数行改为指向 ref 水合；不恢复 --focused 示例（见 P2-5）"
+      },
+      {
+        "id": "P2-2",
+        "title": "tests/phase4/test_m2_inflight_interrupt.py 的 A 分支由真实时序改为 monkeypatch 强制排序，真实性面收窄",
+        "evidence": "git show 91d15c230 -- tests/phase4/test_m2_inflight_interrupt.py：旧版靠 inject_delay=1.45 / tool_sleep=1.55 的真实时间窗赢 natural-first；新版用 threading.Event 屏障强制 future 先完成。断言保留且增强（final=done、item_status=interject_received、r1.status_code=202、ToolResultStatus.SUCCESS、natural_decision.is_set()）",
+        "why_p2": "标准去 flake 手法，判定函数仍在『已完成』状态执行，B 分支完全真实；但『真实时序能自然产生 natural-first 窗口』不再被该测试证明",
+        "disposition": "接受为取舍，登记备查；不阻断"
+      },
+      {
+        "id": "P2-3",
+        "title": "回执与知识卡的锚点在仓库侧不可解析（跨会话）",
+        "evidence": "8 张新卡 frontmatter 的 source_episode_refs=episode:… / evidence_refs=learning:…，以及 evidence://v1/2b052289… 与 ed5ead14…，仓库内读者无法自行水合；审查者在独立会话实测 read_evidence 返回无权访问",
+        "why_p2": "不产生错误结论，但后续审计者只能选择信任或回原会话重取",
+        "disposition": "在恢复块内同时记录 blob_sha256 与 ref 的同一性；跨会话可读性属运行时能力边界，未伪造可读性"
+      },
+      {
+        "id": "P2-4",
+        "title": "a96e1c3d7 提交信息中的 589.19s 与本 job 原文不一致",
+        "evidence": "job_output 原文（blob_sha256=ed5ead14…，第 679 行）：14435 passed, 186 skipped, 3 xfailed, 13 warnings in 214.65s (0:03:34)；提交信息写 589.19s。本会话 Evidence 检索 589.19s 零命中",
+        "why_p2": "仅提交信息措辞，不影响被推代码与被审结论；回执正文采用已验证的 214.65s",
+        "disposition": "记录在案，不改写已推提交信息"
+      },
+      {
+        "id": "P2-5",
+        "title": "旧回执中的 bash scripts/ci_gate.sh --focused <paths> 示例不可执行",
+        "evidence": "grep -n focused scripts/ci_gate.sh 零命中；脚本无 --focused 分支",
+        "why_p2": "文档示例缺陷，在任何历史时点都无法直接运行，易被误当复跑入口",
+        "disposition": "本轮恢复溯源时明确不恢复该示例，并写明原因"
+      }
+    ]
+  },
+  "code_surface_check": {
+    "only_code_commit": "91d15c230",
+    "changed_paths": [
+      "scripts/ci_gate.sh",
+      "src/llm_loop/tools/escalation.py",
+      "tests/conftest.py",
+      "tests/phase4/test_m2_inflight_interrupt.py",
+      "tests/unit/test_ci_gate_conclusion_line.py",
+      "tests/unit/test_escalation.py",
+      "tests/unit/test_terminal_pty.py"
+    ],
+    "matches_full_test_slice": "集合相等（非子集），对应 _evidence-lane-3e9d1b73-rua28-full-test.json 的 7 条 scope=patch 路径",
+    "other_commits": "6 个提交仅动 data/methods/*/METHOD.md 与 docs/governance/receipts/*（非可执行、非门禁）",
+    "timing": "代码提交 2026-11-11T08:27:56（早于 08:50 回执签发）；其后到 push 之间该 7 条路径零改动，故被审代码内容与签发时一致",
+    "uncovered_code_changes": "无"
+  },
+  "gate_strength_check": "7 条路径未发现削弱门禁、放宽阈值、删除断言或 fail-closed 转 fail-open 的改动；scripts/ci_gate.sh 为恢复 tool PATH（+5 行）、tests/conftest.py +2 行、src/llm_loop/tools/escalation.py +3 行",
+  "assertions_verified": [
+    "phase 顺序 tier0; serial_signal; serial_perf; parallel suite; guard_report 与 scripts/ci_gate.sh 第 149/164/181/242 行实际执行顺序一致",
+    "被改写的相位标签原为错标：3 passed 原标 tier0 实为 serial_perf（HEAD 上恰好 3 个 serial_perf 用例），旧版还漏了 tier0 真实行（341 passed）、serial_signal 行与并行集汇总行",
+    "并行集原文 14435 passed / 186 skipped / 3 xfailed / 13 warnings in 214.65s (0:03:34)，见 job_output 第 679 行",
+    "ruff ratchet 行 historical=67, current=27, new=0, resolved=40 与 pyright historical=45, current=10, new=0, resolved=35 可在 job_output 原文与 137374804 版本中对照"
+  ],
+  "security_scan": "对 cc94ac81b..a96e1c3d7 全量新增行扫描绝对路径（/Users/、/home/）、http(s) URL、内网 IP、token 特征（sk-/ghp_/AKIA/PEM）、个人标识：零命中；唯一邮箱为合成地址 mcp-console@users.noreply.invalid",
+  "knowledge_cards_check": "本次 delta 新增 8 张方法卡，frontmatter 全部 status: candidate，未见把未验证写成 verified/qualified 的主张；每张含 Verification 与 Counterexamples；未发现会诱导误用的无边界断言",
+  "residual_risks": [
+    "push 前置资格仍为空：本回执是事后核验，不追认 10:24 那次 push 曾通过门槛",
+    "serial 相位行中每条 2 skipped 无法纯静态闭环（前一 lane 回执同形态，非本 delta 引入）",
+    "跨会话 evidence ref 不可水合，审计者需依赖原会话或本回执记录的 sha256"
+  ],
+  "actions_taken_this_round": [
+    "恢复 docs/governance/receipts/_evidence-lane-3e9d1b73-ci-gate.txt 的溯源块（+15 行，未改原有计数行）",
+    "入库本回执",
+    "未改写任何已推提交，未 force push"
+  ]
+}

@@ -15,3 +15,18 @@ R9 pyright: PASS (historical debt visible; no new errors; touched files clean)
 14435 passed, 186 skipped, 3 xfailed, 13 warnings in 214.65s (0:03:34)
 1 passed, 51 deselected in 10.03s
 ✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）
+
+## 溯源与还原（post-hoc，2026-11-11）
+workdir: <REPO>/.worktrees/github-ci-followup-20261111
+原文来源: evidence://v1/2b05228958f45b00b5163fe19ab7d8d6050eece83bbc87b17e40dd5b72b5ff9b
+  （完整 job_output stdout，blob_sha256 = ed5ead14…，与上方 exact_source_sha256 为同一份快照）
+全量门禁回执（审查刀片，非本文件）: docs/governance/receipts/_evidence-lane-3e9d1b73-rua28-full-test.json
+脱敏声明: 原始逐字摘录中的绝对路径与真值已脱敏为 <REPO>/<HOME>/<R9_TIP>/<R9_ORIG>/<R9_TIP_SHA>/<ORIG_HEAD>。
+
+改写与还原说明:
+- 提交 cb16c93a9 把本文件从「逐字摘录」压缩为「verified summary」，删除了 evidence ref、workdir、
+  ratchet 计数行（ruff historical=67/current=27/new=0/resolved=40、pyright historical=45/current=10/new=0/resolved=35）、
+  原 RUA28 回执指针与脱敏声明；本段按事后核验（2026-11-11，用户授权）恢复溯源字段。
+- 计数行不在文件内重复断言，需要逐字原文时按上方 evidence ref 水合（该 ref 可读，已核 blob_sha256 一致）。
+- 原摘录中的 `bash scripts/ci_gate.sh --focused <paths>` 示例**未**恢复：`grep -n focused scripts/ci_gate.sh` 无命中，
+  ci_gate.sh 没有 --focused 分支，该示例本就不可执行。
