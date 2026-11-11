@@ -362,3 +362,100 @@ def test_atomic_write_leaves_no_temp_file_on_failure(tmp_path, env, monkeypatch)
     assert _err(err)[0] == "sandbox_denied"
     assert target.read_text(encoding="utf-8") == "old"
     assert [p.name for p in root.iterdir() if p.name.startswith(".lfl-peer-write-")] == []
+
+
+# --- M1 原子不覆盖与提交持久化（设计 §6.1/§6.2，A04/A05/A06 对应） --------------------
+
+
+def test_fs_write_no_replace_publish_survives_exists_race(tmp_path, env, monkeypatch):
+    """A04/§6.1：存在性检查与提交之间目标被另一创建者占位（TOCTOU）。
+    发布原语必须由内核原子判冲突，本方失败且不碰胜出文件——
+    「临时文件 + os.replace」不构成不覆盖提交。"""
+    root, _artifacts, ex = env
+    target = root / "race.txt"
+    target.write_text("winner", encoding="utf-8")
+    real_lexists = os.path.lexists
+
+    def hide_target(p):
+        return False if str(p) == str(target) else real_lexists(p)
+
+    monkeypatch.setattr(os.path, "lexists", hide_target)
+    with pytest.raises(PeerError) as err:
+        ex.run(
+            kind="fs.write",
+            params={"path": str(target), "content_b64": "bmV3"},
+            allowed_paths=(str(root),),
+        )
+    assert _err(err) == ("params_schema_invalid", "target exists and overwrite=false")
+    assert target.read_text(encoding="utf-8") == "winner"
+    assert [p.name for p in root.iterdir() if p.name.startswith(".lfl-peer-write-")] == []
+
+
+def test_fs_write_publishes_with_parent_dir_entry_sync(tmp_path, env, monkeypatch):
+    """W3/§6.2：文件级 fsync 不覆盖父目录项；提交后必须同步父目录项
+    （复用 operator._fsync_dir 模式）。"""
+    root, _artifacts, ex = env
+    seen = []
+    real_fsync = os.fsync
+
+    def spy(fd):
+        seen.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    ex.run(
+        kind="fs.write",
+        params={"path": str(root / "d.txt"), "content_b64": "bmV3"},
+        allowed_paths=(str(root),),
+    )
+    assert (root / "d.txt").read_text(encoding="utf-8") == "new"
+    assert len(seen) >= 2, "文件级 fsync 1 次之外，父目录项至少再同步 1 次"
+
+
+def test_fs_write_publish_unsupported_reports_denial_not_silent_replace(tmp_path, env, monkeypatch):
+    """§6.1：文件系统无 hard-link 能力时显式拒绝，不得静默退回先检查后覆盖。"""
+    import errno
+
+    root, _artifacts, ex = env
+
+    def no_link(_src, _dst, **_kw):
+        raise OSError(errno.EOPNOTSUPP, "link(2) not supported on this filesystem")
+
+    monkeypatch.setattr(os, "link", no_link)
+    with pytest.raises(PeerError) as err:
+        ex.run(
+            kind="fs.write",
+            params={"path": str(root / "u.txt"), "content_b64": "bmV3"},
+            allowed_paths=(str(root),),
+        )
+    assert _err(err)[0] == "sandbox_denied"
+    assert "publish" in _err(err)[1] or "link" in _err(err)[1]
+    assert not (root / "u.txt").exists()
+    assert [p.name for p in root.iterdir() if p.name.startswith(".lfl-peer-write-")] == []
+
+
+def test_fs_write_crash_after_publish_keeps_strong_commit_evidence(tmp_path, env, monkeypatch):
+    """§6.1 崩溃切点：link 发布成功后、移除临时名之前。
+    目标已发布＝提交强证据；临时名与目标同 inode（nlink>=2）且含归属前缀，
+    清理失败不得让提交伪装失败。"""
+    import errno
+
+    root, _artifacts, ex = env
+    target = root / "c.txt"
+    real_unlink = os.unlink
+
+    def crash_before_cleanup(p, **kw):
+        if ".lfl-peer-write-" in str(p):
+            raise OSError(errno.EIO, "simulated crash after publish, before cleanup")
+        return real_unlink(p, **kw)
+
+    monkeypatch.setattr(os, "unlink", crash_before_cleanup)
+    ex.run(  # 不得抛错：提交事实优先于清理失败
+        kind="fs.write",
+        params={"path": str(target), "content_b64": "bmV3"},
+        allowed_paths=(str(root),),
+    )
+    assert target.read_text(encoding="utf-8") == "new"
+    leftovers = [p for p in root.iterdir() if p.name.startswith(".lfl-peer-write-")]
+    assert leftovers, "崩溃切点应留下临时名（nlink>=2 提交强证据）"
+    assert os.stat(target).st_ino == os.stat(leftovers[0]).st_ino

@@ -144,9 +144,15 @@ class Executor:
         if not params.get("overwrite", False) and os.path.lexists(target):
             raise PeerError("params_schema_invalid", "target exists and overwrite=false")
 
-        self._atomic_write(target, payload)
+        dir_synced = self._atomic_write(
+            target, payload, replace_existing=bool(params.get("overwrite", False))
+        )
         digest = hashlib.sha256(payload).hexdigest()
-        return ExecOutcome(summary=f"wrote {len(payload)} bytes to {target} (sha256={digest})")
+        summary = f"wrote {len(payload)} bytes to {target} (sha256={digest})"
+        if not dir_synced:
+            # §6.2：提交后目录项同步失败 → 标记待核对，不得伪装成确定状态。
+            summary += " [dir-sync-pending]"
+        return ExecOutcome(summary=summary)
 
     # --- helpers ------------------------------------------------------------
     def _write_payload(self, params: dict[str, Any]) -> bytes:
@@ -169,11 +175,20 @@ class Executor:
         return self._artifacts.read(params["artifact_ref"])
 
     @staticmethod
-    def _atomic_write(target: str, payload: bytes) -> None:
-        """同目录临时文件 + ``os.replace``；跨设备/无权限映射为可判定错误码。"""
+    def _atomic_write(target: str, payload: bytes, *, replace_existing: bool) -> bool:
+        """原子提交（§6.1）：新建走 ``link(2)`` 发布，目标存在与否由内核原子判定，
+        不存在「检查后覆盖」竞态；覆盖仅在调用方（管理锁+快照复核）许可下用
+        ``rename`` 原子替换。返回父目录项是否已同步。
+
+        临时名携带归属前缀（当前进程级；引入 attempt 记录后升级）。
+        link 发布成功后、移除临时名之前崩溃：目标与临时名同 inode（nlink>=2）
+        是「已发布」的强证据——清理失败不得把提交伪装成失败。
+        """
         parent = os.path.dirname(target)
         try:
-            fd, tmp = tempfile.mkstemp(dir=parent, prefix=".lfl-peer-write-")
+            fd, tmp = tempfile.mkstemp(
+                dir=parent, prefix=f".lfl-peer-write-p{os.getpid()}-"
+            )
         except OSError as exc:
             raise PeerError("sandbox_denied", f"cannot create temp file: {exc.strerror}") from None
         try:
@@ -182,7 +197,35 @@ class Executor:
                 fh.flush()
                 os.fsync(fh.fileno())
             os.chmod(tmp, _file_mode_for(target))
-            os.replace(tmp, target)
+            if replace_existing:
+                os.replace(tmp, target)
+            else:
+                try:
+                    os.link(tmp, target)
+                except OSError as exc:
+                    if exc.errno == errno.EEXIST:
+                        with contextlib.suppress(OSError):
+                            os.unlink(tmp)
+                        raise PeerError(
+                            "params_schema_invalid", "target exists and overwrite=false"
+                        ) from None
+                    if exc.errno in (
+                        errno.EOPNOTSUPP,
+                        errno.ENOSYS,
+                        errno.EPERM,
+                        errno.EXDEV,
+                    ):
+                        with contextlib.suppress(OSError):
+                            os.unlink(tmp)
+                        raise PeerError(
+                            "sandbox_denied",
+                            f"atomic publish (link) unsupported: {exc.strerror}",
+                        ) from None
+                    raise
+                # 发布成功即已提交；移除临时名失败不改写提交事实（nlink>=2 强证据）
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            return _fsync_dir(parent)
         except OSError as exc:
             # replace 已成功时 tmp 不存在；清理失败不改变主错误
             with contextlib.suppress(OSError):
@@ -221,6 +264,23 @@ def _file_mode_for(target: str) -> int:
         return os.stat(target).st_mode & 0o777
     except OSError:
         return _DEFAULT_FILE_MODE
+
+
+def _fsync_dir(path: str) -> bool:
+    """父目录项同步（W3；operator._fsync_dir 同款模式）。失败返回 False，
+    由调用方在结果上标记待核对——文件级 fsync 不覆盖目录项。"""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        os.fsync(fd)
+    except OSError:
+        return False
+    else:
+        return True
+    finally:
+        os.close(fd)
 
 
 def _media_type(payload: bytes) -> str:
