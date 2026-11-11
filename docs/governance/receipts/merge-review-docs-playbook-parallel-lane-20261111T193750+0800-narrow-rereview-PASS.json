@@ -1,0 +1,38 @@
+{
+  "gate": "merge",
+  "kind": "narrow_re-review",
+  "supersedes": "docs/governance/receipts/merge-review-docs-playbook-parallel-lane-20261111T191955+0800.json",
+  "reviewer": "subagent_fdabb6810264",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-d72baf37",
+  "branch": "docs/playbook-parallel-lane-20261111",
+  "based_on_main": true,
+  "commits": [
+    "3516131a8020d852ba153124507380e822431a71",
+    "e2ec9af50473d33f267f1733efad0927c9f76d0a"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [],
+  "main_sha_at_review": "7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693",
+  "main_sha_after": "PENDING-合并后回填",
+  "branch_disposition": "PENDING-合并后回填",
+  "verify_receipt_id": "lane-f3610b93:7a496abe3（PASS 后按 SKILL 合并执行纪律签发，禁止预签）",
+  "checks": {
+    "revision_semantics": "L24 锚点改为 verify 凭证 base-sha、L26 改为『队首→merge-review→PASS 签发→立即带凭证 submit』，与 merge_queue.py check_verify_covers_base(L291-369: verify_required/专属/pass/TTL/base==verify_stale)、run_preflight failed 终态(L617-622)、tools_merge_queue.py submit 即跑四检(L234/257/264)及工具描述『无凭证重试只会再消耗一条不可逆的 failed 队列项』、SKILL.md L33-36 合并执行纪律全部一致；机检 a 于 submit 时复核 base==当前 main 的括注属实（L589/593）；未发现新引入事实错误",
+    "nonblocking_l3": "L3 已补注 EXPERIENCE-20261109（dirty 树假绿），卡真实在盘（experiences/EXPERIENCE-20261109-ci-gate-…假绿-行数.md）",
+    "prior_receipt_as_is": "REVISE 回执 json.tool 有效；verdict=REVISE；commits=3516131a8（首审对象）；父会话代落盘注记与实际（reviewer=child_id 更正、落盘于分支 worktree receipts/）一致",
+    "worktree_clean": "git status --porcelain（.worktrees/docs-playbook-20261111）为空",
+    "commit_list": "git log main..HEAD 恰两条 3516131a8+e2ec9af50；HEAD=e2ec9af50473d33f267f1733efad0927c9f76d0a",
+    "merge_base": "merge-base main HEAD == rev-parse main == 7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693，main 未前进，无需 rebase",
+    "diff_scope": "git diff --stat main..HEAD 仅 playbook(+40) 与 REVISE 回执(+39) 两文件；git show --stat e2ec9af50 未触碰两路径之外任何文件",
+    "ff_possible": "git merge-base --is-ancestor main HEAD exit=0"
+  },
+  "notes": [
+    "本回执窄复审并取代上一轮 REVISE 回执（supersedes）；上轮唯一阻断项（L26 操作序与 lane_queue_submit 机检 d 前置链冲突）已修复，非阻断项（L3 补注）已落实。",
+    "审查者纯只读：未写任何文件、未动 main、未执行合并；本 JSON 由审查者定稿、父会话代为落盘（含 reviewer 字段回填真实 child_id）。",
+    "合并执行提醒（按 SKILL 纪律）：ff 合入前先以本 PASS 回执为 evidence 签发 verify 凭证（预期 id=lane-f3610b93:7a496abe3），再走 lane_queue_submit/confirm——本分支自身合入同样受机检 d 约束。",
+    "审查者独立性：未参与该分支任何产出，全部事实只读独立取证（merge_queue.py/tools_merge_queue.py/SKILL.md 直读 + git 命令实测）。",
+    "父会话落盘注记（2026-11-11T19:39+0800）：reviewer 字段按审查者占位符回填真实 child_id subagent_fdabb6810264；落盘于分支 worktree docs/governance/receipts/，随分支合入 main；其余内容与审查者定稿逐字一致。"
+  ]
+}
