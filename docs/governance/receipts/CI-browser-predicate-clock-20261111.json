@@ -1,0 +1,82 @@
+{
+  "gate": "merge",
+  "verdict": "PASS",
+  "reviewer": "subagent_f3698697bf91",
+  "P0": 0,
+  "P1": 0,
+  "P2": 3,
+  "artifact_sha256": "70ba7effa0e74e25ef98bf9c30d9e7a9e6f383dcd606738c60d6564ea6cbfc61",
+  "scope_files": [
+    "tests/unit/test_smc_browser_predicate_wait_v01.py"
+  ],
+  "base_main_sha": "5e50f763de772257512e99e008c8518c2ce3d163",
+  "commits": [
+    "7e608edf779922d14e92be64f519e3375bde0b9f"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "main_sha_after": "7e608edf779922d14e92be64f519e3375bde0b9f",
+  "branch": "fix/github-ci-clock-20261111",
+  "branch_disposition": "kept: final remote CI verification pending",
+  "verify_receipt_id": "lane-2697c46d:5e50f763",
+  "code_review": {
+    "reviewer": "subagent_bf76d90250d0",
+    "candidate_sha256": "07088fd6d0d35062dfe1e65ac37a7fec8ee7e5266a215395f1bc53bfe5f9f4cc",
+    "status": {
+      "qualification": "PASS",
+      "candidate_sha256": "07088fd6d0d35062dfe1e65ac37a7fec8ee7e5266a215395f1bc53bfe5f9f4cc",
+      "artifact_reviewed": true,
+      "consumable_scope": {
+        "kind": "full_test",
+        "scope": "patch",
+        "paths": [
+          "tests/unit/test_smc_browser_predicate_wait_v01.py"
+        ],
+        "authorizes": "整树执行面（pytest / git push 的物理对象是整棵树）",
+        "revalidated_on_use": "切片外 tracked（含新提交）与未跟踪文件的内容摘要",
+        "not_covered": "切片之外只绑定未审；签发后改动即失效",
+        "material_tiers": {
+          "reviewed_slice": "1 条声明路径，内容随材料下发，逐条判定",
+          "bound_unreviewed": "切片外 tracked=0 untracked=0，内容未下发、只绑内容摘要，仅允许存在性核对"
+        }
+      }
+    }
+  },
+  "focused_gates": {
+    "normal": "40 passed; Ruff passed; diff-check passed",
+    "slow_snapshot_before": "two target semantic tests failed, each capture delays 120ms using saved real sleep",
+    "slow_snapshot_after": "same two target tests and same 120ms delay passed"
+  },
+  "full_r9": {
+    "head": "a250f85746d53ce23f38702c89e66bc4477bce56",
+    "exit_code": 0,
+    "elapsed_seconds": 444.68,
+    "execution_mode": "managed_native_process_no_tmux",
+    "command": "bash scripts/ci_gate.sh",
+    "log_sha256": "7eea62be4da0faa8cc00037a958393bc8cfc95eb2887b93f84463bbb00c0a7fa",
+    "summary_lines": [
+      "341 passed, 2 skipped, 14308 deselected, 2 warnings in 34.96s",
+      "7 passed, 2 skipped, 14642 deselected, 2 warnings in 3.95s",
+      "3 passed, 2 skipped, 14646 deselected, 2 warnings in 50.23s",
+      "14463 passed, 158 skipped, 3 xfailed, 13 warnings in 222.04s (0:03:42)",
+      "1 passed, 51 deselected in 11.00s",
+      "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）"
+    ]
+  },
+  "main_smoke": "22 passed; affected predicate test file",
+  "r9_reuse_proof": {
+    "r9_tested_head": "a250f85746d53ce23f38702c89e66bc4477bce56",
+    "integration_head": "7e608edf779922d14e92be64f519e3375bde0b9f",
+    "new_main_base": "5e50f763de772257512e99e008c8518c2ce3d163",
+    "only_tree_differences": [
+      "docs/governance/receipts/_evidence-lane-3e9d1b73-ci-gate.txt",
+      "docs/governance/receipts/posthoc-push-a96e1c3d7-20261111.json"
+    ],
+    "source_tests_scripts_workflows_dependencies_unchanged": true,
+    "patch_blob_identical": true
+  },
+  "github_before": {
+    "run_id": 42946332720,
+    "conclusion": "success after one full parallel retry; residual semantic timing failure motivated this repair"
+  }
+}
