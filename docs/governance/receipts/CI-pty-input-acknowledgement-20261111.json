@@ -1,0 +1,74 @@
+{
+  "gate": "merge",
+  "goal_id": "task-github-ci-hermetic-20261110",
+  "lane_id": "lane-7b0b88f7",
+  "based_on_main": true,
+  "verdict": "PASS",
+  "reviewer": "subagent_d169654f73e3",
+  "P0": 0,
+  "P1": 0,
+  "P2": 3,
+  "artifact_sha256": "2fe9148f3346e2938fc28843eceaa23c4452fe4c361d92992620fc42b24c5c39",
+  "scope_files": [
+    "tests/unit/test_terminal_pty.py"
+  ],
+  "base_main_sha": "e2bbaf3a0f11a5e59e672b19527f5f457ad1aadc",
+  "commits": [
+    "50431d3500dda3b6657bacb6c4113d1516ed9a34"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "main_sha_after": "50431d3500dda3b6657bacb6c4113d1516ed9a34",
+  "branch": "fix/github-ci-pty-20261111",
+  "branch_disposition": "kept: final remote CI verification pending",
+  "verify_receipt_id": "lane-7b0b88f7:e2bbaf3a",
+  "code_review": {
+    "reviewer": "subagent_0bdcd960b617",
+    "candidate_sha256": "c72616246b6ef6e41f444b77327cd9682a39a9fe4a64299f119e5a78d88f85de",
+    "status": {
+      "qualification": "PASS",
+      "candidate_sha256": "c72616246b6ef6e41f444b77327cd9682a39a9fe4a64299f119e5a78d88f85de",
+      "artifact_reviewed": true,
+      "consumable_scope": {
+        "kind": "full_test",
+        "scope": "tree",
+        "paths": [],
+        "authorizes": "整树执行面（pytest / git push）",
+        "revalidated_on_use": "整树内容摘要",
+        "not_covered": "无（tree scope 覆盖整树）"
+      }
+    }
+  },
+  "focused_gates": {
+    "normal": "15 PTY tests passed; Ruff and diff-check passed",
+    "cooked_window_before": "old target fails with CANCELLED false and empty stash when a 250ms cooked redraw is injected through actual prompt-toolkit input detach/cooked-mode contexts",
+    "cooked_window_after": "new target passes with the same cooked redraw; exact buffer acknowledgement before Ctrl+C; all cancellation/stash/termios assertions retained"
+  },
+  "full_r9": {
+    "head": "50431d3500dda3b6657bacb6c4113d1516ed9a34",
+    "exit_code": 0,
+    "elapsed_seconds": 426.53,
+    "execution_mode": "managed_native_process_no_tmux",
+    "command": "bash scripts/ci_gate.sh",
+    "log_sha256": "1e2f0cec207c023094fd0ba3e69e70b939b81bede6517df6c1146b7a99424982",
+    "summary_lines": [
+      "341 passed, 2 skipped, 14308 deselected, 2 warnings in 34.45s",
+      "7 passed, 2 skipped, 14642 deselected, 2 warnings in 3.57s",
+      "3 passed, 2 skipped, 14646 deselected, 2 warnings in 49.86s",
+      "14463 passed, 158 skipped, 3 xfailed, 13 warnings in 211.79s (0:03:31)",
+      "1 passed, 51 deselected in 10.53s",
+      "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）"
+    ]
+  },
+  "main_smoke": "15 passed; full affected PTY file",
+  "candidate_identity": {
+    "r9_tested_head": "50431d3500dda3b6657bacb6c4113d1516ed9a34",
+    "integration_head": "50431d3500dda3b6657bacb6c4113d1516ed9a34",
+    "tree_differences": [],
+    "note": "Same exact frozen candidate. This record does not remap or reuse a gate from an older commit."
+  },
+  "github_before": {
+    "run_id": 42950877997,
+    "conclusion": "success after one full parallel retry; residual PTY cooked-mode interruption timing failure motivated this repair"
+  }
+}
