@@ -37,4 +37,7 @@
 以下两项为演进提案通道，现行纪律不变（rebase 后全量重验、任何树变更整轮重审）:
 
 1. **门禁增量/降级重验通道**: rebase 为零冲突纯 replay 且 paths 与前进提交不相交时，全量重验成本（实测 3×10min）高于增量风险——降级通道需机械判据 + fail-closed（见 EVO 提案，人工审阅中）。
-2. **机械修复快速通道**: 4 行 pyright 类型收窄即触发整轮重审（§3#7）——切片内机械修复（类型收窄/格式）的轻量复审通道需程序可判判据，无法判定即整轮重审（见 EVO 提案）。
+2. **机械修复快速通道（已落地，EVO-20261111-8c5b88df）**: 切片内机械修复（仅注解/纯格式，无语义/控制流/签名变化）触发轻量复审而非全新审查轮。
+   - **机械判据**（`src/llm_loop/tools/mechanical_diff.py`，全部机检、fail-closed）: 触碰文件全为 `.py` 且解析成功; 每文件判为 `format_only`（AST 完全相等）或 `annotation_only`（注解消除归一后 AST 相等——新增/收窄/删除注解不影响运行时语义）; 非 .py、语法错误、越出切片、任何语义变化 ⇒ not mechanical，按全新变更整轮重审。
+   - **接入点**: `review_admission.start(previous_child_id=...)` 续审时，宿主自动用两轮冻结 HEAD 做 git diff 预检，结论（MECHANICAL/NOT MECHANICAL + 逐文件类别）注入任务书; 预检是**信息注入**，不改变任何资格判定——判不了按 NOT MECHANICAL 披露。
+   - **测试**: `tests/unit/test_mechanical_diff.py`（12 例含应拦分支）+ `test_review_host_admission.py` 集成 2 例（注解修复标 MECHANICAL; 值变化标 NOT MECHANICAL/semantic_change）。

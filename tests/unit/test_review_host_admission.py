@@ -3792,3 +3792,57 @@ def test_finding_digest_fails_open_on_unparsed_lines() -> None:
     ]))
     assert "Blocked by P1" in digest
     assert "none of the retries are bounded" in digest
+
+
+# ---- EVO-20261111-8c5b88df：机械修复预检段（续审任务书自动注入）--------------
+def test_mechanical_preflight_marks_annotation_only_fix(tmp_path: Path) -> None:
+    """上一轮 REVISE 后的注解修复 ⇒ 任务书含机械预检段（annotation_only）。"""
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "value fix"], check=True)
+    runner = MultiChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.state = "completed"
+    runner.answer = "P0: 缺少类型注解\nVERDICT: REVISE\nP0=1 P1=0 P2=0"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "REVISE"
+    (repo / "example.py").write_text("x: int = 2\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "add annotation"], check=True)
+    again = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        previous_child_id="child-review-1",
+    )
+    assert again["accepted"], again
+    assert "MECHANICAL FIX PREFLIGHT (EVO-20261111-8c5b88df" in runner.task
+    assert "MECHANICAL (annotation_only)" in runner.task
+    assert "no semantic / control-flow / signature change" in runner.task
+
+
+def test_mechanical_preflight_marks_semantic_change_as_full_review(tmp_path: Path) -> None:
+    """RULE-AI-35 集成层应拦实测：语义变化 ⇒ 任务书明示非机械、按全新变更全量复审。"""
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "value fix"], check=True)
+    runner = MultiChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.state = "completed"
+    runner.answer = "P0: 值错误\nVERDICT: REVISE\nP0=1 P1=0 P2=0"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "REVISE"
+    (repo / "example.py").write_text("x = 9\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "real change"], check=True)
+    again = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        previous_child_id="child-review-1",
+    )
+    assert again["accepted"], again
+    assert "MECHANICAL FIX PREFLIGHT (EVO-20261111-8c5b88df" in runner.task
+    assert "NOT MECHANICAL" in runner.task
+    assert "semantic_change" in runner.task
+    assert "full re-review required" in runner.task

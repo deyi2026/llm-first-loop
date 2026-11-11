@@ -102,6 +102,11 @@ class _Frozen:
     # derived_from：派生资格的来源 push 记录 child_id；非派生记录为空。只用于
     # 审计与回执披露，不参与 _same_admission / _consume 的权威判据。
     derived_from: str = ""
+    # ---- EVO-20261111-8c5b88df ----
+    # head_commit：冻结时刻的 git HEAD commit（bookkeeping，不参与资格判定）。
+    # 供机械修复预检做 previous→current 的 git diff（_Frozen.sha 是材料
+    # SHA256，不是 commit id）。空 = 未记录（旧记录），预检侧 fail-closed。
+    head_commit: str = ""
 
 
 _ALLOWED = AdmissionDecision(True, "")
@@ -2873,6 +2878,56 @@ def _unavailable_receipt(
     )
 
 
+def _head_commit_of(workdir: str) -> str:
+    """当前 git HEAD commit id（bookkeeping 用；失败返回空串，调用方 fail-closed）。"""
+    if not workdir:
+        return ""
+    proc = subprocess.run(
+        ["git", "-C", workdir, "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _mechanical_preflight_section(workdir: str, old_commit: str, new_commit: str) -> str:
+    """EVO-20261111-8c5b88df：续审任务书的机械修复预检段（程序机检）。
+
+    start 带 previous_child_id 时自动评估 ``old_commit..new_commit`` 是否为
+    切片内纯机械修复（仅注解/纯格式），把结论写进任务书——机械时提示复审
+    范围可聚焦上一轮 findings 处置；非机械时明示按全新变更全量复审。
+    预检只是**信息注入**，不改变任何资格判定（fail-closed 闸全部保留在
+    别处）；预检自身出错也按"非机械"披露，绝不把判不了说成机械。
+    """
+    result: dict[str, Any] = {"mechanical": False, "reason": "fail_closed:preflight_error"}
+    if old_commit and new_commit:
+        try:
+            from llm_loop.tools.mechanical_diff import assess_mechanical_fix
+            result = assess_mechanical_fix(workdir, old_sha=old_commit, new_sha=new_commit)
+        except Exception:  # noqa: BLE001 —— 预检绝不因自身故障阻断审查
+            pass
+    if result.get("mechanical"):
+        lines = [
+            "[MECHANICAL FIX PREFLIGHT (EVO-20261111-8c5b88df, machine-checked)]",
+            f"previous review HEAD: {old_commit}",
+            f"current frozen HEAD: {new_commit}",
+            f"verdict: MECHANICAL ({result.get('category') or 'unknown'}) -- annotation/format-only,",
+            "no semantic / control-flow / signature change (program-determined).",
+            "changed files:",
+        ]
+        for path, cat in sorted((result.get("per_file") or {}).items()):
+            lines.append(f"  - {path}: {cat}")
+        lines.append(
+            "re-review scope guidance: prior findings disposition + correctness of the"
+            " mechanical edits; semantic surface is excluded by the machine criteria."
+        )
+        return "\n".join(lines) + "\n\n"
+    return (
+        "[MECHANICAL FIX PREFLIGHT (EVO-20261111-8c5b88df, machine-checked)]\n"
+        f"verdict: NOT MECHANICAL ({result.get('reason') or 'unknown'}) --"
+        " treat as a fresh change; full re-review required.\n\n"
+    )
+
+
 def _resolve_scope(
     kind: str, scope: str, paths: Sequence[str] | None
 ) -> tuple[dict[str, Any], tuple[str, ...], str]:
@@ -3697,7 +3752,7 @@ class HostReviewAdmission:
                 kind, parent, target, sha, child, scope_receipt=scope_receipt,
                 scope_paths=scope_paths, out_scope=out_scope, tier_counts=tier_counts,
                 review_deadline=review_deadline, previous_row=previous_row,
-                push_extra=push_extra, task_chars=task_chars,
+                push_extra=push_extra, task_chars=task_chars, workdir=workdir,
             )
             self._remember_material(child, task, material)
         return self._attach_prior_attempts(
@@ -3716,6 +3771,7 @@ class HostReviewAdmission:
         scope_receipt: dict[str, Any], scope_paths: tuple[str, ...], out_scope: str,
         tier_counts: tuple[int, int] | None, review_deadline: float,
         previous_row: _Frozen | None, push_extra: dict[str, str], task_chars: int,
+        workdir: str = "",
     ) -> _Frozen:
         """构造 admission 冻结记录（2026-11-03 自 ``start`` 抽出，行为不变）。
 
@@ -3737,6 +3793,7 @@ class HostReviewAdmission:
             previous_child_id=previous_row.child_id if previous_row is not None else "",
             content_fingerprint=push_extra.get("content_fingerprint", ""),
             approved_head=str(push_extra.get("src_commit") or ""),
+            head_commit=_head_commit_of(workdir),
         )
 
     def _start_receipt(
@@ -3825,8 +3882,15 @@ class HostReviewAdmission:
         if refusal is not None:
             return refusal
         narrow = _narrow_review_section(previous_row, material) if previous_row else ""
+        mech = (
+            _mechanical_preflight_section(
+                workdir, previous_row.head_commit, _head_commit_of(workdir)
+            )
+            if previous_row is not None
+            else ""
+        )
         return (
-            _compose_review_task(kind, target, sha, material, narrow),
+            _compose_review_task(kind, target, sha, material, narrow + mech),
             previous_row, coverage, out_scope, tier_counts,
         )
 
