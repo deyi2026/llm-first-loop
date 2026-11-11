@@ -30,6 +30,39 @@ def _assert_absent_for(master, output, needle, timeout=0.25):
         assert needle not in output, output.decode(errors="replace")
 
 
+# A screen echo may come from the PTY line discipline while a redraw temporarily
+# restores cooked mode. Acknowledge the real editor buffer without printing into
+# that redraw, before injecting cancellation or termination.
+_PREINPUT_ACK_SCRIPT = textwrap.dedent("""
+    import os
+    import time
+    from pathlib import Path
+
+    def acknowledge_draft(composer, expected):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            session = composer._preinput_session
+            if session is not None and session.default_buffer.text == expected:
+                Path(os.environ["LFL_TEST_DRAFT_ACK"]).write_text(expected)
+                return
+            time.sleep(0.01)
+        raise AssertionError("editor did not consume the expected draft")
+""")
+
+
+def _receive_draft_ack(master, output, path, expected, timeout=6):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and path.read_text() == expected:
+            return
+        if select.select([master], [], [], 0.01)[0]:
+            try:
+                output.extend(os.read(master, 65536))
+            except OSError:
+                break
+    raise AssertionError("editor draft acknowledgement missing: " + output.decode(errors="replace"))
+
+
 @pytest.mark.parametrize(("width", "height", "multiline", "resize", "line_count"), [
     (60, 12, False, None, 2),
     (100, 24, False, None, 2),
@@ -346,10 +379,11 @@ def test_ctrl_c_in_next_draft_requests_current_run_cancel_and_stashes_text(tmp_p
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
     env = dict(os.environ, TERM="xterm-256color", PROMPT_TOOLKIT_NO_CPR="1",
-               XDG_CONFIG_HOME=str(tmp_path / "config"))
+               XDG_CONFIG_HOME=str(tmp_path / "config"),
+               LFL_TEST_DRAFT_ACK=str(tmp_path / "draft-ack"))
     root = Path(__file__).resolve().parents[2]
     env["PYTHONPATH"] = str(root / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    script = textwrap.dedent(
+    script = _PREINPUT_ACK_SCRIPT + textwrap.dedent(
         """
         import json
         import time
@@ -361,8 +395,8 @@ def test_ctrl_c_in_next_draft_requests_current_run_cancel_and_stashes_text(tmp_p
         composer = Composer(UISettings(), Path.cwd())
         cancelled = threading.Event()
         assert composer.start_preinput("fixture", "test/model", cancel_callback=cancelled.set)
-        time.sleep(0.35)
         print("CANCEL_WINDOW", flush=True)
+        acknowledge_draft(composer, "unfinished draft")
         deadline = time.monotonic() + 5
         while composer.preinput_active and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -393,6 +427,7 @@ def test_ctrl_c_in_next_draft_requests_current_run_cancel_and_stashes_text(tmp_p
         receive_until("你".encode())
         receive_until(b"CANCEL_WINDOW")
         os.write(master, b"unfinished draft")
+        _receive_draft_ack(master, output, tmp_path / "draft-ack", "unfinished draft")
         os.write(master, b"\x03")
         receive_until(b"CANCELLED:True")
         receive_until(b"STASHED:unfinished draft")
@@ -421,10 +456,11 @@ def test_abort_preinput_stashes_text_and_restores_terminal(tmp_path):
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
     env = dict(os.environ, TERM="xterm-256color", PROMPT_TOOLKIT_NO_CPR="1",
-               XDG_CONFIG_HOME=str(tmp_path / "config"))
+               XDG_CONFIG_HOME=str(tmp_path / "config"),
+               LFL_TEST_DRAFT_ACK=str(tmp_path / "draft-ack"))
     root = Path(__file__).resolve().parents[2]
     env["PYTHONPATH"] = str(root / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    script = textwrap.dedent(
+    script = _PREINPUT_ACK_SCRIPT + textwrap.dedent(
         """
         import time
         from pathlib import Path
@@ -434,7 +470,7 @@ def test_abort_preinput_stashes_text_and_restores_terminal(tmp_path):
         composer = Composer(UISettings(), Path.cwd())
         assert composer.start_preinput("fixture", "test/model")
         print("ABORT_WINDOW", flush=True)
-        time.sleep(0.35)
+        acknowledge_draft(composer, "unfinished draft")
         print("ABORT_NOW", flush=True)
         stopped = composer.abort_preinput(timeout=3)
         print("ABORTED:" + str(stopped), flush=True)
@@ -486,10 +522,12 @@ def test_sigterm_during_run_aborts_next_draft_and_restores_terminal(tmp_path):
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
     env = dict(os.environ, TERM="xterm-256color", PROMPT_TOOLKIT_NO_CPR="1",
-               XDG_CONFIG_HOME=str(tmp_path / "config"))
+               XDG_CONFIG_HOME=str(tmp_path / "config"),
+               LFL_TEST_DRAFT_ACK=str(tmp_path / "draft-ack"),
+               LFL_TEST_RUN_RELEASE=str(tmp_path / "run-release"))
     root = Path(__file__).resolve().parents[2]
     env["PYTHONPATH"] = str(root / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    script = textwrap.dedent(
+    script = _PREINPUT_ACK_SCRIPT + textwrap.dedent(
         """
         import time
         from pathlib import Path
@@ -507,7 +545,12 @@ def test_sigterm_during_run_aborts_next_draft_and_restores_terminal(tmp_path):
 
             def run_stream(self, sid, text, model=None, **kwargs):
                 yield StreamDelta(text="current run output")
-                time.sleep(1.2)
+                acknowledge_draft(composer, "unfinished draft")
+                release = Path(os.environ["LFL_TEST_RUN_RELEASE"])
+                deadline = time.monotonic() + 8
+                while not release.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert release.exists(), "parent did not release the run after SIGTERM"
                 return LoopResult(sid, "settled after termination request", model_used=model or "fixture/model")
 
         engine = Engine()
@@ -540,7 +583,9 @@ def test_sigterm_during_run_aborts_next_draft_and_restores_terminal(tmp_path):
         receive_until("你".encode())
         receive_until(b"current run output")
         os.write(master, b"unfinished draft")
+        _receive_draft_ack(master, output, tmp_path / "draft-ack", "unfinished draft")
         os.kill(process.pid, signal.SIGTERM)
+        (tmp_path / "run-release").touch()
         receive_until(b"RUN_EXIT:143")
         receive_until(b"STASHED:unfinished draft")
         receive_until(b"COOKED>")
@@ -570,10 +615,11 @@ def test_sigterm_while_waiting_for_next_draft_after_run_settled_restores_termina
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
     env = dict(os.environ, TERM="xterm-256color", PROMPT_TOOLKIT_NO_CPR="1",
-               XDG_CONFIG_HOME=str(tmp_path / "config"))
+               XDG_CONFIG_HOME=str(tmp_path / "config"),
+               LFL_TEST_DRAFT_ACK=str(tmp_path / "draft-ack"))
     root = Path(__file__).resolve().parents[2]
     env["PYTHONPATH"] = str(root / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    script = textwrap.dedent(
+    script = _PREINPUT_ACK_SCRIPT + textwrap.dedent(
         """
         from pathlib import Path
         from llm_loop.terminal.editor import Composer
@@ -585,6 +631,7 @@ def test_sigterm_while_waiting_for_next_draft_after_run_settled_restores_termina
         with _preinput_signal_guard(composer) as (interrupted, terminated):
             composer.mark_preinput_run_settled()
             print("RUN_SETTLED_WAITING_DRAFT", flush=True)
+            acknowledge_draft(composer, "unfinished after run settled")
             draft = composer.finish_preinput()
             exit_code = 143 if terminated.is_set() else 0
             print("EXIT:" + str(exit_code), flush=True)
@@ -611,9 +658,9 @@ def test_sigterm_while_waiting_for_next_draft_after_run_settled_restores_termina
         receive_until("你".encode())
         receive_until(b"RUN_SETTLED_WAITING_DRAFT")
         os.write(master, b"unfinished after run settled")
-        # PTY writes enqueue input; wait until the editor has consumed/displayed
-        # the draft before testing that SIGTERM preserves it.
-        receive_until(b"unfinished after run settled")
+        _receive_draft_ack(
+            master, output, tmp_path / "draft-ack", "unfinished after run settled",
+        )
         os.kill(process.pid, signal.SIGTERM)
         receive_until(b"EXIT:143")
         receive_until(b"STASHED:unfinished after run settled")
