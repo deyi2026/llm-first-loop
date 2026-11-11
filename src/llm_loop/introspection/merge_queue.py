@@ -544,6 +544,75 @@ def assess_rebase_replay(
     }
 
 
+def _validate_carryover(
+    receipts_path: str | Path,
+    *,
+    carryover_of: str,
+    lane_id: str,
+    repo_path: str | Path,
+    old_base: str,
+    old_head: str,
+    new_base: str,
+    new_head: str,
+) -> dict:
+    """carryover 签发前的全部 fail-closed 校验（EVO-20261111-c273f61c）。
+
+    校验链（任一不过 raise ValueError，绝不部分通过）：
+    源凭证存在且同 lane → result=pass → base_sha 精确等于 old_base →
+    head_sha 必须有记录且等于 old_head（缺失即拒：空值静默跳过绑定会让
+    旧格式凭证携带未知范围，R5 审查 P1）→ TTL 可判定且未过期 →
+    ``assess_rebase_replay`` 判据（--verbatim patch-id 纯 replay + 路径
+    不相交 + 无 merge）机检复跑通过。返回 replay 判据评估结果。
+    """
+    if not repo_path or not old_base or not old_head:
+        raise ValueError(
+            "carryover 签发需要 repo_path/old_base/old_head（fail-closed：判据必须机检复跑）"
+        )
+    src = load_receipts(Path(receipts_path)).get(str(carryover_of))
+    if src is None or str(src.get("lane_id") or "") != str(lane_id):
+        raise ValueError(f"carryover 源凭证不存在或不属于该 lane: {carryover_of}")
+    if str(src.get("result") or "").strip().lower() != "pass":
+        raise ValueError(f"carryover 源凭证不是 pass: {carryover_of}")
+    if str(src.get("base_sha") or "") != str(old_base):
+        raise ValueError(
+            f"carryover 源凭证 base_sha 与 old_base 不符: "
+            f"{src.get('base_sha')} != {old_base}（凭证不覆盖被评估范围）"
+        )
+    src_head = str(src.get("head_sha") or "")
+    if not src_head:
+        raise ValueError(
+            f"carryover 源凭证 head_sha 缺失（范围不可判定，fail-closed）: {carryover_of}"
+        )
+    if src_head != str(old_head):
+        raise ValueError(
+            f"carryover 源凭证 head_sha 与 old_head 不符: "
+            f"{src_head} != {old_head}（凭证不覆盖被评估范围）"
+        )
+    created = _parse_iso(src.get("created_at"))
+    src_ttl = src.get("ttl_s")
+    if created is None or not src_ttl:
+        raise ValueError("carryover 源凭证有效期不可判定（fail-closed）")
+    try:
+        expired = system_local_now() > created + timedelta(seconds=int(src_ttl))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("carryover 源凭证 ttl 不可解析（fail-closed）") from None
+    if expired:
+        raise ValueError(f"carryover 源凭证已过期: {carryover_of}")
+    assessment = assess_rebase_replay(
+        repo_path,
+        old_base=old_base,
+        old_head=old_head,
+        new_base=new_base,
+        new_head=new_head,
+    )
+    if not assessment.get("eligible"):
+        raise ValueError(
+            "carryover 判据未满足（拒绝签发，走原全量重验）: "
+            f"{assessment.get('reason')}"
+        )
+    return assessment
+
+
 def issue_verify_receipt(
     receipts_path: str | Path,
     *,
@@ -560,25 +629,19 @@ def issue_verify_receipt(
     old_base: str = "",
     old_head: str = "",
 ) -> dict:
-    """EVO-20261106-7782d438：verify 凭证签发者。
+    """EVO-20261106-7782d438：verify 凭证签发者（append-only JSONL）。
 
     历史缺陷：verify 层只有读者（``load_receipts``/``check_verify_covers_base``）
     没有写入者，``lane_queue_submit`` 机检 d 对任何 lane 恒
     ``verify_layer_not_enabled``——每次提交浪费一次 lane 登记 + 一条不可逆
     队列项（2026-11-06 实测 mq-34e40005 / mq-3cf58f44）。
 
-    幂等键：``receipt_id = f"{lane_id}:{base_sha[:8]}"``——同 lane+base 重验
-    追加即"末行胜出"（``load_receipts`` 语义）；base 前进后键自然变化，
-    旧凭证经机检 d 判 ``verify_stale`` 强制重验。append-only JSONL。
-    签发面约定：merge-review-gate 审查 PASS 后调用（或 CLI
-    ``scripts/issue_verify_receipt.py --apply``），凭证内容须对应真实审查。
+    幂等键 ``receipt_id = f"{lane_id}:{base_sha[:8]}"``（末行胜出）；签发面
+    约定 merge-review-gate PASS 后调用，凭证须对应真实审查。
 
-    EVO-20261111-c273f61c carryover（replay 型 rebase 降级重验）：
-    ``carryover_of`` 指向同 lane 的一张**未过期** pass 凭证（原 base），
-    签发侧**内部强制复跑** ``assess_rebase_replay``（纯 replay + 路径不相交）
-    ——判据不过直接抛 ValueError，绝不接受调用方自述的"应该没变"。
-    读侧（``check_verify_covers_base``）语义不变：carryover 只是一张
-    base=新 base 的普通凭证行，降级闸全部在签发侧。
+    EVO-20261111-c273f61c carryover：``carryover_of`` 指向同 lane 原 base 的
+    pass 凭证，校验链全在 ``_validate_carryover``（签发侧强制机检复跑，读侧
+    ``check_verify_covers_base`` 语义不变）。
     """
     if not lane_id or not base_sha:
         raise ValueError("issue_verify_receipt 需要 lane_id 与 base_sha（fail-closed）")
@@ -596,60 +659,12 @@ def issue_verify_receipt(
         "evo": "EVO-20261106-7782d438",
     }
     if carryover_of:
-        if not repo_path or not old_base or not old_head:
-            raise ValueError(
-                "carryover 签发需要 repo_path/old_base/old_head（fail-closed：判据必须机检复跑）"
-            )
-        existing = load_receipts(Path(receipts_path))
-        src = existing.get(str(carryover_of))
-        if src is None or str(src.get("lane_id") or "") != str(lane_id):
-            raise ValueError(f"carryover 源凭证不存在或不属于该 lane: {carryover_of}")
-        if str(src.get("result") or "").strip().lower() != "pass":
-            raise ValueError(f"carryover 源凭证不是 pass: {carryover_of}")
-        # 源凭证必须绑定到被评估的 commit 范围（P1，2026-11-11 审查）:
-        # base 必须精确等于 old_base；head_sha 在源凭证有记录时也必须等于
-        # old_head——否则"carryover"可以指向同 lane 针对完全不同范围的旧
-        # pass，replay 判据评估的却不是那张凭证覆盖的内容。
-        if str(src.get("base_sha") or "") != str(old_base):
-            raise ValueError(
-                f"carryover 源凭证 base_sha 与 old_base 不符: "
-                f"{src.get('base_sha')} != {old_base}（凭证不覆盖被评估范围）"
-            )
-        # 源 head_sha 缺失即拒（R5 审查 P1）：空值静默跳过绑定会让旧格式
-        # 凭证（无 head 记录）携带未知范围——有效性不可判定按未通过处理，
-        # 与 ttl_s 缺失的 D3/F8 口径一致。
-        src_head = str(src.get("head_sha") or "")
-        if not src_head:
-            raise ValueError(
-                f"carryover 源凭证 head_sha 缺失（范围不可判定，fail-closed）: {carryover_of}"
-            )
-        if src_head != str(old_head):
-            raise ValueError(
-                f"carryover 源凭证 head_sha 与 old_head 不符: "
-                f"{src_head} != {old_head}（凭证不覆盖被评估范围）"
-            )
-        created = _parse_iso(src.get("created_at"))
-        src_ttl = src.get("ttl_s")
-        if created is None or not src_ttl:
-            raise ValueError("carryover 源凭证有效期不可判定（fail-closed）")
-        try:
-            expired = system_local_now() > created + timedelta(seconds=int(src_ttl))
-        except (TypeError, ValueError, OverflowError):
-            raise ValueError("carryover 源凭证 ttl 不可解析（fail-closed）") from None
-        if expired:
-            raise ValueError(f"carryover 源凭证已过期: {carryover_of}")
-        assessment = assess_rebase_replay(
-            repo_path,
-            old_base=old_base,
-            old_head=old_head,
-            new_base=str(base_sha),
-            new_head=str(head_sha or ""),
+        assessment = _validate_carryover(
+            receipts_path,
+            carryover_of=carryover_of, lane_id=lane_id,
+            repo_path=repo_path, old_base=old_base, old_head=old_head,
+            new_base=str(base_sha), new_head=str(head_sha or ""),
         )
-        if not assessment.get("eligible"):
-            raise ValueError(
-                "carryover 判据未满足（拒绝签发，走原全量重验）: "
-                f"{assessment.get('reason')}"
-            )
         row["carryover_of"] = str(carryover_of)
         row["evo"] = "EVO-20261111-c273f61c"
         row["replay_evidence"] = {
