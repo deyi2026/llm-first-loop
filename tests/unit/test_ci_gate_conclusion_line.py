@@ -32,6 +32,34 @@ _FAKE_NPM = """#!/bin/sh
 mkdir -p dist && : > dist/index.html
 """
 
+# 抖动通道桩（2026-11-11 P1-1）：第一次并行全量返回红，serial 单点与并行复跑均绿。
+# 桩用 $0 同目录的计数文件判次，不依赖外部状态目录。
+_FAKE_PYTHON_FLAKY = """#!/bin/sh
+_STATE="$(dirname "$0")/.fake-state"
+mkdir -p "$_STATE"
+case "$*" in
+  *"--tool pyright"*) printf '%s\\n' "$FAKE_PYRIGHT_OUTPUT"; exit 0 ;;
+  *"-m pytest"*)
+    case "$*" in
+      *"--dist loadfile"*)
+        _N=$(cat "$_STATE/parallel_calls" 2>/dev/null || echo 0)
+        _N=$((_N + 1))
+        echo "$_N" > "$_STATE/parallel_calls"
+        if [ "$_N" -eq 1 ]; then
+          echo "FAILED tests/unit/test_flaky_sample.py::test_under_load - assert 1 == 2"
+          echo "1 failed, 42 passed in 9.9s"
+          exit 1
+        fi
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  *"-c"*) echo "$HOME"; exit 0 ;;
+esac
+exit 0
+"""
+
 
 def _make_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -132,3 +160,33 @@ def test_ci_home_is_physical_when_checkout_uses_symlink(tmp_path: Path) -> None:
     assert captured_home.read_text(encoding="utf-8") == str(
         (tmp_path / "root" / "data" / ".ci-test-home").resolve()
     )
+
+
+def test_flaky_xdist_pass_is_not_reported_as_clean_pass(tmp_path: Path) -> None:
+    """抖动放行必须与零失败绿在输出上可区分（P1-1，2026-11-11）。
+
+    RULE-AI-35 的「应拦输入」在此表现为「应可区分输入」：修复前真实 ci_gate.sh 在
+    抖动路径上打印一行 ⚠️ 后继续走无条件 ✅，抖动绿与干净绿对外不可分辨，下游引用
+    「CI 绿」作发布/合并资格时会把一次真实首轮红当成零失败证据。
+    """
+    result = _run_gate(tmp_path, "R9 pyright status=complete", python_script=_FAKE_PYTHON_FLAKY)
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+    assert "分布抖动" in result.stdout
+    assert "FLAKY-PASS" in result.stdout
+    assert "✅ ci_gate 全链路通过" not in result.stdout
+    assert "test_flaky_sample.py" in result.stdout
+    assert "并行首轮 1 文件红" in result.stdout  # $n_files 真被取到，不是空串
+    # 「落盘」必须可核验，不能只验回显：取回清单路径并核对内容。
+    marker = "首轮红清单落盘："
+    manifest_line = next(ln for ln in result.stdout.splitlines() if marker in ln)
+    manifest = Path(manifest_line.split(marker, 1)[1].strip())
+    assert manifest.is_file(), manifest_line
+    assert "test_flaky_sample.py" in manifest.read_text(encoding="utf-8")
+
+
+def test_clean_run_never_claims_flaky(tmp_path: Path) -> None:
+    result = _run_gate(tmp_path, "R9 pyright status=complete")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FLAKY-PASS" not in result.stdout
+    assert "✅ ci_gate 全链路通过" in result.stdout

@@ -239,8 +239,17 @@ else
         echo "   Gate logs: $GATE_TMP" >&2
         exit 1
       fi
-      echo "⚠️ serial 绿 + 并行复跑绿 = xdist 分布抖动（不阻断；首轮文件清单如下，登记观察）"
+      # 2026-11-11（P1-1 暴露面收口）：放行语义不变（抖动不该退化成假红噪声），
+      # 但放行必须与「零失败」在**外部输出上可区分**。此前本分支只打印一行 ⚠️ 就继续
+      # 往下走，最终仍打无条件 ✅ 结论行——抖动绿与干净绿对下游不可区分，引用「CI 绿」
+      # 作发布/合并资格时会把一次真实的首轮红当成零失败证据（RULE-AI-01 完成诚实）。
+      GATE_VERDICT="FLAKY-PASS"
+      GATE_FLAKY_COUNT="$n_files"
+      GATE_FLAKY_MANIFEST="$GATE_TMP/flaky-first-round-files.txt"
+      printf '%s\n' "$fail_files" >"$GATE_FLAKY_MANIFEST"
+      echo "⚠️ serial 绿 + 并行复跑绿 = xdist 分布抖动（不阻断；结论记为 FLAKY-PASS，首轮红文件清单如下）"
       echo "$fail_files"
+      echo "   首轮红清单落盘：$GATE_FLAKY_MANIFEST"
     else
       cat "$GATE_RETRY_OUT"
       echo "❌ 并行复跑仍红：串行单跑绿不足以证明改动无害（负载相关回归形态），阻断" >&2
@@ -272,7 +281,15 @@ fi
 # Phase 2 接线（B2-P2-08）：守卫 WARN 汇总呈现（不阻断；FAIL 用例已在 [4/4] 全量天然覆盖）
 "$PY" -m pytest tests/unit/test_arch_guards.py -m guard_report -q
 
-if [[ "$PYRIGHT_STATUS" == "unknown" ]]; then
+# 结论行三态（2026-11-11）：FLAKY-PASS / pyright=UNKNOWN / 干净 ✅ 必须互斥可辨。
+# 抖动放行仍是 exit 0，但不得借用「全链路通过」的措辞——那是零失败才配的说法。
+if [[ "${GATE_VERDICT:-CLEAN}" == "FLAKY-PASS" ]]; then
+  echo "⚠️ ci_gate 全链路完成：FLAKY-PASS（并行首轮 ${GATE_FLAKY_COUNT} 文件红 → serial 单点复核绿 → 并行同构复跑绿 = xdist 分布抖动放行，非零失败）"
+  echo "   本次结果不得引用为「全量零失败」凭据（发布/合并资格以 CLEAN 绿为准）；首轮红清单：${GATE_FLAKY_MANIFEST}"
+  if [[ "$PYRIGHT_STATUS" == "unknown" ]]; then
+    echo "   另：pyright=UNKNOWN（本轮无类型诊断数据），同样不得引用为类型检查通过。"
+  fi
+elif [[ "$PYRIGHT_STATUS" == "unknown" ]]; then
   echo "⚠️ ci_gate 全链路完成，但 pyright=UNKNOWN（本轮无类型诊断数据，非 PASS）："
   echo "   ruff + env-pin 声明门禁 + tier0 预检 + 全量门禁（并行集 + serial_signal 串行补跑）均已通过；"
   echo "   发布资格（release.yml 带 --require-complete）不得引用本次结果作为类型检查通过。"
