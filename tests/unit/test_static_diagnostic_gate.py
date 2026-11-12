@@ -372,6 +372,71 @@ def test_delivery_range_rejects_mismatched_push_identity(
     with pytest.raises(ValueError, match="identity"):
         gate.changed_python_paths(tmp_path)
 
+
+@pytest.mark.parametrize("annotated", [False, True])
+def test_delivery_range_accepts_lightweight_or_annotated_tag_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, annotated: bool,
+) -> None:
+    _temp_repo(tmp_path)
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    new_file = tmp_path / "src" / "release_fix.py"
+    new_file.parent.mkdir(exist_ok=True)
+    new_file.write_text("value = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "src/release_fix.py")
+    _git(tmp_path, "commit", "-m", "release")
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    if annotated:
+        _git(tmp_path, "tag", "-a", "v-test", "-m", "release")
+    else:
+        _git(tmp_path, "tag", "v-test")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({
+        "ref": "refs/tags/v-test", "after": _git(tmp_path, "rev-parse", "refs/tags/v-test"),
+        "before": "0" * 40,
+    }), encoding="utf-8")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", base)
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/tags/v-test")
+
+    assert gate.changed_python_paths(tmp_path) == {"src/release_fix.py"}
+    assert _git(tmp_path, "rev-parse", "HEAD") == head
+
+
+def test_tag_push_rejects_mismatched_event_object(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _temp_repo(tmp_path)
+    _git(tmp_path, "tag", "-a", "v-test", "-m", "release")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({
+        "ref": "refs/tags/v-test", "after": "0" * 40,
+        "before": "0" * 40,
+    }), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/tags/v-test")
+
+    with pytest.raises(ValueError, match="tag push identity"):
+        gate.changed_python_paths(tmp_path)
+
+
+def test_tag_push_rejects_runner_ref_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _temp_repo(tmp_path)
+    _git(tmp_path, "tag", "v-test")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({
+        "ref": "refs/tags/v-test", "after": _git(tmp_path, "rev-parse", "HEAD"),
+        "before": "0" * 40,
+    }), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/tags/wrong-tag")
+
+    with pytest.raises(ValueError, match="runner ref"):
+        gate.changed_python_paths(tmp_path)
+
 def test_delivery_range_cannot_override_ci_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

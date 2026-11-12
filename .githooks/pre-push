@@ -101,9 +101,58 @@ done <<< "$untracked_new_receipts"
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" =~ ^0+$ ]] && continue
-  if [[ "$remote_sha" =~ ^0+$ ]]; then
-    RANGE_ARGS=(--commit "$local_sha")   # 首推：扫待推提交可达的完整历史（逐提交，非仅 tip 树）
-    if ! changed_receipts="$(git ls-tree -r --name-only "$local_sha" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
+  RANGE_ARGS=(--commit "$local_sha")
+  TAG_RANGE_SCAN=0
+  SKIP_SOURCE_SCAN=0
+  RECEIPT_TREE_SHA="$local_sha"
+  if [[ "$local_ref" == refs/tags/* ]]; then
+    # 标签创建/更新均按目标 commit 与远端受保护 main 的关系判定：
+    # - 目标恰等于 main：没有新代码；main 推送增量闸 + CI --tree 已覆盖，不重扫；
+    # - 目标是 main 的旧祖先：扫精确目标树，防止旧 tag 指向后来已删除的敏感内容；
+    # - 目标领先 main：扫描 main..tag 的每个新增提交，再扫 tag 完整目标树；
+    # - 无法证明关系/对象缺失/历史分叉：回退完整 --commit 扫描，fail-closed。
+    if ! TAG_TARGET_SHA="$(git rev-parse --verify --quiet "${local_sha}^{commit}")"; then
+      echo "[pre-push] 拒绝：标签目标无法解析为 commit（fail-closed）。" >&2
+      exit 1
+    fi
+    REMOTE_MAIN_LINE="$(git ls-remote --heads "$REMOTE_URL" refs/heads/main 2>/dev/null || true)"
+    REMOTE_MAIN_SHA="${REMOTE_MAIN_LINE%%$'\t'*}"
+    RECEIPT_TREE_SHA="$TAG_TARGET_SHA"
+    if [[ "$REMOTE_MAIN_SHA" =~ ^[0-9a-f]{40,64}$ ]] \
+      && git cat-file -e "${REMOTE_MAIN_SHA}^{commit}" 2>/dev/null; then
+      if git merge-base --is-ancestor "$REMOTE_MAIN_SHA" "$TAG_TARGET_SHA" 2>/dev/null; then
+        if [[ "$REMOTE_MAIN_SHA" == "$TAG_TARGET_SHA" ]]; then
+          # Tagging the exact commit already on main changes no source bytes.
+          # The main push pre-push delta scan and required CI full-tree scan
+          # are the trust evidence; repeating the same 8k-file tree scan is
+          # redundant. Receipt completeness checks above still run.
+          SKIP_SOURCE_SCAN=1
+          echo "[pre-push] 标签目标与远端 main 完全相同：无代码增量，复用 main 推送/CI 安全检查。" >&2
+        else
+          RANGE_ARGS=(--tree-commit "$TAG_TARGET_SHA")
+          TAG_RANGE_ARGS=(--range "$REMOTE_MAIN_SHA" "$TAG_TARGET_SHA")
+          TAG_RANGE_SCAN=1
+          echo "[pre-push] 标签使用已推送 main 基线：精确树 + main 之后的新增提交。" >&2
+        fi
+      elif git merge-base --is-ancestor "$TAG_TARGET_SHA" "$REMOTE_MAIN_SHA" 2>/dev/null; then
+        RANGE_ARGS=(--tree-commit "$TAG_TARGET_SHA")
+        echo "[pre-push] 标签目标已包含在远端 main：只扫描该标签的精确树，不重扫已接受历史。" >&2
+      else
+        RANGE_ARGS=(--commit "$local_sha")
+        echo "[pre-push] 标签与远端 main 历史分叉：回退完整历史扫描。" >&2
+      fi
+    else
+      RANGE_ARGS=(--commit "$local_sha")
+      echo "[pre-push] 无法证明远端 main 基线：回退完整历史扫描。" >&2
+    fi
+    if ! changed_receipts="$(git ls-tree -r --name-only "$RECEIPT_TREE_SHA" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
+      echo "[pre-push] 拒绝：无法枚举首推回执（fail-closed）。" >&2
+      exit 1
+    fi
+  elif [[ "$remote_sha" =~ ^0+$ ]]; then
+    RANGE_ARGS=(--commit "$local_sha")   # 新分支首推：没有可信远端基线，扫完整可达历史
+    RECEIPT_TREE_SHA="$local_sha"
+    if ! changed_receipts="$(git ls-tree -r --name-only "$RECEIPT_TREE_SHA" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
       echo "[pre-push] 拒绝：无法枚举首推回执（fail-closed）。" >&2
       exit 1
     fi
@@ -130,8 +179,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
     check_receipt_content "$f@${local_sha:0:12}" "$body"
   done <<< "$changed_receipts"
-  echo "[pre-push] $local_ref -> $remote_ref  (${RANGE_ARGS[*]})"
-  bash "$SCAN" "${RANGE_ARGS[@]}" || exit 1
+  if [[ "$TAG_RANGE_SCAN" == "1" ]]; then
+    echo "[pre-push] $local_ref -> $remote_ref  (${TAG_RANGE_ARGS[*]})"
+    bash "$SCAN" "${TAG_RANGE_ARGS[@]}" || exit 1
+  fi
+  if [[ "$SKIP_SOURCE_SCAN" != "1" ]]; then
+    echo "[pre-push] $local_ref -> $remote_ref  (${RANGE_ARGS[*]})"
+    bash "$SCAN" "${RANGE_ARGS[@]}" || exit 1
+  fi
 done
 
 if [[ "$receipt_hit" -ne 0 ]]; then

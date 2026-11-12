@@ -61,10 +61,40 @@ def call_svcctl(python: Path, *args: str) -> dict:
         [str(python), "-m", "llm_loop.runtime.service_control", *args],
         check=True, capture_output=True, text=True, timeout=40,
     )
-    obj = json.loads(cp.stdout)
-    if not isinstance(obj, dict):
-        raise ValueError("service_control returned non-object response")
-    return obj
+    # `service_control restart` deliberately writes two JSON Lines records:
+    # the immediate accepted receipt, then the detached/terminal action view.
+    # `publish-wheel` writes one.  Treat stdout as JSONL and consume the final
+    # record; parsing the entire stream as one JSON document raises
+    # JSONDecodeError("Extra data") *after* publish/restart side effects occurred.
+    records: list[dict] = []
+    for line_number, line in enumerate(cp.stdout.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"service_control {args[0] if args else '<unknown>'} "
+                f"emitted invalid JSONL at stdout line {line_number}"
+            ) from exc
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"service_control {args[0] if args else '<unknown>'} "
+                f"emitted non-object JSONL at stdout line {line_number}"
+            )
+        records.append(value)
+    if not records:
+        raise ValueError("service_control returned empty JSONL stdout")
+    command = args[0] if args else "<unknown>"
+    if command == "restart":
+        if len(records) != 2:
+            raise ValueError("service_control restart must emit accepted + final JSONL records")
+        if any(not item.get("action_id") for item in records):
+            raise ValueError("service_control restart JSONL record missing action_id")
+    action_ids = {str(item["action_id"]) for item in records if item.get("action_id")}
+    if len(action_ids) > 1:
+        raise ValueError("service_control JSONL records refer to different actions")
+    return records[-1]
 
 
 def wait_for_action(data: Path, action_id: str, timeout_s: int) -> dict:

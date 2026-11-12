@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery_tag:
-        description: "Immutable release recovery (pinned v0.6.37 / v0.6.47)"
+        description: "Immutable release recovery (pinned v0.6.37 / v0.6.47 / v0.6.48)"
         required: true
         type: string
 
@@ -48,7 +48,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref }}
-      - name: 不可变 v0.6.37 / v0.6.47 恢复身份（仅手动入口）
+      - name: 不可变 v0.6.37 / v0.6.47 / v0.6.48 恢复身份（仅手动入口）
         if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
@@ -62,6 +62,11 @@ jobs:
               test "$(git rev-parse HEAD)" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
               test "$(git rev-parse refs/tags/v0.6.47)" = "2de91c607f5504f84554add6780f60cf2a646a37"
               test "$(git rev-parse 'refs/tags/v0.6.47^{commit}')" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+              ;;
+            v0.6.48)
+              test "$(git rev-parse HEAD)" = "e635bc1e688776e431df76fd92e3ed8fa4441080"
+              test "$(git rev-parse refs/tags/v0.6.48)" = "d1fac53225e382448052bd0e2824145588d6f975"
+              test "$(git rev-parse 'refs/tags/v0.6.48^{commit}')" = "e635bc1e688776e431df76fd92e3ed8fa4441080"
               ;;
             *)
               echo "release recovery denied: unsupported immutable tag" >&2
@@ -106,13 +111,13 @@ jobs:
     name: 生成 Release 草稿
     needs: gate
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (inputs.recovery_tag == 'v0.6.37' || inputs.recovery_tag == 'v0.6.47')) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (inputs.recovery_tag == 'v0.6.37' || inputs.recovery_tag == 'v0.6.47' || inputs.recovery_tag == 'v0.6.48')) }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref }}
-      - name: 不可变 v0.6.37 / v0.6.47 恢复身份（仅手动入口）
+      - name: 不可变 v0.6.37 / v0.6.47 / v0.6.48 恢复身份（仅手动入口）
         if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
@@ -126,6 +131,11 @@ jobs:
               test "$(git rev-parse HEAD)" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
               test "$(git rev-parse refs/tags/v0.6.47)" = "2de91c607f5504f84554add6780f60cf2a646a37"
               test "$(git rev-parse 'refs/tags/v0.6.47^{commit}')" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+              ;;
+            v0.6.48)
+              test "$(git rev-parse HEAD)" = "e635bc1e688776e431df76fd92e3ed8fa4441080"
+              test "$(git rev-parse refs/tags/v0.6.48)" = "d1fac53225e382448052bd0e2824145588d6f975"
+              test "$(git rev-parse 'refs/tags/v0.6.48^{commit}')" = "e635bc1e688776e431df76fd92e3ed8fa4441080"
               ;;
             *)
               echo "release recovery denied: unsupported immutable tag" >&2
@@ -148,8 +158,8 @@ jobs:
         run: uv build
       - name: 将 Linux 用户级安装/卸载脚本纳入发行工件
         run: cp scripts/install_linux.sh scripts/uninstall_linux.sh dist/
-      - name: 将受管发布收敛工具纳入新标签工件（含固定 v0.6.47 恢复，不改变 v0.6.37）
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.recovery_tag == 'v0.6.47' }}
+      - name: 将受管发布收敛工具纳入新标签工件（含固定 v0.6.47/v0.6.48 恢复，不改变 v0.6.37）
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.recovery_tag == 'v0.6.47' || inputs.recovery_tag == 'v0.6.48' }}
         run: cp scripts/verify_managed_release.py scripts/finish_managed_release.py dist/
       - name: 独立安装与本地 Web 验收（禁止模型调用）
         shell: bash
@@ -176,7 +186,7 @@ jobs:
         env:
           # The immutable checkout is the package source; workflow_dispatch
           # github.sha points to the dispatch branch, not the frozen tag.
-          RELEASE_COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag == 'v0.6.47' && '07adee68fcab273a2eddadfeb1acb2459bb8e942' || github.sha }}
+          RELEASE_COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag == 'v0.6.48' && 'e635bc1e688776e431df76fd92e3ed8fa4441080' || github.event_name == 'workflow_dispatch' && inputs.recovery_tag == 'v0.6.47' && '07adee68fcab273a2eddadfeb1acb2459bb8e942' || github.sha }}
         run: |
           python scripts/release_finalize.py manifest \
             --from-dir dist \
@@ -200,8 +210,8 @@ jobs:
             dist/linux-installer-smoke.json
             dist/SHA256SUMS
             dist/release-artifacts-manifest.json
-      - name: 新标签及 v0.6.47 恢复补齐受管发布工具资产（纳入同一 Release manifest）
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.recovery_tag == 'v0.6.47' }}
+      - name: 新标签及 v0.6.47/v0.6.48 恢复补齐受管发布工具资产（纳入同一 Release manifest）
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.recovery_tag == 'v0.6.47' || inputs.recovery_tag == 'v0.6.48' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" dist/verify_managed_release.py dist/finish_managed_release.py
