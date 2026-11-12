@@ -76,3 +76,40 @@ def test_recovery_replaces_only_pinned_smoke_harness_not_release_source():
         "dist/SHA256SUMS",
         "dist/release-artifacts-manifest.json",
     }
+
+
+
+def test_v0647_annotated_tag_recovery_keeps_immutable_source_and_assets() -> None:
+    """Second exact-pin recovery uses the one draft writer, never retargets a tag."""
+    cfg = _workflow()
+    assert "github.ref == 'refs/heads/main'" in cfg["jobs"]["release"]["if"]
+    assert "inputs.recovery_tag == 'v0.6.47'" in cfg["jobs"]["release"]["if"]
+    assert cfg["concurrency"]["cancel-in-progress"] is False
+    assert set(cfg["jobs"]) == {"gate", "release"}
+    pin_commit = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+    pin_tag_object = "2de91c607f5504f84554add6780f60cf2a646a37"
+    for job in cfg["jobs"].values():
+        identity = next(
+            step for step in job["steps"]
+            if step.get("name", "").startswith("不可变 v0.6.37")
+        )
+        assert pin_commit in identity["run"] and pin_tag_object in identity["run"]
+        assert "unsupported immutable tag" in identity["run"]
+        assert "v0.6.37)" in identity["run"]
+        assert "v0.6.47)" in identity["run"]
+        checkout = next(step for step in job["steps"] if step.get("uses") == "actions/checkout@v4")
+        assert "inputs.recovery_tag" in checkout["with"]["ref"]
+    release_steps = cfg["jobs"]["release"]["steps"]
+    copy_step = next(s for s in release_steps if s.get("name", "").startswith("将受管发布收敛工具"))
+    upload_step = next(s for s in release_steps if s.get("name", "").startswith("新标签及 v0.6.47"))
+    assert "inputs.recovery_tag == 'v0.6.47'" in copy_step["if"]
+    assert "inputs.recovery_tag == 'v0.6.47'" in upload_step["if"]
+    assert "verify_managed_release.py" in copy_step["run"]
+    assert "finish_managed_release.py" in upload_step["run"]
+    smoke = next(s for s in release_steps if s.get("name", "").startswith("独立安装与本地 Web 验收"))
+    assert '&& "${RELEASE_TAG}" == "v0.6.37"' in smoke["run"]
+    assert "python scripts/verify_install_distribution.py" in smoke["run"]
+    manifest = next(s for s in release_steps if s.get("name", "").startswith("生成平台工件 manifest"))
+    assert pin_commit in manifest["env"]["RELEASE_COMMIT_SHA"]
+    draft = next(s for s in release_steps if s.get("uses") == "softprops/action-gh-release@v2")
+    assert draft["with"]["draft"] is True
