@@ -104,6 +104,12 @@ def test_all_worker_records_real_three_service_verification(deployment, monkeypa
         stable = view["services"][service]["stable"]
         assert stable["wheel_sha256"] == dep.wheel_sha256
         assert stable["matches_desired_generation"]
+    # An all-restart must not certify the absent WeCom service on wheel installs.
+    wecom = view["services"]["wecom"]
+    assert wecom["live"]["manifest_present"] is False
+    assert wecom["stable"] is None
+    assert wecom["restart_required"] is True
+    assert sc.compose_convergence_view(store)["services"]["wecom"]["converged"] is False
     assert not view["admission_barriers"]
 
 
