@@ -2394,6 +2394,24 @@ def _full_test_review_base(workdir: str) -> tuple[str, str]:
     return base, (dst_ref if first_push else "")
 
 
+
+def _resolve_full_test_anchor(
+    workdir: str, frozen_base: str | None, first_push_ref: str,
+) -> tuple[str, str]:
+    """Resolve once at review start; validate frozen anchors without remote I/O."""
+    if frozen_base is None:
+        base, ref = _full_test_review_base(workdir)
+    else:
+        base, ref = frozen_base, first_push_ref
+    if base:
+        if not re.fullmatch(r"[0-9a-f]{40,64}", base):
+            raise ValueError("full_test_frozen_base_invalid")
+        _git(Path(workdir), "cat-file", "-e", base + "^{commit}")
+    elif frozen_base is not None:
+        raise ValueError("full_test_frozen_base_missing")
+    return base, ref
+
+
 def _push_target(command: str, workdir: str) -> str:
     """Require explicit remote/ref: no ambiguous implicit push.default or --all."""
     remote, refspec = _push_refspec(command)
@@ -3699,16 +3717,9 @@ class HostReviewAdmission:
             # committed delta was EMPTY — the reviewer saw an empty shell and
             # PASS was vacuous. Anchor on the push destination when remote
             # facts resolve; an actually empty artifact is refused outright.
-            if full_test_base is None:
-                ft_base, ft_ref = _full_test_review_base(true_dir)
-            else:
-                ft_base, ft_ref = full_test_base, full_test_first_push_ref
-            if ft_base:
-                if not re.fullmatch(r"[0-9a-f]{40,64}", ft_base):
-                    raise ValueError("full_test_frozen_base_invalid")
-                _git(Path(true_dir), "cat-file", "-e", ft_base + "^{commit}")
-            elif full_test_base is not None:
-                raise ValueError("full_test_frozen_base_missing")
+            ft_base, ft_ref = _resolve_full_test_anchor(
+                true_dir, full_test_base, full_test_first_push_ref
+            )
             # Without usable remote facts keep the existing legacy merge-base
             # material/header semantics; those grants use the strict old check.
             push_base = ft_base
@@ -3742,15 +3753,7 @@ class HostReviewAdmission:
                 scope_paths=scope_paths, tier_counts=tier_counts,
             )
         except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
-            # EVO-20261102-677f6c44（人工批准 2026-11-02，exec_override）：no-delta
-            # 复跑资格派生。全部已推送+树干净+无 backlog 时 full_test 无增量可审；
-            # 若同 parent 存在覆盖当前 HEAD 树的 git_push PASS，由 Host 派生一次性
-            # 资格（不新拉 reviewer）。无覆盖记录时维持原拒绝，行为不变。
-            if kind == "full_test" and str(exc).startswith(_FULL_TEST_NO_DELTA_PREFIX):
-                derived = self._derive_full_test_from_push(parent, workdir, command)
-                if derived is not None:
-                    return derived
-            return {"accepted": False, "reason": str(exc)}
+            return self._start_target_failure(parent, kind, workdir, command, exc)
         prepared = self._prepare_attempt(
             parent, kind, sha, target, workdir, scope_paths, material,
             scope_receipt, previous_child_id, binding=binding,
@@ -3802,6 +3805,17 @@ class HostReviewAdmission:
             ),
             parent, kind, sha, target,
         )
+
+    def _start_target_failure(
+        self, parent: str, kind: str, workdir: str, command: str, exc: Exception,
+    ) -> dict[str, Any]:
+        """Derive no-delta full-test admission only from an existing push PASS."""
+        # EVO-20261102-677f6c44: no covered push record means the original denial.
+        if kind == "full_test" and str(exc).startswith(_FULL_TEST_NO_DELTA_PREFIX):
+            derived = self._derive_full_test_from_push(parent, workdir, command)
+            if derived is not None:
+                return derived
+        return {"accepted": False, "reason": str(exc)}
 
     def _freeze_record(
         self, kind: str, parent: str, target: str, sha: str, child: str, *,
