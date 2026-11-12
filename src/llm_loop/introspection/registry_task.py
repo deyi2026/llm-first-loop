@@ -1,6 +1,6 @@
 """Task Frontier 工具注册（DESIGN-20260828）.
 
-承载: task_create / task_update / task_frontier
+承载: task_create / task_update / task_frontier / task_get
 """
 
 from __future__ import annotations
@@ -27,6 +27,10 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_task import run_task_frontier
 
         return run_task_frontier(host.ctx, host, args)
+    if name == "task_get":
+        from llm_loop.introspection.tools_task import run_task_get
+
+        return run_task_get(host.ctx, host, args)
     if name == "claim_task":
         from llm_loop.introspection.tools_task import run_claim_task
 
