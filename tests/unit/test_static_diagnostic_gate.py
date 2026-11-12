@@ -328,9 +328,10 @@ def test_delivery_range_keeps_code_before_trailing_docs(
         _git(tmp_path, "update-ref", "refs/remotes/origin/main", base)
     if base_source == "github_push":
         event = tmp_path / "event.json"
-        event.write_text(json.dumps({"before": base, "after": head}))
+        event.write_text(json.dumps({"ref": "refs/heads/main", "before": base, "after": head}))
         monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
         monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+        monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
         monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     if base_source == "github_pull_request":
         event = tmp_path / "event.json"
@@ -365,10 +366,11 @@ def test_delivery_range_rejects_mismatched_push_identity(
     _temp_repo(tmp_path)
     head = _git(tmp_path, "rev-parse", "HEAD")
     event = tmp_path / "event.json"
-    event.write_text(json.dumps({"before": head, "after": "0" * 40}))
+    event.write_text(json.dumps({"ref": "refs/heads/main", "before": head, "after": "0" * 40}))
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
     with pytest.raises(ValueError, match="identity"):
         gate.changed_python_paths(tmp_path)
 
