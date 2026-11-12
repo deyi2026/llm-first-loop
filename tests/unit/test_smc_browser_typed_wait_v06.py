@@ -5,6 +5,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.predicate import validate_predicate
 from llm_loop.tools.builtin import browser_wait as browser_wait_module
@@ -471,7 +473,7 @@ def test_typed_wait_never_starts_poll_sample_at_or_after_deadline(
 
 def _execute_typed_wait_with_late_sample(
     tmp_path: Path,
-    monkeypatch: Any,
+    monkeypatch: pytest.MonkeyPatch,
     *,
     value: str,
 ) -> tuple[Any, dict[str, float]]:
@@ -499,7 +501,7 @@ def _execute_typed_wait_with_late_sample(
 
 
 def test_typed_object_wait_preserves_timeout_unsatisfied(
-    tmp_path: Path, monkeypatch: Any,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result, clock = _execute_typed_wait_with_late_sample(
         tmp_path, monkeypatch, value="Never this name"
@@ -513,7 +515,7 @@ def test_typed_object_wait_preserves_timeout_unsatisfied(
 
 
 def test_typed_object_wait_downgrades_late_satisfied_sample(
-    tmp_path: Path, monkeypatch: Any,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result, clock = _execute_typed_wait_with_late_sample(
         tmp_path, monkeypatch, value="Submit"
