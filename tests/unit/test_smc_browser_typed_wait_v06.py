@@ -76,6 +76,16 @@ class _SequenceBackend:
         return deepcopy(item)
 
 
+class _LateSequenceBackend(_SequenceBackend):
+    def __init__(self, clock: dict[str, float]) -> None:
+        super().__init__([FIXTURES["base"]])
+        self._clock = clock
+
+    def capture(self) -> dict[str, Any]:
+        self._clock["now"] += 0.004
+        return super().capture()
+
+
 def _scope_tool(
     tmp_path: Path,
     backend: _SequenceBackend | None = None,
@@ -459,25 +469,62 @@ def test_typed_wait_never_starts_poll_sample_at_or_after_deadline(
     assert clock["now"] == 0.01
 
 
-def test_typed_object_wait_preserves_timeout_unsatisfied(tmp_path: Path) -> None:
-    backend = _SequenceBackend([FIXTURES["base"]])
+def _execute_typed_wait_with_late_sample(
+    tmp_path: Path,
+    monkeypatch: Any,
+    *,
+    value: str,
+) -> tuple[Any, dict[str, float]]:
+    clock = {"now": 0.0}
+    backend = _LateSequenceBackend(clock)
     adapter, tool = _object_tool(tmp_path, backend)
     seed = adapter.snapshot("s1", FIXTURES["base"])
     submit = _by_name(seed, "Submit")
+    with monkeypatch.context() as clock_patch:
+        clock_patch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+        clock_patch.setattr(
+            browser_wait_module.time,
+            "sleep",
+            lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+        )
+        result = tool.execute(
+            object_ref=submit["grounding_ref"],
+            property="name",
+            operator="eq",
+            value=value,
+            timeout_ms=3,
+            interval_ms=1,
+        )
+    return result, clock
 
-    result = tool.execute(
-        object_ref=submit["grounding_ref"],
-        property="name",
-        operator="eq",
-        value="Never this name",
-        timeout_ms=3,
-        interval_ms=1,
+
+def test_typed_object_wait_preserves_timeout_unsatisfied(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    result, clock = _execute_typed_wait_with_late_sample(
+        tmp_path, monkeypatch, value="Never this name"
     )
 
     assert result.status.value == "success"
     payload = json.loads(result.content)
     assert payload["predicate_result"]["result"] == "unsatisfied"
-    assert payload["predicate_result"]["sample_count"] >= 1
+    assert payload["predicate_result"]["sample_count"] == 1
+    assert clock["now"] == 0.004
+
+
+def test_typed_object_wait_downgrades_late_satisfied_sample(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    result, clock = _execute_typed_wait_with_late_sample(
+        tmp_path, monkeypatch, value="Submit"
+    )
+
+    assert result.status.value == "success"
+    payload = json.loads(result.content)
+    assert payload["predicate_result"]["result"] == "indeterminate"
+    assert payload["predicate_result"]["sample_count"] == 1
+    assert payload["observation"]["reason"] == "deadline_exceeded"
+    assert clock["now"] == 0.004
 
 
 def test_typed_object_wait_preserves_complete_absence_vs_partial_indeterminate(

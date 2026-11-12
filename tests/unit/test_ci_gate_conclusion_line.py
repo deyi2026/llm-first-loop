@@ -22,6 +22,8 @@ _FAKE_PYTHON = """#!/bin/sh
 case "$*" in
   *"-c"*) echo /tmp; exit 0 ;;
   *"--tool pyright"*) printf '%s\\n' "$FAKE_PYRIGHT_OUTPUT"; exit 0 ;;
+  *"pytest"*)
+    if [ -n "${CAPTURE_HOME_FILE:-}" ]; then printf '%s' "$HOME" > "$CAPTURE_HOME_FILE"; fi ;;
 esac
 exit 0
 """
@@ -36,7 +38,12 @@ def _make_executable(path: Path) -> None:
 
 
 def _run_gate(
-    tmp_path: Path, pyright_output: str, *, python_script: str = _FAKE_PYTHON,
+    tmp_path: Path,
+    pyright_output: str,
+    *,
+    python_script: str = _FAKE_PYTHON,
+    symlink_cwd: bool = False,
+    capture_home_file: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     root = tmp_path / "root"
     (root / "scripts").mkdir(parents=True)
@@ -61,9 +68,16 @@ def _run_gate(
     env["PY"] = str(fake_python)
     env["FAKE_PYRIGHT_OUTPUT"] = pyright_output
     env["PATH"] = f"{fake_npm.parent}{os.pathsep}{env.get('PATH', '')}"
+    if capture_home_file is not None:
+        env["CAPTURE_HOME_FILE"] = str(capture_home_file)
+    run_root = root
+    if symlink_cwd:
+        run_root = tmp_path / "root-link"
+        run_root.symlink_to(root, target_is_directory=True)
+        env["PWD"] = str(run_root)
     return subprocess.run(
         ["bash", "scripts/ci_gate.sh"],
-        cwd=root,
+        cwd=run_root,
         env=env,
         capture_output=True,
         text=True,
@@ -104,3 +118,17 @@ exit 0""")
     result = _run_gate(tmp_path, "R9 pyright status=complete", python_script=python_script)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "chosen venv pytest" in result.stdout
+
+
+def test_ci_home_is_physical_when_checkout_uses_symlink(tmp_path: Path) -> None:
+    captured_home = tmp_path / "captured-home.txt"
+    result = _run_gate(
+        tmp_path,
+        "R9 pyright status=complete",
+        symlink_cwd=True,
+        capture_home_file=captured_home,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert captured_home.read_text(encoding="utf-8") == str(
+        (tmp_path / "root" / "data" / ".ci-test-home").resolve()
+    )
