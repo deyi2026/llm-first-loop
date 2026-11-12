@@ -1,0 +1,74 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_2afa2fc8a0d9",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-3cb818eb",
+  "branch": "feat/peer-m1-nonce-persist",
+  "based_on_main": true,
+  "commits": [
+    "dff6c2c57afba447193c255ffbd44a6f002ba8b0",
+    "a80c3835b133af36a7393086d335d366c220fef4",
+    "40dc690a98a4801acb3a4cebe54f31daf23f203d"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/peer/test_peer_auth.py",
+    "tests/unit/test_arch_guards.py::test_durability_write_candidates_registered"
+  ],
+  "main_sha_at_review": "8e78aa58e2e5729d36823a5af362bf1cc720fd24",
+  "main_sha_after": "",
+  "branch_disposition": "deleted",
+  "verify_receipt_id": "lane-69edeadf:8e78aa5",
+  "reviewed_at": "2026-11-11T18:05:27+08:00",
+  "head_sha": "dff6c2c57afba447193c255ffbd44a6f002ba8b0",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/peer-m1-nonce",
+  "checks": {
+    "status_porcelain_clean": true,
+    "commit_count_exactly_3": true,
+    "whitelist_conformance": {
+      "pass": true,
+      "changed_files": [
+        "src/llm_loop/peer/auth.py",
+        "tests/guards/function_size_baseline.json",
+        "tests/peer/test_peer_auth.py"
+      ]
+    },
+    "merge_base_equals_base_main_sha": "8e78aa58e2e5729d36823a5af362bf1cc720fd24",
+    "main_not_advanced": true,
+    "fast_forward_possible": true,
+    "focused_gate_rerun_by_reviewer": "33 passed in 0.94s",
+    "canonical_full_gate": "exit=0 @ head=dff6c2c57afba447193c255ffbd44a6f002ba8b0, delegated fact (completed 17:53), not re-executed by this reviewer",
+    "semantic": {
+      "bucketed_persistence_node_generation_window": "auth.py L21-23, L147-148, L242-251: <persist_dir>/nonce/<node>/<generation>/<window_index>.jsonl",
+      "no_eviction_within_window": "persistent path never touches max_entries/LRU; cleanup only deletes fully-expired buckets (now >= (idx+1)*bucket_seconds + window_seconds, L303-307/L337); lookback guarantees live records always scanned (L180-182)",
+      "key_rotation_dual_generation": "candidates=[primary, previous_secret] L405-412; hmac.compare_digest per generation, matched_generation routed into bucket accounting L432-441",
+      "per_request_fsync": "_append_record O_APPEND|O_CREAT + os.fsync (L292-298), persist-before-respond order, exactly one durable write per accepted nonce",
+      "cross_process_flock": "_fs_lock flock + 0o600 lock file + 0o700 dirs (L258-263)",
+      "falsy_latent_bug_fixed": "NonceCache defines __len__ (empty=falsy); 'or' would silently swap freshly-built persistent cache for default memory cache; fixed to 'is not None' (commit 40dc690a9 diff)",
+      "pyright_optional_narrowing": "a80c3835b local narrowing persist_root in _persistent_check_and_store (L239-241)",
+      "persistence_failure_fails_closed": "OSError -> PeerError executor_internal_error (L212-213); test_persistent_storage_failure_fails_closed",
+      "registry_entry_fields_complete": {
+        "surface": "peer_nonce_replay_window",
+        "owner": "peer",
+        "paths": ["src/llm_loop/peer/auth.py"],
+        "rationale_includes_measured_cost": "append+fsync ~337us/request, no-eviction, dual-generation",
+        "status": "observe",
+        "tier": "T2"
+      },
+      "persistence_test_coverage": [
+        "test_replay_rejected_across_process_restart",
+        "test_persistent_buckets_by_window_and_generation_no_eviction",
+        "test_persistent_bucket_cleanup_whole_window_after_expiry",
+        "test_key_rotation_old_generation_transition_and_replay",
+        "test_bad_signature_does_not_consume_persistent_slot",
+        "test_persistent_storage_failure_fails_closed"
+      ]
+    }
+  },
+  "notes": [
+    "Branch brief cites commit #1 as 544d73bf; actual first commit on current tree is 40dc690a98a4801acb3a4cebe54f31daf23f203d (pre-rebase stale SHA reference). Head anchor dff6c2c57, topic and file whitelist all match; no impact on current-tree facts.",
+    "Lane ledger object not discoverable on filesystem (.lfl/.lanes absent); verify_receipt_id recorded as delegated. Merge queue empty, slot idle, no competing lanes at review time.",
+    "Full-test supplemental PASS receipts 35788414/58101439 were issued against pre-rebase trees fcfb4027/64381f65 and do not cover the current tree; this review judges current tree dff6c2c57 in full, as instructed."
+  ]
+}
