@@ -102,7 +102,8 @@ def test_identity_view_green_when_live_matches_desired(tmp_path: Path) -> None:
     view = compose_service_identity_view(store)
     assert view["deployment"]["generation"] == 1
     assert set(view["services"]) == {"web", "feishu", "learning", "wecom"}
-    for entry in view["services"].values():
+    for service in ("web", "feishu", "learning"):
+        entry = view["services"][service]
         assert entry["restart_required"] is False
         assert entry["reasons"] == []
         assert entry["live"]["git_head"] == HEAD_A
@@ -112,6 +113,8 @@ def test_identity_view_green_when_live_matches_desired(tmp_path: Path) -> None:
         assert stable["generation"] == 1
         assert stable["matches_desired_generation"] is True
         assert stable["git_head"] == HEAD_A
+    assert view["services"]["wecom"]["stable"] is None
+    assert view["services"]["wecom"]["live"]["pid_alive"] is True
 
 
 def test_live_generation_match_marked_inferred_with_evidence(tmp_path: Path) -> None:
@@ -577,8 +580,8 @@ def test_web_dead_manifest_pid_no_port_keeps_honest(tmp_path, monkeypatch) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_convergence_view_empty_when_all_covered(tmp_path: Path) -> None:
-    """全服务 succeeded 回执覆盖 desired generation → lagging 为空、只读。"""
+def test_convergence_view_all_leaves_wecom_uncovered(tmp_path: Path) -> None:
+    """restart all 成功只覆盖物理三服务，未执行的 WeCom 必须保留代差。"""
     store = _green_store(tmp_path)
     _write_receipt(
         store, action_id="svc-all-1", target="all", generation=1,
@@ -586,10 +589,32 @@ def test_convergence_view_empty_when_all_covered(tmp_path: Path) -> None:
     )
     view = compose_convergence_view(store)
     assert view["desired_generation"] == 1
-    assert view["lagging"] == []
+    assert view["lagging"] == ["wecom"]
     assert view["read_only"] is True
     assert set(view["services"]) == {"web", "feishu", "learning", "wecom"}
-    assert all(svc["converged"] for svc in view["services"].values())
+    assert all(view["services"][s]["converged"] for s in ("web", "feishu", "learning"))
+    assert view["services"]["wecom"]["stable_generation"] is None
+    assert view["services"]["wecom"]["effective_converged"] is False
+
+
+def test_wecom_explicit_stable_survives_newer_all_receipt(tmp_path: Path) -> None:
+    """A later all action cannot overwrite an older WeCom-only receipt."""
+    store = _green_store(tmp_path)
+    _write_receipt(store, action_id="svc-wecom-1", target="wecom", generation=1,
+                   updated_at="2026-09-18T09:00:00+00:00")
+    _publish(store, _deployment(tmp_path, 2, HEAD_B))
+    _write_receipt(store, action_id="svc-all-2", target="all", generation=2,
+                   updated_at="2026-09-18T10:00:00+00:00")
+    stable = compose_service_identity_view(store)["services"]["wecom"]["stable"]
+    assert stable is not None
+    assert stable["action_id"] == "svc-wecom-1"
+    assert stable["target"] == "wecom"
+    assert stable["generation"] == 1
+    assert stable["matches_desired_generation"] is False
+    assert stable["lag_generations"] == 1
+    convergence = compose_convergence_view(store)
+    assert convergence["services"]["wecom"]["converged"] is False
+    assert convergence["lagging"] == ["wecom"]
 
 
 def test_convergence_view_flags_only_uncovered_services(tmp_path: Path) -> None:

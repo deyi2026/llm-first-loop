@@ -2385,7 +2385,7 @@ def _receipt_stable_view(
     candidates = [
         action
         for target, action in succeeded.items()
-        if target == service or target == "all"
+        if target == service or (target == "all" and service in _RESTART_ALL_BATCH)
     ]
     receipt = max(candidates, key=lambda a: a.updated_at) if candidates else None
     if receipt is None:
