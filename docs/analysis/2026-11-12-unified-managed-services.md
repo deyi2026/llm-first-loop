@@ -1,6 +1,6 @@
 # 统一受管发布候选（2026-11-12）
 
-验收记录：独立审查与原版完整 R9 已通过。统一切换按下文受管流程执行，实际发布与重启终态以 service_control 回执为准。
+冻结记录：前一候选的独立审查与原版完整 R9 已通过；推送前远端出现新的源码提交，已纳入最终候选。最终合并树的代码资格、完整测试及切换终态以本任务 review-r9-04、ship-02 和 service_control 实际回执为准，旧回执不冒充新树验证。
 范围：当前 Mac 的 Web、Feishu、Learning、WeCom。Deepin 生产服务不在本轮切换范围内。
 
 ## 来源与复用边界
@@ -49,3 +49,10 @@
 - 并行 Python：14628 passed、158 skipped、3 xfailed；serial_signal 7 passed，serial_perf 3 passed；前端 57 文件、600 测试通过。Ruff 和 Pyright 均 status=complete，无新增错误，变更文件零诊断。
 - 完整日志 SHA256：`547f9c33e0428b9a3baa82357b1188a19167b790f441cad87095c9f538aa5648`；原始回执与日志位于 `.scratch/unified-managed-services-20261112/review-r9-03/`。
 - 推送前已重新 fetch main，远端仍为 aff86f63d，本地 main 为 594a3bcec，均为本候选祖先；隔离树干净，knowledge_flush --check 无待入库资产。共享主工作区的 9 个在途修改和 17 个未跟踪文件另行快照保护，禁止混入发布快照。
+
+## 推送前远端推进与最终冻结
+
+- 第一轮 push 独审 subagent_e19cf2df8081 已取得 tree/PASS，但消费前远端 main 前进到 `96adbf14706b80d4b23e56135cc31fa8503da061`（PR #11，任务详情按需检索）；Host 以 push_remote_commit_not_local_fetch_first 拒绝，实际 push 未发生。
+- 已 fetch 并无冲突合入该公开主线。新增执行面仅 introspection/registry_task.py、introspection/tools_task.py 和测试 test_task_get_tool.py；相关 9 项定向测试通过。原统一补丁的其余源码保持逐字节一致，沿用已有独立审查覆盖。
+- 新增源码进入合并树，故重新申请 full_test 原生资格并运行原版完整 R9。git_push 只读审查可与测试并行；物理合并/push 仍由真实 R9 exit 0、独立合并 PASS、原生 git_push PASS 及远端未漂移共同约束。
+- 本节为最终候选冻结时的事实记录，不预签 PASS；最终原始证据位于 `.scratch/unified-managed-services-20261112/review-r9-04/` 与 `ship-02/`。为避免回执改 HEAD 再复审的循环，测试结束后的收口回执独立保存，不修改本冻结代码树。
