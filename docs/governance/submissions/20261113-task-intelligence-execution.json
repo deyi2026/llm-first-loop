@@ -1,0 +1,59 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261113-task-intelligence-execution",
+  "summary": "Add on-demand, read-only retrieval of a single durable Task's complete detail through the existing TaskStore and Task Frontier registry. Preserve retrieval-only semantics: no new state store, no new lifecycle or authorization state machine, and no automatic prompt injection.",
+  "components": [
+    {
+      "component_id": "task-detail-read-capability",
+      "paths": [
+        "src/llm_loop/introspection/tools_task.py",
+        "src/llm_loop/introspection/registry_task.py",
+        "tests/unit/test_task_get_tool.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing Task Frontier / TaskStore",
+      "disposition": "Reuse TaskStore.get and the existing task registry. Add task_get as an opt-in model-callable read view for full acceptance, done_when, blocked_reason, evidence refs and task metadata. It does not write task state, decide task semantics, add a new authority, or inject task data into ordinary prompts.",
+      "evidence": [
+        "tests/unit/test_task_get_tool.py",
+        "docs/analysis/TASK-INTELLIGENCE-M0-AUDIT-20261112.md"
+      ],
+      "verification_level": "Independent GLM-5.3 Reviewer PASS, P0=0/P1=0; focused 42 tests passed; original bash scripts/ci_gate.sh --release exit 0 with Ruff/Pyright complete, Vitest 600 passed, tier0 341 passed, serial_signal 7 passed, serial_perf 3 passed, and full parallel pytest 14631 passed/158 skipped/3 xfailed.",
+      "model_evidence_veto_recovery_exit": "The model chooses whether and when to call task_get. If full detail is unnecessary it can use existing task_frontier or do no task lookup. No task data is forced into the prompt; the read result is evidence for the model, not a program-owned completion or priority decision.",
+      "rollback_route": "Revert the task_get feature commit. The change adds no persistent task records and does not migrate or rewrite existing task data."
+    },
+    {
+      "component_id": "design-and-audit-evidence",
+      "paths": [
+        "docs/design/DESIGN-20261112-task-intelligence-execution-v2.md",
+        "docs/governance/receipts/REVIEW-20261112-task-intelligence-deepseek-v4-flash.md",
+        "docs/analysis/TASK-INTELLIGENCE-M0-AUDIT-20261112.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository design, review and analysis documentation",
+      "disposition": "Preserve the revised design proposal, its DeepSeek review summary, the M0 evidence-based delta audit and the measured LFL parallel-coordination retrospective. These documents record scope, decisions, evidence and deferred findings; they do not create runtime controls.",
+      "evidence": [
+        "docs/design/DESIGN-20261112-task-intelligence-execution-v2.md",
+        "docs/analysis/TASK-INTELLIGENCE-M0-AUDIT-20261112.md"
+      ],
+      "verification_level": "Document contents checked in the isolated worktree; M0 findings independently cross-checked by the GLM-5.3 development parent and the task_get candidate independently reviewed by GLM-5.3.",
+      "model_evidence_veto_recovery_exit": "The design and audit are advisory evidence. The model and operator may reject or defer proposed follow-up work; no runtime behavior is changed by reading these documents.",
+      "rollback_route": "Revert the documentation paths independently of the task_get code if the design or audit is superseded."
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261113-task-intelligence-execution.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture-submission evidence",
+      "disposition": "Declare the exact changed-path partition for this submission. This manifest is a governance record and does not add runtime policy or execution authority.",
+      "evidence": [
+        "scripts/check_architecture_submission.py"
+      ],
+      "verification_level": "A.5 checker run against aff86f63dbc856fed43ec3a2b4d7dd90300bd013..HEAD.",
+      "model_evidence_veto_recovery_exit": "If path coverage or schema validation fails, the checker reports the missing paths and the manifest can be corrected; the checker does not determine semantic quality or force a runtime decision.",
+      "rollback_route": "Correct or revert this manifest; no application data or runtime state is affected."
+    }
+  ],
+  "declarations": []
+}

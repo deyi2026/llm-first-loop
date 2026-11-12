@@ -1,9 +1,10 @@
 """Task Frontier 工具实现（DESIGN-20260828，GOAL-20260828-df03e08e T1）.
 
-3 个工具（程序记账/模型决策，设计 §2）:
+4 个工具（程序记账/模型决策，设计 §2）:
 - task_create: 建任务（title/acceptance 必填；依赖须同 goal 内已存在；≤40/goal）
 - task_update: 状态推进（合法转移表/evidence_refs 校验/blocked_reason 必填；acceptance 修订留痕）
 - task_frontier: 全图查询（ready/in_progress/blocked/waiting/done/unreachable/premise_stale）
+- task_get: 单任务明细按需读取（全文；M0 审计 20261112 缺口1，只读派生视图）
 
 存储: audit_dir/tasks/<goal_id>.jsonl append-only last-wins（task_store.py）。
 """
@@ -148,6 +149,26 @@ TASK_FRONTIER_TOOL_DEF: dict = {
             "full": {"type": "boolean", "description": "true=全图含 waiting/done 详情（默认 false）"},
         },
         "required": [],
+    },
+}
+
+
+TASK_GET_TOOL_DEF: dict = {
+    "name": "task_get",
+    "description": (
+        "按需读取单个 durable Task 明细（全文，不截断）：acceptance/done_when/blocked_reason/"
+        "evidence_refs+verification/依赖/owner/期限/修订与前提标记。task_frontier 是图视图"
+        "（blocked reason 截 50 字符、无 acceptance 全文），需要完整验收标准或阻塞原因全文时用本工具。"
+        "goal_id 省略或 current/active 时解析当前会话活动 goal（同 task_frontier）。只读：不修改"
+        "任务图、不写任何状态、不触发注入。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "goal_id": {"type": "string", "description": "目标 id（可选，默认当前会话）"},
+            "task_id": {"type": "string", "description": "任务 id（必填）"},
+        },
+        "required": ["task_id"],
     },
 }
 
@@ -367,6 +388,80 @@ def run_task_frontier(ctx: Any, host: Any, args: dict) -> ToolResult:
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", name)
 
 
+def run_task_get(ctx: Any, host: Any, args: dict) -> ToolResult:
+    """单任务明细按需读取（M0 审计 TASK-INTELLIGENCE-M0-AUDIT-20261112 缺口1）.
+
+    只读派生视图：包装 TaskStore.get，全文渲染 acceptance/done_when/blocked_reason/
+    evidence_refs；不修改任务图、不写状态、不触发注入。goal 解析与 task_frontier
+    同款（current/active 别名 → bound_session_id → strict_session）。
+    """
+    name = "task_get"
+    task_id = str(args.get("task_id", "") or "").strip()
+    if not task_id:
+        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 缺少必填 'task_id'", "", name)
+    audit = _audit_dir(host)
+    if not audit:
+        return ToolResult(ToolResultStatus.FAILURE, "[存储不可用] audit_dir 未装配", "", name)
+    goal_id = str(args.get("goal_id", "") or "").strip()
+    if goal_id.casefold() in {"current", "active", "当前", "当前目标", "当前任务"}:
+        goal_id = ""
+    if not goal_id:
+        try:
+            from llm_loop.introspection.tools_status import bound_session_id
+
+            sid = bound_session_id()
+            g = (
+                GoalStore(audit).get(prefer_session_id=sid, strict_session=True)
+                if sid
+                else None
+            )
+        except GoalStoreCorruptionError:
+            g = None
+        goal_id = str((g or {}).get("id", "")) if g else ""
+    if not goal_id:
+        return ToolResult(ToolResultStatus.SUCCESS, "[无任务] 当前无活动 goal（先 create_goal + task_create）", "", name)
+    task = TaskStore(audit).get(goal_id, task_id)
+    if task is None:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[任务不存在] {goal_id}/{task_id}（用 task_frontier 查当前任务清单）",
+            "",
+            name,
+        )
+    lines = [f"[任务] {goal_id}/{task.task_id} {task.title}", f"  status: {task.status}  owner: {task.owner}"]
+    if task.parent_id:
+        lines.append(f"  parent: {task.parent_id}")
+    if task.dependencies:
+        lines.append(f"  deps: {','.join(task.dependencies)}")
+    if task.blocked_by_goals:
+        lines.append(f"  xdeps: {','.join(task.blocked_by_goals)}")
+    if task.deadline_at:
+        lines.append(f"  deadline: {task.deadline_at}")
+    if task.acceptance:
+        lines.append("  acceptance:")
+        lines.extend(f"    - {a}" for a in task.acceptance)
+    if task.done_when:
+        lines.append("  done_when:")
+        lines.extend(f"    - {w}" for w in task.done_when)
+    if task.blocked_reason:
+        # M0 缺口1：blocked_reason 全文（frontier 视图截 50 字符，此处不截断）
+        lines.append(f"  blocked_reason: {task.blocked_reason}")
+    if task.evidence_refs:
+        lines.append(f"  evidence_refs (verification={task.evidence_verification_status}):")
+        lines.extend(f"    - {r}" for r in task.evidence_refs)
+    elif task.evidence_required:
+        lines.append("  evidence_refs: (空；evidence_required=true，→done 前必须补齐)")
+    flags = []
+    if task.acceptance_revised:
+        flags.append("acceptance_revised=true（修订已留痕）")
+    if task.premise_stale:
+        flags.append("premise_stale=true（前置已重开，结论请复核）")
+    if flags:
+        lines.append("  ⚠ " + "；".join(flags))
+    lines.append(f"  created: {task.created_at}  updated: {task.updated_at}")
+    return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", name)
+
+
 def _current_sid(ctx: Any) -> str:
     try:
         from llm_loop.introspection.tools_status import current_session_id
@@ -547,6 +642,7 @@ TASK_TOOL_DEFS: list[dict] = [
     TASK_CREATE_TOOL_DEF,
     TASK_UPDATE_TOOL_DEF,
     TASK_FRONTIER_TOOL_DEF,
+    TASK_GET_TOOL_DEF,
     CLAIM_TOOL_DEF,
     CLAIM_RENEW_TOOL_DEF,
     CLAIM_RELEASE_TOOL_DEF,
