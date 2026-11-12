@@ -57,15 +57,11 @@
         "CHANGELOG.md",
         "README.en.md",
         "README.md",
-        "\"experiences/EXPERIENCE-20261112-review-host-admission-py-\\346\\224\\271\\345\\212\\250\\344\\274\\232\\346\\222\\236-function-size-\\346\\243\\230\\350\\275\\256\\345\\256\\210\\345\\215\\253-s.md\"",
-        "\"experiences/EXPERIENCE-20261112-rule28-\\345\\207\\206\\345\\205\\245\\346\\235\\220\\346\\226\\231\\344\\270\\212\\351\\231\\220\\345\\220\\214\\346\\227\\266\\350\\256\\241\\351\\241\\265\\351\\235\\242\\345\\217\\257\\350\\247\\201\\346\\255\\243\\346\\226\\207\\344\\270\\216\\347\\250\\277\\344\\273\\266\\345\\205\\250\\346\\226\\207-\\345\\217\\252\\344\\274\\240-artifact-paths-\\344\\270\\273\\347\\250\\277.md\"",
-        "\"experiences/EXPERIENCE-20261112-\\345\\205\\254\\347\\275\\221\\345\\233\\276\\345\\206\\205\\345\\256\\271\\346\\212\\275\\351\\252\\214-cdp-clip-\\346\\210\\252\\345\\233\\276-\\346\\207\\222\\345\\212\\240\\350\\275\\275\\344\\270\\213\\351\\200\\220\\346\\256\\265\\346\\273\\232\\345\\212\\250\\347\\255\\211\\345\\233\\276\\345\\212\\240\\350\\275\\275\\345\\256\\214.md\"",
-        "\"experiences/EXPERIENCE-20261112-\\347\\273\\210\\347\\250\\277\\345\\256\\241\\347\\250\\277\\345\\214\\205\\344\\275\\223\\347\\247\\257\\346\\214\\211\\345\\255\\220\\344\\273\\243\\347\\220\\206\\346\\250\\241\\345\\236\\213\\350\\276\\223\\345\\205\\245\\351\\242\\204\\347\\256\\227\\345\\210\\207-\\345\\217\\260\\350\\264\\246\\345\\217\\252\\345\\217\\226\\345\\277\\205\\350\\246\\201\\350\\241\\214.md\"",
+        "docs/analysis/2026-11-12-unified-managed-services.md",
+        "docs/governance/submissions/20261112-unified-managed-services.json",
         "pyproject.toml",
         "src/llm_loop/web/routes.py",
-        "uv.lock",
-        "docs/analysis/2026-11-12-unified-managed-services.md",
-        "docs/governance/submissions/20261112-unified-managed-services.json"
+        "uv.lock"
       ],
       "control_machinery": false,
       "owning_subsystem": "existing managed release",
@@ -88,7 +84,11 @@
         "data/methods/resume-truncated-payload-at-cut-via-recovery-handle-2fe836ae5c7a/METHOD.md",
         "data/methods/reviewer-attribution-from-child-transport-log-not-workspace-noise-aa64aa14bf28/METHOD.md",
         "data/methods/tail-first-conclusion-retrieval-for-terminal-job-logs-96b329c01a1b/METHOD.md",
-        "data/methods/zero-delta-pending-poll-fold-to-ledger-wait-by-estimate-b8274da11af8/METHOD.md"
+        "data/methods/zero-delta-pending-poll-fold-to-ledger-wait-by-estimate-b8274da11af8/METHOD.md",
+        "experiences/EXPERIENCE-20261112-review-host-admission-py-改动会撞-function-size-棘轮守卫-s.md",
+        "experiences/EXPERIENCE-20261112-rule28-准入材料上限同时计页面可见正文与稿件全文-只传-artifact-paths-主稿.md",
+        "experiences/EXPERIENCE-20261112-公网图内容抽验-cdp-clip-截图-懒加载下逐段滚动等图加载完.md",
+        "experiences/EXPERIENCE-20261112-终稿审稿包体积按子代理模型输入预算切-台账只取必要行.md"
       ],
       "control_machinery": false,
       "owning_subsystem": "existing knowledge assets",
