@@ -79,10 +79,13 @@ def _write_payload(root: Path, *, effect_id: str = "eff_w0000001", content: byte
     }
 
 
-def _held(env):
+def _held(env, *, overwrite: bool = False):
     service, store, root = env
     store.issue_grant(_grant(root))
-    receipt = service.submit(_write_payload(root))
+    payload = _write_payload(root)
+    if overwrite:
+        payload["params"]["overwrite"] = True
+    receipt = service.submit(payload)
     assert receipt["state"] == "awaiting_supervision"
     return service, store, root, receipt["task_id"]
 
@@ -640,3 +643,86 @@ def test_service_ticket_captures_existing_target_digest_and_mode(tmp_path):
     assert snapshot.sha256 == hashlib.sha256(b"existing target bytes").hexdigest()
     assert snapshot.mode == stat.S_IMODE(target.stat().st_mode)
     assert snapshot.size == len(b"existing target bytes")
+
+
+@pytest.mark.parametrize("explicit_preview", [True, False])
+def test_reconfirmation_refreshes_changed_target_snapshot(tmp_path, explicit_preview):
+    service, store, root, task_id = _held(_env(tmp_path), overwrite=True)
+    target = root / "out.txt"
+    target.write_bytes(b"initial target")
+    initial = service.preview_supervision_target(task_id)
+    service.issue_supervision_ticket(
+        task_id, issued_by="first-operator",
+        preview_snapshot=initial if explicit_preview else None,
+    )
+
+    target.write_bytes(b"changed target shown on second confirmation")
+    fresh = service.preview_supervision_target(task_id)
+    ticket = service.issue_supervision_ticket(
+        task_id, issued_by="second-operator",
+        preview_snapshot=fresh if explicit_preview else None,
+    )
+    receipt = service.resume_supervised(task_id, decided_by="second-operator")
+
+    assert receipt["state"] == "succeeded", receipt
+    assert ticket.target_snapshot == fresh
+    assert ticket.issued_by == "second-operator"
+    assert target.read_bytes() == b"hello"
+    assert store.get_grant(GRANT_ID).tasks_used == 1
+
+
+@pytest.mark.parametrize("initial_exists", [False, True])
+def test_reconfirmation_rejects_return_to_previous_target(tmp_path, initial_exists):
+    service, store, root, task_id = _held(_env(tmp_path), overwrite=initial_exists)
+    target = root / "out.txt"
+    original = b"original target"
+    if initial_exists:
+        target.write_bytes(original)
+    initial = service.preview_supervision_target(task_id)
+    assert initial is not None and initial.exists == initial_exists
+    service.issue_supervision_ticket(
+        task_id, issued_by="first-operator", preview_snapshot=initial,
+    )
+
+    target.write_bytes(b"file visible to the second operator")
+    fresh = service.preview_supervision_target(task_id)
+    service.issue_supervision_ticket(
+        task_id, issued_by="second-operator", preview_snapshot=fresh,
+    )
+    # S0 -> S1 -> S0 must not resurrect the first confirmation.
+    if initial_exists:
+        target.write_bytes(original)
+    else:
+        target.unlink()
+    assert service.preview_supervision_target(task_id) == initial
+
+    receipt = service.resume_supervised(task_id, decided_by="second-operator")
+
+    assert receipt["state"] == "failed", receipt
+    assert receipt["reason_code"] == "supervision_ticket_mismatch"
+    if initial_exists:
+        assert target.read_bytes() == original
+    else:
+        assert not target.exists()
+    assert store.get_grant(GRANT_ID).tasks_used == 0
+    assert AdmissionStore(tmp_path / "peer").count_admitted() == 0
+
+
+def test_reconfirmation_of_unchanged_target_still_executes_once(tmp_path):
+    service, store, root, task_id = _held(_env(tmp_path), overwrite=True)
+    target = root / "out.txt"
+    target.write_bytes(b"stable target")
+    initial = service.preview_supervision_target(task_id)
+    service.issue_supervision_ticket(
+        task_id, issued_by="first-operator", preview_snapshot=initial,
+    )
+    service.issue_supervision_ticket(
+        task_id, issued_by="second-operator",
+        preview_snapshot=service.preview_supervision_target(task_id),
+    )
+
+    receipt = service.resume_supervised(task_id, decided_by="second-operator")
+
+    assert receipt["state"] == "succeeded", receipt
+    assert target.read_bytes() == b"hello"
+    assert store.get_grant(GRANT_ID).tasks_used == 1

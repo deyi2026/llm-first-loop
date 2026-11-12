@@ -641,9 +641,10 @@ class PeerService:
             raise PeerError("supervision_timeout", iso(deadline))
         digest = task.params_digest or ""
         target = self._supervision_target(task)
+        target_snapshot = TargetSnapshot.capture(target) if target is not None else None
         if preview_snapshot is not None and (
             target is None or preview_snapshot.path != target
-            or preview_snapshot != TargetSnapshot.capture(target)
+            or preview_snapshot != target_snapshot
         ):
             raise PeerError(
                 "supervision_ticket_mismatch", "target changed since operator preview"
@@ -660,9 +661,10 @@ class PeerService:
                             "supervision_ticket_mismatch",
                             "现有票据绑定了不同写入目标；请重新核对任务后确认",
                         )
-                    return existing
-                # 旧 CLI 票据未绑定目标快照：本次函数由新的本机 TTY 确认调用，
-                # 因此丢弃旧票据并为当前确认签发绑定目标的新票据。
+                    if existing.target_snapshot == target_snapshot:
+                        return existing
+                # 旧票据无快照或绑定了旧状态：新确认必须绑定本次完整快照，
+                # 不能仅凭相同路径复用上次确认的授权。
                 self._operator.discard(task_id)
             else:
                 # A ticket minted by an older CLI/config is not authoritative for this task.
@@ -680,7 +682,7 @@ class PeerService:
             issued_by=issued_by,
             expires_at=iso(deadline),
             target=target,
-            target_snapshot=preview_snapshot,
+            target_snapshot=target_snapshot,
         )
 
     def reject_supervised(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
