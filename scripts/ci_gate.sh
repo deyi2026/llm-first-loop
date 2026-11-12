@@ -11,6 +11,7 @@
 #
 # 用法:
 #   bash scripts/ci_gate.sh            # 全链路（预检 + 全量）
+#   bash scripts/ci_gate.sh --release  # 共通门禁 + 必须完成类型分析 + 不接受复跑放行
 #   bash scripts/ci_gate.sh --quick    # 仅预检（tier0，开发回路；不构成提交门禁）
 #
 # Phase 2 接线占位（本批不实现）:
@@ -33,6 +34,10 @@ if [[ ! -x "$PY" ]]; then
 fi
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 MODE="${1:-full}"
+case "$MODE" in
+  full|--quick|--release) ;;
+  *) echo "Usage: bash scripts/ci_gate.sh [--quick|--release]" >&2; exit 2 ;;
+esac
 
 # Fail before long analysis when a clean environment lacks test-only dependencies.
 if ! "$PY" -c 'import jsonschema, pytest, xdist'; then
@@ -66,13 +71,21 @@ echo "═══ [3/5] Pyright 全树静态诊断门禁（精确历史债 ratchet
 # 放行语义保持不变——环境性超时不该把开发侧 push 门禁变成永久红；但结论行不得
 # 再声称「pyright 已通过」。此处捕获该状态，末行按实际状态二分呈现。
 set +e
-PYRIGHT_OUT="$("$PY" scripts/check_static_diagnostics.py --tool pyright 2>&1)"
+if [[ "$MODE" == "--release" ]]; then
+  PYRIGHT_OUT="$("$PY" scripts/check_static_diagnostics.py --tool pyright --require-complete 2>&1)"
+else
+  PYRIGHT_OUT="$("$PY" scripts/check_static_diagnostics.py --tool pyright 2>&1)"
+fi
 PYRIGHT_RC=$?
 set -e
 printf '%s\n' "$PYRIGHT_OUT"
 [[ "$PYRIGHT_RC" -eq 0 ]] || exit "$PYRIGHT_RC"
 if [[ "$PYRIGHT_OUT" == *"status=unknown"* ]]; then
   PYRIGHT_STATUS=unknown
+  if [[ "$MODE" == "--release" ]]; then
+    echo "❌ Release requires completed type analysis; pyright=UNKNOWN" >&2
+    exit 3
+  fi
 else
   PYRIGHT_STATUS=complete
 fi
@@ -122,6 +135,9 @@ if ! (cd "$ROOT/webui" && npm run build) >/dev/null; then
   exit 1
 fi
 test -f "$ROOT/webui/dist/index.html" || { echo "❌ CI WebUI candidate dist missing" >&2; exit 1; }
+
+echo "═══ WebUI Vitest behavior tests ═══"
+(cd "$ROOT/webui" && npm test -- --maxWorkers=2 --minWorkers=1)
 
 echo "═══ [4/5] pytest tier0 预检（分钟级快反馈，非提交门禁）═══"
 "$PY" -m pytest -m tier0 -q
@@ -208,6 +224,12 @@ else
     GATE_RETRY_XML="$GATE_TMP/retry.xml"; GATE_RETRY_OUT="$GATE_TMP/retry.log"
     if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_RETRY_XML" >"$GATE_RETRY_OUT" 2>&1; then
       cat "$GATE_RETRY_OUT"
+      if [[ "$MODE" == "--release" ]]; then
+        echo "❌ Release requires a clean parallel result; first-round failure retained" >&2
+        echo "$fail_files" >&2
+        echo "   Gate logs: $GATE_TMP" >&2
+        exit 1
+      fi
       echo "⚠️ serial 绿 + 并行复跑绿 = xdist 分布抖动（不阻断；首轮文件清单如下，登记观察）"
       echo "$fail_files"
     else

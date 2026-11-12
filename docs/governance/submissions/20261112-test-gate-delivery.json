@@ -1,0 +1,58 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261112-test-gate-delivery",
+  "summary": "Unify release validation with the existing gate, execute existing frontend behavior tests and retain all changed Python files across multi-commit delivery.",
+  "components": [
+    {
+      "component_id": "shared-delivery-validation",
+      "paths": [
+        ".github/workflows/release.yml",
+        "scripts/check_static_diagnostics.py",
+        "scripts/ci_gate.sh",
+        "tests/unit/test_static_diagnostic_gate.py",
+        "tests/unit/test_gate_delivery_contract.py",
+        "docs/governance/submissions/20261112-test-gate-delivery.json",
+        "docs/analysis/2026-11-12-test-gate-delivery.md"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing R9 delivery validation",
+      "disposition": "Reuse ci_gate and the immutable diagnostic debt ledger; change only delivery-range provenance and shared release preparation. No new service or autonomous semantic decision is introduced.",
+      "evidence": [
+        "tests/unit/test_static_diagnostic_gate.py",
+        "tests/unit/test_gate_delivery_contract.py"
+      ],
+      "verification_level": "41 focused Python tests and 600 Vitest tests passed. Independent review blocked pending explicit external-model authorization; no full R9 verdict.",
+      "model_evidence_veto_recovery_exit": "The model may inspect the printed base/head and choose an explicit reviewed ancestor for local verification. Existing targeted tests remain available. Release rejection prints the missing validation result; no permission or review bypass is added.",
+      "rollback_route": "Revert the isolated delivery candidate; no production state is modified.",
+      "declaration_id": "existing-r9-delivery-contract"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-r9-delivery-contract",
+      "g1": {
+        "necessity": "Executable negative cases prove that the prior gate misses earlier code commits and accepts incomplete release type results or frontend behavior failures. Exact Git scope and tool completion are mechanical facts that cannot be replaced by a model opinion."
+      },
+      "g2": {
+        "authority_owner": "Existing R9 gate maintained by the repository owner",
+        "relationship": "reuse",
+        "non_duplication": "Reuse the frozen debt ledger, existing analyzers, ci_gate, Vitest and release workflow; do not create a new authority or service."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_static_diagnostic_gate.py",
+          "tests/unit/test_gate_delivery_contract.py"
+        ],
+        "recovery_or_reason": "Print exact range provenance; local verification may declare a reviewed ancestor. CI uses its event and refuses narrower overrides. Targeted diagnosis remains available; missing results can be completed on a suitable runner."
+      },
+      "g4": {
+        "rollback": "Revert this isolated patch; production state is untouched.",
+        "verification": [
+          "41 focused Python tests passed",
+          "57 frontend files and 600 Vitest tests passed",
+          "Independent review and full R9 remain pending"
+        ]
+      }
+    }
+  ]
+}

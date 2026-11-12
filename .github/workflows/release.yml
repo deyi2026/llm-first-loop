@@ -37,7 +37,7 @@ permissions:
 jobs:
   gate:
     name: 发版门禁复核（零回归纪律）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     steps:
       # Full history: the gate suite includes pinned-commit contract tests
@@ -61,7 +61,7 @@ jobs:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@v5
       - name: 安装依赖（uv.lock 冻结环境，与本地 ci_gate 同一面）
-        run: uv sync --frozen --extra dev
+        run: uv sync --locked --extra dev
       - name: tag 与包版本一致性
         run: |
           PACKAGE_VERSION="$(uv run --no-sync python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
@@ -70,19 +70,30 @@ jobs:
           else
             test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
           fi
-      - name: ruff
-        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool ruff
-      - name: pyright
-        # 发版资格要求本轮真实诊断数据：900s 墙钟超限不再以 advisory 放行（exit 3 拦截），
-        # 避免「类型检查没跑完」被当成「类型检查通过」写进发行基线。
-        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright --require-complete
-      - name: pytest（非真实 LLM）
-        run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: 安装冻结 WebUI 依赖
+        working-directory: webui
+        run: npm ci --ignore-scripts
+      - name: 与本地及 CI 共用完整门禁（发行要求完整类型结果）
+        shell: bash
+        run: bash scripts/ci_gate.sh --release 2>&1 | tee release-gate.log
+      - name: 保存发行门禁日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-log
+          path: release-gate.log
+          if-no-files-found: ignore
+          retention-days: 14
 
   release:
     name: 生成 Release 草稿
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && inputs.recovery_tag == 'v0.6.37') }}
     steps:
       - uses: actions/checkout@v4

@@ -190,7 +190,65 @@ def deserialize(rows: list[dict[str, Any]]) -> collections.Counter[tuple[str, st
     return counter
 
 
-def changed_python_paths(root: Path) -> set[str]:
+def _delivery_base(root: Path, head: str, explicit: str | None) -> str:
+    """Resolve the complete delivery range without changing the debt ledger."""
+    base, source = explicit, "explicit"
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if workspace and event_path and Path(workspace).resolve() == root.resolve():
+        try:
+            event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError("GitHub delivery event must be readable, valid JSON") from exc
+        if not isinstance(event, dict):
+            raise ValueError("GitHub delivery event must be a JSON object")
+        event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+        if explicit and event_name in ("push", "pull_request"):
+            raise ValueError("CI delivery base comes from its event; explicit override is not permitted")
+        if event_name == "push":
+            if event.get("after") != head:
+                raise ValueError("GitHub push identity does not match candidate HEAD")
+            before = str(event.get("before") or "")
+            if before and before != "0" * 40:
+                base, source = before, "github_push"
+        elif event_name == "pull_request":
+            expected = os.environ.get("GITHUB_SHA")
+            if expected and expected != head:
+                raise ValueError("GitHub pull request identity does not match candidate HEAD")
+            try:
+                base = event["pull_request"]["base"]["sha"]
+            except (KeyError, TypeError) as exc:
+                raise ValueError("GitHub delivery event is missing pull_request.base.sha") from exc
+            if not isinstance(base, str) or not base:
+                raise ValueError("GitHub delivery event has invalid pull_request.base.sha")
+            source = "github_pull_request"
+    if not base:
+        for ref in ("refs/remotes/origin/main", "refs/heads/main"):
+            result = subprocess.run(
+                ["git", "merge-base", head, ref], cwd=root,
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                base, source = result.stdout.strip(), ref
+                break
+    if not base:
+        base, source = _git(root, "rev-parse", "HEAD^").decode().strip(), "single_commit"
+    if str(base).startswith("-"):
+        raise ValueError("delivery base must be a commit")
+    resolved = _git(root, "rev-parse", "--verify", f"{base}^{{commit}}").decode().strip()
+    if source == "github_pull_request":
+        resolved = _git(root, "merge-base", resolved, head).decode().strip()
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", resolved, head],
+        cwd=root, capture_output=True,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError("delivery base must be an ancestor of candidate HEAD")
+    print(f"ratchet delivery_base source={source} base={resolved} head={head}")
+    return resolved
+
+
+def changed_python_paths(root: Path, *, base: str | None = None) -> set[str]:
     """Source under test, including staged/uncommitted source for local preflight.
 
     Prints per-source provenance: a 2026-10-10 mis-rooted run reported a
@@ -198,7 +256,7 @@ def changed_python_paths(root: Path) -> set[str]:
     showed where the set came from, which cost an hour of forensics.
     """
     head = _git(root, "rev-parse", "HEAD").decode().strip()
-    parent = _git(root, "rev-parse", "HEAD^").decode().strip()
+    parent = _delivery_base(root, head, base)
     sources: dict[str, set[str]] = {}
     for label, args in (
         ("committed", ("diff", "--name-only", "-z", "--diff-filter=ACMR", parent, head)),
@@ -278,6 +336,7 @@ def main() -> int:
             "发布/发行资格门禁必须带此开关——advisory 放行只适用于开发侧 push 门禁。"
         ),
     )
+    parser.add_argument("--base", help="Reviewed delivery base commit; must be an ancestor of HEAD")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     head = _git(root, "rev-parse", "HEAD").decode().strip()
@@ -330,7 +389,7 @@ def main() -> int:
             "`uv sync --frozen --extra dev` before re-running this gate (do not edit the baseline)"
         )
     old = deserialize(baseline["diagnostics"][args.tool])
-    changed = changed_python_paths(root)
+    changed = changed_python_paths(root, base=args.base)
     new, resolved, touched = evaluate(current, old, changed)
     print(
         f"R9 {args.tool}: historical={sum(old.values())}, current={sum(current.values())}, "

@@ -307,3 +307,123 @@ def test_pyright_wallclock_advisory_denies_release_qualification(
     assert "reason=wallclock_advisory" in captured.out
     assert "status=complete" not in captured.out
     assert "--require-complete" in captured.err
+
+@pytest.mark.parametrize("base_source", ["explicit", "tracking", "github_push", "github_pull_request"])
+def test_delivery_range_keeps_code_before_trailing_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_source: str,
+) -> None:
+    _temp_repo(tmp_path)
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    for name in ("first", "second"):
+        path = tmp_path / "src" / f"{name}.py"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("value = 1\n")
+        _git(tmp_path, "add", str(path.relative_to(tmp_path)))
+        _git(tmp_path, "commit", "-m", name)
+    (tmp_path / "note.md").write_text("delivery notes\n")
+    _git(tmp_path, "add", "note.md")
+    _git(tmp_path, "commit", "-m", "documentation")
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    if base_source == "tracking":
+        _git(tmp_path, "update-ref", "refs/remotes/origin/main", base)
+    if base_source == "github_push":
+        event = tmp_path / "event.json"
+        event.write_text(json.dumps({"before": base, "after": head}))
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    if base_source == "github_pull_request":
+        event = tmp_path / "event.json"
+        event.write_text(json.dumps({"pull_request": {"base": {"sha": base}}}))
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+        monkeypatch.setenv("GITHUB_SHA", head)
+    paths = gate.changed_python_paths(
+        tmp_path, **({"base": base} if base_source == "explicit" else {})
+    )
+    assert paths == {"src/first.py", "src/second.py"}
+
+
+def test_delivery_range_rejects_nonancestor_base(tmp_path: Path) -> None:
+    _temp_repo(tmp_path)
+    main = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "checkout", "-b", "unrelated")
+    (tmp_path / "other.md").write_text("other\n")
+    _git(tmp_path, "add", "other.md")
+    _git(tmp_path, "commit", "-m", "unrelated")
+    unrelated = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "checkout", "main")
+    assert _git(tmp_path, "rev-parse", "HEAD") == main
+    with pytest.raises(ValueError, match="ancestor"):
+        gate.changed_python_paths(tmp_path, base=unrelated)
+
+
+def test_delivery_range_rejects_mismatched_push_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _temp_repo(tmp_path)
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": head, "after": "0" * 40}))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    with pytest.raises(ValueError, match="identity"):
+        gate.changed_python_paths(tmp_path)
+
+def test_delivery_range_cannot_override_ci_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _temp_repo(tmp_path)
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": head, "after": head}))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    with pytest.raises(ValueError, match="explicit override"):
+        gate.changed_python_paths(tmp_path, base=head)
+
+
+def test_pr_delivery_range_uses_merge_base_after_target_advances(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _temp_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "feature")
+    path = tmp_path / "src" / "feature.py"
+    path.parent.mkdir()
+    path.write_text("value = 1\n")
+    _git(tmp_path, "add", "src/feature.py")
+    _git(tmp_path, "commit", "-m", "feature")
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "checkout", "main")
+    target = tmp_path / "src" / "target.py"
+    target.parent.mkdir(exist_ok=True)
+    target.write_text("target = 1\n")
+    _git(tmp_path, "add", "src/target.py")
+    _git(tmp_path, "commit", "-m", "target advanced")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "checkout", "feature")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"pull_request": {"base": {"sha": base}}}))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_SHA", head)
+    assert gate.changed_python_paths(tmp_path) == {"src/feature.py"}
+
+
+@pytest.mark.parametrize("body", ["{broken", "[]", '{"pull_request": {}}'])
+def test_invalid_pr_delivery_event_has_actionable_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str,
+) -> None:
+    _temp_repo(tmp_path)
+    event = tmp_path / "event.json"
+    event.write_text(body)
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_SHA", _git(tmp_path, "rev-parse", "HEAD"))
+    with pytest.raises(ValueError, match="GitHub delivery event"):
+        gate.changed_python_paths(tmp_path)
