@@ -1,0 +1,51 @@
+{
+  "gate": "knowledge_flush",
+  "task": "定期知识资产入库（每周）",
+  "effect_id": "schedule:sched-50432bfc:4",
+  "execution_no": "4/13",
+  "repo": "~/Project/llm-first-loop-mirror",
+  "branch": "main",
+  "commit_sha": "7197558366cadfd5e4ea9e8bc352c026a193b8e4",
+  "commit_subject": "knowledge: 入库 9 张方法卡与 7 条经验卡及 15 份审计文档（knowledge_flush 2026-11-12）",
+  "files_changed": 31,
+  "insertions": 2528,
+  "staged_scope": {
+    "data/methods/": "9 张新方法卡（METHOD.md）",
+    "experiences/": "7 条新经验卡（EXPERIENCE-20261112-*.md）",
+    "docs/": "15 份审计/分析文档与治理回执（ANALYSIS / ARTICLE 及发布回执 / CI Root Cause / REPORT / design 文档 / 9 份 merge-review 与 posthoc-review 回执）"
+  },
+  "desensitization": {
+    "trigger": "提交前安全扫描（scripts/git_security_scan.sh --staged）规则3/规则5 拦截本机绝对路径与用户名形态",
+    "files": [
+      "docs/governance/receipts/merge-review-lane-42c4d690-20261111T174127+0800.json",
+      "docs/governance/receipts/merge-review-lane-42c4d690-20261111T174548+0800.json",
+      "docs/governance/receipts/merge-review-lane-465751a0-20261111T2155+0800.json",
+      "docs/governance/receipts/merge-review-lane-69edeadf-20261111T180527+0800.json"
+    ],
+    "action": "worktree/command 字段中的本机绝对路径前缀改写为 ~/Project/llm-first-loop-mirror（仓库既有回执惯例）",
+    "verified": "重跑扫描 → 通过（31 个文件无敏感/错误内容），exit 0"
+  },
+  "excluded_from_commit": {
+    "reason": "同一工作区存在并发活跃会话（session ea89d59c…，GOAL-20261112-b73cb5a3，20:53 仍在执行；scripts/restore_prebackup.sh 在本次入库过程中被改动），其 src/ scripts/ tests/ 在途改动与当日设计文档不属于知识资产批次，全量暂存会夹带在途代码",
+    "paths": [
+      "src/llm_loop/core/loop/engine.py",
+      "src/llm_loop/core/loop/engine_services/compaction_gate.py",
+      "src/llm_loop/core/loop/engine_services/publish_closeout_notice.py",
+      "src/llm_loop/factory.py",
+      "src/llm_loop/runtime/service_control.py",
+      "scripts/ci_gate.sh",
+      "scripts/md_to_plain.py",
+      "scripts/promo_closeout.py",
+      "scripts/restore_prebackup.sh",
+      "tests/unit/test_ci_gate_conclusion_line.py",
+      "tests/unit/test_compaction_gate.py",
+      "tests/unit/test_promo_closeout.py",
+      "tests/unit/test_publish_closeout_notice.py",
+      "docs/design/DESIGN-20261112-promo-shift-efficiency-v1.md",
+      "docs/promotion/PLAN-20261011-new-original-topics.md"
+    ]
+  },
+  "external_side_effects": "无（本次授权不含对外发布/推送；入库批次按任务约定随下一次发布进入 release）",
+  "precheck": "本次执行前核对：data/methods/ 与 experiences/ 新批次仍为未跟踪状态（上次入库 975a2c898 早于本批次生成），故动作未重复执行",
+  "recorded_at": "2026-11-12T20:58:00+08:00"
+}
