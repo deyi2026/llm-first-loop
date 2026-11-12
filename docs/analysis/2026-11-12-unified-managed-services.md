@@ -1,6 +1,6 @@
 # 统一受管发布候选（2026-11-12）
 
-状态：隔离集成已完成，等待本候选的独立审查和原版完整 R9；尚未发布或重启服务。
+验收记录：独立审查与原版完整 R9 已通过。统一切换按下文受管流程执行，实际发布与重启终态以 service_control 回执为准。
 范围：当前 Mac 的 Web、Feishu、Learning、WeCom。Deepin 生产服务不在本轮切换范围内。
 
 ## 来源与复用边界
@@ -40,3 +40,12 @@
 6. 不满足资格则停止物理切换；保留先前部署和原始工作区备份，以现有受管接口复核、接管或回滚，不扩大基线、不强推、不覆盖未提交工作。
 
 主工作区的连续性/压缩、其他文档等未提交修改保存在原处，不进入本候选和不可变发布快照。
+
+## 发布前最终验收回执
+
+- 受测源码 HEAD：`5a58dd70fa0ead6dcbd9d1fa80ec06ef3c57086b`。后续仅补充本验收记录，不更改可执行源码。
+- 窄复审：`subagent_bcab71ad4e29`，真实 completed/PASS/P0=0/P1=0/P2=3；材料 SHA256 `db3469c95b6fff1c52456f4f5dc4f46d65f8f2dfff70ae78be9bdf0ff7ea33f6`。其余路径与上一次有效审查逐字节一致，覆盖链保存在本任务 review-r9-03/coverage.json。
+- 原版命令：`bash scripts/ci_gate.sh --release`；2026-11-12T23:22:34Z 至 23:29:48Z；真实 exit 0，CLEAN，无失败重跑放行。
+- 并行 Python：14628 passed、158 skipped、3 xfailed；serial_signal 7 passed，serial_perf 3 passed；前端 57 文件、600 测试通过。Ruff 和 Pyright 均 status=complete，无新增错误，变更文件零诊断。
+- 完整日志 SHA256：`547f9c33e0428b9a3baa82357b1188a19167b790f441cad87095c9f538aa5648`；原始回执与日志位于 `.scratch/unified-managed-services-20261112/review-r9-03/`。
+- 推送前已重新 fetch main，远端仍为 aff86f63d，本地 main 为 594a3bcec，均为本候选祖先；隔离树干净，knowledge_flush --check 无待入库资产。共享主工作区的 9 个在途修改和 17 个未跟踪文件另行快照保护，禁止混入发布快照。
