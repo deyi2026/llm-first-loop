@@ -1,4 +1,5 @@
 """认证层：四头 HMAC 通过/拒绝路径、时钟窗、nonce 重放、nonce 中毒防护、持久防重放。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -35,8 +36,17 @@ def _auth(clock=lambda: NOW, **kwargs):
     return PeerAuthenticator(secret_for=secrets.get, clock=clock, **kwargs)
 
 
-def _req(secret: bytes = SECRET, *, node_id: str = "node-a", nonce: str = "a" * 32, ts: int = NOW,
-         path: str = "/api/peer/manifest", method: str = "GET", query: str = "", body: bytes | None = None):
+def _req(
+    secret: bytes = SECRET,
+    *,
+    node_id: str = "node-a",
+    nonce: str = "a" * 32,
+    ts: int = NOW,
+    path: str = "/api/peer/manifest",
+    method: str = "GET",
+    query: str = "",
+    body: bytes | None = None,
+):
     headers = sign_request(
         secret=secret,
         method=method,
@@ -179,9 +189,7 @@ def test_canonical_is_exactly_five_lines_in_design_order():
 
 def test_empty_body_uses_empty_string_digest():
     assert body_digest(None) == body_digest(b"")
-    assert body_digest(b"") == (
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    )
+    assert body_digest(b"") == ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 
 
 def test_compose_path_keeps_query_and_omits_empty():
@@ -387,3 +395,131 @@ def test_persistent_storage_failure_fails_closed(tmp_path, monkeypatch):
     with pytest.raises(PeerError) as err:
         a.verify_request(**_req(nonce="c" * 32))
     assert err.value.reason_code == "peer_replay_detected"
+
+
+def test_persistent_nonce_rejects_replay_at_inclusive_signature_window_endpoint(tmp_path):
+    now = [float(NOW)]
+    cache = NonceCache(persist_dir=tmp_path, clock=lambda: now[0])
+    auth = PeerAuthenticator(
+        secret_for={"node-a": SECRET}.get,
+        nonce_cache=cache,
+        clock=lambda: now[0],
+    )
+    request = _req(ts=NOW + MAX_SKEW_SECONDS)
+
+    assert auth.verify_request(**request) == "node-a"
+    # The signature remains valid at the inclusive +MAX_SKEW endpoint. The
+    # nonce must therefore remain protected when its nominal 600s window ends.
+    now[0] = float(NOW + 2 * MAX_SKEW_SECONDS)
+    restarted = PeerAuthenticator(
+        secret_for={"node-a": SECRET}.get,
+        nonce_cache=NonceCache(persist_dir=tmp_path, clock=lambda: now[0]),
+        clock=lambda: now[0],
+    )
+    with pytest.raises(PeerError) as err:
+        restarted.verify_request(**request)
+    assert err.value.reason_code == "peer_replay_detected"
+
+
+def test_persistent_nonce_fails_closed_on_clock_rollback_within_signature_window(tmp_path):
+    now = [float(NOW + MAX_SKEW_SECONDS)]
+    cache = NonceCache(persist_dir=tmp_path, clock=lambda: now[0])
+    auth = PeerAuthenticator(
+        secret_for={"node-a": SECRET}.get,
+        nonce_cache=cache,
+        clock=lambda: now[0],
+    )
+    request = _req(ts=NOW)
+
+    assert auth.verify_request(**request) == "node-a"
+    # Rolling back by 600s makes the same signed request valid at the opposite
+    # inclusive endpoint. A persistent high-water mark must fail closed.
+    now[0] = float(NOW - MAX_SKEW_SECONDS)
+    restarted = PeerAuthenticator(
+        secret_for={"node-a": SECRET}.get,
+        nonce_cache=NonceCache(persist_dir=tmp_path, clock=lambda: now[0]),
+        clock=lambda: now[0],
+    )
+    with pytest.raises(PeerError) as err:
+        restarted.verify_request(**request)
+    assert err.value.reason_code == "executor_internal_error"
+    assert "clock rollback" in err.value.detail.lower()
+
+
+def test_persistent_nonce_cleanup_cannot_erase_clock_rollback_evidence(tmp_path):
+    now = [float(NOW)]
+    cache = NonceCache(persist_dir=tmp_path, clock=lambda: now[0])
+    auth = PeerAuthenticator(
+        secret_for={"node-a": SECRET}.get,
+        nonce_cache=cache,
+        clock=lambda: now[0],
+    )
+    request = _req(ts=NOW + MAX_SKEW_SECONDS)
+
+    assert auth.verify_request(**request) == "node-a"
+    # A forward jump expires and removes the bucket. The durable clock
+    # high-water mark must survive cleanup so a later rollback cannot revive
+    # a still-valid signature at the old endpoint.
+    cache.cleanup(now=float(NOW + 4 * MAX_SKEW_SECONDS))
+    now[0] = float(NOW + 2 * MAX_SKEW_SECONDS)
+    restarted = PeerAuthenticator(
+        secret_for={"node-a": SECRET}.get,
+        nonce_cache=NonceCache(persist_dir=tmp_path, clock=lambda: now[0]),
+        clock=lambda: now[0],
+    )
+    with pytest.raises(PeerError) as err:
+        restarted.verify_request(**request)
+    assert err.value.reason_code == "executor_internal_error"
+    assert "clock rollback" in err.value.detail.lower()
+
+
+def test_persistent_nonce_recovers_clock_highwater_from_legacy_buckets(tmp_path):
+    cache = NonceCache(persist_dir=tmp_path)
+    nonce = "b" * 32
+    assert cache.check_and_store("node-a", nonce, now=float(NOW + MAX_SKEW_SECONDS))
+    marker = tmp_path / "nonce" / "node-a" / "default" / ".clock.highwater"
+    marker.unlink()
+
+    with pytest.raises(PeerError) as err:
+        cache.check_and_store("node-a", nonce, now=float(NOW - MAX_SKEW_SECONDS))
+    assert err.value.reason_code == "executor_internal_error"
+    assert "clock rollback" in err.value.detail.lower()
+
+
+def test_persistent_nonce_corrupt_clock_highwater_fails_closed(tmp_path):
+    cache = NonceCache(persist_dir=tmp_path)
+    assert cache.check_and_store("node-a", "c" * 32, now=float(NOW))
+    marker = tmp_path / "nonce" / "node-a" / "default" / ".clock.highwater"
+    marker.write_text("not-a-timestamp", encoding="ascii")
+
+    with pytest.raises(PeerError) as err:
+        cache.check_and_store("node-a", "d" * 32, now=float(NOW + 1))
+    assert err.value.reason_code == "executor_internal_error"
+    assert "high-water corrupted" in err.value.detail.lower()
+
+
+def test_authenticator_requires_nonce_window_to_cover_both_signature_endpoints(tmp_path):
+    short_window = NonceCache(persist_dir=tmp_path, window_seconds=2 * MAX_SKEW_SECONDS - 1)
+    with pytest.raises(ValueError, match="nonce window must cover"):
+        PeerAuthenticator(
+            secret_for={"node-a": SECRET}.get,
+            nonce_cache=short_window,
+            max_skew_seconds=MAX_SKEW_SECONDS,
+        )
+
+
+def test_memory_nonce_rejects_replay_at_inclusive_expiry_endpoint():
+    cache = NonceCache()
+    nonce = "e" * 32
+    assert cache.check_and_store("node-a", nonce, now=float(NOW))
+    assert not cache.check_and_store("node-a", nonce, now=float(NOW + NONCE_WINDOW_SECONDS))
+    assert cache.check_and_store("node-a", nonce, now=float(NOW + NONCE_WINDOW_SECONDS + 1))
+
+
+def test_persistent_nonce_replay_within_same_bucket_is_still_rejected(tmp_path):
+    cache = NonceCache(persist_dir=tmp_path, bucket_seconds=NONCE_WINDOW_SECONDS)
+    nonce = "f" * 32
+    assert cache.check_and_store("node-a", nonce, now=float(NOW + 300))
+    # Same-bucket movement does not need a high-water rewrite: the bucket
+    # itself remains present and must reject the duplicate.
+    assert not cache.check_and_store("node-a", nonce, now=float(NOW + 350))

@@ -25,7 +25,7 @@ if str(_REPO / "src") not in sys.path:
 
 from llm_loop.peer.admission import AdmissionStore  # noqa: E402
 from llm_loop.peer.artifacts import ArtifactStore  # noqa: E402
-from llm_loop.peer.auth import PeerAuthenticator  # noqa: E402
+from llm_loop.peer.auth import NonceCache, PeerAuthenticator  # noqa: E402
 from llm_loop.peer.errors import PeerError  # noqa: E402
 from llm_loop.peer.pair import secret_key_from_store  # noqa: E402
 from llm_loop.peer.service import PeerService  # noqa: E402
@@ -149,7 +149,10 @@ def build_app(
         except (PeerError, ValueError):
             return None
 
-    authenticator = PeerAuthenticator(secret_for=_secret_for)
+    # 与主 Web 共用同一 PeerStore/nonce 持久目录，避免入口差异导致重启后重放放行。
+    authenticator = PeerAuthenticator(
+        secret_for=_secret_for, nonce_cache=NonceCache(persist_dir=store.root)
+    )
     return create_peer_app(service=service, authenticator=authenticator)
 
 

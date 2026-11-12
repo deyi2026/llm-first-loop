@@ -85,7 +85,7 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
         return
     from llm_loop.peer.admission import AdmissionStore
     from llm_loop.peer.artifacts import ArtifactStore
-    from llm_loop.peer.auth import PeerAuthenticator
+    from llm_loop.peer.auth import NonceCache, PeerAuthenticator
     from llm_loop.peer.pair import secret_key_from_store
     from llm_loop.peer.service import PeerService
     from llm_loop.peer.store import PeerStore
@@ -129,7 +129,10 @@ def _mount_peer_routes(app: FastAPI, settings) -> None:
         except ValueError:
             return None
 
-    authenticator = PeerAuthenticator(secret_for=_secret_for)
+    # 主 Web 与独立 peer_serve 共用 PeerStore/nonce 目录；跨进程与重启均保留重放账本。
+    authenticator = PeerAuthenticator(
+        secret_for=_secret_for, nonce_cache=NonceCache(persist_dir=store.root)
+    )
     install_peer_error_handler(app)
     app.include_router(build_peer_router(service=service, authenticator=authenticator))
     # 进程启动即收敛上一次中断留下的中间态（不自动重跑）：主 app 与独立 peer_serve

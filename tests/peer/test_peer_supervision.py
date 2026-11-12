@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import stat
 import subprocess
 import sys
 from dataclasses import replace
@@ -557,3 +559,84 @@ def test_operator_legacy_ttl_flag_is_accepted_but_not_applied(tmp_path):
     )
     assert proc.returncode == 0
     assert "没有等待确认" in proc.stdout
+
+
+def test_service_ticket_binds_resolved_write_target_snapshot(tmp_path):
+    service, store, root, task_id = _held(_env(tmp_path))
+    target = root / "out.txt"
+
+    ticket = service.issue_supervision_ticket(task_id, issued_by="tester")
+
+    assert ticket.target_snapshot is not None
+    assert ticket.target_snapshot.path == str(target.resolve())
+    assert not ticket.target_snapshot.exists
+    target.write_bytes(b"external change after local confirmation")
+
+    receipt = service.resume_supervised(task_id, decided_by="tester")
+    assert receipt["state"] == "failed"
+    assert receipt["reason_code"] == "supervision_ticket_mismatch"
+    assert target.read_bytes() == b"external change after local confirmation"
+    assert store.get_grant(GRANT_ID).tasks_used == 0
+    with pytest.raises(PeerError) as err:
+        service._operator.load(task_id, params_digest=store.get_task(task_id).params_digest or "")
+    assert err.value.reason_code == "supervision_ticket_missing"
+
+
+def test_resume_rejects_legacy_write_ticket_without_target_snapshot(tmp_path):
+    service, store, root, task_id = _held(_env(tmp_path))
+    task = store.get_task(task_id)
+    assert task is not None
+    service._operator.issue(
+        task_id=task.task_id,
+        node_id=task.node_id,
+        kind=task.kind,
+        params_digest=task.params_digest or "",
+        issued_by="legacy-cli",
+        expires_at=task.supervision_expires_at,
+    )
+
+    receipt = service.resume_supervised(task_id, decided_by="tester")
+    assert receipt["state"] == "failed"
+    assert receipt["reason_code"] == "supervision_ticket_mismatch"
+    assert not (root / "out.txt").exists()
+    assert store.get_grant(GRANT_ID).tasks_used == 0
+    with pytest.raises(PeerError) as err:
+        service._operator.load(task_id, params_digest=task.params_digest or "")
+    assert err.value.reason_code == "supervision_ticket_missing"
+
+
+def test_issue_replaces_legacy_unbound_write_ticket_after_fresh_tty_confirmation(tmp_path):
+    service, store, root, task_id = _held(_env(tmp_path))
+    task = store.get_task(task_id)
+    assert task is not None
+    service._operator.issue(
+        task_id=task.task_id,
+        node_id=task.node_id,
+        kind=task.kind,
+        params_digest=task.params_digest or "",
+        issued_by="legacy-cli",
+        expires_at=task.supervision_expires_at,
+    )
+
+    # issue_supervision_ticket is reached only after the current local TTY
+    # confirmation; it must not reuse a legacy ticket without a target snapshot.
+    ticket = service.issue_supervision_ticket(task_id, issued_by="fresh-operator")
+    assert ticket.target_snapshot is not None
+    assert ticket.target_snapshot.path == str((root / "out.txt").resolve())
+
+
+def test_service_ticket_captures_existing_target_digest_and_mode(tmp_path):
+    service, _store, root, task_id = _held(_env(tmp_path))
+    target = root / "out.txt"
+    target.write_bytes(b"existing target bytes")
+    target.chmod(0o640)
+
+    ticket = service.issue_supervision_ticket(task_id, issued_by="tester")
+
+    snapshot = ticket.target_snapshot
+    assert snapshot is not None
+    assert snapshot.path == str(target.resolve())
+    assert snapshot.exists
+    assert snapshot.sha256 == hashlib.sha256(b"existing target bytes").hexdigest()
+    assert snapshot.mode == stat.S_IMODE(target.stat().st_mode)
+    assert snapshot.size == len(b"existing target bytes")

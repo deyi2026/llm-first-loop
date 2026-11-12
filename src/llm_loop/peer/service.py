@@ -43,9 +43,10 @@ from .models import (
     now_local,
     parse_ts,
 )
-from .operator import OperatorChannel, SupervisionTicket
+from .operator import OperatorChannel, SupervisionTicket, TargetSnapshot
 from .policy import evaluate, precheck
 from .suggestions import REASON_SUGGESTIONS
+from .write_gate import require_write_target
 
 PEER_API = "1"
 _SUBMIT_FIELDS = frozenset(
@@ -588,6 +589,12 @@ class PeerService:
             expired.append(task.task_id)
         return expired
 
+    def _supervision_target(self, task: TaskRecord) -> str | None:
+        """返回受监督写任务的规范化物理目标；非写任务不绑定文件快照。"""
+        if task.kind != "fs.write":
+            return None
+        return require_write_target(task.params.get("path"), write_root=self._write_root)
+
     def issue_supervision_ticket(
         self, task_id: str, *, issued_by: str
     ) -> SupervisionTicket:
@@ -600,12 +607,26 @@ class PeerService:
         if deadline <= now:
             raise PeerError("supervision_timeout", iso(deadline))
         digest = task.params_digest or ""
+        target = self._supervision_target(task)
         try:
             existing = self._operator.load(task_id, params_digest=digest)
             if existing.expires_at == iso(deadline):
-                return existing
-            # A ticket minted by an older CLI/config is not authoritative for this task.
-            self._operator.discard(task_id)
+                if target is None:
+                    return existing
+                if existing.target_snapshot is not None:
+                    if existing.target_snapshot.path != target:
+                        self._operator.discard(task_id)
+                        raise PeerError(
+                            "supervision_ticket_mismatch",
+                            "现有票据绑定了不同写入目标；请重新核对任务后确认",
+                        )
+                    return existing
+                # 旧 CLI 票据未绑定目标快照：本次函数由新的本机 TTY 确认调用，
+                # 因此丢弃旧票据并为当前确认签发绑定目标的新票据。
+                self._operator.discard(task_id)
+            else:
+                # A ticket minted by an older CLI/config is not authoritative for this task.
+                self._operator.discard(task_id)
         except PeerError as exc:
             if exc.reason_code in {"supervision_ticket_expired", "supervision_ticket_missing"}:
                 self._operator.discard(task_id)
@@ -618,6 +639,7 @@ class PeerService:
             params_digest=digest,
             issued_by=issued_by,
             expires_at=iso(deadline),
+            target=target,
         )
 
     def reject_supervised(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
@@ -663,7 +685,17 @@ class PeerService:
                     "supervision_ticket_mismatch",
                     "票据 expires_at 与任务持久化监督截止时间不一致",
                 )
+            target = self._supervision_target(task)
+            if target is not None:
+                current_snapshot = TargetSnapshot.capture(target)
+                if ticket.target_snapshot is None or ticket.target_snapshot != current_snapshot:
+                    raise PeerError(
+                        "supervision_ticket_mismatch",
+                        "写入目标快照缺失或已变化；拒绝进入准入和额度消费",
+                    )
         except PeerError as exc:
+            if exc.reason_code == "supervision_ticket_mismatch":
+                self._operator.discard(task_id)
             return self._fail_waiting(task, exc, decided_by=decided_by)
         admission = self._write_admission(
             AdmissionRecord(

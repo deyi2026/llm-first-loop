@@ -18,6 +18,8 @@
 先验签后落 nonce，避免未认证方用垃圾 nonce 污染重放窗（nonce 中毒）。
 
 持久防重放（设计 §6.5 / R04 / A09）：
+- 每密钥代际保存原子时钟检查点；跨桶前进与清理前同步检查点，墙钟回退 fail-closed。
+- nonce 有效期端点按包含处理；签名在端点仍有效时，nonce 不会提前过期。
 - ``NonceCache(persist_dir=...)`` 启用持久模式：按「节点+密钥代际+时间窗」三级分桶
   落盘（``<persist_dir>/nonce/<node>/<generation>/<window_index>.jsonl``），跨进程
   ``flock`` 串行化同一代际桶树，已验签 nonce「先持久（append+fsync）、后响应」。
@@ -25,7 +27,7 @@
   文件（有界批次）。每代际桶保留至该代签名窗（含时钟偏差）完全结束。
 - 换钥过渡：``PeerAuthenticator(previous_secret_for=...)`` 双代并验，nonce 按
   验签命中的密钥代际（``key_fingerprint``）分桶。
-- 存储故障/记录损坏 fail-closed（``executor_internal_error``），绝不静默放行或
+- 存储故障/记录损坏/墙钟回退 fail-closed（``executor_internal_error``），绝不静默放行或
   以空记录恢复写入资格；垃圾签名不消耗持久槽位。
 
 已知边界（不隐瞒）：
@@ -43,13 +45,15 @@ import fcntl
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
+import tempfile
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -142,7 +146,7 @@ class NonceCache:
     """nonce 重放窗：内存 LRU（默认）或持久分桶（``persist_dir``，设计 §6.5）。
 
     内存模式（默认，向后兼容）：node_id → OrderedDict{nonce: 过期时刻}，全局 LRU
-    上限 ``max_entries``；只影响窗内保护强度，不放宽时间窗。重启即失忆。
+    上限 ``max_entries``；只影响窗内保护强度，不放宽时间窗。重启即失忆。持久模式另保存跨进程时钟检查点，避免墙钟回退复活已清理记录。
 
     持久模式（``persist_dir`` 非空）：``<persist_dir>/nonce/<node>/<generation>/
     <window_index>.jsonl`` 三级分桶，窗口内结构性永不淘汰（``max_entries`` 不参与
@@ -185,6 +189,11 @@ class NonceCache:
             self._bucket_seconds = self._window
             self._lookback = 0
 
+    @property
+    def window_seconds(self) -> int:
+        """当前 nonce 保留窗口，供认证器校验其覆盖完整签名有效期。"""
+        return self._window
+
     def __len__(self) -> int:
         with self._lock:
             return len(self._seen)
@@ -210,7 +219,9 @@ class NonceCache:
             try:
                 return self._persistent_check_and_store(node_id, nonce, now_ts, generation)
             except OSError as exc:
-                raise PeerError("executor_internal_error", f"nonce persistence failure: {exc}") from exc
+                raise PeerError(
+                    "executor_internal_error", f"nonce persistence failure: {exc}"
+                ) from exc
 
     # ---- 内存模式（默认，向后兼容） ----
 
@@ -227,7 +238,8 @@ class NonceCache:
             return True
 
     def _purge(self, now_ts: float) -> None:
-        expired = [key for key, exp in self._seen.items() if exp <= now_ts]
+        # 签名时间窗端点是包含的；nonce 到 expires_at 这一秒仍必须拒绝重放。
+        expired = [key for key, exp in self._seen.items() if exp < now_ts]
         for key in expired:
             del self._seen[key]
 
@@ -239,21 +251,119 @@ class NonceCache:
         persist_root = self._persist_root
         if persist_root is None:  # pragma: no cover - 由 check_and_store 分流保证
             raise PeerError("executor_internal_error", "nonce persistence requires persist_dir")
+        if not math.isfinite(now_ts):
+            raise PeerError("executor_internal_error", "nonce clock is not finite")
         gen_dir = persist_root / _safe_segment(node_id) / _safe_segment(generation)
         index = int(now_ts // self._bucket_seconds)
         with self._fs_lock(gen_dir):
+            # 先推进持久时钟高水位，再查重/落账。系统时间回退时拒绝所有新请求，
+            # 避免索引退回旧桶或前跳清理后又把已过期桶“复活”。
+            self._advance_clock_highwater(gen_dir, now_ts)
             for back in range(self._lookback + 1):
                 bucket = gen_dir / f"{index - back}.jsonl"
                 if self._bucket_contains(bucket, nonce, now_ts):
                     self.stats["replays_detected"] += 1
                     return False
-            # 首次接受：先持久（append+fsync）、后响应；每次请求恰好一次持久写。
+            next_ops = self._ops + 1
+            if next_ops % _LAZY_CLEANUP_INTERVAL == 0:
+                # 清理前强制持久化精确时刻；之后回退到同一桶内也不能复活已清理记录。
+                self._advance_clock_highwater(gen_dir, now_ts, force=True)
+                self._cleanup_gen_dir(gen_dir, now_ts)
+            # 首次接受：每个新 nonce 先 append+fsync，后响应。
             self._append_record(gen_dir / f"{index}.jsonl", nonce, now_ts + self._window)
             self.stats["appends"] += 1
-            self._ops += 1
-            if self._ops % _LAZY_CLEANUP_INTERVAL == 0:
-                self._cleanup_gen_dir(gen_dir, now_ts)
+            self._ops = next_ops
             return True
+
+    def _advance_clock_highwater(
+        self, gen_dir: Path, now_ts: float, *, force: bool = False
+    ) -> None:
+        """持久记录墙钟检查点；回退、损坏均 fail-closed。"""
+        if not math.isfinite(now_ts):
+            raise PeerError("executor_internal_error", "nonce clock is not finite")
+        marker = gen_dir / ".clock.highwater"
+        marker_exists = True
+        try:
+            previous = float(marker.read_text(encoding="ascii").strip())
+        except FileNotFoundError:
+            marker_exists = False
+            # 兼容已有持久桶：首次升级时从未清理的记录反推最后接受时刻。
+            previous = self._legacy_highwater(gen_dir)
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise PeerError(
+                "executor_internal_error", f"nonce clock high-water corrupted: {exc}"
+            ) from exc
+        if previous is not None:
+            if not math.isfinite(previous):
+                raise PeerError("executor_internal_error", "nonce clock high-water is not finite")
+            if now_ts < previous:
+                raise PeerError(
+                    "executor_internal_error",
+                    f"nonce clock rollback detected: now={now_ts:.6f} high_water={previous:.6f}",
+                )
+        advance_bucket = previous is not None and (
+            int(now_ts // self._bucket_seconds) > int(previous // self._bucket_seconds)
+        )
+        if (
+            not marker_exists
+            or previous is None
+            or (now_ts > previous and (force or advance_bucket))
+        ):
+            self._write_clock_highwater(marker, now_ts)
+
+    def _legacy_highwater(self, gen_dir: Path) -> float | None:
+        """没有高水位标记时，从仍存在的旧 nonce 桶恢复最大接受时刻。"""
+        latest: float | None = None
+        for name in os.listdir(gen_dir):
+            if not name.endswith(".jsonl"):
+                continue
+            bucket = gen_dir / name
+            try:
+                raw = bucket.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            except UnicodeError as exc:
+                raise PeerError(
+                    "executor_internal_error", f"nonce bucket corrupted: {bucket}: {exc}"
+                ) from exc
+            for line in raw.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                    if not isinstance(record, dict) or not isinstance(record.get("n"), str):
+                        raise ValueError("invalid nonce record shape")
+                    accepted_at = float(record["e"]) - self._window
+                    if not math.isfinite(accepted_at):
+                        raise ValueError("non-finite nonce expiry")
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                    raise PeerError(
+                        "executor_internal_error", f"nonce bucket corrupted: {bucket}: {exc}"
+                    ) from exc
+                latest = accepted_at if latest is None else max(latest, accepted_at)
+        return latest
+
+    @staticmethod
+    def _write_clock_highwater(marker: Path, now_ts: float) -> None:
+        """原子替换高水位文件，并同步文件与目录项后才允许请求继续。"""
+        fd, temporary = tempfile.mkstemp(prefix=".clock-highwater-", dir=marker.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="ascii") as handle:
+                handle.write(f"{now_ts!r}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, marker)
+            dir_fd = os.open(marker.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except BaseException:
+            with suppress(OSError):
+                os.close(fd)
+            with suppress(OSError):
+                os.unlink(temporary)
+            raise
 
     @contextmanager
     def _fs_lock(self, gen_dir: Path) -> Iterator[None]:
@@ -274,13 +384,22 @@ class NonceCache:
             raw = bucket.read_text(encoding="utf-8")
         except FileNotFoundError:
             return False  # 桶不存在或刚被有界清理移除（仅可能整体过期）
+        except UnicodeError as exc:
+            raise PeerError(
+                "executor_internal_error", f"nonce bucket corrupted: {bucket}: {exc}"
+            ) from exc
         for line in raw.splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
                 record = json.loads(line)
-                if record["n"] == nonce and float(record["e"]) > now_ts:
+                if not isinstance(record, dict) or not isinstance(record.get("n"), str):
+                    raise ValueError("invalid nonce record shape")
+                expires_at = float(record["e"])
+                if not math.isfinite(expires_at):
+                    raise ValueError("non-finite nonce expiry")
+                if record["n"] == nonce and expires_at >= now_ts:
                     return True
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
                 raise PeerError(
@@ -318,6 +437,7 @@ class NonceCache:
                 if not gen_dir.is_dir():
                     continue
                 with self._fs_lock(gen_dir):
+                    self._advance_clock_highwater(gen_dir, now_ts, force=True)
                     total += self._cleanup_gen_dir(gen_dir, now_ts)
         return total
 
@@ -374,6 +494,10 @@ class PeerAuthenticator:
         self._nonces = nonce_cache if nonce_cache is not None else NonceCache(clock=clock)
         self._clock = clock
         self._max_skew = int(max_skew_seconds)
+        if self._max_skew < 0:
+            raise ValueError("max_skew_seconds must be non-negative")
+        if self._nonces.window_seconds < 2 * self._max_skew:
+            raise ValueError("nonce window must cover both inclusive signature-window endpoints")
 
     def verify_request(
         self,
