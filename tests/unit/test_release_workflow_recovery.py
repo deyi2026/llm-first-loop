@@ -113,3 +113,30 @@ def test_v0647_annotated_tag_recovery_keeps_immutable_source_and_assets() -> Non
     assert pin_commit in manifest["env"]["RELEASE_COMMIT_SHA"]
     draft = next(s for s in release_steps if s.get("uses") == "softprops/action-gh-release@v2")
     assert draft["with"]["draft"] is True
+
+
+def test_v0648_recovery_pins_annotated_tag_and_keeps_draft_first() -> None:
+    """The existing immutable tag is recovered by dispatch, never retargeted."""
+    cfg = _workflow()
+    source_sha = "e635bc1e688776e431df76fd92e3ed8fa4441080"
+    tag_object = "d1fac53225e382448052bd0e2824145588d6f975"
+    assert set(cfg["jobs"]) == {"gate", "release"}
+    assert cfg["jobs"]["release"]["needs"] == "gate"
+    assert "inputs.recovery_tag == 'v0.6.48'" in cfg["jobs"]["release"]["if"]
+    for job in cfg["jobs"].values():
+        checkout = next(s for s in job["steps"] if s.get("uses") == "actions/checkout@v4")
+        assert "inputs.recovery_tag" in checkout["with"]["ref"]
+        identity = next(s for s in job["steps"] if s.get("name", "").startswith("不可变 v0.6.37"))
+        assert source_sha in identity["run"]
+        assert tag_object in identity["run"]
+        assert "v0.6.48)" in identity["run"]
+        assert "unsupported immutable tag" in identity["run"]
+    steps = cfg["jobs"]["release"]["steps"]
+    copy = next(s for s in steps if s.get("name", "").startswith("将受管发布收敛工具"))
+    upload = next(s for s in steps if s.get("name", "").startswith("新标签及"))
+    assert "inputs.recovery_tag == 'v0.6.48'" in copy["if"]
+    assert "inputs.recovery_tag == 'v0.6.48'" in upload["if"]
+    manifest = next(s for s in steps if s.get("name", "").startswith("生成平台工件 manifest"))
+    assert source_sha in manifest["env"]["RELEASE_COMMIT_SHA"]
+    draft = next(s for s in steps if s.get("uses") == "softprops/action-gh-release@v2")
+    assert draft["with"]["draft"] is True
