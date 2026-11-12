@@ -29,6 +29,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from llm_loop.core.loop.runner import BackgroundRunner
@@ -152,13 +153,22 @@ def _interject(client: TestClient, sid: str, queue_id: str, gen: str):
     )
 
 
-def _enqueue_and_interject(client, sid, gen, rec_step):
+def _enqueue_and_interject(client, sid, gen, rec_step, *, allow_natural_completion=False):
     """POST /queue + POST /queue/interject，返回 (queue_id, created_at, interject_done_perf)."""
     r1 = client.post("/api/v1/chat/queue", json={"session_id": sid, "message": INTERJECT_TEXT})
     assert r1.status_code == 202, f"入队非 202: {r1.status_code}"
     queue_id = r1.json()["queue_id"]
     r2 = _interject(client, sid, queue_id, gen)
-    assert r2.status_code == 202, f"插话受理非 202: {r2.status_code} {r2.text[:200]}"
+    natural_completion = (
+        allow_natural_completion
+        and r2.status_code == 409
+        and r2.json().get("error") == "interject_no_live_run"
+    )
+    assert r2.status_code == 202 or natural_completion, (
+        f"插话受理非 202: {r2.status_code} {r2.text[:200]}"
+    )
+    if rec_step is not None:
+        rec_step["interject_http_status"] = r2.status_code
     return queue_id
 
 
@@ -238,7 +248,9 @@ def _one_tool_sample(build_test_engine, *, tool_name: str, cmd: str | None, slee
         time.sleep(inject_delay_s)
         entry["inject_perf"] = round(time.perf_counter(), 3)
         gen = (runner.get_handle(sid) or {}).get("run_generation")
-        queue_id = _enqueue_and_interject(client, sid, gen, None)
+        queue_id = _enqueue_and_interject(
+            client, sid, gen, entry, allow_natural_completion=tag.startswith("S15"),
+        )
 
         if tag.startswith("S15"):
             done_perf = _wait_tool_done(engine, tool_name, poll_attr)
@@ -260,6 +272,12 @@ def _one_tool_sample(build_test_engine, *, tool_name: str, cmd: str | None, slee
             INTERJECT_TEXT in (m.content or "") for m in sess.messages
         )
         entry["llm_call_count"] = len(fake.calls)
+        if entry.get("interject_http_status") == 409:
+            # A naturally finished run cannot accept an interjection. The
+            # queued message must remain available for a later turn.
+            assert final.get("type") == "done", final
+            assert item.get("status") == "queued", item
+            assert entry["model_saw_interject"] is False
         return entry
     finally:
         runner.cancel(sid)
@@ -317,28 +335,22 @@ def test_s15_race_natural_vs_interrupt(build_test_engine):
     rec = Rec("S15", "竞速如实：sleep 1.55 + 1.45s 注入（完成落判定片内部）")
     try:
         for i in range(6):
-            # 全套负载下 HTTP 往返可达 100ms+：到达可能晚于 run 终态（409 构造竞争，
-            # 非行为缺陷）——脚手架级重试一次新会话；两次仍失败才如实报错。
-            s = None
-            for _attempt in range(2):
-                try:
-                    s = _one_tool_sample(
-                        build_test_engine,
-                        tool_name="execute_command", cmd="sleep 1.55", sleep_s=1.55,
-                        inject_delay_s=1.45, title="S15", tag=f"S15-{i+1}",
-                    )
-                    break
-                except AssertionError as _ax:
-                    if _attempt == 1 or "409" not in str(_ax):
-                        raise
-                    s = None
+            # Keep both legitimate race outcomes; do not retry away the
+            # natural-completion branch or widen the injection timing window.
+            s = _one_tool_sample(
+                build_test_engine,
+                tool_name="execute_command", cmd="sleep 1.55", sleep_s=1.55,
+                inject_delay_s=1.45, title="S15", tag=f"S15-{i+1}",
+            )
             # 分支判定（M0 近似口径 + 观察噪声边界）：
             # received_perf ≈ inject_perf + t_effect（created_at 在注入打点后数 ms 内落盘）
             # 观察机制不对称：tool_done 来自本测试 5ms 轮询线程（滞后真实退出可达
             # ~20ms），received 来自引擎内 hq 时间戳——两者差 <40ms 属观察噪声带，
             # M0 无打断判定通道（构造上不可能 interrupt_first）。
             # M2 后改用事件序真值（终止登记/WAL 事件），弃近似与噪声带。
-            if s.get("tool_done_perf") is not None and s.get("t_effect_ms") is not None:
+            if s.get("interject_http_status") == 409:
+                s["branch"] = "natural_first(completed_before_interject)"
+            elif s.get("tool_done_perf") is not None and s.get("t_effect_ms") is not None:
                 s["tool_done_after_inject_ms"] = round(
                     (s["tool_done_perf"] - s["inject_perf"]) * 1000, 1
                 )
@@ -431,3 +443,47 @@ def test_s16_interject_llm_generation_window(build_test_engine):
         rec.write("error", exc)
         raise
     rec.write()
+
+
+@pytest.mark.parametrize("delay_stage", ["before_enqueue", "before_interject"])
+def test_s15_records_natural_completion_race(build_test_engine, monkeypatch, delay_stage):
+    engines = []
+
+    def make_engine(responses):
+        engine, fake = build_test_engine(responses)
+        engines.append(engine)
+        return engine, fake
+
+    def wait_for_completion():
+        deadline = time.monotonic() + 10
+        while engines[-1].runner.is_running(session_id[0]) and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not engines[-1].runner.is_running(session_id[0]), "run did not finish"
+
+    session_id = []
+    original_enqueue = _enqueue_and_interject
+    original_interject = _interject
+
+    def enqueue_after_completion(client, sid, gen, entry, **kwargs):
+        session_id[:] = [sid]
+        if delay_stage == "before_enqueue":
+            wait_for_completion()
+        return original_enqueue(client, sid, gen, entry, **kwargs)
+
+    def interject_after_completion(client, sid, queue_id, gen):
+        if delay_stage == "before_interject":
+            wait_for_completion()
+        return original_interject(client, sid, queue_id, gen)
+
+    monkeypatch.setitem(globals(), "_enqueue_and_interject", enqueue_after_completion)
+    monkeypatch.setitem(globals(), "_interject", interject_after_completion)
+    sample = _one_tool_sample(
+        make_engine, tool_name="execute_command", cmd="sleep 0.3", sleep_s=0.3,
+        inject_delay_s=0.0, title="S15 completion race", tag="S15-completion-race",
+    )
+
+    assert sample["interject_http_status"] == 409
+    assert sample["final_event"] == "done"
+    assert sample["item_status"] == "queued"
+    assert sample["model_saw_interject"] is False
+    assert sample.get("t_effect_ms") is None
