@@ -124,6 +124,9 @@ jobs:
         run: uv build
       - name: 将 Linux 用户级安装/卸载脚本纳入发行工件
         run: cp scripts/install_linux.sh scripts/uninstall_linux.sh dist/
+      - name: 将受管发布收敛工具纳入新标签工件（不改变 v0.6.37 恢复）
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        run: cp scripts/verify_managed_release.py scripts/finish_managed_release.py dist/
       - name: 独立安装与本地 Web 验收（禁止模型调用）
         shell: bash
         run: |
@@ -171,6 +174,11 @@ jobs:
             dist/linux-installer-smoke.json
             dist/SHA256SUMS
             dist/release-artifacts-manifest.json
+      - name: 新标签补齐受管发布工具资产（纳入同一 Release manifest）
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" dist/verify_managed_release.py dist/finish_managed_release.py
       - name: 机器可读平台状态块写入 Release 正文（幂等置顶）
         # 状态块由 scripts/release_finalize.py 维护（HTML 注释包裹 fenced JSON），
         # finalize 转正成功时原位改写为 published；非全绿正文不得含 latest 承诺。
