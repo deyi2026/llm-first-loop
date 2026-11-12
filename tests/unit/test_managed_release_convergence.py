@@ -197,6 +197,40 @@ def test_call_svcctl_rejects_mixed_action_jsonl_records(tmp_path, finisher, monk
         finisher.call_svcctl(tmp_path / "python", "restart")
 
 
+def test_call_svcctl_requires_action_id_on_final_restart_record(tmp_path, finisher, monkeypatch):
+    accepted = {"ok": True, "action_id": "svc-abc123"}
+    final = {"ok": True, "status": "accepted", "detached": True}
+    monkeypatch.setattr(
+        finisher.subprocess,
+        "run",
+        Mock(return_value=finisher.subprocess.CompletedProcess(
+            args=["python", "-m", "service_control", "restart"],
+            returncode=0,
+            stdout=json.dumps(accepted) + "\n" + json.dumps(final) + "\n",
+            stderr="",
+        )),
+    )
+
+    with pytest.raises(ValueError, match="restart JSONL record missing action_id"):
+        finisher.call_svcctl(tmp_path / "python", "restart")
+
+
+def test_call_svcctl_accepts_single_publish_wheel_json_record(tmp_path, finisher, monkeypatch):
+    published = {"version": "0.6.48", "generation": 12, "wheel_sha256": SHA}
+    monkeypatch.setattr(
+        finisher.subprocess,
+        "run",
+        Mock(return_value=finisher.subprocess.CompletedProcess(
+            args=["python", "-m", "service_control", "publish-wheel"],
+            returncode=0,
+            stdout=json.dumps(published) + "\n",
+            stderr="",
+        )),
+    )
+
+    assert finisher.call_svcctl(tmp_path / "python", "publish-wheel") == published
+
+
 def test_source_version_drift_stops_before_publish(tmp_path, finisher, monkeypatch):
     root = staged(tmp_path, desired_gen=11)
     monkeypatch.setattr(finisher.socket, "gethostname", lambda: "test-host")

@@ -85,6 +85,12 @@ def call_svcctl(python: Path, *args: str) -> dict:
         records.append(value)
     if not records:
         raise ValueError("service_control returned empty JSONL stdout")
+    command = args[0] if args else "<unknown>"
+    if command == "restart":
+        if len(records) != 2:
+            raise ValueError("service_control restart must emit accepted + final JSONL records")
+        if any(not item.get("action_id") for item in records):
+            raise ValueError("service_control restart JSONL record missing action_id")
     action_ids = {str(item["action_id"]) for item in records if item.get("action_id")}
     if len(action_ids) > 1:
         raise ValueError("service_control JSONL records refer to different actions")

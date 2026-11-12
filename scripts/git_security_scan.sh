@@ -283,8 +283,10 @@ main() {
   if [[ "$MODE" == "--range" ]]; then
     RANGE_BASE="${2:?--range 需要 BASE}"
     RANGE_HEAD="${3:?--range 需要 HEAD}"
-  elif [[ "$MODE" == "--commit" || "$MODE" == "--tree-commit" ]]; then
+  elif [[ "$MODE" == "--commit" ]]; then
     RANGE_HEAD="${2:?--commit 需要 SHA}"
+  elif [[ "$MODE" == "--tree-commit" ]]; then
+    RANGE_HEAD="${2:?--tree-commit 需要 SHA}"
   fi
 
   # 目标集：staged=暂存区；range=B..H 内**逐提交**的变更 blob（中间提交引入后被还原的内容

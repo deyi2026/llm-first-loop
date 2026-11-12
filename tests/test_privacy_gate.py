@@ -239,6 +239,14 @@ def test_tree_commit_still_blocks_sensitive_content_in_tag_snapshot(repo):
     assert "本地绝对路径匹配" in result.stdout
 
 
+def test_tree_commit_missing_sha_has_mode_specific_diagnostic():
+    result = subprocess.run(
+        ["bash", SCAN, "--tree-commit"], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode != 0
+    assert "--tree-commit 需要 SHA" in result.stderr
+
+
 def test_new_tag_equal_to_remote_main_reuses_main_push_and_ci_checks(repo, tmp_path):
     historical_path = "/Users/" + "fixtureuser/" + "Project/old-export.txt"
     commit_file(repo, "archive-fixture.txt", historical_path, "historical fixture")
