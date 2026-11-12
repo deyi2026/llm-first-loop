@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery_tag:
-        description: "Immutable release recovery (only v0.6.37)"
+        description: "Immutable release recovery (pinned v0.6.37 / v0.6.47)"
         required: true
         type: string
 
@@ -48,14 +48,26 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref }}
-      - name: 不可变 v0.6.37 恢复身份（仅手动入口）
+      - name: 不可变 v0.6.37 / v0.6.47 恢复身份（仅手动入口）
         if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
-          test "${RELEASE_TAG}" = "v0.6.37"
-          test "$(git rev-parse HEAD)" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
-          test "$(git rev-parse refs/tags/v0.6.37)" = "025eb7d1b81b5959662ec6158f1b9ebc939466c2"
-          test "$(git rev-parse 'refs/tags/v0.6.37^{commit}')" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+          case "${RELEASE_TAG}" in
+            v0.6.37)
+              test "$(git rev-parse HEAD)" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+              test "$(git rev-parse refs/tags/v0.6.37)" = "025eb7d1b81b5959662ec6158f1b9ebc939466c2"
+              test "$(git rev-parse 'refs/tags/v0.6.37^{commit}')" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+              ;;
+            v0.6.47)
+              test "$(git rev-parse HEAD)" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+              test "$(git rev-parse refs/tags/v0.6.47)" = "2de91c607f5504f84554add6780f60cf2a646a37"
+              test "$(git rev-parse 'refs/tags/v0.6.47^{commit}')" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+              ;;
+            *)
+              echo "release recovery denied: unsupported immutable tag" >&2
+              exit 1
+              ;;
+          esac
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -94,20 +106,32 @@ jobs:
     name: 生成 Release 草稿
     needs: gate
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && inputs.recovery_tag == 'v0.6.37') }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && (inputs.recovery_tag == 'v0.6.37' || inputs.recovery_tag == 'v0.6.47')) }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref }}
-      - name: 不可变 v0.6.37 恢复身份（仅手动入口）
+      - name: 不可变 v0.6.37 / v0.6.47 恢复身份（仅手动入口）
         if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
-          test "${RELEASE_TAG}" = "v0.6.37"
-          test "$(git rev-parse HEAD)" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
-          test "$(git rev-parse refs/tags/v0.6.37)" = "025eb7d1b81b5959662ec6158f1b9ebc939466c2"
-          test "$(git rev-parse 'refs/tags/v0.6.37^{commit}')" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+          case "${RELEASE_TAG}" in
+            v0.6.37)
+              test "$(git rev-parse HEAD)" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+              test "$(git rev-parse refs/tags/v0.6.37)" = "025eb7d1b81b5959662ec6158f1b9ebc939466c2"
+              test "$(git rev-parse 'refs/tags/v0.6.37^{commit}')" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+              ;;
+            v0.6.47)
+              test "$(git rev-parse HEAD)" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+              test "$(git rev-parse refs/tags/v0.6.47)" = "2de91c607f5504f84554add6780f60cf2a646a37"
+              test "$(git rev-parse 'refs/tags/v0.6.47^{commit}')" = "07adee68fcab273a2eddadfeb1acb2459bb8e942"
+              ;;
+            *)
+              echo "release recovery denied: unsupported immutable tag" >&2
+              exit 1
+              ;;
+          esac
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -124,10 +148,13 @@ jobs:
         run: uv build
       - name: 将 Linux 用户级安装/卸载脚本纳入发行工件
         run: cp scripts/install_linux.sh scripts/uninstall_linux.sh dist/
+      - name: 将受管发布收敛工具纳入新标签工件（含固定 v0.6.47 恢复，不改变 v0.6.37）
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.recovery_tag == 'v0.6.47' }}
+        run: cp scripts/verify_managed_release.py scripts/finish_managed_release.py dist/
       - name: 独立安装与本地 Web 验收（禁止模型调用）
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${RELEASE_TAG}" == "v0.6.37" ]]; then
             # Only replace the *test harness*. Wheel, sdist, installer and Web
             # resources remain byte-for-byte built from the immutable tag.
             # The harness is from independently reviewed/R9/CI-qualified PR #9.
@@ -147,7 +174,9 @@ jobs:
         # manifest 是平台状态与逐资产 sha256 的权威记录（上传前本地实测）；
         # macOS .pkg 由签名机上传后经 `manifest --tag` 按实际资产重生成回传。
         env:
-          RELEASE_COMMIT_SHA: ${{ github.sha }}
+          # The immutable checkout is the package source; workflow_dispatch
+          # github.sha points to the dispatch branch, not the frozen tag.
+          RELEASE_COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag == 'v0.6.47' && '07adee68fcab273a2eddadfeb1acb2459bb8e942' || github.sha }}
         run: |
           python scripts/release_finalize.py manifest \
             --from-dir dist \
@@ -171,6 +200,11 @@ jobs:
             dist/linux-installer-smoke.json
             dist/SHA256SUMS
             dist/release-artifacts-manifest.json
+      - name: 新标签及 v0.6.47 恢复补齐受管发布工具资产（纳入同一 Release manifest）
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.recovery_tag == 'v0.6.47' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" dist/verify_managed_release.py dist/finish_managed_release.py
       - name: 机器可读平台状态块写入 Release 正文（幂等置顶）
         # 状态块由 scripts/release_finalize.py 维护（HTML 注释包裹 fenced JSON），
         # finalize 转正成功时原位改写为 published；非全绿正文不得含 latest 承诺。
