@@ -1,0 +1,100 @@
+{
+  "lane_id": "lane-7385153f",
+  "review_kind": "merge-review-independent (RULE-AI-34)",
+  "branch": "evo/replay-degraded-reverify-20261111",
+  "head_sha": "071979808aa9a7db9e082b78d6baefe04db2d695",
+  "base_sha": "0512f6b7456a11d7c41d83c5ba36754f5e8c1bbe",
+  "diff_scope": "git -C .worktrees/evo-replay-reverify-20261111 diff 0512f6b74..HEAD (3 commits, 4 files, +609/-4)",
+  "verdict": "REVISE",
+  "counts": {"P0": 0, "P1": 1, "P2": 1},
+  "checklist": [
+    {
+      "item": 1,
+      "title": "变更文件与 lane paths 一致无越界",
+      "verdict": "PASS",
+      "evidence": "data/audit/lanes.jsonl:60 paths=[docs/playbooks/parallel-lane-development.md, scripts/issue_verify_receipt.py, src/llm_loop/introspection/merge_queue.py, tests/unit/test_merge_queue_verify_replay.py] 与 diff --name-status (M/M/M/A) 精确一致，无第 5 文件；merge-base(HEAD,0512f6b74)==0512f6b74 无意外分叉"
+    },
+    {
+      "item": 2,
+      "title": "读侧 check_verify_covers_base 判定逻辑零改动",
+      "verdict": "PASS",
+      "evidence": "base/HEAD 两版函数体各 82 行 diff 为空（CVB_IDENTICAL，awk 抽取比对）；diff 全文 grep 'check_verify_covers_base' 仅命中注释/文档/测试 import 与调用；merge_queue.py numstat +197/-0 纯增量，无删改"
+    },
+    {
+      "item": 3,
+      "title": "carryover 签发侧 fail-closed 完整无旁路",
+      "verdict": "PASS",
+      "evidence": "merge_queue.py:575-636 顺序校验全 raise 链：缺 repo_path/old_base/old_head→raise(:577)；源不存在/异lane→raise(:583)；非pass→raise(:585)；src.base_sha!=old_base→raise(:590-594)；src.head_sha(有记录)!=old_head→raise(:596-600)；TTL不可判定/不可解析/过期→raise(:604,:608,:610)；内部强制复跑 assess_rebase_replay(:611-617) not eligible→raise(:618-622)；文件写入仅在块后(:632-635)。--verbatim 单用(:426)、空rev前置None(:409-410)。grep 全触点仅 issue_verify_receipt+CLI 两写者，无旁路。残留 P2-1（源 head_sha 为空时绑定跳过）"
+    },
+    {
+      "item": 4,
+      "title": "15 测试覆盖应拦分支",
+      "verdict": "PASS",
+      "evidence": "独立复跑 .venv(py3.13) pytest tests/unit/test_merge_queue_verify_replay.py -q → '15 passed in 3.85s'。分支映射：非replay(test:93-108,:174-192,CLI bad :304-313)；相交(test:110-126)；坏ref(test:128-137)；过期(test:209-223)；缺源(test:194-207)；CLI应拦(exit2 :294-303 + nonzero :304-313)；空白变化(test:353-368)；空rev(test:370-380)。4+4+2+1+2+2=15"
+    },
+    {
+      "item": 5,
+      "title": "playbook §5 与实现一致",
+      "verdict": "FAIL",
+      "evidence": "playbooks/parallel-lane-development.md:41 判据 a 写 'git patch-id --stable'，实现为 'git patch-id --verbatim'（merge_queue.py:426，commit 071979808 第三轮P1修码未同步文档；playbook 仅 c0b1aba 触及）；merge_queue.py:396 docstring 首行同残留 --stable。drift 方向为码严于文（fail-closed 安全侧），其余条目（判据b/c、签发侧闸、CLI、降级范围、读侧零放宽、测试）与实现一致 → 记 P1-1 文档一致性，修复为一词级"
+    },
+    {
+      "item": 6,
+      "title": "无夹带无关变更",
+      "verdict": "PASS",
+      "evidence": "numstat: merge_queue.py +197/-0、issue_verify_receipt.py +21/-0、test_merge_queue_verify_replay.py +380/-0、playbook +11/-4（仅§5机制节重写）；无 CI/配置/无关模块触碰；script 文件模式 100755 未变"
+    }
+  ],
+  "spot_checks": [
+    {
+      "id": 1,
+      "topic": "判据复跑链无旁路",
+      "result": "PASS",
+      "evidence": "carryover_of 非空必经 assess_rebase_replay（merge_queue.py:575-622），row 写入在校验块之后；CLI 仅参数粘合（scripts/issue_verify_receipt.py:41-48）缺 --old-base/--old-head 即 exit 2；test_carryover_refused_when_not_replay 实测 ValueError 拦截；grep 'carryover' src/scripts 无第二写者"
+    },
+    {
+      "id": 2,
+      "topic": "--verbatim/--stable 互斥",
+      "result": "PASS（含 P1-1 文档残留发现）",
+      "evidence": "实测 git 2.50.1：'git patch-id --stable --verbatim' exit=129 \"options '--verbatim' and '--stable' cannot be used together\"；单用 --verbatim exit=0；代码仅传 --verbatim（merge_queue.py:426），docstring:403-407 对互斥与 fail-closed 降级描述正确；playbook:41 与 docstring:396 残留 --stable 见 P1-1"
+    },
+    {
+      "id": 3,
+      "topic": "_diff_paths 空值 fail-closed",
+      "result": "PASS",
+      "evidence": "实测 'git diff --name-only \"\" HEAD' exit=128 fatal → returncode!=0 → 返回 None（merge_queue.py:439-445）→ assess 判 fail_closed:paths_unavailable；上游 _patch_id_series 空 rev 前置 None（:409-410）先拦，test_empty_head_fail_closed（test:370-380）覆盖"
+    },
+    {
+      "id": 4,
+      "topic": "读侧零放宽 + scope 非判定因子",
+      "result": "PASS",
+      "evidence": "check_verify_covers_base(HEAD :280-369) 与 base 逐行一致；scope 仅在成功详情回显（:368）不参与任何判定 → carryover 行自定义 scope 无读侧旁路；test:227-259 双向验证（carryover 行按普通行通过 / 旧 base 凭证仍 verify_stale）"
+    }
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "title": "playbook §5.1.a 与 docstring 残留 --stable，与实现 --verbatim 不一致",
+      "location": "docs/playbooks/parallel-lane-development.md:41；src/llm_loop/introspection/merge_queue.py:396",
+      "detail": "第三轮 P1（patch-id 忽略空白）修复 commit 071979808 改代码为 --verbatim 但未同步 playbook 与 _patch_id_series docstring 首行。operator 按 §5.1.a 手验会低估严格度（以为空白级相等可过，实际被拒）——drift 在 fail-closed 安全方向，无功能/安全风险，但违反第 5 项一致性要求。修复：两处文案 --stable → --verbatim",
+      "blocking": false
+    },
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "title": "carryover 源凭证 head_sha 为空时 old_head 绑定跳过",
+      "location": "src/llm_loop/introspection/merge_queue.py:595-600",
+      "detail": "src.head_sha 为空（遗留/未记录 head 的凭证）时不强制 ==old_head，调用方可任选 old_head 使 replay 判据评估范围与源凭证实际覆盖范围脱钩。缓解：现役签发路径均记录 head_sha，且判据仍要求该 old_head 全量 replay+不相交。建议后续收紧：源 head_sha 为空即拒（fail-closed）",
+      "blocking": false
+    }
+  ],
+  "observations": [
+    "carryover 在 base_sha==old_base 时判据平凡通过，等效同 base 内容位级同一的 TTL 续期，无安全影响（不计级）"
+  ],
+  "reviewer": "merge-review-independent-subagent",
+  "full_test_receipt": "job-2d46cb88e2f2413cb12c exit0",
+  "review_gate": "PASS 82c3caaf",
+  "methodology_search": "search_records 工具在本代理工具集不可用（仅 read_file/execute_command/search_files），按纪律条款以不适用处理直接开工",
+  "ts": "2026-11-11T21:55:00+08:00"
+}

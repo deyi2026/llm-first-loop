@@ -1,0 +1,45 @@
+{
+  "gate": "merge",
+  "reviewer": "merge-review-gate-subagent-r34",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-3cb818eb",
+  "branch": "feat/peer-m1-nonce-persist",
+  "based_on_main": true,
+  "commits": [
+    "6a638a5ff49a3680b1f75c3b588fdb2e0ef85c63",
+    "af18c1a67cc915361061e91367f901fa85c578e3",
+    "7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/peer/test_peer_auth.py",
+    "tests/unit/test_arch_guards.py::test_durability_write_candidates_registered"
+  ],
+  "main_sha_at_review": "5c73df7da786b9d2fa1c3f2d4390d529bc9bc8de",
+  "main_sha_after": "7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693",
+  "branch_disposition": "deleted",
+  "verify_receipt_id": "lane-69edeadf:5c73df7d",
+  "checks": {
+    "focused_gate": "33 passed in 0.95s (pytest -q, worktree peer-m1-nonce, venv .venv/bin/python)",
+    "commit_count": 3,
+    "whitelist_conformance": "git diff --stat across 3 commits touches only src/llm_loop/peer/auth.py, tests/peer/test_peer_auth.py, tests/guards/function_size_baseline.json",
+    "worktree_clean": "git status --porcelain empty",
+    "merge_base": "5c73df7da786b9d2fa1c3f2d4390d529bc9bc8de == current main, no main advance",
+    "ff_possible": "merge-base --is-ancestor main feat/peer-m1-nonce-persist exit=0",
+    "canonical_gate_coverage": "head prefix 7a496abe3 unique in repo (rev-parse --disambiguate single value); all 3 commits dated 2026-11-11 18:05:49 +0800, reflog @{0}=rebase(finish) with no later amend/commit; declared canonical full gate exit=0 at 18:16 postdates all commits and covers current tree",
+    "semantic_audit": {
+      "bucketed_persistence": "PASS: <persist_dir>/nonce/<node>/<generation>/<window_index>.jsonl, flock LOCK_EX per gen_dir, 0o600/0o700",
+      "no_eviction_within_window": "PASS: cleanup deletes bucket only when now >= (idx+1)*bucket_seconds + window_seconds (whole-window expiry); no LRU/max_entries path in persistent mode; lookback=ceil(window/bucket) covers all live records; _bucket_contains FileNotFoundError => not-replay only for wholly-expired buckets",
+      "key_rotation_dual_generation": "PASS: verify_request builds primary+previous candidates, hmac.compare_digest per generation, matched generation participates in nonce bucketing; tests test_key_rotation_old_generation_transition_and_replay",
+      "per_request_fsync": "PASS: _append_record O_APPEND|O_CREAT 0o600 -> write -> flush -> os.fsync before response; exactly one persistent write per accepted request under flock",
+      "falsy_trap_fix": "PASS: persist_dir is not None / _persist_root is None explicit sentinel checks in __init__/check_and_store/cleanup",
+      "optional_narrowing": "PASS: af18c1a67 local alias + is None raise in _persistent_check_and_store (pyright clean per commit msg, 4+/1-)",
+      "registry_surface": "PASS: peer_nonce_replay_window owner=peer, paths=[src/llm_loop/peer/auth.py], rationale, status=observe, tier=T2"
+    }
+  },
+  "notes": [
+    "Delegation text's 40-char head 7a496abe3e9810f625b017b6b0718b5a0e38da8a does not exist in object store (cat-file fatal, no containing ref, no dangling match) - judged transcription error; actual HEAD 7a496abe3cc3cb4cdb0a101a1dbba6ee8d6ca693 verified via reflog rebase(finish) onto 5c73df7d and unique 9-char prefix; timeline consistent with canonical gate at 18:16; not blocking.",
+    "Receipt commits use actual 40-char SHAs from git rev-parse."
+  ]
+}

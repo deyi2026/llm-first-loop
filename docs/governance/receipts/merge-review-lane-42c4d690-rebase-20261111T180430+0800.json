@@ -1,0 +1,22 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_6f7591fad9e9",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-3cb818eb",
+  "branch": "feat/peer-m1-atomic-write",
+  "based_on_main": true,
+  "commits": [
+    "149c6a422f65c98f4ddd56fcde0000df1a6b1832",
+    "5c73df7da786b9d2fa1c3f2d4390d529bc9bc8de"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/peer/test_peer_write_gate.py",
+    "tests/e2e/peer/test_u5_unknown_outcome.py"
+  ],
+  "main_sha_at_review": "8e78aa58e2e5729d36823a5af362bf1cc720fd24",
+  "main_sha_after": "5c73df7da786b9d2fa1c3f2d4390d529bc9bc8de",
+  "branch_disposition": "deleted",
+  "verify_receipt_id": "lane-42c4d690:8e78aa5"
+}

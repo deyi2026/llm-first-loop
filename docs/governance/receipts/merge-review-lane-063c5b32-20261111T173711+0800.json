@@ -1,0 +1,68 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_adc241a988c0",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-3cb818eb",
+  "branch": "feat/peer-m1-snapshot-confirm",
+  "based_on_main": true,
+  "commits": [
+    "8e78aa58e2e5729d36823a5af362bf1cc720fd24"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/peer/test_peer_operator.py",
+    "tests/peer/test_peer_supervision.py"
+  ],
+  "main_sha_after": "8e78aa58e2e5729d36823a5af362bf1cc720fd24",
+  "branch_disposition": "deleted",
+  "verify_receipt_id": "lane-063c5b32:fcfb4027",
+  "reviewed_at": "2026-11-11T17:37:11+08:00",
+  "checks": [
+    {
+      "item": "focused-gate",
+      "result": "pass",
+      "evidence": "worktree 内 .venv/bin/python -m pytest tests/peer/test_peer_operator.py tests/peer/test_peer_supervision.py -q → 40 passed in 0.55s"
+    },
+    {
+      "item": "commit-scope",
+      "result": "pass",
+      "evidence": "git log main..feat 单提交 8e78aa58；diff --name-only 仅 src/llm_loop/peer/operator.py + tests/peer/test_peer_operator.py（⊆ 白名单 3 文件，无夹带）"
+    },
+    {
+      "item": "branch-hygiene",
+      "result": "pass",
+      "evidence": "git status --porcelain 为空；提交信息 feat(peer): bind snapshot to content digest and mode bits, atomic ticket consume 与声明一致"
+    },
+    {
+      "item": "baseline",
+      "result": "pass",
+      "evidence": "merge-base main feat == fcfb40270e1dd50cc423934153baf77fb294ddd3 == rev-parse main（main 未前进）"
+    },
+    {
+      "item": "no-post-gate-commits",
+      "result": "pass",
+      "evidence": "worktree git log main..feat 仅 8e78aa58，全量门禁后无新增提交"
+    },
+    {
+      "item": "ff-feasibility",
+      "result": "pass",
+      "evidence": "git merge-base --is-ancestor main feat/peer-m1-snapshot-confirm 退出码 0"
+    },
+    {
+      "item": "semantic-snapshot",
+      "result": "pass",
+      "evidence": "operator.py L46-135：TargetSnapshot.capture 用 lstat（拒符号链接/目录 fail-closed），sha256 内容摘要 + st_mode&0o777 权限位，exists 变化也算冲突，from_dict 损坏即拒"
+    },
+    {
+      "item": "semantic-consume",
+      "result": "pass",
+      "evidence": "operator.py L298-327：_verify_target_snapshot 在 os.replace（烧票）之前调用，冲突抛 supervision_ticket_mismatch 且不执行 rename → 票据不烧；并发由 os.replace 原子性 + FileNotFoundError→supervision_ticket_consumed 兜底"
+    },
+    {
+      "item": "semantic-tests",
+      "result": "pass",
+      "evidence": "test_peer_operator.py：test_chmod_after_preview_conflicts_at_consume（断言 consumed 不存在=不烧票）；test_content_change_after_preview_conflicts_at_consume；test_concurrent_consume_same_ticket_exactly_one_wins（Barrier(2)+monkeypatch os.replace 同刻会合，断言恰 1 成功恰 1 supervision_ticket_consumed）；另有出现/消失/持久化快照/旧票据兼容/双 CLI 实例负例"
+    }
+  ]
+}

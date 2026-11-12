@@ -1,0 +1,106 @@
+{
+  "lane_id": "lane-465751a0",
+  "lane_branch": "evo/mechanical-fix-rereview-20261111",
+  "evo": "EVO-20261111-8c5b88df",
+  "branch": "evo/mechanical-fix-rereview-20261111",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/evo-mechanical-rereview-20261111",
+  "head_sha": "22c8dcad16d39d19df53591e0c9feeedf12b0d66",
+  "base_sha": "0512f6b7456a11d7c41d83c5ba36754f5e8c1bbe",
+  "commits": ["87072bb01", "c0c3db2c6", "22c8dcad1"],
+  "verdict": "REVISE",
+  "reviewer": "merge-review-independent-subagent",
+  "review_kind": "RULE-AI-34 independent read-only merge-review",
+  "methodology_search": "N/A: search_records 工具不在本代理工具集（read_file/execute_command/search_files），无相关卡可检",
+  "full_test_receipt": "job-6be2286b8e6c42dcace5 exit0 CLEAN",
+  "review_gate": "PASS f87dc7f3",
+  "independent_test_run": {
+    "cmd": ".venv/bin/python -m pytest tests/unit/test_mechanical_diff.py -q; ... -k mechanical_preflight",
+    "result": "16 passed in 1.58s; 2 passed, 271 deselected in 0.73s",
+    "worktree": "evo-mechanical-rereview-20261111 @22c8dcad16d3"
+  },
+  "checklist": [
+    {
+      "item": 1,
+      "title": "变更文件与 lane paths 一致无越界",
+      "pass": true,
+      "evidence": "git diff --name-status 0512f6b74..HEAD: A src/llm_loop/tools/mechanical_diff.py, M src/llm_loop/tools/review_host_admission.py, A tests/unit/test_mechanical_diff.py, M tests/unit/test_review_host_admission.py, M docs/playbooks/parallel-lane-development.md; 共 5 文件 +666/-3; worktree status 干净。全部文件均为本功能自身面（模块+其两份测试+playbook §5#2），无无关文件。注: 委派上下文'变更文件'仅列 4 个（漏 test_review_host_admission.py），但该文件为集成测试必需且被 lane 自己的 playbook 条目声明（'集成 2 例'），且验收清单第 4 项本身要求该文件存在——不构成越界，记 P2-4 备查。"
+    },
+    {
+      "item": 2,
+      "title": "预检信息注入不改资格判定（_same_admission/_consume/_cached_pass 零语义变化）",
+      "pass": true,
+      "evidence": "review_host_admission.py diff 仅 6 hunks（@@102/@@2873/@@3697/@@3716/@@3737/@@3825）: (a) _Frozen.head_commit bookkeeping 字段默认空串带'不参与资格判定'注释; (b) 新函数 _head_commit_of/_mechanical_preflight_section; (c) _freeze_row 透传 workdir 并填 head_commit; (d) compose 处 _compose_review_task(kind,target,sha,material, narrow+mech) 注入。_same_admission L115-133 逐字段比较 kind/parent/target/sha/child_id/granted/consumed——不含 head_commit，未被修改; _cached_pass L3905-3928 用 _pass_cache 键 (parent,kind,sha,target,digest)，未触碰; _consume L4623-4657 显式字段比较（含 content_fingerprint/scope_paths），未触碰; grep 全文无 _Frozen 整对象 ==/asdict 资格比较命中。资格判定路径零语义变化。"
+    },
+    {
+      "item": 3,
+      "title": "机械判据 fail-closed",
+      "pass": true,
+      "evidence": "mechanical_diff.assess_mechanical_fix: git diff 失败⇒fail_closed:git_diff_failed (L233-237); 非math.py⇒non_python (L243-249); 越出 allowed_paths⇒outside_slice (L250-257); blob 取不到⇒fail_closed:blob_unavailable (L259-267); SyntaxError⇒fail_closed:syntax_error (L268-275); 归一后不等⇒semantic_change (L282-287); 无 future import 且注解含可执行结构/未知名⇒eager_annotation_risk (L195-201 判定, L163-175 白名单闸)。宿主侧 _mechanical_preflight_section L2904 默认 {'mechanical':False,'reason':'fail_closed:preflight_error'}，L2907-2912 except Exception:pass ⇒ 预检异常按 NOT MECHANICAL 披露。应拦分支均有实测（16 例含 Call 注解/未知名应拦，2 集成例）。注: allowed_paths=None（scope_paths 为空）时不做切片比对，宿主仅在 scope_paths 非空时强制（list(scope_paths) or None）——无切片声明时'切片内'空真，可接受。"
+    },
+    {
+      "item": 4,
+      "title": "测试覆盖",
+      "pass": true,
+      "evidence": "独立实跑（主仓 .venv 解释器, worktree @22c8dcad16d3）: tests/unit/test_mechanical_diff.py 16 passed in 1.58s（TestMechanicalCategories 3: annotation_only/Any收窄/format_only; TestShouldRefuse 8: 控制流/字面量/签名默认值/新增语句/非py/语法错/越出切片/坏ref; TestMixedMechanical 1; TestEagerAnnotationSafetyGate 4: Call应拦/未知名应拦/future import安全/内建+已import名）; tests/unit/test_review_host_admission.py -k mechanical_preflight: 2 passed, 271 deselected（注解修复标 MECHANICAL(annotation_only); 值变化标 NOT MECHANICAL/semantic_change/full re-review required）。"
+    },
+    {
+      "item": 5,
+      "title": "playbook §5 第 2 项与实现一致",
+      "pass": false,
+      "evidence": "playbook §5#2 写于 commit 87072bb01 且 commit c0c3db2c6/22c8dcad1 均未回写（git show --stat 证实）。HEAD 原文三处与实现不符: (a) 测试数'12 例' vs 实际 16（实跑 16 passed; commit2 增 TestEagerAnnotationSafetyGate 4 例）; (b) 机械判据枚举'非 .py、语法错误、越出切片、任何语义变化 ⇒ not mechanical'缺 commit2 新增的第 5 个触发条件 eager_annotation_risk; (c) '新增/收窄/删除注解不影响运行时语义'无条件限定——这正是本 lane 审查轮 P1 已证伪命题（无 from __future__ import annotations 时注解在 import/def 时急切求值）。mechanical_diff.py 模块 docstring L10-11 同款未限定论断（_classify docstring L181-185 有正确限定）。见 P1-1。"
+    },
+    {
+      "item": 6,
+      "title": "无夹带",
+      "pass": true,
+      "evidence": "累积 diff 仅上述 5 文件; review_host_admission.py 6 hunks 全部功能内聚（无其他函数改动）; playbook 仅 §5#2 段; 两测试文件仅本功能测试; commit 22c8dcad1 仅 2 行（_future_annotations_active 签名 ast.Module 收窄）。无 CI/gate/白名单/回执/无关模块改动搭车。主仓工作树的未跟踪改动（scripts/ci_gate.sh 等）不属于本 lane 分支 diff。"
+    }
+  ],
+  "spot_checks": [
+    {
+      "id": 1,
+      "target": "AnnStripper 注解消除归一（AnnAssign 降级/纯声明删除）",
+      "evidence": "mechanical_diff.py L63-69 visit_AnnAssign: 有值 ⇒ ast.Assign(targets=[node.target], value=node.value, lineno=...) 降级（ast.dump 默认不含位置属性 ⇒ lineno 不影响相等）; 无值 ⇒ return None 整条删除（纯声明仅写 __annotations__ 域，无运行时效果，两侧各自删除后语句序列一致）; L46-61 FunctionDef/AsyncFunctionDef/Lambda 均 generic_visit 后 node.returns=None 且 _strip_args 把 posonly/args/kwonly/vararg/kwarg 的 arg.annotation 全置 None。降级路径被单测 total: int = a+b 与集成测 x: int = 2 覆盖（均判 annotation_only）。"
+    },
+    {
+      "id": 2,
+      "target": "eager 安全闸 known_names 收集",
+      "evidence": "L197 known = _known_names(norm_old) | _BUILTIN_TYPE_NAMES; L125-139 _known_names 在剥离注解后的旧树上收集全部 ast.Name.id + import 绑定名（(alias.asname or alias.name).split('.')[0]，Import/ImportFrom 均收）; L163-175 _annotation_eagerly_safe: walk(ann) 内任一节点不在 _SAFE_ANN_NODES（Name/Attribute/Subscript/Constant/Tuple/List + Load/Store/Del ctx 节点）即 False，裸 Name 必须 ∈ known（Call/BinOp/Lambda/JoinedStr 等可执行结构必拦）; L113-122 _future_annotations_active 只认 module.body 顶层 from __future__ import annotations（嵌套形态要么 parse 期 SyntaxError 要么按无 future 保守处理）。实测 test_callable_annotation_refused / test_unknown_name_annotation_refused 均拦为 eager_annotation_risk。"
+    },
+    {
+      "id": 3,
+      "target": "_blob 严格 UTF-8",
+      "evidence": "L94-100: subprocess capture_output 未开 text=True（拿 bytes），proc.stdout.decode('utf-8', errors='strict')——非 UTF-8 抛 UnicodeDecodeError 而非 text 模式静默替换坏字节，符合注释声明。但发现解码发生在 per-file try 块（L268）之外的 L259-261，assess 内 except UnicodeDecodeError（L276-281）对此为死分支，异常以逃逸方式到达宿主 except Exception 兜底为 fail_closed:preflight_error——fail-closed 性质保持（仍 NOT MECHANICAL），仅 reason 保真度受损（见 P2-2）。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "title": "playbook §5#2 与实现不一致（含已被本 lane 审查证伪的无条件论断）",
+      "detail": "docs/playbooks/parallel-lane-development.md §5#2 为 durable 治理文档: 测试数 12 例应为 16; 判据枚举缺 eager_annotation_risk 触发条件; '新增/收窄/删除注解不影响运行时语义'未加'有 future import 或过急切求值安全闸'限定——未来按此文档复刻快速通道者可能漏掉急切求值闸。mechanical_diff.py 模块 docstring L10-11 同款未限定表述。修复面小: 改写 §5#2 一段（12→16、补判据、限定论断），可选同步模块 docstring。方向保守（代码拒得比文档多），无安全回归。",
+      "checklist_item": 5
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "title": "assess_mechanical_fix 解码异常逃逸 + 死 except 分支（契约保真度）",
+      "detail": "_blob 的 strict 解码在 per-file try 之外调用（L259-261 vs try L268），except UnicodeDecodeError（L276）为死分支; 含 NUL 源码时 ast.parse 抛 ValueError 同样未捕获。非 dict 返回违反模块契约'任何判不了 ⇒ mechanical=False'; 唯一集成调用点（_mechanical_preflight_section except Exception）兜底 fail-closed，故实际披露仍 NOT MECHANICAL（reason 退化为 preflight_error）。建议把 _blob 调用挪进 try 或增捕 ValueError。"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "title": "_head_commit_of 在参数求值处调用，不在预检 try 内",
+      "detail": "compose 路径 L3893 _head_commit_of(workdir) 于 _mechanical_preflight_section 参数求值时执行，git 二进制缺失（FileNotFoundError）会沿 compose/start 路径抛出而非被预检内部 except 吞掉。宿主本身重度 git 依赖，纯理论边界; 建议把 new_commit 的获取挪进 _mechanical_preflight_section 内部 try。"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "title": "委派上下文文件清单不完整（记录备查）",
+      "detail": "委派'变更文件'列 4 个，实际 5 个（多 tests/unit/test_review_host_admission.py +54 集成测试）。该文件为功能必需且被 playbook/验收条件第 4 项自身引用，不判越界; 仅记录父侧清单偏差。"
+    }
+  ],
+  "p0": [],
+  "verdict_line": "VERDICT: REVISE (P0=0 P1=1 P2=3)",
+  "next_action": "修复 P1-1（playbook §5#2 一段改写，可选 mechanical_diff 模块 docstring 限定 + P2-2/P2-3 顺手修）后重走轻量复审; 代码侧 fail-closed 性质与资格判定不变性已由本次独立复核成立，无需重开全量审查轮。"
+}

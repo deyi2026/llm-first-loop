@@ -1,0 +1,62 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_1bc4a8fcc80d",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-3cb818eb",
+  "branch": "feat/peer-m1-atomic-write",
+  "based_on_main": true,
+  "commits": [
+    "35242ad342e7a80be362619bb9068f939e2cf1f2",
+    "a2897fc66c37df9fd4a2a227f1507e567ebb3e0f"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/peer/test_peer_write_gate.py",
+    "tests/e2e/peer/test_u5_unknown_outcome.py"
+  ],
+  "main_sha_after": "",
+  "branch_disposition": "deleted",
+  "verify_receipt_id": "lane-42c4d690:fcfb4027",
+  "reviewed_at": "2026-11-11T17:41:27+08:00",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/peer-m1-atomic",
+  "base_main_sha": "fcfb40270e1dd50cc423934153baf77fb294ddd3",
+  "head_sha": "a2897fc66c37df9fd4a2a227f1507e567ebb3e0f",
+  "checks": {
+    "focused_gate": {
+      "command": ".venv/bin/python -m pytest tests/peer/test_peer_write_gate.py tests/e2e/peer/test_u5_unknown_outcome.py -q",
+      "run_by": "reviewer",
+      "result": "31 passed in 0.12s",
+      "exit_code": 0
+    },
+    "commits_ahead_of_main": 2,
+    "changed_files": [
+      "src/llm_loop/peer/executor.py",
+      "tests/e2e/peer/u5_child.py",
+      "tests/peer/test_peer_write_gate.py"
+    ],
+    "changed_files_within_whitelist": true,
+    "worktree_status_porcelain_empty": true,
+    "merge_base_matches_declared_base": true,
+    "main_sha_at_review": "fcfb40270e1dd50cc423934153baf77fb294ddd3",
+    "main_not_advanced": true,
+    "head_matches_declared_head": true,
+    "no_new_commits_after_full_gate_head": true,
+    "ff_feasible_is_ancestor": true,
+    "semantic_review": {
+      "no_replace_uses_os_link_not_replace": "executor.py L204 os.link(tmp, target)；replace_existing=True 才走 L201 os.replace（设计 §6.1 覆盖许可路径）",
+      "EEXIST_mapping": "L206-211 -> ('params_schema_invalid', 'target exists and overwrite=false')，与调用点预检 L145 文案一致",
+      "link_unsupported_mapping": "L212-223 EOPNOTSUPP/ENOSYS/EPERM/EXDEV -> sandbox_denied，且先 suppress 清理临时名",
+      "post_publish_cleanup_failure_not_commit_failure": "L225-227 os.unlink(tmp) 包 contextlib.suppress(OSError)，发布成功即提交（nlink>=2 强证据）",
+      "temp_name_ownership_prefix": "L190 prefix='.lfl-peer-write-p{pid}-'",
+      "post_commit_dir_fsync": "L228 _fsync_dir(parent)；失败 L152-154 由调用方标记 [dir-sync-pending]，不伪装确定状态",
+      "four_new_tests_added_in_35242ad34": [
+        "test_fs_write_no_replace_publish_survives_exists_race: monkeypatch os.path.lexists 隐藏目标模拟 TOCTOU；断言 PeerError==('params_schema_invalid','target exists and overwrite=false')、胜出文件未被碰、无临时残留",
+        "test_fs_write_publishes_with_parent_dir_entry_sync: os.fsync spy；断言 seen>=2（文件级之外父目录项至少再 1 次）",
+        "test_fs_write_publish_unsupported_reports_denial_not_silent_replace: monkeypatch os.link 抛 EOPNOTSUPP；断言 sandbox_denied、消息含 publish/link、目标不存在、无临时残留",
+        "test_fs_write_crash_after_publish_keeps_strong_commit_evidence: monkeypatch os.unlink 对临时名抛 EIO；断言不抛错、目标内容已提交、临时名残留且 st_ino 与目标相同"
+      ]
+    }
+  },
+  "notes": "只读审查（RULE-AI-34 合并闸）；合并与分支删除未由审查者执行，main_sha_after 留空待执行方合并后回填；全量门禁按父会话声明 exit=0 @ head=a2897fc66，审查者独立核实 head 之后无新提交。"
+}

@@ -1,0 +1,64 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_b2ff0350ecd7",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261111-3cb818eb",
+  "branch": "feat/peer-m1-atomic-write",
+  "based_on_main": true,
+  "commits": [
+    "35242ad342e7a80be362619bb9068f939e2cf1f2",
+    "a2897fc66c37df9fd4a2a227f1507e567ebb3e0f"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/peer/test_peer_write_gate.py",
+    "tests/e2e/peer/test_u5_unknown_outcome.py"
+  ],
+  "main_sha_after": "",
+  "branch_disposition": "deleted",
+  "verify_receipt_id": "lane-42c4d690:fcfb4027",
+  "reviewed_at": "2026-11-11T17:45:48+08:00",
+  "worktree": "~/Project/llm-first-loop-mirror/.worktrees/peer-m1-atomic",
+  "base_main_sha": "fcfb40270e1dd50cc423934153baf77fb294ddd3",
+  "head_sha": "a2897fc66c37df9fd4a2a227f1507e567ebb3e0f",
+  "checks": {
+    "focused_gate": {
+      "command": "~/Project/llm-first-loop-mirror/.venv/bin/python -m pytest tests/peer/test_peer_write_gate.py tests/e2e/peer/test_u5_unknown_outcome.py -q",
+      "run_by": "reviewer",
+      "result": "31 passed in 0.10s",
+      "exit_code": 0
+    },
+    "commits_ahead_of_main": 2,
+    "changed_files": [
+      "src/llm_loop/peer/executor.py",
+      "tests/e2e/peer/u5_child.py",
+      "tests/peer/test_peer_write_gate.py"
+    ],
+    "changed_files_within_whitelist": true,
+    "worktree_status_porcelain_empty": true,
+    "merge_base_matches_declared_base": true,
+    "main_sha_at_review": "fcfb40270e1dd50cc423934153baf77fb294ddd3",
+    "main_not_advanced": true,
+    "head_matches_declared_head": true,
+    "no_new_commits_after_full_gate_head": true,
+    "ff_feasible_is_ancestor": true,
+    "design_doc_sections": "docs/design/LFL_Peer_Requirements_Implementation_Design_2026-11-11.md L165 §6.1 原子创建与有条件覆盖 / L183 §6.2 路径与持久化边界",
+    "semantic_review": {
+      "no_replace_uses_os_link_not_replace": "executor.py L200-204：os.replace 仅出现在 replace_existing=True 分支 L201；新建路径 L204 os.link(tmp, target)，存在性由内核原子判定",
+      "EEXIST_mapping": "L206-211 EEXIST -> PeerError('params_schema_invalid','target exists and overwrite=false')，与调用点预检 L145 文案一致；先 suppress 清理临时名",
+      "link_unsupported_mapping": "L212-223 {EOPNOTSUPP,ENOSYS,EPERM,EXDEV} -> sandbox_denied（'atomic publish (link) unsupported'），先 suppress 清理临时名，不静默退回覆盖",
+      "post_publish_cleanup_suppressed": "L225-227 os.unlink(tmp) 包 contextlib.suppress(OSError)：link 发布成功即提交，清理失败不改写提交事实（nlink>=2 强证据）",
+      "post_commit_dir_fsync": "L228 return _fsync_dir(parent)；_fsync_dir L269-283 失败返回 False，调用方 L152-154 在 summary 标记 [dir-sync-pending]，不伪装确定状态",
+      "overwrite_path_keeps_replace": "L200-201 replace_existing=True（overwrite=true）保留 os.replace 原子替换",
+      "four_new_tests_in_35242ad34": [
+        "test_fs_write_no_replace_publish_survives_exists_race（L370）：monkeypatch os.path.lexists 隐藏已存在目标模拟 TOCTOU；断言 PeerError==('params_schema_invalid','target exists and overwrite=false')、胜出文件未被碰、无临时残留——实质覆盖竞态语义",
+        "test_fs_write_publishes_with_parent_dir_entry_sync（L394）：os.fsync spy 记录 fd；断言 seen>=2（文件级之外父目录项至少再 1 次）——实质覆盖 W3",
+        "test_fs_write_publish_unsupported_reports_denial_not_silent_replace（L415）：monkeypatch os.link 抛 EOPNOTSUPP；断言 sandbox_denied、detail 含 publish/link、目标不存在、无临时残留——实质覆盖拒绝映射",
+        "test_fs_write_crash_after_publish_keeps_strong_commit_evidence（L437）：monkeypatch os.unlink 对临时名抛 EIO；断言不抛错、目标已提交、临时名残留且 st_ino 与目标相同——实质覆盖崩溃切点提交强证据"
+      ],
+      "u5_child_adaptation_in_a2897fc66": "keyword-only 签名透传 replace_existing；行为契约不变（真实写后 sleep 120 等 SIGKILL），e2e 崩溃窗口语义保持"
+    }
+  },
+  "notes": "独立只读复审（RULE-AI-34 合并闸）；审查者未参与该分支任何产出，除本回执外零文件改动。全量门禁 canonical 按声明 exit=0 @ head=a2897fc66；本审查者经 git log 独立核实分支 tip==a2897fc66、其后无新提交。合并与分支删除不由审查者执行：main_sha_after 留空待执行方合并后回填；branch_disposition='deleted' 为委派模板预设值，实际删除动作由执行方在 ff 合并后完成（审查时分支仍在 worktree 检出）。同 lane 存在先前审查回执 merge-review-lane-42c4d690-20261111T174127+0800.json（PASS, reviewer=subagent_1bc4a8fcc80d），本次独立复审结论与其一致。"
+}
