@@ -287,7 +287,7 @@ fi
 
 # ---- T1: untracked 只读比对（--check 到此结束） ----
 if [[ "$MODE" == "T1" && -f "$TGZ" ]]; then
-  TMP_OUT="$(mktemp)"
+  TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/lfl-prebackup.XXXXXXXX")"
   untracked_pass check "$TGZ" "$REPO_ROOT" "$BACKUP_DIR/restored" >"$TMP_OUT" || {
     cat "$TMP_OUT"; REASON="internal_error"; emit_summary; exit 1
   }
@@ -334,7 +334,7 @@ fi
 # ---- T3: 解包 untracked ----
 if [[ "$MODE" == "T3" || "$MODE" == "T2+T3" ]]; then
   if [[ -f "$TGZ" ]]; then
-    TMP_OUT="$(mktemp)"
+    TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/lfl-prebackup.XXXXXXXX")"
     untracked_pass apply "$TGZ" "$REPO_ROOT" "$BACKUP_DIR/restored" >"$TMP_OUT" || {
       cat "$TMP_OUT"; REASON="internal_error"; emit_summary; exit 1
     }
