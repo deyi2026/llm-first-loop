@@ -107,6 +107,10 @@ class _Frozen:
     # 供机械修复预检做 previous→current 的 git diff（_Frozen.sha 是材料
     # SHA256，不是 commit id）。空 = 未记录（旧记录），预检侧 fail-closed。
     head_commit: str = ""
+    # Full-test authority must bind the review base/ref frozen at start, not
+    # the mutable remote main during one-shot consumption.
+    full_test_base: str = ""
+    full_test_first_push_ref: str = ""
 
 
 _ALLOWED = AdmissionDecision(True, "")
@@ -130,6 +134,8 @@ def _same_admission(left: _Frozen, right: _Frozen) -> bool:
         and left.child_id == right.child_id
         and left.granted == right.granted
         and left.consumed == right.consumed
+        and left.full_test_base == right.full_test_base
+        and left.full_test_first_push_ref == right.full_test_first_push_ref
     )
 _PUBLISH_LABEL_RE = re.compile(
     r"^(?:publish(?:\s+(?:now|post|article))?|post(?:\s+(?:now|article))?|"
@@ -3597,6 +3603,8 @@ class HostReviewAdmission:
         manuscript_path: str = "", artifact_paths: Sequence[str] = (),
         scope_paths: Sequence[str] = (),
         tier_counts: tuple[int, int] | None = None,
+        full_test_base: str | None = None,
+        full_test_first_push_ref: str = "",
     ) -> tuple[str, str, str, str, dict[str, str], list[tuple[str, int]]]:
         if kind == "article_publish":
             if not target_name or _PUBLISH_LABEL_RE.fullmatch(target_name) is None:
@@ -3691,8 +3699,21 @@ class HostReviewAdmission:
             # committed delta was EMPTY — the reviewer saw an empty shell and
             # PASS was vacuous. Anchor on the push destination when remote
             # facts resolve; an actually empty artifact is refused outright.
-            ft_base, ft_ref = _full_test_review_base(true_dir)
+            if full_test_base is None:
+                ft_base, ft_ref = _full_test_review_base(true_dir)
+            else:
+                ft_base, ft_ref = full_test_base, full_test_first_push_ref
+            if ft_base:
+                if not re.fullmatch(r"[0-9a-f]{40,64}", ft_base):
+                    raise ValueError("full_test_frozen_base_invalid")
+                _git(Path(true_dir), "cat-file", "-e", ft_base + "^{commit}")
+            elif full_test_base is not None:
+                raise ValueError("full_test_frozen_base_missing")
+            # Without usable remote facts keep the existing legacy merge-base
+            # material/header semantics; those grants use the strict old check.
             push_base = ft_base
+            push_extra["full_test_base"] = ft_base
+            push_extra["full_test_first_push_ref"] = ft_ref
             sha, text, sections = _full_test_snapshot_sections(
                 true_dir, ft_base, ft_ref, scope_paths, tier_counts
             )
@@ -3733,6 +3754,10 @@ class HostReviewAdmission:
         prepared = self._prepare_attempt(
             parent, kind, sha, target, workdir, scope_paths, material,
             scope_receipt, previous_child_id, binding=binding,
+            full_test_anchor=(
+                push_extra.get("full_test_base", ""),
+                push_extra.get("full_test_first_push_ref", ""),
+            ),
         )
         if isinstance(prepared, dict):
             return prepared
@@ -3806,6 +3831,10 @@ class HostReviewAdmission:
             content_fingerprint=push_extra.get("content_fingerprint", ""),
             approved_head=str(push_extra.get("src_commit") or ""),
             head_commit=_head_commit_of(workdir),
+            full_test_base=push_extra.get("full_test_base", "") if kind == "full_test" else "",
+            full_test_first_push_ref=(
+                push_extra.get("full_test_first_push_ref", "") if kind == "full_test" else ""
+            ),
         )
 
     def _start_receipt(
@@ -3859,6 +3888,7 @@ class HostReviewAdmission:
         scope_paths: Sequence[str], material: str,
         scope_receipt: dict[str, Any], previous_child_id: str,
         binding: tuple[str, int, int, int] | None = None,
+        full_test_anchor: tuple[str, str] = ("", ""),
     ) -> tuple[str, _Frozen | None, dict[str, Any] | None, str, tuple[int, int] | None] | dict[str, Any]:
         """`start` 的前半段：越界摘要 + E5 复用 + E3 续审 + 任务书组装。
 
@@ -3888,7 +3918,7 @@ class HostReviewAdmission:
         if cached:
             return self._replay_cached_pass(
                 parent, kind, sha, target, cached, scope_receipt, scope_paths,
-                out_scope, tier_counts,
+                out_scope, tier_counts, full_test_anchor=full_test_anchor,
             )
         previous_row, coverage, refusal = self._resolve_previous(
             parent, previous_child_id, material, kind=kind, target=target,
@@ -4174,6 +4204,7 @@ class HostReviewAdmission:
         scope_receipt: dict[str, Any], scope_paths: Sequence[str],
         out_scope_digest: str = "",
         tier_counts: tuple[int, int] | None = None,
+        full_test_anchor: tuple[str, str] = ("", ""),
     ) -> dict[str, Any]:
         """E5: mint a grant that replays an identical, still-fresh PASS."""
         now = time.time()
@@ -4194,6 +4225,8 @@ class HostReviewAdmission:
                 bound_unreviewed_tracked=(tier_counts or (0, 0))[0],
                 bound_unreviewed_untracked=(tier_counts or (0, 0))[1],
                 cached_pass=True, reused_from=cached,
+                full_test_base=full_test_anchor[0] if kind == "full_test" else "",
+                full_test_first_push_ref=full_test_anchor[1] if kind == "full_test" else "",
             )
         return self._attach_prior_attempts({
             "accepted": True, "child_id": reused_id, "candidate_sha256": sha,
@@ -4941,18 +4974,22 @@ class HostReviewAdmission:
                     "知识闸拒绝；资格未被消费。",
                     hint=str(knowledge_gate.get("fix") or ""),
                 )
-        for scope_paths, recorded_digest, tier in scopes:
+        for scope_paths, recorded_digest, tier, review_base, review_ref in scopes:
             try:
-                # Re-resolves the push base (ls-remote) too: if the remote ref
-                # moved after admission, the candidate SHA changes and the grant
-                # will not match — the drift check is built into recomputation.
+                # full_test runs on the local worktree; recompute with the
+                # review's frozen base/ref, not a now-moving remote main.
+                # git_push retains its independent live-remote drift check.
+                full_test_kwargs = (
+                    {"full_test_base": review_base, "full_test_first_push_ref": review_ref}
+                    if kind == "full_test" and review_base else {}
+                )
                 # EVO-20261103-0de3bd57：冻结输入不止 scope_paths。切片外绑定的
                 # 两级计数也进 header → material → identity，必须按记录重放；
                 # 否则切片外一有绑定内容（哪怕一个未跟踪文件），重算 SHA 就
                 # 必然对不上，资格被通用拒绝吞掉。
                 sha, target, _text, _push_base, push_extra, _sections = self._target(
                     kind, workdir, command, "", None,
-                    scope_paths=scope_paths, tier_counts=tier,
+                    scope_paths=scope_paths, tier_counts=tier, **full_test_kwargs,
                 )
             except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
                 # EVO-20261102-677f6c44：no-delta 状态下 _target 必然抛
@@ -4995,15 +5032,15 @@ class HostReviewAdmission:
 
     def _pending_scopes(
         self, parent: str, kind: str,
-    ) -> list[tuple[tuple[str, ...], str, tuple[int, int]]]:
-        """未消费且已发放的资格各自声明的 scope，(scope_paths, 越界摘要, 绑定计数)，保序。
+    ) -> list[tuple[tuple[str, ...], str, tuple[int, int], str, str]]:
+        """未消费资格的 scope、越界绑定和 full_test 冻结基准，保序。
 
         EVO-20261103-0de3bd57：第三项是签发时冻结的切片外两级计数
         ``(tracked, untracked)``，它进 header → material → identity。消费口只
         重放 ``scope_paths`` 而丢掉它时，切片外一有绑定内容就永远算不出同一个
         SHA，资格被通用拒绝吞掉。
         """
-        seen: list[tuple[tuple[str, ...], str, tuple[int, int]]] = []
+        seen: list[tuple[tuple[str, ...], str, tuple[int, int], str, str]] = []
         with self._guard:
             for row in self._records.values():
                 if not (
@@ -5015,6 +5052,8 @@ class HostReviewAdmission:
                     row.scope_paths,
                     row.out_scope_digest,
                     (row.bound_unreviewed_tracked, row.bound_unreviewed_untracked),
+                    row.full_test_base if kind == "full_test" else "",
+                    row.full_test_first_push_ref if kind == "full_test" else "",
                 )
                 if item not in seen:
                     seen.append(item)

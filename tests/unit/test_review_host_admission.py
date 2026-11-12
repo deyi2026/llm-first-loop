@@ -3670,11 +3670,10 @@ def test_full_test_anchor_transient_failure_is_explicit_not_silent_legacy(
         rha._full_test_review_base(str(repo))
 
 
-def test_full_test_anchor_transient_failure_keeps_qualification_recoverable(
+def test_full_test_frozen_anchor_works_when_remote_temporarily_unavailable(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """PASS 资格在网络抖动窗口内必须可恢复：抖动期 deny 必须指明锚点原因，
-    网络恢复（远端未动）后同一资格可消费——不因静默换锚永久错位。"""
+    """full_test 冻结后不再重新查询远端；临时断网不影响相同本地执行树。"""
     repo, head = _repo_with_origin(tmp_path)
     runner = FakeChildRunner()
     host = HostReviewAdmission()
@@ -3690,14 +3689,9 @@ def test_full_test_anchor_transient_failure_keeps_qualification_recoverable(
         raise ValueError("push_base_unresolvable_fail_closed")
 
     monkeypatch.setattr(rha, "_push_base_commit", _network_boom)
-    d = host.check_shell("author-1", "pytest -q", str(repo))
-    assert not d.allowed
-    # 修复前：模糊通用 deny（红：reason 无锚点语义）
-    assert "anchor" in d.reason.lower(), f"deny 应指明锚点不可解析: {d.reason}"
-
-    # 网络恢复（远端未动）→ 同一资格可消费（抖动期未被静默换锚消费掉）
-    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+    # 一次性票据不得二次消费（网络状态不改变此约束）。
+    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
 
 
 def test_generic_deny_names_the_mismatch_dimension(tmp_path: Path) -> None:
@@ -3726,12 +3720,10 @@ def test_generic_deny_names_the_mismatch_dimension(tmp_path: Path) -> None:
     )
 
 
-def test_full_test_remote_really_moved_keeps_drift_denial(
+def test_full_test_remote_changed_only_allows_frozen_candidate(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """远端锚点真实移动（非网络抖动）时消费必须保持拒绝——锚点修复只消除
-    暂时性解析失败的静默换锚，不弱化 drift 语义（EVO-20261102 注释的
-    重解析防漂移设计保持不变）。"""
+    """独立审查绑定的本地候选未变时，远端基准移动不影响 full_test。"""
     repo, head = _repo_with_origin(tmp_path)
     other = subprocess.run(
         ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "remote-moved"],
@@ -3753,13 +3745,9 @@ def test_full_test_remote_really_moved_keeps_drift_denial(
     runner.state = "completed"
     assert host.poll("author-1", str(issued["child_id"]))["qualification"] == "PASS"
 
-    # 消费时远端已前移（base=moved ≠ 审查锚 head）→ 材料指纹变化 → 拒绝
+    # full_test 本地执行面的材料不变，复核仍用冻结旧基点。
     monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (moved, False))
-    d = host.check_shell("author-1", "pytest -q", str(repo))
-    assert not d.allowed, "远端锚点真实移动后旧 PASS 不得再消费（drift 语义保持）"
-    assert ("sha_mismatch" in d.reason) or ("sha" in d.reason.lower()), (
-        f"deny 应指名 sha 维度: {d.reason}"
-    )
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
 
 
 def test_finding_digest_skips_none_placeholders() -> None:
@@ -3846,3 +3834,69 @@ def test_mechanical_preflight_marks_semantic_change_as_full_review(tmp_path: Pat
     assert "NOT MECHANICAL" in runner.task
     assert "semantic_change" in runner.task
     assert "full re-review required" in runner.task
+
+
+def test_full_test_pass_survives_unrelated_remote_main_advance(tmp_path: Path, monkeypatch) -> None:
+    """Remote main is moving; full_test must bind the frozen *review* base, not rebase itself."""
+    repo, base = _repo_with_origin(tmp_path)
+    (repo / "example.py").write_text("x = 1\n")
+    (repo / "peer_change.py").write_text("peer = 1\n")
+    _git_out(repo, "add", "peer_change.py")
+    _git_out(repo, "commit", "-qm", "frozen peer candidate")
+    candidate = _git_out(repo, "rev-parse", "HEAD")
+
+    # Unrelated main advancement is represented by a different reachable git commit.
+    _git_out(repo, "checkout", "-qb", "unrelated-remote", base)
+    (repo / "unrelated.txt").write_text("another owner\n")
+    _git_out(repo, "add", "unrelated.txt")
+    _git_out(repo, "commit", "-qm", "unrelated main commit")
+    moved_main = _git_out(repo, "rev-parse", "HEAD")
+    _git_out(repo, "branch", "frozen-candidate", candidate)
+    _git_out(repo, "checkout", "-q", "frozen-candidate")
+
+    remote = [(base, True)]
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: remote[0])
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", str(issued["child_id"]))["qualification"] == "PASS"
+
+    remote[0] = (moved_main, False)  # true remote base/ref transition, same local code
+    assert _git_out(repo, "rev-parse", "HEAD") == candidate
+    assert not _git_out(repo, "status", "--porcelain")
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_full_test_remote_drift_does_not_hide_actual_candidate_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A frozen review base must never authorize changed tracked or untracked bytes."""
+    repo, base = _repo_with_origin(tmp_path)
+    (repo / "example.py").write_text("x = 1\n")
+    (repo / "peer_change.py").write_text("peer = 1\n")
+    _git_out(repo, "add", "peer_change.py")
+    _git_out(repo, "commit", "-qm", "frozen peer candidate")
+    candidate = _git_out(repo, "rev-parse", "HEAD")
+    remote = [(base, True)]
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: remote[0])
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", str(issued["child_id"]))["qualification"] == "PASS"
+
+    remote[0] = (candidate, False)  # remote moved and first-push ref appeared
+    (repo / "peer_change.py").write_text("peer = 2\n")
+    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
+    (repo / "peer_change.py").write_text("peer = 1\n")
+    (repo / "untracked_payload.py").write_text("unexpected = True\n")
+    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
+    (repo / "untracked_payload.py").unlink()
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
