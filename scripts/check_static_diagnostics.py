@@ -190,6 +190,29 @@ def deserialize(rows: list[dict[str, Any]]) -> collections.Counter[tuple[str, st
     return counter
 
 
+def _verify_tag_push_identity(root: Path, head: str, event: dict[str, Any]) -> None:
+    """Bind an annotated/lightweight tag event to its checked-out commit.
+
+    GitHub's push.after may name the *tag object* rather than the commit, so
+    comparing it directly to checkout HEAD rejects valid annotated releases.
+    Both the event's object and the tag ref must still identify exactly HEAD.
+    """
+    ref = event.get("ref")
+    if not isinstance(ref, str) or not ref.startswith("refs/tags/"):
+        raise ValueError("GitHub tag push event is missing its tag ref")
+    runner_ref = os.environ.get("GITHUB_REF")
+    if runner_ref and runner_ref != ref:
+        raise ValueError("GitHub tag push ref does not match runner ref")
+    raw = event.get("after")
+    try:
+        tag_object = _git(root, "rev-parse", "--verify", f"{ref}^{{object}}").decode().strip()
+        tag_commit = _git(root, "rev-parse", "--verify", f"{ref}^{{commit}}").decode().strip()
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("GitHub tag push ref cannot be resolved") from exc
+    if tag_commit != head or raw not in (tag_object, tag_commit):
+        raise ValueError("GitHub tag push identity does not match candidate HEAD")
+
+
 def _delivery_base(root: Path, head: str, explicit: str | None) -> str:
     """Resolve the complete delivery range without changing the debt ledger."""
     base, source = explicit, "explicit"
@@ -206,11 +229,17 @@ def _delivery_base(root: Path, head: str, explicit: str | None) -> str:
         if explicit and event_name in ("push", "pull_request"):
             raise ValueError("CI delivery base comes from its event; explicit override is not permitted")
         if event_name == "push":
-            if event.get("after") != head:
-                raise ValueError("GitHub push identity does not match candidate HEAD")
-            before = str(event.get("before") or "")
-            if before and before != "0" * 40:
-                base, source = before, "github_push"
+            event_ref = event.get("ref") or os.environ.get("GITHUB_REF", "")
+            if isinstance(event_ref, str) and event_ref.startswith("refs/tags/"):
+                _verify_tag_push_identity(root, head, event)
+                # A tag push does not publish the tag's `before` commit as a
+                # source delta. Use the main merge-base below as the baseline.
+            else:
+                if event.get("after") != head:
+                    raise ValueError("GitHub push identity does not match candidate HEAD")
+                before = str(event.get("before") or "")
+                if before and before != "0" * 40:
+                    base, source = before, "github_push"
         elif event_name == "pull_request":
             expected = os.environ.get("GITHUB_SHA")
             if expected and expected != head:

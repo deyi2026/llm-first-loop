@@ -8,6 +8,7 @@
 #   --staged   pre-commit 钩子用：扫描暂存区（git diff --cached）——提交前拦截
 #   --tree     CI 用：扫描整个已跟踪文件树（git ls-files）——推送后兜底
 #   --range B H  pre-push 钩子/CI 用：扫描 B..H 提交集的增量 blob——推送前拦截
+#   --tree-commit H 发行标签用：扫描 H 的完整快照（不重扫已接受的历史）
 #
 # 命中任一规则 → 打印命中项 + exit 1（提交/CI 失败，如实提示修复方式）。
 # 规则保守防误报；确属测试夹具的可显式豁免（见 _allowlist）。
@@ -278,17 +279,21 @@ _check_mode_downgrade() {
 }
 
 main() {
-  # --range B H / --commit SHA：解析模式参数
+  # --range B H / --commit SHA / --tree-commit SHA：解析模式参数
   if [[ "$MODE" == "--range" ]]; then
     RANGE_BASE="${2:?--range 需要 BASE}"
     RANGE_HEAD="${3:?--range 需要 HEAD}"
   elif [[ "$MODE" == "--commit" ]]; then
     RANGE_HEAD="${2:?--commit 需要 SHA}"
+  elif [[ "$MODE" == "--tree-commit" ]]; then
+    RANGE_HEAD="${2:?--tree-commit 需要 SHA}"
   fi
 
   # 目标集：staged=暂存区；range=B..H 内**逐提交**的变更 blob（中间提交引入后被还原的内容
   # 也会随历史推送——净 diff 会漏，必须逐提交扫）；commit=SHA 可达的**完整历史**逐提交
-  # （首推/CI 初始 push 推的是全历史，仅扫 tip 树会漏中间提交泄露）；tree=工作区
+  # （无可信基线的首推/CI 初始 push 推的是全历史，仅扫 tip 树会漏中间提交泄露）；
+  # tree-commit=精确提交快照（标签目标已在远端受保护分支中时，不重复扫描已接受历史）；
+  # tree=工作区
   local files=() f_line c list
   if [[ "$MODE" == "--staged" ]]; then
     # 规则 6 先于目标集解析：模式降级与文件内容无关，且必须在任何内容规则之前
@@ -325,6 +330,16 @@ main() {
         fi
       done <<<"$list"
     done < <(git rev-list --reverse "${rl_args[@]}" 2>/dev/null)
+  elif [[ "$MODE" == "--tree-commit" ]]; then
+    git rev-parse --verify --quiet "${RANGE_HEAD}^{commit}" >/dev/null 2>&1 \
+      || _fail "无法解析待扫快照 $RANGE_HEAD（fail-closed）" "(refs)"
+    if ! list="$(git -c core.quotePath=false ls-tree -r --name-only "$RANGE_HEAD" 2>/dev/null)"; then
+      _fail "提交快照文件清单读取失败: $RANGE_HEAD（fail-closed）" "(refs)"
+    fi
+    while IFS= read -r f_line; do
+      [[ -z "$f_line" ]] && continue
+      files+=("$RANGE_HEAD"$'\t'"$f_line")
+    done <<< "$list"
   else
     while IFS= read -r f_line; do files+=("$f_line"); done < <(git -c core.quotePath=false ls-files 2>/dev/null)
   fi
@@ -342,8 +357,14 @@ main() {
       [[ "$path" =~ $pat ]] && _fail "禁止路径匹配 [$pat]" "$path"
     done
 
-    # 规则 4: 大文件（工作区文件；--range/--commit 扫历史 blob，无工作区语义，跳过）
-    if [[ -z "$src" ]]; then
+    # 规则 4: 大文件。range/commit 已逐提交扫描变更 blob，维持既有口径；
+    # tree-commit 扫发行快照，必须按该快照 blob 大小检查，不能依赖当前工作区。
+    if [[ "$MODE" == "--tree-commit" ]]; then
+      if ! size="$(git cat-file -s "${src}:${path}" 2>/dev/null)"; then
+        _fail "提交快照 blob 大小读取失败（fail-closed）" "$path"
+      fi
+      (( size > MAX_FILE_BYTES )) && _fail "文件过大 (${size}B > 1MB)" "$path"
+    elif [[ -z "$src" ]]; then
       [[ -f "$path" ]] || continue
       size="$(_file_size "$path")"
       (( size > MAX_FILE_BYTES )) && _fail "文件过大 (${size}B > 1MB)" "$path"
