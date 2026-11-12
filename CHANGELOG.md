@@ -1,5 +1,11 @@
 # Changelog（公开变更记录）
 
+## v0.6.48 — WeCom 回执归属修复及 macOS 沙箱恢复脚本兼容（2026-11-12）
+
+- 受管 `restart all` 的成功回执仅认证实际重启的 Web、Feishu 和 Learning；WeCom 不再从未执行的批量重启中继承最新 stable generation，保留其独立回执的真实代差。
+- `restore_prebackup.sh` 两处临时文件创建显式使用 `TMPDIR`（缺省 `/tmp`），修复 macOS 沙箱下裸 `mktemp` 落到不可写目录而导致的四项测试失败。
+- 同步项目包、Web 运行时、锁文件及中英文 README 的 `0.6.48` 版本声明；生产切换须在后续发行验收完成后才视为生效。
+
 ## v0.6.47 — Peer 监督截止时间与 wheel 兼容防降级（2026-11-10）
 
 - 将 Peer 任务监督截止时间写入任务记录，服务端与本机 Operator CLI 共用同一绝对期限；旧记录缺失、损坏或票据期限不一致时 fail-closed。
