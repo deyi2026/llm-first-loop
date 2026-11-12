@@ -118,7 +118,10 @@ class TestCliDispatch:
         assert rc == 0
         assert fake_store_cls["spawn"] == ["act-x"]
         assert fake_store_cls["inline"] == 0
-        receipt = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        lines = capsys.readouterr().out.strip().splitlines()
+        assert len(lines) == 2  # accepted receipt + detached action view, JSON Lines protocol
+        accepted, receipt = (json.loads(line) for line in lines)
+        assert accepted["action_id"] == receipt["action_id"] == "act-x"
         assert receipt["detached"] is True
         assert receipt["ok"] is True
         assert "hint" in receipt

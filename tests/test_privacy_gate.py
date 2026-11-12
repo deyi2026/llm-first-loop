@@ -3,6 +3,7 @@
 "中间提交引入后被还原"的泄露（P1），本测试固化该行为契约。"""
 import os
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -45,6 +46,45 @@ def commit_file(r, name, content, msg):
 def rev(r, ref="HEAD"):
     return subprocess.run(["git", "-C", str(r), "rev-parse", ref],
                           check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _git(r, *args):
+    return subprocess.run(["git", "-C", str(r), *args], check=True,
+                          capture_output=True, text=True)
+
+
+def _install_pre_push_harness(repo):
+    hooks = repo / ".githooks"
+    scripts = repo / "scripts"
+    hooks.mkdir(exist_ok=True)
+    scripts.mkdir(exist_ok=True)
+    shutil.copy2(HOOK, hooks / "pre-push")
+    shutil.copy2(SCAN, scripts / "git_security_scan.sh")
+    # The tests target tag/base selection; keep the independent knowledge gate
+    # present and successful without importing or mutating a real knowledge DB.
+    (scripts / "knowledge_flush.py").write_text(
+        "#!/usr/bin/env python3\nraise SystemExit(0)\n", encoding="utf-8"
+    )
+
+
+def _run_new_tag_pre_push(repo, remote, tag_sha):
+    line = f"refs/tags/v-test {tag_sha} refs/tags/v-test {'0' * 40}\n"
+    return subprocess.run(
+        ["bash", str(repo / ".githooks" / "pre-push"), "origin", str(remote)],
+        cwd=repo, input=line, capture_output=True, text=True, timeout=120,
+    )
+
+
+def _bare_origin(tmp_path, repo, *, push_main=True):
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    _git(repo, "remote", "add", "origin", str(remote))
+    if push_main:
+        subprocess.run(
+            ["git", "-C", str(repo), "push", "--no-verify", "origin", "HEAD:refs/heads/main"],
+            check=True, capture_output=True, text=True,
+        )
+    return remote
 
 
 def test_staged_blocks_private_ip(repo):
@@ -174,6 +214,91 @@ def test_commit_mode_clean_history_passes(repo):
     commit_file(repo, "ok.txt", "fine\\n", "ok")
     sha = rev(repo)
     assert run_scan(repo, "--commit", sha).returncode == 0
+
+
+def test_tree_commit_scans_exact_snapshot_not_removed_history(repo):
+    historical_path = "/Users/" + "fixtureuser/" + "Project/old-export.txt"
+    commit_file(repo, "archive-fixture.txt", historical_path, "historical fixture")
+    commit_file(repo, "archive-fixture.txt", "sanitized fixture", "sanitize fixture")
+    head = rev(repo)
+
+    snapshot = run_scan(repo, "--tree-commit", head)
+    history = run_scan(repo, "--commit", head)
+
+    assert snapshot.returncode == 0, snapshot.stdout + snapshot.stderr
+    assert history.returncode == 1, history.stdout + history.stderr
+
+
+def test_tree_commit_still_blocks_sensitive_content_in_tag_snapshot(repo):
+    private_path = "/Users/" + "fixtureuser/" + "Project/current-export.txt"
+    commit_file(repo, "current-fixture.txt", private_path, "current fixture")
+
+    result = run_scan(repo, "--tree-commit", rev(repo))
+
+    assert result.returncode == 1
+    assert "本地绝对路径匹配" in result.stdout
+
+
+def test_new_tag_equal_to_remote_main_reuses_main_push_and_ci_checks(repo, tmp_path):
+    historical_path = "/Users/" + "fixtureuser/" + "Project/old-export.txt"
+    commit_file(repo, "archive-fixture.txt", historical_path, "historical fixture")
+    commit_file(repo, "archive-fixture.txt", "sanitized fixture", "sanitize fixture")
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    _git(repo, "tag", "-a", "v-test", "-m", "test release")
+
+    result = _run_new_tag_pre_push(repo, remote, rev(repo, "refs/tags/v-test"))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "与远端 main 完全相同" in result.stderr
+    assert "unbound variable" not in result.stderr
+    assert "--tree-commit" not in result.stdout
+    assert "--commit" not in result.stdout
+
+
+def test_new_tag_ahead_of_remote_main_scans_new_commits_and_tag_tree(repo, tmp_path):
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    private_path = "/Users/" + "fixtureuser/" + "Project/new-export.txt"
+    commit_file(repo, "new-fixture.txt", private_path, "new private fixture")
+    _git(repo, "tag", "-a", "v-test", "-m", "test release")
+
+    result = _run_new_tag_pre_push(repo, remote, rev(repo, "refs/tags/v-test"))
+
+    assert result.returncode == 1
+    assert "--range" in result.stdout
+    assert "本地绝对路径匹配" in result.stdout
+
+
+def test_new_tag_older_than_remote_main_still_scans_its_own_snapshot(repo, tmp_path):
+    _install_pre_push_harness(repo)
+    private_path = "/Users/" + "fixtureuser/" + "Project/old-release-export.txt"
+    commit_file(repo, "old-release-fixture.txt", private_path, "old release contains private path")
+    old_target = rev(repo)
+    commit_file(repo, "old-release-fixture.txt", "sanitized on main", "sanitize main")
+    remote = _bare_origin(tmp_path, repo)
+    _git(repo, "tag", "-a", "v-test", old_target, "-m", "old release")
+
+    result = _run_new_tag_pre_push(repo, remote, rev(repo, "refs/tags/v-test"))
+
+    assert result.returncode == 1
+    assert "--tree-commit" in result.stdout
+    assert "本地绝对路径匹配" in result.stdout
+
+
+def test_new_tag_without_provable_remote_main_keeps_full_history_scan(repo, tmp_path):
+    historical_path = "/Users/" + "fixtureuser/" + "Project/old-export.txt"
+    commit_file(repo, "archive-fixture.txt", historical_path, "historical fixture")
+    commit_file(repo, "archive-fixture.txt", "sanitized fixture", "sanitize fixture")
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo, push_main=False)
+    _git(repo, "tag", "-a", "v-test", "-m", "test release")
+
+    result = _run_new_tag_pre_push(repo, remote, rev(repo, "refs/tags/v-test"))
+
+    assert result.returncode == 1
+    assert "--commit" in result.stdout
+    assert "本地绝对路径匹配" in result.stdout
 
 
 def test_commit_mode_fail_closed_on_bad_ref(repo):
