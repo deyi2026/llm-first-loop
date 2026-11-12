@@ -1,0 +1,59 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_c3aac13e9450",
+  "reviewer_model": "glm/glm-5.3",
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 7,
+  "goal_id": null,
+  "branch": "fix/test-gate-delivery-20261112",
+  "based_on_main": true,
+  "base_main_sha": "1c18285d57a49979c0a8ec0d76ac2e1fac3f18f2",
+  "commits": [
+    "a2ff097641f24ffebfb5fe9802f1e93a70e7b1eb"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "main_sha_after": "a2ff097641f24ffebfb5fe9802f1e93a70e7b1eb",
+  "branch_disposition": "kept: retain isolated worktree and verification evidence until remote CI closure",
+  "verify_receipt_id": "not_applicable: external Codex branch, no lane-queue submission",
+  "code_review": {
+    "reviewer": "subagent_d0d93886c35c",
+    "model": "glm/glm-5.3",
+    "verdict": "PASS",
+    "P0": 0,
+    "P1": 0,
+    "P2": 6,
+    "material_sha256": "e6ca6fc75af9c45ef56eccd649b52198addf9ea5822361686349e08bef9f52cb",
+    "patch_bytes": 25539,
+    "patch_sha256": "f8e0baaf5aabf316a71f23c066011981a259106595f512a4164f8d0612708526"
+  },
+  "full_r9": {
+    "command": "bash scripts/ci_gate.sh --release",
+    "exit_code": 0,
+    "log_sha256": "f57cf33bf7281ce188ba5fc965b547483d215e2f1e927d70dbf86729f24f9861",
+    "parallel_passed": 14552,
+    "parallel_skipped": 158,
+    "parallel_xfailed": 3,
+    "serial_signal_passed": 7,
+    "serial_perf_passed": 3,
+    "vitest_passed": 600,
+    "first_parallel_pass": true
+  },
+  "post_merge_smoke": {
+    "exit_code": 0,
+    "main_sha": "a2ff097641f24ffebfb5fe9802f1e93a70e7b1eb",
+    "log_sha256": "019ad6afbcb123631cb82b9c08332a8974ad3057078956dd21ca22981420acc0",
+    "summary": "9 passed in 4.97s"
+  },
+  "foreign_work": {
+    "tracked_paths": [
+      "scripts/ci_gate.sh",
+      "tests/unit/test_ci_gate_conclusion_line.py"
+    ],
+    "untracked_preserved": true,
+    "included_in_commit": false
+  },
+  "finalization": "Only documentation and governance evidence changed after the frozen tested commit; all executable, test and workflow blobs are unchanged."
+}
