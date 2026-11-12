@@ -1,0 +1,155 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261112-unified-managed-services",
+  "summary": "Integrate existing Peer M1, review-anchor, CI sandbox and flaky-result fixes for one managed Mac service cutover; retain unrelated changes.",
+  "components": [
+    {
+      "component_id": "unified-peer",
+      "paths": [
+        "docs/design/LFL_Peer_Requirements_Implementation_Design_2026-11-11.md",
+        "scripts/peer_operator.py",
+        "scripts/peer_serve.py",
+        "src/llm_loop/peer/auth.py",
+        "src/llm_loop/peer/operator.py",
+        "src/llm_loop/peer/service.py",
+        "src/llm_loop/peer/store.py",
+        "src/llm_loop/web/__init__.py",
+        "tests/peer/test_peer_auth.py",
+        "tests/peer/test_peer_entrypoints.py",
+        "tests/peer/test_peer_m1_lifecycle.py",
+        "tests/peer/test_peer_supervision.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing Peer runtime",
+      "disposition": "Integrate existing reviewed fixes and immutable evidence; no new authority or service.",
+      "evidence": [
+        "docs/analysis/2026-11-12-unified-managed-services.md"
+      ],
+      "verification_level": "323 focused tests passed; existing M1 facts retained; unified independent review and full R9 pending.",
+      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface.",
+      "declaration_id": "unified-peer-existing-control",
+      "model_evidence_veto_recovery_exit": "The model can stop integration, inspect exact identities and receipts, request fresh observations, or use existing managed release/adopt/verify_acknowledge exits; no bypass of cryptographic or physical identity failures."
+    },
+    {
+      "component_id": "unified-admission",
+      "paths": [
+        "scripts/ci_gate.sh",
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_ci_gate_conclusion_line.py",
+        "tests/unit/test_ci_gate_vitest_sandbox_cache.py",
+        "tests/unit/test_review_host_admission.py",
+        "webui/vite.config.ts"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing Host review admission and ci_gate",
+      "disposition": "Integrate existing reviewed fixes and immutable evidence; no new authority or service.",
+      "evidence": [
+        "docs/analysis/2026-11-12-unified-managed-services.md"
+      ],
+      "verification_level": "323 focused tests passed; existing M1 facts retained; unified independent review and full R9 pending.",
+      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface.",
+      "declaration_id": "unified-admission-existing-control",
+      "model_evidence_veto_recovery_exit": "The model can stop integration, inspect exact identities and receipts, request fresh observations, or use existing managed release/adopt/verify_acknowledge exits; no bypass of cryptographic or physical identity failures."
+    },
+    {
+      "component_id": "unified-release",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "\"experiences/EXPERIENCE-20261112-review-host-admission-py-\\346\\224\\271\\345\\212\\250\\344\\274\\232\\346\\222\\236-function-size-\\346\\243\\230\\350\\275\\256\\345\\256\\210\\345\\215\\253-s.md\"",
+        "\"experiences/EXPERIENCE-20261112-rule28-\\345\\207\\206\\345\\205\\245\\346\\235\\220\\346\\226\\231\\344\\270\\212\\351\\231\\220\\345\\220\\214\\346\\227\\266\\350\\256\\241\\351\\241\\265\\351\\235\\242\\345\\217\\257\\350\\247\\201\\346\\255\\243\\346\\226\\207\\344\\270\\216\\347\\250\\277\\344\\273\\266\\345\\205\\250\\346\\226\\207-\\345\\217\\252\\344\\274\\240-artifact-paths-\\344\\270\\273\\347\\250\\277.md\"",
+        "\"experiences/EXPERIENCE-20261112-\\345\\205\\254\\347\\275\\221\\345\\233\\276\\345\\206\\205\\345\\256\\271\\346\\212\\275\\351\\252\\214-cdp-clip-\\346\\210\\252\\345\\233\\276-\\346\\207\\222\\345\\212\\240\\350\\275\\275\\344\\270\\213\\351\\200\\220\\346\\256\\265\\346\\273\\232\\345\\212\\250\\347\\255\\211\\345\\233\\276\\345\\212\\240\\350\\275\\275\\345\\256\\214.md\"",
+        "\"experiences/EXPERIENCE-20261112-\\347\\273\\210\\347\\250\\277\\345\\256\\241\\347\\250\\277\\345\\214\\205\\344\\275\\223\\347\\247\\257\\346\\214\\211\\345\\255\\220\\344\\273\\243\\347\\220\\206\\346\\250\\241\\345\\236\\213\\350\\276\\223\\345\\205\\245\\351\\242\\204\\347\\256\\227\\345\\210\\207-\\345\\217\\260\\350\\264\\246\\345\\217\\252\\345\\217\\226\\345\\277\\205\\350\\246\\201\\350\\241\\214.md\"",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py",
+        "uv.lock",
+        "docs/analysis/2026-11-12-unified-managed-services.md",
+        "docs/governance/submissions/20261112-unified-managed-services.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing managed release",
+      "disposition": "Integrate existing reviewed fixes and immutable evidence; no new authority or service.",
+      "evidence": [
+        "docs/analysis/2026-11-12-unified-managed-services.md"
+      ],
+      "verification_level": "323 focused tests passed; existing M1 facts retained; unified independent review and full R9 pending.",
+      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface."
+    },
+    {
+      "component_id": "unified-knowledge",
+      "paths": [
+        "data/methods/freeze-workdir-writes-during-one-shot-admission-window-e883241b10ca/METHOD.md",
+        "data/methods/gate-param-inapplicable-swap-widening-keep-gated-command-verbatim-f9f989d6029e/METHOD.md",
+        "data/methods/hard-block-receipt-as-rewrite-playbook-split-warned-subactions-2623bf332bc0/METHOD.md",
+        "data/methods/isolated-worktree-ref-facts-via-ls-remote-split-preflight-by-locality-b13c79a4a7dc/METHOD.md",
+        "data/methods/publish-freeze-delta-trim-derivatives-not-rewrite-a785591e3f30/METHOD.md",
+        "data/methods/receipt-budget-conjunction-closes-model-proof-for-host-direct-review-91b04bb639a9/METHOD.md",
+        "data/methods/resume-truncated-payload-at-cut-via-recovery-handle-2fe836ae5c7a/METHOD.md",
+        "data/methods/reviewer-attribution-from-child-transport-log-not-workspace-noise-aa64aa14bf28/METHOD.md",
+        "data/methods/tail-first-conclusion-retrieval-for-terminal-job-logs-96b329c01a1b/METHOD.md",
+        "data/methods/zero-delta-pending-poll-fold-to-ledger-wait-by-estimate-b8274da11af8/METHOD.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing knowledge assets",
+      "disposition": "Integrate existing reviewed fixes and immutable evidence; no new authority or service.",
+      "evidence": [
+        "docs/analysis/2026-11-12-unified-managed-services.md"
+      ],
+      "verification_level": "323 focused tests passed; existing M1 facts retained; unified independent review and full R9 pending.",
+      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "unified-peer-existing-control",
+      "g1": {
+        "necessity": "Signature, nonce expiry/replay, frozen commit identity and physical execution ownership are mechanical safety facts; model opinion cannot replace exact checks. This reuses the existing runtime and gate."
+      },
+      "g2": {
+        "authority_owner": "existing Peer runtime",
+        "relationship": "reuse",
+        "non_duplication": "No new authority, registry, service or semantic verdict engine; integrate the existing protocol, store and gate fixes."
+      },
+      "g3": {
+        "model_evidence": [
+          "docs/analysis/2026-11-12-unified-managed-services.md"
+        ],
+        "recovery_or_reason": "The model can stop integration, inspect exact identities and receipts, request fresh observations, or use existing managed release/adopt/verify_acknowledge exits; no bypass of cryptographic or physical identity failures."
+      },
+      "g4": {
+        "rollback": "Stop before cutover or return to the prior managed deployment using its existing recovery surface.",
+        "verification": [
+          "323 focused tests passed",
+          "Original Peer M1 reviewed and dual-host QA complete",
+          "Final unified independent review and original full R9 pending"
+        ]
+      }
+    },
+    {
+      "declaration_id": "unified-admission-existing-control",
+      "g1": {
+        "necessity": "Signature, nonce expiry/replay, frozen commit identity and physical execution ownership are mechanical safety facts; model opinion cannot replace exact checks. This reuses the existing runtime and gate."
+      },
+      "g2": {
+        "authority_owner": "existing Host review admission and ci_gate",
+        "relationship": "reuse",
+        "non_duplication": "No new authority, registry, service or semantic verdict engine; integrate the existing protocol, store and gate fixes."
+      },
+      "g3": {
+        "model_evidence": [
+          "docs/analysis/2026-11-12-unified-managed-services.md"
+        ],
+        "recovery_or_reason": "The model can stop integration, inspect exact identities and receipts, request fresh observations, or use existing managed release/adopt/verify_acknowledge exits; no bypass of cryptographic or physical identity failures."
+      },
+      "g4": {
+        "rollback": "Stop before cutover or return to the prior managed deployment using its existing recovery surface.",
+        "verification": [
+          "323 focused tests passed",
+          "Original Peer M1 reviewed and dual-host QA complete",
+          "Final unified independent review and original full R9 pending"
+        ]
+      }
+    }
+  ]
+}
