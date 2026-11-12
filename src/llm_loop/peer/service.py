@@ -26,6 +26,7 @@ import json
 import shutil
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -379,6 +380,18 @@ class PeerService:
             raise PeerError("audit_unavailable", f"admission write failed: {exc}") from exc
 
     def _execute(
+        self, task: TaskRecord, *, ticket: SupervisionTicket | None = None,
+        owner_held: bool = False,
+    ) -> TaskRecord:
+        if owner_held:
+            return self._execute_owned(task, ticket=ticket)
+        with self._store.operation_lock("task:" + task.task_id) as owned:
+            current = self._local_task(task.task_id)
+            if not owned or current.state != "running":
+                return current
+            return self._execute_owned(current, ticket=ticket)
+
+    def _execute_owned(
         self, task: TaskRecord, *, ticket: SupervisionTicket | None = None
     ) -> TaskRecord:
         grant = self._store.get_grant(task.grant_id) if task.grant_id else None
@@ -580,13 +593,16 @@ class PeerService:
                 if deadline > now:
                     continue
                 reason = "supervision_timeout"
-            try:
-                self._transition(task, "failed", reason_code=reason)
-            except PeerError:
-                # Concurrent confirmation may already have advanced the task; never overwrite it.
-                continue
-            self._operator.discard(task.task_id)
-            expired.append(task.task_id)
+            with self._store.operation_lock("task:" + task.task_id) as owned:
+                current = self._local_task(task.task_id)
+                if not owned or current.state != "awaiting_supervision":
+                    continue
+                try:
+                    self._transition(current, "failed", reason_code=reason)
+                except PeerError:
+                    continue
+                self._operator.discard(task.task_id)
+                expired.append(task.task_id)
         return expired
 
     def _supervision_target(self, task: TaskRecord) -> str | None:
@@ -595,8 +611,25 @@ class PeerService:
             return None
         return require_write_target(task.params.get("path"), write_root=self._write_root)
 
+    def preview_supervision_target(self, task_id: str) -> TargetSnapshot | None:
+        """Capture the original target BEFORE the operator types confirmation."""
+        task = self._get_waiting(task_id)
+        target = self._supervision_target(task)
+        return TargetSnapshot.capture(target) if target is not None else None
+
     def issue_supervision_ticket(
-        self, task_id: str, *, issued_by: str
+        self, task_id: str, *, issued_by: str,
+        preview_snapshot: TargetSnapshot | None = None,
+    ) -> SupervisionTicket:
+        with self._store.operation_lock("task:" + task_id) as owned:
+            if not owned:
+                raise PeerError("idempotency_conflict", "task decision already owned")
+            return self._issue_supervision_ticket_owned(
+                task_id, issued_by=issued_by, preview_snapshot=preview_snapshot
+            )
+
+    def _issue_supervision_ticket_owned(
+        self, task_id: str, *, issued_by: str, preview_snapshot: TargetSnapshot | None,
     ) -> SupervisionTicket:
         """签发票据（本机 CLI 专用）。TTL 取任务 deadline 与全局上限的较小值。"""
         task = self._get_waiting(task_id)
@@ -608,6 +641,13 @@ class PeerService:
             raise PeerError("supervision_timeout", iso(deadline))
         digest = task.params_digest or ""
         target = self._supervision_target(task)
+        if preview_snapshot is not None and (
+            target is None or preview_snapshot.path != target
+            or preview_snapshot != TargetSnapshot.capture(target)
+        ):
+            raise PeerError(
+                "supervision_ticket_mismatch", "target changed since operator preview"
+            )
         try:
             existing = self._operator.load(task_id, params_digest=digest)
             if existing.expires_at == iso(deadline):
@@ -640,9 +680,17 @@ class PeerService:
             issued_by=issued_by,
             expires_at=iso(deadline),
             target=target,
+            target_snapshot=preview_snapshot,
         )
 
     def reject_supervised(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
+        with self._store.operation_lock("task:" + task_id) as owned:
+            task = self._local_task(task_id)
+            if not owned or task.state != "awaiting_supervision":
+                return self.receipt(task)
+            return self._reject_supervised_owned(task_id, decided_by=decided_by)
+
+    def _reject_supervised_owned(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
         task = self._get_waiting(task_id)
         self._operator.discard(task_id)
         return self._deny(
@@ -654,6 +702,18 @@ class PeerService:
         )
 
     def resume_supervised(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
+        with self._store.operation_lock("task:" + task_id) as owned:
+            task = self._local_task(task_id)
+            if not owned or task.state != "awaiting_supervision":
+                return self.receipt(task)
+            target = self._supervision_target(task)
+            lock = self._store.operation_lock("write:" + target) if target else nullcontext(True)
+            with lock as path_owned:
+                if not path_owned:
+                    return self.receipt(task)
+                return self._resume_supervised_owned(task_id, decided_by=decided_by)
+
+    def _resume_supervised_owned(self, task_id: str, *, decided_by: str) -> dict[str, Any]:
         """D6：载入票据 → 验未消费/未过期 → 重算 digest → 重判 → 消费 → 执行。
 
         任务超龄或票据不可用时把等待态收敛为 ``failed`` 并返回回执——
@@ -729,7 +789,7 @@ class PeerService:
             return self.receipt(self._transition(task, "failed", reason_code=exc.reason_code))
         task = self._transition(task, "queued")
         task = self._transition(task, "running", max_running=grant.max_concurrency)
-        return self.receipt(self._execute(task))
+        return self.receipt(self._execute(task, owner_held=True))
 
     def _supervision_deadline(self, task: TaskRecord) -> datetime:
         """唯一权威监督截止时间：在进入等待态时已写入 TaskRecord。"""
@@ -771,13 +831,17 @@ class PeerService:
         return self.receipt(failed)
 
     def _get_waiting(self, task_id: str) -> TaskRecord:
+        task = self._local_task(task_id)
+        if task.state != "awaiting_supervision":
+            raise PeerError("idempotency_conflict", f"task {task_id} state={task.state}")
+        return task
+
+    def _local_task(self, task_id: str) -> TaskRecord:
         task = self._store.get_task(task_id)
         if task is None:
             raise PeerError("task_not_found", f"unknown task_id: {task_id}")
         if task.node_id != self._node_id:
             raise PeerError("task_not_found", f"task {task_id} 不属于本节点")
-        if task.state != "awaiting_supervision":
-            raise PeerError("idempotency_conflict", f"task {task_id} state={task.state}")
         return task
 
     # ---- 中断恢复 ----------------------------------------------------------
@@ -799,10 +863,14 @@ class PeerService:
         recovered: list[TaskRecord] = []
         for state in ("submitted", "admitted", "queued", "running"):
             for task in self._store.list_tasks(node_id=self._node_id, state=state, limit=10_000):
-                if state == "running" and task.idempotency_class != "idempotent":
-                    recovered.append(self._transition(task, "unknown_outcome", reason_code="crashed"))
-                else:
-                    recovered.append(self._transition(task, "failed", reason_code="crashed"))
+                with self._store.operation_lock("task:" + task.task_id) as owned:
+                    current = self._local_task(task.task_id)
+                    if not owned or current.state != state:
+                        continue
+                    target = "unknown_outcome" if (
+                        state == "running" and current.idempotency_class != "idempotent"
+                    ) else "failed"
+                    recovered.append(self._transition(current, target, reason_code="crashed"))
         return recovered
 
     def _select_grant(self) -> GrantRecord:

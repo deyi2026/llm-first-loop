@@ -10,6 +10,7 @@ fail-closed：文件不可解析或结构异常一律抛 ``PeerError("executor_i
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import tempfile
@@ -63,6 +64,31 @@ class PeerStore:
             yield
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    @contextmanager
+    def operation_lock(self, key: str) -> Iterator[bool]:
+        """Nonblocking ownership shared by CLI, recovery and all service instances.
+
+        Lock files are never unlinked: replacing an inode would split ownership.
+        This holds no PeerStore document lock while execution performs file I/O.
+        """
+        directory = self.root / "operation-locks"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+        name = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".lock"
+        fd = os.open(directory / name, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        acquired = False
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except BlockingIOError:
+                pass
+            yield acquired
+        finally:
+            if acquired:
+                fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
     def _read(self, name: str) -> dict[str, Any]:

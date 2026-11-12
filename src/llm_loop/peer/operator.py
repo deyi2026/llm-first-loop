@@ -216,6 +216,7 @@ class OperatorChannel:
         ttl_s: int | None = None,
         expires_at: str | None = None,
         target: str | None = None,
+        target_snapshot: TargetSnapshot | None = None,
     ) -> SupervisionTicket:
         if not params_digest:
             raise PeerError("supervision_ticket_missing", "任务缺少 params_digest，拒绝签票")
@@ -223,7 +224,11 @@ class OperatorChannel:
             raise PeerError("supervision_ticket_missing", "缺少确认人")
         if target is not None and not target.strip():
             raise PeerError("params_schema_invalid", "target 必须是非空路径")
-        snapshot = TargetSnapshot.capture(target) if target is not None else None
+        if target_snapshot is not None and target_snapshot.path != target:
+            raise PeerError("supervision_ticket_mismatch", "preview target does not match task")
+        snapshot = target_snapshot
+        if snapshot is None and target is not None:
+            snapshot = TargetSnapshot.capture(target)
         if not self.available():
             raise PeerError("supervision_channel_unavailable", str(self._root))
         path = self._path(task_id)

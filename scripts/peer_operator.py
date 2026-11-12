@@ -126,6 +126,9 @@ def _cmd_confirm(args: argparse.Namespace) -> int:
     if row is None:
         print(f"拒绝：任务 {args.task_id} 不在等待确认态。", file=sys.stderr)
         return 2
+    preview = service.preview_supervision_target(args.task_id)
+    if preview is not None:
+        print(f"原文件快照：{json.dumps(preview.to_dict(), ensure_ascii=False, sort_keys=True)}")
     print(f"任务：{row['task_id']}")
     print(f"kind：{row['kind']}")
     print(f"params：{json.dumps(row['params'], ensure_ascii=False, sort_keys=True)}")
@@ -136,7 +139,9 @@ def _cmd_confirm(args: argparse.Namespace) -> int:
     if answer != tail:
         print("已放弃；任务仍在等待确认。")
         return 1
-    ticket = service.issue_supervision_ticket(args.task_id, issued_by=args.operator)
+    ticket = service.issue_supervision_ticket(
+        args.task_id, issued_by=args.operator, preview_snapshot=preview
+    )
     print(f"票据已签发：expires={ticket.expires_at}")
     receipt = service.resume_supervised(args.task_id, decided_by=args.operator)
     print(f"结果：state={receipt['state']}  reason={receipt.get('reason_code') or '-'}")
