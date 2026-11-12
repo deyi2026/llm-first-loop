@@ -102,12 +102,9 @@ CI_TEST_VITE_CACHE="$CI_TEST_HOME/vite-cache"
 mkdir -p "$CI_TEST_TMP" "$CI_TEST_VITE_CACHE"
 chmod 700 "$CI_TEST_HOME" "$CI_TEST_TMP" "$CI_TEST_VITE_CACHE"
 export HOME="$CI_TEST_HOME"
-# The Host macOS sandbox permits writes in the candidate workspace, not the
-# account's /var/folders TMPDIR or the main worktree behind node_modules.
-# Node/Vitest temp files and Vite's cache must remain in this isolated HOME.
-export TMPDIR="$CI_TEST_TMP/"
-export TMP="$CI_TEST_TMP"
-export TEMP="$CI_TEST_TMP"
+# Scope workspace-local temp files to Node commands below. Python fixtures
+# need the system temp directory: placing them under this Git checkout makes
+# otherwise non-repository workspaces inherit this repository via Git discovery.
 export LFL_CI_VITE_CACHE_DIR="$CI_TEST_VITE_CACHE"
 
 # Playwright resolves its browser binary below HOME by default; since pytest
@@ -139,14 +136,14 @@ if [[ ! -d "$ROOT/webui/node_modules" ]]; then
   fi
   ln -s "$MAIN_WT/webui/node_modules" "$ROOT/webui/node_modules"
 fi
-if ! (cd "$ROOT/webui" && npm run build) >/dev/null; then
+if ! (cd "$ROOT/webui" && TMPDIR="$CI_TEST_TMP/" TMP="$CI_TEST_TMP" TEMP="$CI_TEST_TMP" npm run build) >/dev/null; then
   echo "❌ CI WebUI candidate build failed" >&2
   exit 1
 fi
 test -f "$ROOT/webui/dist/index.html" || { echo "❌ CI WebUI candidate dist missing" >&2; exit 1; }
 
 echo "═══ WebUI Vitest behavior tests ═══"
-(cd "$ROOT/webui" && npm test -- --maxWorkers=2 --minWorkers=1)
+(cd "$ROOT/webui" && TMPDIR="$CI_TEST_TMP/" TMP="$CI_TEST_TMP" TEMP="$CI_TEST_TMP" npm test -- --maxWorkers=2 --minWorkers=1)
 
 echo "═══ [4/5] pytest tier0 预检（分钟级快反馈，非提交门禁）═══"
 "$PY" -m pytest -m tier0 -q

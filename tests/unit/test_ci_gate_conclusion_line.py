@@ -23,12 +23,14 @@ case "$*" in
   *"-c"*) echo /tmp; exit 0 ;;
   *"--tool pyright"*) printf '%s\\n' "$FAKE_PYRIGHT_OUTPUT"; exit 0 ;;
   *"pytest"*)
-    if [ -n "${CAPTURE_HOME_FILE:-}" ]; then printf '%s' "$HOME" > "$CAPTURE_HOME_FILE"; fi ;;
+    if [ -n "${CAPTURE_HOME_FILE:-}" ]; then printf '%s' "$HOME" > "$CAPTURE_HOME_FILE"; fi
+    if [ -n "${CAPTURE_TMP_FILE:-}" ]; then printf 'python:%s\\n' "${TMPDIR:-}" >> "$CAPTURE_TMP_FILE"; fi ;;
 esac
 exit 0
 """
 
 _FAKE_NPM = """#!/bin/sh
+if [ -n "${CAPTURE_TMP_FILE:-}" ]; then printf 'npm:%s\\n' "${TMPDIR:-}" >> "$CAPTURE_TMP_FILE"; fi
 mkdir -p dist && : > dist/index.html
 """
 
@@ -72,6 +74,7 @@ def _run_gate(
     python_script: str = _FAKE_PYTHON,
     symlink_cwd: bool = False,
     capture_home_file: Path | None = None,
+    capture_tmp_file: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     root = tmp_path / "root"
     (root / "scripts").mkdir(parents=True)
@@ -98,6 +101,8 @@ def _run_gate(
     env["PATH"] = f"{fake_npm.parent}{os.pathsep}{env.get('PATH', '')}"
     if capture_home_file is not None:
         env["CAPTURE_HOME_FILE"] = str(capture_home_file)
+    if capture_tmp_file is not None:
+        env["CAPTURE_TMP_FILE"] = str(capture_tmp_file)
     run_root = root
     if symlink_cwd:
         run_root = tmp_path / "root-link"
@@ -190,3 +195,20 @@ def test_clean_run_never_claims_flaky(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "FLAKY-PASS" not in result.stdout
     assert "✅ ci_gate 全链路通过" in result.stdout
+
+
+def test_node_tmp_is_private_without_rebinding_python_tmp(tmp_path: Path, monkeypatch) -> None:
+    caller_tmp = tmp_path / "system-temp"
+    caller_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(caller_tmp))
+    capture = tmp_path / "temp-environments.txt"
+    result = _run_gate(tmp_path, "R9 pyright status=complete", capture_tmp_file=capture)
+    assert result.returncode == 0, result.stdout + result.stderr
+    observed = [line.split(":", 1) for line in capture.read_text().splitlines()]
+    python_tmp = [value for process, value in observed if process == "python"]
+    node_tmp = [value for process, value in observed if process == "npm"]
+    assert python_tmp and set(python_tmp) == {str(caller_tmp)}
+    assert len(node_tmp) == 2
+    expected = tmp_path / "root" / "data" / ".ci-test-home" / "tmp"
+    assert {Path(value).resolve() for value in node_tmp} == {expected.resolve()}
+    assert not caller_tmp.is_relative_to(tmp_path / "root")
