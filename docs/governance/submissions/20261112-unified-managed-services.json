@@ -70,7 +70,8 @@
         "docs/analysis/2026-11-12-unified-managed-services.md"
       ],
       "verification_level": "323 focused tests passed; existing M1 facts retained; unified independent review and full R9 pending.",
-      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface."
+      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface.",
+      "model_evidence_veto_recovery_exit": "No new control machinery in these metadata/knowledge paths. The model can inspect exact source identity and evidence, decline the release, or revert this component through the existing Git and managed deployment recovery surfaces."
     },
     {
       "component_id": "unified-knowledge",
@@ -97,7 +98,8 @@
         "docs/analysis/2026-11-12-unified-managed-services.md"
       ],
       "verification_level": "323 focused tests passed; existing M1 facts retained; unified independent review and full R9 pending.",
-      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface."
+      "rollback_route": "Stop before cutover or return to the prior managed deployment using its existing recovery surface.",
+      "model_evidence_veto_recovery_exit": "No new control machinery in these metadata/knowledge paths. The model can inspect exact source identity and evidence, decline the release, or revert this component through the existing Git and managed deployment recovery surfaces."
     }
   ],
   "declarations": [
