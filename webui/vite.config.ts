@@ -5,6 +5,10 @@ import react from "@vitejs/plugin-react";
 // base="/ui/v2/"：构建产物由 FastAPI 挂载于 /ui/v2（与原版 / 并存，互不干扰）。
 export default defineConfig({
   base: "/ui/v2/",
+  // CI worktrees may symlink node_modules from the main checkout. That target
+  // is read-only under the Host sandbox; route Vitest/Vite cache to the
+  // candidate's own ignored data dir when the CI launcher sets this variable.
+  cacheDir: process.env.LFL_CI_VITE_CACHE_DIR || undefined,
   plugins: [react()],
   server: {
     port: 5173,

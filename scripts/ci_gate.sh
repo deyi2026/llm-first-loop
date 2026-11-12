@@ -97,9 +97,18 @@ echo "═══ [4/5] 测试运行前置：隔离 HOME + 从候选源码构建 W
 # weakening any safety assertion. The R9 PROBE worktree is removed by the
 # wrapper; neither production HOME nor production data is touched.
 CI_TEST_HOME="$ROOT/data/.ci-test-home"
-mkdir -p "$CI_TEST_HOME"
-chmod 700 "$CI_TEST_HOME"
+CI_TEST_TMP="$CI_TEST_HOME/tmp"
+CI_TEST_VITE_CACHE="$CI_TEST_HOME/vite-cache"
+mkdir -p "$CI_TEST_TMP" "$CI_TEST_VITE_CACHE"
+chmod 700 "$CI_TEST_HOME" "$CI_TEST_TMP" "$CI_TEST_VITE_CACHE"
 export HOME="$CI_TEST_HOME"
+# The Host macOS sandbox permits writes in the candidate workspace, not the
+# account's /var/folders TMPDIR or the main worktree behind node_modules.
+# Node/Vitest temp files and Vite's cache must remain in this isolated HOME.
+export TMPDIR="$CI_TEST_TMP/"
+export TMP="$CI_TEST_TMP"
+export TEMP="$CI_TEST_TMP"
+export LFL_CI_VITE_CACHE_DIR="$CI_TEST_VITE_CACHE"
 
 # Playwright resolves its browser binary below HOME by default; since pytest
 # has a deliberately isolated HOME, point it at the preinstalled *binary*
