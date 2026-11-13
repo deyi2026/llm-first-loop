@@ -16,6 +16,7 @@ import dataclasses
 import json
 import time
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -23,6 +24,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from llm_loop.core.run_context import (
+    current_reasoning_effort,
+    current_reasoning_mode,
     current_run_generation,
     current_tool_discovery_scope,
     current_write_scope,
@@ -44,6 +47,12 @@ from llm_loop.resources.task_budget_dispatch import (
     exact_workspace_scope,
 )
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError, TaskBudgetStore
+from llm_loop.resources.task_budget_transport_context import (
+    IsolatedTransportProfile,
+    bind_authorized_provider_proxy,
+    bind_isolated_provider_transport,
+    qualify_loopback_provider_proxy,
+)
 
 MODEL = "glm/glm-5.3"
 PROFILE = "m1-t1-fx05-bounded-cli-v2"
@@ -119,7 +128,7 @@ def _install_fail_closed_transport_guard() -> dict[str, int]:
         model_id: str,
         target_url: str = "",
         transport_retry_index: int = 0,
-        prepared: dict[str, Any] | None = None,
+        prepared: Mapping[str, Any] | None = None,
     ):
         budget = active_task_budget()
         if budget is None or budget.store.read(budget.budget_id)["grant"]["profile"] != PROFILE:
@@ -179,9 +188,13 @@ def _install_fail_closed_transport_guard() -> dict[str, int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt-file", type=Path)
-    parser.add_argument("--probe", action="store_true")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--probe", action="store_true")
+    mode.add_argument("--smoke", action="store_true", help="one tiny direct GLM request under the same CAS gate")
+    mode.add_argument("--execute", action="store_true", help="run the one-shot FX05 task under the same CAS gate")
+    parser.add_argument("--proxy", default="", help="optional explicit local HTTP proxy, e.g. http://127.0.0.1:6152")
     args = parser.parse_args()
-    if not args.probe and args.prompt_file is None:
+    if not args.probe and not args.smoke and args.prompt_file is None:
         parser.error("--prompt-file required unless --probe")
     root = Path(__file__).resolve().parents[1]
     from llm_loop.config import load_settings
@@ -215,10 +228,14 @@ def main() -> int:
     from llm_loop.factory import build_engine
 
     engine = build_engine(settings, workspace_root=str(root))
-    engine.llm_pool.replace_registry(trusted_registry)
-    engine.llm_pool.set_default_model(MODEL)
-    engine.llm_pool.model_fallbacks_raw = ""
-    routed_client, resolved_provider, resolved_model = engine.llm_pool.get_resolved_client(MODEL)
+    pool = engine.llm_pool
+    if pool is None:
+        engine.close()
+        raise TaskBudgetDeniedError("m1_model_pool_unavailable")
+    pool.replace_registry(trusted_registry)
+    pool.set_default_model(MODEL)
+    pool.model_fallbacks_raw = ""
+    routed_client, resolved_provider, resolved_model = pool.get_resolved_client(MODEL)
     if (
         resolved_provider != "glm" or resolved_model != "glm-5.3"
         or getattr(routed_client, "provider", None) != "glm"
@@ -228,8 +245,12 @@ def main() -> int:
         raise TaskBudgetDeniedError("m1_glm_routing_identity_mismatch")
     # Per-model registry defaults may be larger than the frozen output quota.
     # This is a process-local instance only; no change to production config.
-    routed_client.max_tokens = min(int(routed_client.max_tokens or MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS)
-    routed_client.timeout_s = 180.0
+    routed_client.max_tokens = 128 if args.smoke else min(
+        int(routed_client.max_tokens or MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS
+    )
+    routed_client.timeout_s = 45.0 if args.smoke else 60.0
+    if args.smoke:
+        routed_client.retry_disconnect = 0
     session_id = engine.session.create()
     generation = uuid.uuid4().hex
     root_id = "m1fx05-" + uuid.uuid4().hex
@@ -276,7 +297,14 @@ def main() -> int:
     generation_token = current_run_generation.set(generation)
     exit_code = 0
     try:
-        with bind_task_budget(execution):
+        # Without the existing I5-D isolated worker, budgeted_transport_timeout
+        # deliberately falls back to a 1s socket timeout. Bind the qualified
+        # per-attempt worker so Stop can terminate/reap the exact HTTP process;
+        # this is what makes the existing <=60s IO timeout safe for real GLM.
+        with (
+            bind_task_budget(execution),
+            bind_isolated_provider_transport(IsolatedTransportProfile(verify=True)),
+        ):
             if args.probe:
                 # Deliberately attempt no provider send. The actual Registry and
                 # HTTP hooks must still be tested by subsequent qualification.
@@ -287,16 +315,77 @@ def main() -> int:
                     print(json.dumps({"event": "probe", "shell_denied": True}), flush=True)
                 else:
                     raise AssertionError("shell unexpectedly admitted")
+            elif args.smoke:
+                proxy = qualify_loopback_provider_proxy(args.proxy or None)
+                if args.proxy and proxy is None:
+                    raise TaskBudgetDeniedError("m1_smoke_proxy_must_be_explicit_loopback_http")
+                mode_token = current_reasoning_mode.set("off")
+                effort_token = current_reasoning_effort.set("low")
+                started = time.monotonic()
+                response = None
+                try:
+                    with bind_authorized_provider_proxy(proxy), bind_isolated_provider_transport(
+                        IsolatedTransportProfile(verify=True, proxy=proxy)
+                    ):
+                        iterator = routed_client._stream_openai(
+                            [{"role": "user", "content": "Reply with exactly OK."}],
+                            [],
+                            timeout_s=45.0,
+                            model="glm-5.3",
+                        )
+                        try:
+                            while True:
+                                try:
+                                    next(iterator)
+                                except StopIteration as stop:
+                                    response = stop.value
+                                    break
+                        finally:
+                            close_iterator = getattr(iterator, "close", None)
+                            if callable(close_iterator):
+                                close_iterator()
+                finally:
+                    current_reasoning_effort.reset(effort_token)
+                    current_reasoning_mode.reset(mode_token)
+                elapsed = round(time.monotonic() - started, 3)
+                if (
+                    response is None or not getattr(response, "content", "")
+                    or counters["attempts"] != counters["usage_reports"]
+                    or counters["tokens_in"] <= 0 or counters["tokens_out"] <= 0
+                ):
+                    exit_code = 3
+                print(json.dumps({
+                    "event": "smoke_terminal",
+                    "provider": resolved_provider,
+                    "model": resolved_model,
+                    "proxy": "explicit_loopback" if proxy else "direct",
+                    "elapsed_s": elapsed,
+                    "response_chars": len(getattr(response, "content", "") or ""),
+                    "finish_reason": getattr(response, "finish_reason", ""),
+                    "usage_in": counters["tokens_in"],
+                    "usage_out": counters["tokens_out"],
+                    "physical_attempts": counters["attempts"],
+                    "usage_reports": counters["usage_reports"],
+                }), flush=True)
             else:
                 prompt = args.prompt_file.read_text(encoding="utf-8")
-                result = engine.run(
-                    session_id,
-                    prompt,
-                    model=MODEL,
-                    reasoning_mode="off",
-                    reasoning_effort="low",
-                    ingress=issue_ingress("cli"),
-                )
+                proxy = qualify_loopback_provider_proxy(args.proxy or None)
+                if args.proxy and proxy is None:
+                    raise TaskBudgetDeniedError("m1_run_proxy_must_be_explicit_loopback_http")
+                # The full FX05 attempt uses the same isolated, one-request
+                # worker proven by both smoke paths. No shared httpx pool or
+                # ambient system-proxy discovery can strand this Run.
+                with bind_authorized_provider_proxy(proxy), bind_isolated_provider_transport(
+                    IsolatedTransportProfile(verify=True, proxy=proxy)
+                ):
+                    result = engine.run(
+                        session_id,
+                        prompt,
+                        model=MODEL,
+                        reasoning_mode="off",
+                        reasoning_effort="low",
+                        ingress=issue_ingress("cli"),
+                    )
                 if (
                     result.model_used != MODEL or result.run_incomplete
                     or counters["attempts"] != counters["usage_reports"]
@@ -316,7 +405,11 @@ def main() -> int:
                     "session_id": session_id,
                 }), flush=True)
     except Exception as exc:
-        print(json.dumps({"event": "error", "type": type(exc).__name__}), flush=True)
+        print(json.dumps({
+            "event": "error",
+            "type": type(exc).__name__,
+            "reason": getattr(exc, "reason", ""),
+        }), flush=True)
         exit_code = 3
     finally:
         # Terminal Run never leaves a reusable ACTIVE grant, even on error.

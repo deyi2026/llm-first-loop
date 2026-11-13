@@ -24,7 +24,7 @@
 - 只准在该隔离树内使用 `read_file(snapshot=true)` → `edit_file(expected_snapshot_ref=...)` 对已存在目标进行原子 CAS。新文件需要经过工具 schema 确认的 create-only 路径；不存在则本批先使用 Git 已跟踪的固定 FX05 初稿，不能以 `/tmp/*.py` + `execute_command`、here-doc 或隐蔽替代姿势规避。
 - 写前核 `Goal/Task claim`、权限、当前预算 phase/余额、Run/Session 绑定、快照 hash、目标目录；写后读真实字节、验证段落内容、SHA、一次性标注 attempt 身份。人工独立复核而不是执行者自称 PASS。
 - 禁止将可变预算 ledger（运行态状态文件）混在受审 Git tree 中；另存于持久运行数据目录，候选只引用固定 receipt/hash/snapshot，避免预算 `request_stop` 导致候选 SHA 漂移。审查前冻结完整补丁集和 evidence；候选变化必须重新审查。
-- 新样本默认 1 个 FX05 attempt，不沿用旧 8 fixture + 2 repeats 的成果为合规证据。M1 单例通过后再决定扩到 N/F/R，不用追加样本美化成功率。
+- 新样本默认只做 1 个 FX05 样本任务，不沿用旧 8 fixture + 2 repeats 的成果为合规证据。M1 单例通过后再决定扩到 N/F/R，不用追加样本美化成功率。
 
 ## 闸门与部署
 
@@ -42,3 +42,12 @@
 - 第二个**独立新根**使用 GLM-5.3 的 low reasoning_effort，仍在 180 秒 ReadTimeout，无有效 usage、工具 0，预算根 stop_requested。两次 FX05 源文件 SHA 均保持 ad44484566051fad39f12ba070dfe95738677cc1118a31d7f4dfdb9b12a2a1ab；**未完成真实文稿修改**，不得将试验计为通过样本。
 - 无密钥 GET/HEAD 连通性检查对 open.bigmodel.cn 返回 HTTP 401（说明 DNS/TLS/HTTP 通路可达，不证明模型推理可用）。出现两次真实 GLM 超时后不无限重试；后续须先取得有效 GLM 回应和可信 usage，再申请 M1 开发验收。
 - 原代码相关 TaskBudget 契约定向回归 55 passed；新 M1 预算 reserve/stop/allowlist 四项测试 4 passed，ruff/pyright 通过。这些只证明本地模型尝试前的 CAS 和工具拒绝面，不是 T1 内容完成、F18 端到端或正式 R9 的证据。
+
+## 2026-11-13 预算隔离传输复测与 FX05 实际产物
+
+- 新增 `--smoke` 只发一条极小 GLM-5.3 请求，仍走真实 `FX05BudgetExecution` / `checked_provider_attempt` / I5-D 单请求 worker。直连 1.740s（17 input / 3 output）；显式 Surge loopback proxy `127.0.0.1:6152` 2.013s（17 input / 7 output）。两者都 HTTP 200、usage report=1、physical=1，结束后各自预算根 `stop_requested`。这排除了“GLM API 不可用”和“Surge 代理整体不可达”，但不单独证明之前超时的唯一根因。
+- 将完整 FX05 放到同一个 I5-D 独占 worker、TLS 验证开启、直连（无系统代理发现）后成功完成三轮真实请求：3/3 HTTP 200、Provider 观测模型 `glm-5.3`、3 份 `request.usage`。合计 input=8,520（含 cache hit 7,360）、output=175、reasoning=25；实际工具 `read_file → edit_file → read_file` 均 success。原共享 HTTPX transport 路径与 I5-D worker 的差异包括连接/进程所有权、代理发现及 socket 生命周期；目前证据只说明隔离 worker 路径成功，不足以把旧 ReadTimeout 唯一归因于代理。
+- `edit_file` 的 effect receipt：before SHA=`ad44484566051fad39f12ba070dfe95738677cc1118a31d7f4dfdb9b12a2a1ab`，expected/actual after SHA=`6ec241cd185f1c4145d26d4adb847b6bf055e7a813ad8adb12eb5bd3609e5129`，`matches_expected=true`。再次独立读取并与 Git 中原始字节比较：仅唯一日期 `2026-11-20` → `2026-11-27`，新旧均 418 bytes，`new_bytes == old_bytes.replace(old, new, 1)` 精确成立。
+- 预算根 `m1fx05-bb5e0437cde64f3d907d0954e3eb26ae` 停止于 revision 21：physical=3/3、tool=3/8、输入 token-equivalent 预占 92,456/400,000、output 18,000/400,000、payload 34,228/2,097,152。物理 reservation 依 I2 仍保留 UNKNOWN（没有把 usage 回执误当远端物理结清）；精确真实用量以 3 条 EventStore `request.usage` 为准。预占输入等价值仍不是经 GLM tokenizer 证明的严格 token 上界。
+- 由于冻结 `max_iterations=3` 恰好耗尽于第三次成功的 `read_file` 后，LoopResult 的 run reason 为 `max_iterations` 且 `run_incomplete=true`，未生成最终 assistant 自然语言答复。不能将其表述为完整 Loop 完成；但任务要求的实际文件副作用已由 effect receipt、第三次读取、独立 SHA/字节比较机械验收为 **FX05 artifact PASS**。该事实及事件日志引用固定记录于 `docs/receipts/M1-FX05-20261113.json`。
+- M1 专项预算测试增至 6 passed，新增“无绑定预算的 Provider 请求 0 dispatch 即拒绝”和“缺少 usage 时保留 UNKNOWN reservation 并 fail-closed”两项负测；Ruff / Pyright 0 错。55 项原有 TaskBudget 定向回归仍需对最终冻结候选重跑。

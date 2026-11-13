@@ -1,0 +1,85 @@
+{
+  "schema": "m1-fx05-run-receipt/v1",
+  "implementation_base_commit": "8a5cc674778dbc0e8306bab03d3878d8eec722a3",
+  "qualification": {
+    "artifact_acceptance": "PASS",
+    "assistant_run_completion": "INCOMPLETE_MAX_ITERATIONS",
+    "release_qualification": "NOT_QUALIFIED",
+    "note": "The exact requested file mutation and independent byte-level verification succeeded. The LFL loop reached its frozen three-round ceiling immediately after the third successful read_file, so it did not emit a normal final assistant response."
+  },
+  "run": {
+    "session_id": "783c443b-5003-42bd-87f0-23ba32b86025",
+    "run_generation": "3a98d69052204386bbebaa112a5813f1",
+    "budget_id": "m1fx05-bb5e0437cde64f3d907d0954e3eb26ae",
+    "budget_phase": "stop_requested",
+    "budget_revision": 21,
+    "model_label": "glm/glm-5.3",
+    "provider_identity": "glm",
+    "provider_observed_model": "glm-5.3",
+    "transport": "I5-D isolated single-request worker, direct HTTPS, TLS verification enabled",
+    "physical_attempts": 3,
+    "physical_attempt_limit": 3,
+    "provider_usage_reports": 3,
+    "tool_invocations": 3,
+    "tool_invocation_limit": 8,
+    "tool_sequence": [
+      {"name": "read_file", "status": "success"},
+      {"name": "edit_file", "status": "success"},
+      {"name": "read_file", "status": "success"}
+    ],
+    "provider_attempts": [
+      {
+        "status_code": 200,
+        "finish_reason": "tool_calls",
+        "input_tokens": 2494,
+        "output_tokens": 35,
+        "cached_input_tokens": 2176,
+        "reasoning_tokens": 6
+      },
+      {
+        "status_code": 200,
+        "finish_reason": "tool_calls",
+        "input_tokens": 2791,
+        "output_tokens": 83,
+        "cached_input_tokens": 2432,
+        "reasoning_tokens": 0
+      },
+      {
+        "status_code": 200,
+        "finish_reason": "tool_calls",
+        "input_tokens": 3235,
+        "output_tokens": 57,
+        "cached_input_tokens": 2752,
+        "reasoning_tokens": 19
+      }
+    ],
+    "usage_totals": {
+      "input_tokens_including_cache": 8520,
+      "output_tokens": 175,
+      "cached_input_tokens": 7360,
+      "reasoning_tokens": 25
+    },
+    "conservative_pre_send_reservations": {
+      "input_token_equivalent": 92456,
+      "output_tokens": 18000,
+      "payload_bytes": 34228,
+      "payload_bytes_limit": 2097152
+    },
+    "reservation_note": "The durable TaskBudget ledger keeps physical reservations UNKNOWN under the existing I2 settlement contract; the exact provider usage is independently present in the EventStore request.usage and provider.transport.settled records. Input token-equivalent precharge is conservative but not proven to be a strict tokenizer upper bound."
+  },
+  "artifact": {
+    "path": "t1-sandbox/outputs/fx05-draft.md",
+    "snapshot_ref": "artifact://v1/41cfa0ef742845c0b44d237a9a4e732d",
+    "before_sha256": "ad44484566051fad39f12ba070dfe95738677cc1118a31d7f4dfdb9b12a2a1ab",
+    "after_sha256": "6ec241cd185f1c4145d26d4adb847b6bf055e7a813ad8adb12eb5bd3609e5129",
+    "edit_effect_artifact_ref": "artifact://v1/fe9f9768c6224ba4a2b7b562b6ef7910",
+    "edit_effect_matches_expected": true,
+    "size_bytes_before": 418,
+    "size_bytes_after": 418,
+    "only_change": "2026-11-20 -> 2026-11-27",
+    "replacement_occurrences": 1,
+    "independent_byte_comparison": "new_bytes == old_bytes.replace(b'2026-11-20', b'2026-11-27', 1)",
+    "independent_byte_comparison_passed": true
+  },
+  "event_log": "data/m1-budgeted-run/event_logs/783c443b-5003-42bd-87f0-23ba32b86025.jsonl"
+}

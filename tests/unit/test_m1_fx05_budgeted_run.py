@@ -122,3 +122,80 @@ def test_tool_allowlist_and_persisted_stop_are_hard(tmp_path: Path) -> None:
             budget.reserve(BudgetDimension.PHYSICAL_ATTEMPTS)
     finally:
         module._PRE_SEND_ENVELOPE.reset(token)
+
+
+def test_provider_transport_requires_an_explicit_budget_binding() -> None:
+    module = _runner_module()
+    from llm_loop.llm.client import LLMClient
+
+    original_transport = LLMClient._transport_attempt_scope
+    original_usage = LLMClient._observe_transport_usage
+    counters = module._install_fail_closed_transport_guard()
+    guarded = LLMClient._transport_attempt_scope
+    LLMClient._transport_attempt_scope = original_transport
+    LLMClient._observe_transport_usage = original_usage
+    client = LLMClient(
+        api_key="test-only",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        model="glm-5.3",
+        provider="glm",
+        max_tokens=128,
+        trust_env=False,
+    )
+    try:
+        with pytest.raises(TaskBudgetDeniedError, match="m1_explicit_budget_binding_required"), guarded(
+            client,
+            model_id="glm-5.3",
+            target_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            prepared={"projected_bytes": 1000, "controls": {"max_tokens": 128}},
+        ):
+            pytest.fail("unbound provider transport reached dispatch")
+        assert counters["attempts"] == 0
+    finally:
+        client.close()
+
+
+def test_provider_usage_missing_fails_closed_after_one_unknown_reservation(
+    tmp_path: Path,
+) -> None:
+    module = _runner_module()
+    from llm_loop.llm.client import LLMClient
+    from llm_loop.resources.task_budget_dispatch import bind_task_budget
+
+    budget = _budget(tmp_path, module)
+    original_transport = LLMClient._transport_attempt_scope
+    original_usage = LLMClient._observe_transport_usage
+    counters = module._install_fail_closed_transport_guard()
+    guarded = LLMClient._transport_attempt_scope
+    LLMClient._transport_attempt_scope = original_transport
+    LLMClient._observe_transport_usage = original_usage
+    client = LLMClient(
+        api_key="test-only",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        model="glm-5.3",
+        provider="glm",
+        max_tokens=128,
+        trust_env=False,
+    )
+    try:
+        with bind_task_budget(budget), pytest.raises(
+            TaskBudgetDeniedError, match="m1_provider_usage_missing"
+        ), guarded(
+            client,
+            model_id="glm-5.3",
+            target_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            prepared={"projected_bytes": 1000, "controls": {"max_tokens": 128}},
+        ):
+            pass  # Simulate a response without a complete usage receipt.
+        row = budget.store.read(budget.budget_id)
+        assert counters["attempts"] == 1
+        assert counters["usage_reports"] == 0
+        assert len(row["reservations"]) == 1
+        reservation = next(iter(row["reservations"].values()))
+        assert reservation["kind"] == "physical_attempts"
+        assert reservation["phase"] == "unknown"
+        assert reservation["allocations"]["input_tokens"] == 10_000
+        assert row["phase"] == "active"
+        budget.request_stop(reason="missing_usage_negative_test")
+    finally:
+        client.close()
