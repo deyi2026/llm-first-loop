@@ -73,14 +73,23 @@ def _snapshot_tree(root: Path) -> dict[str, tuple[int, int]]:
     }
 
 
-def test_reader_module_has_no_llm_loop_imports() -> None:
-    """kernel reader 自身零 llm_loop 依赖（runtime→feishu 防回归定向断言）."""
+def test_reader_module_imports_confined_to_kernel() -> None:
+    """reader 的 llm_loop 依赖只能指向 kernel 内部 root（runtime→feishu 防回归）.
+
+    对齐 test_arch_guards 的 _KERNEL_INTERNAL_ROOTS（含 resolver 依赖，R9
+    env-access ratchet 修订：env 经 legacy_env_snapshot 正门读取）。
+    """
     import llm_loop.runtime.feishu_compensation_reader as reader_mod
 
+    kernel_roots = {"core", "loop", "event_log", "resources", "runtime", "llm"}
     tree = ast.parse(Path(reader_mod.__file__).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
-            assert node.module.split(".")[0] != "llm_loop", f"reader 不得依赖 {node.module}"
+            root = node.module.split(".")[0]
+            if root == "llm_loop":
+                assert node.module.split(".")[1] in kernel_roots, (
+                    f"reader 不得依赖 kernel 外模块: {node.module}"
+                )
         if isinstance(node, ast.Import):
             for alias in node.names:
                 assert alias.name.split(".")[0] != "llm_loop", alias.name
@@ -281,4 +290,22 @@ def test_feishu_wrapper_equivalence(tmp_path: Path) -> None:
 def test_feishu_wrapper_none_passthrough(tmp_path: Path) -> None:
     """kernel 侧 fail-closed None → capability 包装层透传 None."""
     _write_jsonl(tmp_path, [{**_GOOD_JSONL, "reply_type": "group"}])
+    assert read_only_compensation_records(tmp_path) is None
+
+
+def test_feishu_wrapper_fail_closed_if_dataclass_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9 审查修订回归锁：包装构造期任何 ValueError → 整体 None（fail-closed）.
+
+    与下沉前原实现结构等价——原版 dataclass 构造在 try/except 内；若
+    dataclass ``__post_init__`` 未来新增校验（如 msg_id↔cause 组合），包装层
+    仍 fail-closed，绝不向 service_control 逃逸未捕获异常。
+    """
+    _write_jsonl(tmp_path, [_GOOD_JSONL])
+
+    def _future_validation(self: InterruptionCompensationRecord) -> None:
+        raise ValueError("dataclass 未来新增校验")
+
+    monkeypatch.setattr(InterruptionCompensationRecord, "__post_init__", _future_validation)
     assert read_only_compensation_records(tmp_path) is None

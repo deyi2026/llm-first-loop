@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from llm_loop.runtime.resolver import legacy_env_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +43,20 @@ _LEGACY_INTERRUPTED_PATH_ENV = "FEISHU_INTERRUPTED_PATH"
 _DEFAULT_LEGACY_INTERRUPTED_PATH = "data/feishu_interrupted.json"
 
 
-def compensation_path() -> str:
-    """补偿记录 JSONL 路径（默认 data/feishu_compensation.jsonl，可经 env 配置）."""
-    return os.environ.get(_COMPENSATION_PATH_ENV, "") or _DEFAULT_COMPENSATION_PATH
+def compensation_path(env: Mapping[str, str] | None = None) -> str:
+    """补偿记录 JSONL 路径（默认 data/feishu_compensation.jsonl，可经 env 配置）.
+
+    env 经 kernel 正门 ``resolver.legacy_env_snapshot`` 取进程快照——runtime
+    包内禁止新增直接 ``os.environ`` 访问（env-access 单向 ratchet，R9）。
+    """
+    values = legacy_env_snapshot() if env is None else env
+    return values.get(_COMPENSATION_PATH_ENV, "") or _DEFAULT_COMPENSATION_PATH
 
 
-def legacy_interrupted_path() -> str:
+def legacy_interrupted_path(env: Mapping[str, str] | None = None) -> str:
     """旧单文件补偿路径（默认 data/feishu_interrupted.json，启动迁移数据源）."""
-    return os.environ.get(_LEGACY_INTERRUPTED_PATH_ENV, "") or _DEFAULT_LEGACY_INTERRUPTED_PATH
+    values = legacy_env_snapshot() if env is None else env
+    return values.get(_LEGACY_INTERRUPTED_PATH_ENV, "") or _DEFAULT_LEGACY_INTERRUPTED_PATH
 
 
 def _resolve_runtime_path(configured: str, runtime_root: str | Path | None) -> Path | None:

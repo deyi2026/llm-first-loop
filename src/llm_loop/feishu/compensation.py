@@ -75,6 +75,13 @@ def read_only_compensation_records(
     （fail-closed：无法排除目标 msg_id 恰在损坏行中，“跳过”会把证据不足
     误判为无补偿）。
 
+    校验等价性说明（R9 审查修订）：kernel reader 已同序复刻 dataclass
+    ``__post_init__`` 的三项 raise 校验（receive_id 非空 / reply_type 枚举 /
+    cause 枚举）并前置拦截空 interrupted_at（历史注释提到的 msg_id↔cause
+    组合校验在 dataclass 中实际不存在，勿臆造）；包装构造仍置于
+    try/except 内——与下沉前原实现结构一致，dataclass 未来新增校验时
+    依旧 fail-closed None，而不是向 service_control 逃逸未捕获异常。
+
     Args:
         runtime_root: 桥运行根目录（相对路径解析基准，与 bridge cwd=runtime_root
             语义一致）；绝对路径配置不受影响；相对路径且 runtime_root=None → None。
@@ -86,17 +93,22 @@ def read_only_compensation_records(
     data = read_compensation_records(runtime_root)
     if data is None:
         return None
-    return [
-        InterruptionCompensationRecord(
-            receive_id=item.receive_id,
-            reply_type=item.reply_type,
-            interrupt_cause=item.interrupt_cause,
-            interrupted_at=item.interrupted_at,
-            context_ref=item.context_ref,
-            msg_id=item.msg_id,
-        )
-        for item in data
-    ]
+    try:
+        return [
+            InterruptionCompensationRecord(
+                receive_id=item.receive_id,
+                reply_type=item.reply_type,
+                interrupt_cause=item.interrupt_cause,
+                interrupted_at=item.interrupted_at,
+                context_ref=item.context_ref,
+                msg_id=item.msg_id,
+            )
+            for item in data
+        ]
+    except (OSError, ValueError) as exc:
+        # 与下沉前原实现等价的构造期 fail-closed（防 dataclass 校验演进）
+        logger.warning("补偿记录包装构造失败（fail-closed，按证据不足处理）: %s", exc)
+        return None
 
 
 def _now_iso() -> str:
