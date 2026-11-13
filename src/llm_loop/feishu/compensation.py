@@ -64,6 +64,94 @@ def legacy_interrupted_path() -> str:
     return os.environ.get(_LEGACY_INTERRUPTED_PATH_ENV, "") or _DEFAULT_LEGACY_INTERRUPTED_PATH
 
 
+def _resolve_runtime_path(configured: str, runtime_root: str | Path | None) -> Path | None:
+    """把 env 可配的（可能相对的）补偿路径解析为绝对 Path（M2-2）.
+
+    bridge 进程的 cwd 即 runtime_root，因此相对路径的运行时语义 = runtime_root
+    下解析；runtime_root 缺失时相对路径不可解析 → None（fail-closed，调用方按
+    证据不足处理）。绝对路径配置不受 runtime_root 影响。
+    """
+    path = Path(configured)
+    if path.is_absolute():
+        return path
+    if runtime_root is None:
+        return None
+    return Path(runtime_root) / path
+
+
+def read_only_compensation_records(
+    runtime_root: str | Path | None = None,
+) -> list[InterruptionCompensationRecord] | None:
+    """纯只读补偿记录读取（M2-2；供 service_control 空闲判定，零写副作用）.
+
+    与 ``CompensationStore.read_all`` 的关键差异：绝不调用 ``_ensure_migrated()``
+    （迁移会改写 JSONL 并删除 legacy 单文件——只读判定不得有写副作用，spec
+    M2-2 安全边界 4）；解析策略相反：单行损坏在 read_all 是跳过隔离，本函数
+    整体失败返回 None（fail-closed：无法排除目标 msg_id 恰在损坏行中，
+    “跳过”会把证据不足误判为无补偿）。
+
+    Args:
+        runtime_root: 桥运行根目录（相对路径解析基准，与 bridge cwd=runtime_root
+            语义一致）；绝对路径配置不受影响；相对路径且 runtime_root=None → None。
+
+    Returns:
+        解析成功：记录列表（JSONL 与 legacy 均缺失/空 = []，不创建任何文件）；
+        读取/解析失败：None（调用方必须按证据不足处理，不得视作“无补偿”）。
+    """
+    records: list[InterruptionCompensationRecord] = []
+    jsonl = _resolve_runtime_path(compensation_path(), runtime_root)
+    if jsonl is None:
+        return None
+    try:
+        if jsonl.exists():
+            for line_no, raw in enumerate(jsonl.read_text(encoding="utf-8").splitlines(), 1):
+                line = raw.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                if not isinstance(data, dict):
+                    raise ValueError(f"补偿行非对象（{jsonl}:{line_no}）")
+                if not str(data.get("interrupted_at", "")):
+                    # 不允许记录构造器自动补时点：存储侧缺时点 = 记录无效
+                    raise ValueError(f"interrupted_at 缺失（{jsonl}:{line_no}）")
+                records.append(
+                    InterruptionCompensationRecord(
+                        receive_id=str(data.get("receive_id", "")),
+                        reply_type=str(data.get("reply_type", "chat_id")),
+                        interrupt_cause=str(data.get("interrupt_cause", CRASH)),
+                        interrupted_at=str(data.get("interrupted_at", "")),
+                        context_ref=str(data.get("context_ref", "")),
+                        msg_id=str(data.get("msg_id", "")),
+                    )
+                )
+    except (OSError, ValueError) as exc:  # JSONDecodeError ⊂ ValueError，整体 fail-closed
+        logger.warning("补偿 JSONL 只读解析失败（fail-closed，按证据不足处理）: %s", exc)
+        return None
+    legacy = _resolve_runtime_path(legacy_interrupted_path(), runtime_root)
+    if legacy is None:
+        return None
+    try:
+        if legacy.exists():
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f"legacy 补偿非对象: {legacy}")
+            if not str(data.get("interrupted_at", "")):
+                raise ValueError(f"legacy interrupted_at 缺失: {legacy}")
+            records.append(
+                InterruptionCompensationRecord(
+                    receive_id=str(data.get("reply_id", "")),
+                    reply_type=str(data.get("reply_type", "chat_id") or "chat_id"),
+                    interrupt_cause=CRASH,
+                    interrupted_at=str(data.get("interrupted_at", "")),
+                    msg_id=str(data.get("msg_id", "")),
+                )
+            )
+    except (OSError, ValueError) as exc:
+        logger.warning("legacy 补偿只读解析失败（fail-closed，按证据不足处理）: %s", exc)
+        return None
+    return records
+
+
 def _now_iso() -> str:
     return system_local_now().isoformat(timespec="seconds")
 
