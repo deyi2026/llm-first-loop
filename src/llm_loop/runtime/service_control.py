@@ -27,6 +27,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import math
 import os
 import pwd
 import re
@@ -48,6 +49,7 @@ from llm_loop.runtime.admission_barrier import (
     AdmissionBarrierRegistry,
     BarrierConflictError,
 )
+from llm_loop.runtime.feishu_compensation_reader import read_compensation_records
 from llm_loop.runtime.learning_idle import learning_busy_reason
 from llm_loop.runtime.package_identity import installed_identity
 from llm_loop.runtime.service_control_derivation import (
@@ -3637,6 +3639,229 @@ def _interpret_idle_probe(probe: str | bool) -> tuple[str, str]:
     return "confirmed_busy", text
 
 
+_FEISHU_WATCHDOG_POLL_S = 30.0  # 与 bridge._WATCHDOG_POLL_S 对齐：心跳写周期（30s/次）
+# M2-2: 心跳“明确 stale”门槛 = 2 个 watchdog 周期无心跳写。生产根因
+# （pre-v0.6.51-gen13 备份复原）：桥 crash 后心跳冻结在 processing 态，
+# _target_idle_state 永远 confirmed_busy，waiting_for_idle 假忙死锁。
+_FEISHU_HEARTBEAT_STALE_S = 2 * _FEISHU_WATCHDOG_POLL_S
+_FEISHU_CLOCK_TOLERANCE_S = 1.0  # 浮点心跳 ts 与秒精度 ISO 补偿时点之间的可比容差
+_FEISHU_HISTORY_MIN_ROWS = 3  # 连续快照稳定性门槛（≥2-3 个周期同值）
+_FEISHU_HISTORY_TAIL_BYTES = 8192  # 只读尾窗（心跳行 ~600B，覆盖 13 行）
+# 相邻 history 行 ts 上界：bridge 每 poll 周期写一行，正常间隔 ≈30s；
+# 挂钟暂停/调度抖动容差后超过 2 周期+容差即视为快照链断裂（fail-closed busy）。
+_FEISHU_HISTORY_GAP_TOLERANCE_S = 5.0
+_FEISHU_HISTORY_MAX_GAP_S = 2 * _FEISHU_WATCHDOG_POLL_S + _FEISHU_HISTORY_GAP_TOLERANCE_S
+
+
+def _feishu_history_snapshots_stable(
+    heartbeat: Mapping[str, Any], *, runtime_root: str
+) -> tuple[bool, str]:
+    """心跳 history 连续快照稳定性核对（M2-2 证据链第 6 环，fail-closed）.
+
+    只读 ``data/feishu_heartbeat_history.jsonl`` 尾部，要求最近
+    ``_FEISHU_HISTORY_MIN_ROWS`` 条连续快照与主心跳在 pid / processing_msg_id /
+    queue_depth(=0，显式 int 严格校验) / last_message_ts / processing_since 上
+    逐条一致；且每行 ts 为有限正数、严格递增、相邻间隔 ≤ 2×watchdog 周期+容差，
+    最新一条 ts 与主心跳 ts 精确一致（bridge._write_heartbeat 同一 payload 先写
+    主文件再 append history）。3 条同值连续快照 ≈ processing 态已冻结 ≥2 个
+    watchdog 周期（~60s），收紧“入队发生在两次心跳写之间”的观察竞态；不引入新状态库。
+
+    无 history / 不足 3 行 / 尾部不可读 / 任一行损坏或字段不一致 / ts 链异常
+    → (False, tag)。
+    """
+    path = Path(runtime_root) / "data" / "feishu_heartbeat_history.jsonl"
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - _FEISHU_HISTORY_TAIL_BYTES))
+            chunk = f.read()
+    except OSError:
+        return False, "history_unreadable"
+    try:
+        text = chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, "history_unreadable"
+    lines = [line for line in text.splitlines() if line.strip()]
+    if size > _FEISHU_HISTORY_TAIL_BYTES and lines:
+        lines = lines[1:]  # 尾窗首行可能被截断，整行丢弃
+    if len(lines) < _FEISHU_HISTORY_MIN_ROWS:
+        return False, "history_insufficient"
+    pid = heartbeat.get("pid")
+    processing = str(heartbeat.get("processing_msg_id") or "")
+    last_message_ts = heartbeat.get("last_message_ts")
+    processing_since = heartbeat.get("processing_since")
+    hb_ts = _epoch_or_none(heartbeat.get("ts"))
+    if hb_ts is None or hb_ts <= 0:
+        # 顶层与 stale helper 已验证过 ts；此处防御性再验，供下方最新行一致性比对
+        return False, "heartbeat_ts_invalid"
+    rows: list[dict[str, Any]] = []
+    for line in lines[-_FEISHU_HISTORY_MIN_ROWS:]:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            return False, "history_row_malformed"
+        if not isinstance(row, dict):
+            return False, "history_row_malformed"
+        rows.append(row)
+    # (a) 字段逐条一致（queue_depth 显式 int 严格校验——M2-2 P1-A 反例 A 路径）
+    for row in rows:
+        if row.get("pid") != pid or str(row.get("processing_msg_id") or "") != processing:
+            return False, "history_state_changed"
+        row_queue_depth = _queue_depth_or_invalid(row.get("queue_depth"))
+        if row_queue_depth is None:
+            return False, "history_queue_depth_invalid"
+        if row_queue_depth != 0:
+            return False, "history_state_changed"
+        if row.get("last_message_ts") != last_message_ts:
+            return False, "history_state_changed"
+        if row.get("processing_since") != processing_since:
+            return False, "history_state_changed"
+    # (b) ts 链：每行有限正数、严格递增、相邻间隔 ≤ 2×watchdog 周期+容差
+    prev_ts: float | None = None
+    row_ts_values: list[float] = []
+    for row in rows:
+        row_ts = _epoch_or_none(row.get("ts"))
+        if row_ts is None or row_ts <= 0:
+            return False, "history_ts_invalid"
+        if prev_ts is not None:
+            if row_ts <= prev_ts:
+                return False, "history_ts_not_monotonic"
+            if row_ts - prev_ts > _FEISHU_HISTORY_MAX_GAP_S:
+                return False, "history_gap_too_large"
+        prev_ts = row_ts
+        row_ts_values.append(row_ts)
+    # (c) 最新行 ts 与主心跳 ts 精确一致（同一 payload 先写主文件再 append history）
+    if row_ts_values[-1] != hb_ts:
+        return False, "history_latest_mismatch"
+    return True, ""
+
+
+def _epoch_or_none(value: Any) -> float | None:
+    """心跳数值字段严格取值：非（非 bool 的 int/float）或非有限值（NaN/±Inf）→ None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    epoch = float(value)
+    if not math.isfinite(epoch):
+        return None
+    return epoch
+
+
+def _queue_depth_or_invalid(value: Any) -> int | None:
+    """queue_depth 严格校验：仅接受显式精确 int（非 bool/str/float）且 >=0，否则 None.
+
+    缺失/None/空串/字符串数字/float/bool/负数/非数一律 None（无效 → busy），
+    不得做 ``int(value or 0)`` 式静默归零——静默归零会把"写坏的心跳"判成 idle。
+    """
+    if type(value) is not int or value < 0:  # noqa: E721 - 精确类型匹配，bool 必须排除
+        return None
+    return value
+
+
+def _feishu_stale_processing_recovered(
+    heartbeat: Mapping[str, Any], *, runtime_root: str
+) -> tuple[bool, str]:
+    """stale-processing 心跳只读证据链（M2-2；全部成立才允许按非忙碌推进）.
+
+    生产根因（pre-v0.6.51-gen13 备份复原，不含消息正文）：桥进程已 crash 且已
+    为**同一精确 msg_id** 落盘 crash 补偿，但心跳冻结在 processing_msg_id 非空 →
+    旧行为下 _target_idle_state 永远 confirmed_busy，waiting_for_idle 假忙死锁。
+    仅在以下证据链完整时认定该 processing 态已被持久补偿覆盖、桥确已死亡且无
+    后续入队迹象：
+
+    1. queue_depth 精确为 0（>0 一律忙碌）；
+    2. pid 明确死亡：os.kill(pid, 0) → ProcessLookupError(ESRCH)。存活（含
+       PID 复用）/PermissionError/其他异常/非法 pid → 忙碌（保守）；
+    3. 心跳明确 stale：now - ts ≥ 2×watchdog 周期（60s）；未来/缺失/不可
+       解析 → 忙碌；
+    4. processing_since 与 last_message_ts 均有效，且 last_message_ts ≤
+       processing_since + 1s（有后续入队迹象 → 忙碌）；
+    5. 存在同一精确 msg_id 的持久补偿记录（receive_id/reply_type/cause 结构
+       合法、interrupted_at 可解析且不早于 processing_since）——经纯只读
+       read_only_compensation_records 读取，绝不触发 CompensationStore.read_all
+       的迁移/删除写副作用；
+    6. history 连续快照稳定性（_feishu_history_snapshots_stable，fail-closed）。
+
+    任何一环不足 → (False, tag)，调用方必须保持 confirmed_busy：本场景**不得**
+    以 unconfirmable 绕过门禁（_wait_for 把 unconfirmable 当非忙碌推进）。
+
+    Returns:
+        (True, "")：证据链完整，该 processing 态不构成忙碌；
+        (False, tag)：机器可读失败标签（审计/排障用）。
+    """
+    # (1) queue_depth 精确为 0（矩阵 E：>0 一律忙碌）；严格校验——缺失/None/
+    # 字符串/float/bool/负数一律无效（M2-2 P1-A：不得 int(value or 0) 静默归零）
+    queue_depth = _queue_depth_or_invalid(heartbeat.get("queue_depth"))
+    if queue_depth is None:
+        return False, "queue_depth_invalid"
+    if queue_depth != 0:
+        return False, "queue_nonzero"
+
+    # (2) PID 明确死亡
+    pid = heartbeat.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False, "pid_invalid"
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:  # ESRCH：进程确定不存在
+        pass
+    except (PermissionError, OverflowError, OSError):
+        return False, "pid_alive_or_unknown"
+    else:
+        # kill(0) 成功 = 进程存在（含 PID 复用被新进程占用）→ 保守视为存活
+        return False, "pid_alive_or_unknown"
+
+    # (3) 心跳明确 stale（未来/缺失/不可解析 → 忙碌）
+    hb_ts = _epoch_or_none(heartbeat.get("ts"))
+    now = time.time()
+    if hb_ts is None or hb_ts <= 0 or hb_ts > now + _FEISHU_CLOCK_TOLERANCE_S:
+        return False, "heartbeat_ts_invalid"
+    if now - hb_ts < _FEISHU_HEARTBEAT_STALE_S:
+        return False, "heartbeat_fresh"
+
+    # (4) 无后续入队迹象（字段无效/入队晚于 processing 开始 → 忙碌）
+    processing_since = _epoch_or_none(heartbeat.get("processing_since"))
+    last_message_ts = _epoch_or_none(heartbeat.get("last_message_ts"))
+    if (
+        processing_since is None
+        or processing_since <= 0
+        or last_message_ts is None
+        or last_message_ts <= 0
+    ):
+        return False, "processing_clock_invalid"
+    if last_message_ts > processing_since + _FEISHU_CLOCK_TOLERANCE_S:
+        return False, "subsequent_message"
+
+    # (5) 同一精确 msg_id 的持久补偿（纯只读；M2-2 架构边偿还：解析事实在
+    #     kernel 侧 llm_loop.runtime.feishu_compensation_reader，capability 层
+    #     llm_loop.feishu.compensation 包装为原 dataclass）
+    records = read_compensation_records(runtime_root)
+    if records is None:
+        return False, "compensation_unreadable"
+    processing = str(heartbeat.get("processing_msg_id") or "")
+    matched = [rec for rec in records if rec.msg_id and rec.msg_id == processing]
+    if not matched:
+        return False, "compensation_missing"
+    for rec in matched:
+        try:
+            interrupted_at = datetime.fromisoformat(rec.interrupted_at)
+        except ValueError:
+            continue
+        if interrupted_at.tzinfo is None:
+            interrupted_at = interrupted_at.astimezone()  # naive 按宿主本地时区解释（与写入端同源）
+        # interrupted_at 写出为秒精度（截断），允许 1s 容差
+        if interrupted_at.timestamp() >= processing_since - _FEISHU_CLOCK_TOLERANCE_S:
+            break
+    else:
+        return False, "compensation_time_invalid"
+
+    # (6) history 连续快照稳定性（fail-closed）
+    stable, tag = _feishu_history_snapshots_stable(heartbeat, runtime_root=runtime_root)
+    if not stable:
+        return False, tag
+    return True, ""
+
+
 def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
     """L22: 目标空闲三态 ``confirmed_busy`` / ``confirmed_idle`` / ``unconfirmable``.
 
@@ -3648,6 +3873,12 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
 
     "无法确认"≠"忙碌"：探测能力不足（heartbeat 缺失、目录不可读）只作如实
     事实披露，不再被程序等同为 busy 而锁死模型行动空间。
+
+    M2-2（feishu stale-processing）：feishu heartbeat 的 processing_msg_id
+    非空不再无条件视为忙碌；仅当 stale 证据链完整（pid 确死 + 心跳 stale
+    ≥60s + 无后续入队迹象 + 同 msg_id 精确补偿 + history 快照稳定，见
+    _feishu_stale_processing_recovered）时按非忙碌放行，证据不足一律
+    confirmed_busy（不得以 unconfirmable 绕过 waiting_for_idle 门禁）。
     """
     reasons: list[str] = []
     unconfirmable: list[str] = []
@@ -3663,11 +3894,32 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
             unconfirmable.append(f"feishu heartbeat 不可解析: {type(exc).__name__}")
         if isinstance(heartbeat, dict):
             processing = str(heartbeat.get("processing_msg_id") or "")
-            queue_depth = int(heartbeat.get("queue_depth") or 0)
-            if processing or queue_depth > 0:
+            queue_depth = _queue_depth_or_invalid(heartbeat.get("queue_depth"))
+            if queue_depth is None:
+                # M2-2 P1-A fail-closed：queue_depth 缺失/None/字符串/float/bool/
+                # 负数/非数 = 心跳写坏 → 一律 confirmed_busy，不得静默归零、不抛异常
                 reasons.append(
-                    f"feishu busy: processing={processing!r} queue_depth={queue_depth}"
+                    "feishu busy: queue_depth="
+                    f"{heartbeat.get('queue_depth')!r} 无效（须显式 int>=0）"
                 )
+            elif processing or queue_depth > 0:
+                reason = f"feishu busy: processing={processing!r} queue_depth={queue_depth}"
+                if processing and queue_depth == 0:
+                    recovered, tag = _feishu_stale_processing_recovered(
+                        heartbeat, runtime_root=runtime_root
+                    )
+                    if recovered:
+                        logger.info(
+                            "feishu stale-processing 按持久补偿证据放行（假忙解除）:"
+                            " pid=%s msg_id=%s",
+                            heartbeat.get("pid"),
+                            processing,
+                        )
+                        reason = ""
+                    else:
+                        reason += f"（stale-processing 证据不足: {tag}）"
+                if reason:
+                    reasons.append(reason)
     if target in {"wecom", "all"}:
         # 判定口径与 feishu 分支对齐：wecom 心跳由桥的独立心跳线程写
         # （data/wecom_heartbeat.json），字段 processing_msg_id/queue_depth
