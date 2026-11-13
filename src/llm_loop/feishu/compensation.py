@@ -13,13 +13,34 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from llm_loop.runtime.feishu_compensation_reader import (
+    CRASH,
+    INTERRUPT_CAUSES,
+    REPLY_TYPES,
+    legacy_interrupted_path,
+    read_compensation_records,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    DRAIN_TIMEOUT as DRAIN_TIMEOUT,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    PROCESS_TIMEOUT as PROCESS_TIMEOUT,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    QUEUE_FULL as QUEUE_FULL,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    WATCHDOG_EXIT as WATCHDOG_EXIT,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    compensation_path as compensation_path,
+)
 from llm_loop.runtime.resolver import business_config_snapshot
 from llm_loop.timekeeping import system_local_now
 
@@ -27,56 +48,18 @@ logger = logging.getLogger(__name__)
 
 _COMPENSATION_CONFIG = business_config_snapshot("feishu_compensation")
 
-# 结构化中断原因五类（FTR-DFX-08：禁止脆弱文本匹配分类）
-WATCHDOG_EXIT = "watchdog_exit"
-QUEUE_FULL = "queue_full"
-DRAIN_TIMEOUT = "drain_timeout"
-PROCESS_TIMEOUT = "process_timeout"
-CRASH = "crash"
+# 结构化中断原因五类与路径解析事实（FTR-DFX-08）的单一事实源已下沉 kernel 侧
+# llm_loop.runtime.feishu_compensation_reader（M2-2 runtime→feishu 架构边偿还：
+# service_control 不得函数内 import 本 capability 模块）；此处 re-export 保持
+# 既有公共 API（bridge/tests 引用）不变。InterruptCause 类型别名与 kernel 侧
+# 校验枚举语义一致。
 InterruptCause = Literal[
     "watchdog_exit", "queue_full", "drain_timeout", "process_timeout", "crash"
 ]
-INTERRUPT_CAUSES: tuple[str, ...] = (
-    WATCHDOG_EXIT,
-    QUEUE_FULL,
-    DRAIN_TIMEOUT,
-    PROCESS_TIMEOUT,
-    CRASH,
-)
 
-_REPLY_TYPES = frozenset({"chat_id", "open_id"})
-
-_COMPENSATION_PATH_ENV = "FEISHU_COMPENSATION_PATH"
-_DEFAULT_COMPENSATION_PATH = "data/feishu_compensation.jsonl"
-_LEGACY_INTERRUPTED_PATH_ENV = "FEISHU_INTERRUPTED_PATH"
-_DEFAULT_LEGACY_INTERRUPTED_PATH = "data/feishu_interrupted.json"
+_REPLY_TYPES = REPLY_TYPES
 
 _NOTIFY_TIMEOUT_S = float(_COMPENSATION_CONFIG.get("FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S", "1"))
-
-
-def compensation_path() -> str:
-    """补偿记录 JSONL 路径（默认 data/feishu_compensation.jsonl，可经 env 配置）."""
-    return os.environ.get(_COMPENSATION_PATH_ENV, "") or _DEFAULT_COMPENSATION_PATH
-
-
-def legacy_interrupted_path() -> str:
-    """旧单文件补偿路径（默认 data/feishu_interrupted.json，启动迁移数据源）."""
-    return os.environ.get(_LEGACY_INTERRUPTED_PATH_ENV, "") or _DEFAULT_LEGACY_INTERRUPTED_PATH
-
-
-def _resolve_runtime_path(configured: str, runtime_root: str | Path | None) -> Path | None:
-    """把 env 可配的（可能相对的）补偿路径解析为绝对 Path（M2-2）.
-
-    bridge 进程的 cwd 即 runtime_root，因此相对路径的运行时语义 = runtime_root
-    下解析；runtime_root 缺失时相对路径不可解析 → None（fail-closed，调用方按
-    证据不足处理）。绝对路径配置不受 runtime_root 影响。
-    """
-    path = Path(configured)
-    if path.is_absolute():
-        return path
-    if runtime_root is None:
-        return None
-    return Path(runtime_root) / path
 
 
 def read_only_compensation_records(
@@ -84,11 +67,13 @@ def read_only_compensation_records(
 ) -> list[InterruptionCompensationRecord] | None:
     """纯只读补偿记录读取（M2-2；供 service_control 空闲判定，零写副作用）.
 
-    与 ``CompensationStore.read_all`` 的关键差异：绝不调用 ``_ensure_migrated()``
-    （迁移会改写 JSONL 并删除 legacy 单文件——只读判定不得有写副作用，spec
-    M2-2 安全边界 4）；解析策略相反：单行损坏在 read_all 是跳过隔离，本函数
-    整体失败返回 None（fail-closed：无法排除目标 msg_id 恰在损坏行中，
-    “跳过”会把证据不足误判为无补偿）。
+    解析与校验事实在 kernel 侧 ``llm_loop.runtime.feishu_compensation_reader``
+    （M2-2 runtime→feishu 架构边偿还）；本层把 immutable DTO 包装为
+    InterruptionCompensationRecord，公共 API 与行为保持不变：绝不调用
+    ``_ensure_migrated()``（迁移会改写 JSONL 并删除 legacy 单文件——只读判定
+    不得有写副作用，spec M2-2 安全边界 4）；单行损坏整体失败返回 None
+    （fail-closed：无法排除目标 msg_id 恰在损坏行中，“跳过”会把证据不足
+    误判为无补偿）。
 
     Args:
         runtime_root: 桥运行根目录（相对路径解析基准，与 bridge cwd=runtime_root
@@ -98,77 +83,20 @@ def read_only_compensation_records(
         解析成功：记录列表（JSONL 与 legacy 均缺失/空 = []，不创建任何文件）；
         读取/解析失败：None（调用方必须按证据不足处理，不得视作“无补偿”）。
     """
-    records: list[InterruptionCompensationRecord] = []
-    jsonl = _resolve_runtime_path(compensation_path(), runtime_root)
-    if jsonl is None:
+    data = read_compensation_records(runtime_root)
+    if data is None:
         return None
-    try:
-        if jsonl.exists():
-            for line_no, raw in enumerate(jsonl.read_text(encoding="utf-8").splitlines(), 1):
-                line = raw.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
-                if not isinstance(data, dict):
-                    raise ValueError(f"补偿行非对象（{jsonl}:{line_no}）")
-                # M2-2 P1-B fail-closed：五个字段必须显式存在且为字符串——
-                # 缺失/非字符串一律整行无效（外层 fail-closed None → busy），
-                # 绝不默认补 chat_id/CRASH 制造"记录合法"的假象。取值合法性
-                # （reply_type/cause 枚举、msg_id↔cause 组合）交给 dataclass 校验。
-                # legacy 单文件兼容路径保留既有默认（历史格式无 cause，按 CRASH）。
-                for field_name in (
-                    "receive_id",
-                    "reply_type",
-                    "interrupt_cause",
-                    "interrupted_at",
-                    "msg_id",
-                ):
-                    value = data.get(field_name)
-                    if not isinstance(value, str):
-                        raise ValueError(
-                            f"字段缺失或非字符串: {field_name}={value!r}（{jsonl}:{line_no}）"
-                        )
-                if not data["interrupted_at"]:
-                    # 不允许记录构造器自动补时点（dataclass 空时点会填 now）：
-                    # 存储侧缺时点 = 记录无效（矩阵 D empty_ts 反例）
-                    raise ValueError(f"interrupted_at 为空（{jsonl}:{line_no}）")
-                context_ref_raw = data.get("context_ref")
-                records.append(
-                    InterruptionCompensationRecord(
-                        receive_id=data["receive_id"],
-                        reply_type=data["reply_type"],
-                        interrupt_cause=data["interrupt_cause"],
-                        interrupted_at=data["interrupted_at"],
-                        context_ref=(context_ref_raw if isinstance(context_ref_raw, str) else ""),
-                        msg_id=data["msg_id"],
-                    )
-                )
-    except (OSError, ValueError) as exc:  # JSONDecodeError ⊂ ValueError，整体 fail-closed
-        logger.warning("补偿 JSONL 只读解析失败（fail-closed，按证据不足处理）: %s", exc)
-        return None
-    legacy = _resolve_runtime_path(legacy_interrupted_path(), runtime_root)
-    if legacy is None:
-        return None
-    try:
-        if legacy.exists():
-            data = json.loads(legacy.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError(f"legacy 补偿非对象: {legacy}")
-            if not str(data.get("interrupted_at", "")):
-                raise ValueError(f"legacy interrupted_at 缺失: {legacy}")
-            records.append(
-                InterruptionCompensationRecord(
-                    receive_id=str(data.get("reply_id", "")),
-                    reply_type=str(data.get("reply_type", "chat_id") or "chat_id"),
-                    interrupt_cause=CRASH,
-                    interrupted_at=str(data.get("interrupted_at", "")),
-                    msg_id=str(data.get("msg_id", "")),
-                )
-            )
-    except (OSError, ValueError) as exc:
-        logger.warning("legacy 补偿只读解析失败（fail-closed，按证据不足处理）: %s", exc)
-        return None
-    return records
+    return [
+        InterruptionCompensationRecord(
+            receive_id=item.receive_id,
+            reply_type=item.reply_type,
+            interrupt_cause=item.interrupt_cause,
+            interrupted_at=item.interrupted_at,
+            context_ref=item.context_ref,
+            msg_id=item.msg_id,
+        )
+        for item in data
+    ]
 
 
 def _now_iso() -> str:

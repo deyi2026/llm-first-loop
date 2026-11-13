@@ -49,6 +49,7 @@ from llm_loop.runtime.admission_barrier import (
     AdmissionBarrierRegistry,
     BarrierConflictError,
 )
+from llm_loop.runtime.feishu_compensation_reader import read_compensation_records
 from llm_loop.runtime.learning_idle import learning_busy_reason
 from llm_loop.runtime.package_identity import installed_identity
 from llm_loop.runtime.service_control_derivation import (
@@ -3831,11 +3832,10 @@ def _feishu_stale_processing_recovered(
     if last_message_ts > processing_since + _FEISHU_CLOCK_TOLERANCE_S:
         return False, "subsequent_message"
 
-    # (5) 同一精确 msg_id 的持久补偿（纯只读；延迟导入：
-    #     llm_loop.feishu.__init__ → factory → 本模块，顶层导入成环）
-    from llm_loop.feishu.compensation import read_only_compensation_records
-
-    records = read_only_compensation_records(runtime_root)
+    # (5) 同一精确 msg_id 的持久补偿（纯只读；M2-2 架构边偿还：解析事实在
+    #     kernel 侧 llm_loop.runtime.feishu_compensation_reader，capability 层
+    #     llm_loop.feishu.compensation 包装为原 dataclass）
+    records = read_compensation_records(runtime_root)
     if records is None:
         return False, "compensation_unreadable"
     processing = str(heartbeat.get("processing_msg_id") or "")
