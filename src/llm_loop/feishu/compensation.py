@@ -111,17 +111,36 @@ def read_only_compensation_records(
                 data = json.loads(line)
                 if not isinstance(data, dict):
                     raise ValueError(f"补偿行非对象（{jsonl}:{line_no}）")
-                if not str(data.get("interrupted_at", "")):
-                    # 不允许记录构造器自动补时点：存储侧缺时点 = 记录无效
-                    raise ValueError(f"interrupted_at 缺失（{jsonl}:{line_no}）")
+                # M2-2 P1-B fail-closed：五个字段必须显式存在且为字符串——
+                # 缺失/非字符串一律整行无效（外层 fail-closed None → busy），
+                # 绝不默认补 chat_id/CRASH 制造"记录合法"的假象。取值合法性
+                # （reply_type/cause 枚举、msg_id↔cause 组合）交给 dataclass 校验。
+                # legacy 单文件兼容路径保留既有默认（历史格式无 cause，按 CRASH）。
+                for field_name in (
+                    "receive_id",
+                    "reply_type",
+                    "interrupt_cause",
+                    "interrupted_at",
+                    "msg_id",
+                ):
+                    value = data.get(field_name)
+                    if not isinstance(value, str):
+                        raise ValueError(
+                            f"字段缺失或非字符串: {field_name}={value!r}（{jsonl}:{line_no}）"
+                        )
+                if not data["interrupted_at"]:
+                    # 不允许记录构造器自动补时点（dataclass 空时点会填 now）：
+                    # 存储侧缺时点 = 记录无效（矩阵 D empty_ts 反例）
+                    raise ValueError(f"interrupted_at 为空（{jsonl}:{line_no}）")
+                context_ref_raw = data.get("context_ref")
                 records.append(
                     InterruptionCompensationRecord(
-                        receive_id=str(data.get("receive_id", "")),
-                        reply_type=str(data.get("reply_type", "chat_id")),
-                        interrupt_cause=str(data.get("interrupt_cause", CRASH)),
-                        interrupted_at=str(data.get("interrupted_at", "")),
-                        context_ref=str(data.get("context_ref", "")),
-                        msg_id=str(data.get("msg_id", "")),
+                        receive_id=data["receive_id"],
+                        reply_type=data["reply_type"],
+                        interrupt_cause=data["interrupt_cause"],
+                        interrupted_at=data["interrupted_at"],
+                        context_ref=(context_ref_raw if isinstance(context_ref_raw, str) else ""),
+                        msg_id=data["msg_id"],
                     )
                 )
     except (OSError, ValueError) as exc:  # JSONDecodeError ⊂ ValueError，整体 fail-closed

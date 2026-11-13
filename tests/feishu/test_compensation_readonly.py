@@ -195,3 +195,94 @@ def test_fail_closed_on_legacy_missing_interrupted_at(tmp_path: Path) -> None:
     legacy = tmp_path / "data" / "feishu_interrupted.json"
     legacy.write_text(json.dumps(bad_legacy), encoding="utf-8")
     assert read_only_compensation_records(tmp_path) is None
+
+
+# --- M2-2 复检 P1-B：JSONL 必填字段显式存在且为字符串，缺失不得默认补全 ---------
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "receive_id",
+        "reply_type",
+        "interrupt_cause",
+        "interrupted_at",
+        "msg_id",
+    ],
+)
+def test_fail_closed_on_missing_required_field(tmp_path: Path, missing_field: str) -> None:
+    """M2-2 P1-B：五个必填字段任一缺失（不得默认 chat_id/CRASH/空串）→ 整体 None."""
+    records = [dict(GOOD_RECORDS[0])]
+    records[0].pop(missing_field)
+    _write_jsonl(tmp_path / "data" / "feishu_compensation.jsonl", records)
+    assert read_only_compensation_records(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [("reply_type", 123), ("interrupt_cause", None), ("msg_id", 456), ("receive_id", [])],
+    ids=["reply-type-int", "cause-null", "msg-id-int", "receive-id-list"],
+)
+def test_fail_closed_on_non_string_required_field(
+    tmp_path: Path, field: str, bad_value: object
+) -> None:
+    """必填字段非字符串类型 → 整体 None（fail-closed）."""
+    records: list[dict[str, object]] = [dict(GOOD_RECORDS[0])]
+    records[0][field] = bad_value
+    _write_jsonl(tmp_path / "data" / "feishu_compensation.jsonl", records)
+    assert read_only_compensation_records(tmp_path) is None
+
+
+def test_fail_closed_on_empty_interrupted_at(tmp_path: Path) -> None:
+    """interrupted_at 显式空串 → None（构造器会自动补 now，读侧必须拒绝）."""
+    records = [dict(GOOD_RECORDS[0], interrupted_at="")]
+    _write_jsonl(tmp_path / "data" / "feishu_compensation.jsonl", records)
+    assert read_only_compensation_records(tmp_path) is None
+
+
+def test_msg_id_empty_string_allowed_for_crash(tmp_path: Path) -> None:
+    """msg_id 可为空字符串（dataclass 语义：无 msg_id 打断必须是 CRASH）."""
+    records = [dict(GOOD_RECORDS[0], msg_id="")]
+    _write_jsonl(tmp_path / "data" / "feishu_compensation.jsonl", records)
+    parsed = read_only_compensation_records(tmp_path)
+    assert parsed is not None
+    assert parsed[0].msg_id == ""
+
+
+def test_context_ref_optional_and_non_string_coerced(tmp_path: Path) -> None:
+    """context_ref 可选：缺失/非字符串都按缺省处理，不影响记录有效性."""
+    no_ctx = [dict(GOOD_RECORDS[0])]
+    no_ctx[0].pop("context_ref")
+    null_ctx = [dict(GOOD_RECORDS[0], context_ref=None)]
+    for records in (no_ctx, null_ctx):
+        _write_jsonl(tmp_path / "data" / "feishu_compensation.jsonl", records)
+        parsed = read_only_compensation_records(tmp_path)
+        assert parsed is not None
+        assert parsed[0].context_ref == ""
+
+
+def test_writer_reader_roundtrip(tmp_path: Path) -> None:
+    """写侧 to_dict() 全字段输出必须能被严格读侧读回（写读契约一致）."""
+    from llm_loop.feishu.compensation import (
+        CRASH,
+        CompensationStore,
+        InterruptionCompensationRecord,
+        _now_iso,
+    )
+
+    record = InterruptionCompensationRecord(
+        receive_id="oc_roundtrip",
+        reply_type="chat_id",
+        interrupt_cause=CRASH,
+        interrupted_at=_now_iso(),
+        context_ref="ctx://v1/test",
+        msg_id="om_roundtrip",
+    )
+    jsonl = tmp_path / "data" / "feishu_compensation.jsonl"
+    jsonl.parent.mkdir(parents=True, exist_ok=True)
+    store = CompensationStore(jsonl, legacy_path=tmp_path / "data" / "feishu_interrupted.json")
+    store.append(record)
+    parsed = read_only_compensation_records(tmp_path)
+    assert parsed is not None
+    assert len(parsed) == 1
+    assert parsed[0] == record

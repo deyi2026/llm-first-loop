@@ -387,3 +387,297 @@ def test_wecom_busy_branch_untouched(tmp_path: Path) -> None:
     assert state == "confirmed_busy"
     assert "wecom busy" in detail
     assert "feishu busy" not in detail  # feishu 已按证据链放行，wecom 仍独立判定
+
+
+# --- M2-2 复检 P1-A：父侧真实反例——queue_depth 缺失不得静默归零 -----------------
+
+
+def test_regression_parent_case_a_missing_queue_depth_stays_busy(tmp_path: Path) -> None:
+    """父侧反例 A：主心跳+history 3 行全部缺 queue_depth，其余证据链齐全.
+
+    旧行为 ``int(None or 0)`` 静默归零 → confirmed_idle（假忙解除误放行）。
+    """
+    heartbeat = _write_stale_world(tmp_path, pid=_dead_pid())
+    hb_path = tmp_path / "data" / "feishu_heartbeat.json"
+    hb = json.loads(hb_path.read_text(encoding="utf-8"))
+    hb.pop("queue_depth")
+    hb_path.write_text(json.dumps(hb), encoding="utf-8")
+    hist_path = tmp_path / "data" / "feishu_heartbeat_history.jsonl"
+    rows = [json.loads(x) for x in hist_path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    for row in rows:
+        row.pop("queue_depth", None)
+    hist_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "queue_depth" in detail
+    # 反例 A 的完整特征仍在场：processing 冻结 + 死 PID + 补偿齐全——但 queue_depth
+    # 无效必须无条件 busy，不进入 stale 恢复证据链
+    assert heartbeat["processing_msg_id"] == MSG_ID
+
+
+def _valid_comp_record() -> dict:
+    """与 _write_stale_world 默认补偿同构的合法记录（供逐字段剔除变体）."""
+    return {
+        "receive_id": "oc_matrix",
+        "reply_type": "chat_id",
+        "interrupt_cause": "crash",
+        "interrupted_at": _iso_local(time.time() + 1.0),
+        "context_ref": "",
+        "msg_id": MSG_ID,
+    }
+
+
+_NO_COMP_DETAIL = "compensation_unreadable"  # JSONL 整体解析失败 → 证据不足标签
+
+
+def _no_comp_detail() -> str:
+    return _NO_COMP_DETAIL
+
+
+@pytest.mark.parametrize(
+    "bad_queue_depth",
+    [None, "", "0", "5", True, False, -1, -0.5, 1.5, 0.0, [], {}],
+    ids=[
+        "none",
+        "empty-str",
+        "str0",
+        "str5",
+        "true",
+        "false",
+        "neg-int",
+        "neg-float",
+        "float",
+        "float-zero",
+        "list",
+        "dict",
+    ],
+)
+def test_top_queue_depth_invalid_values_fail_closed(tmp_path: Path, bad_queue_depth) -> None:
+    """顶层 queue_depth 缺失/None/空串/字符串/float/bool/负数/非数 → busy 且不抛异常."""
+    _write_stale_world(tmp_path, pid=_dead_pid(), hb_overrides={"queue_depth": bad_queue_depth})
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "queue_depth" in detail
+    assert "无效" in detail
+
+
+def test_top_queue_depth_invalid_even_when_idle_processing(
+    tmp_path: Path,
+) -> None:
+    """processing 已空但 queue_depth 无效：仍必须 busy（写坏的心跳 ≠ 空闲证据）."""
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        hb_overrides={"queue_depth": None, "processing_msg_id": ""},
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "queue_depth" in detail
+
+
+def test_wecom_loose_queue_depth_semantics_untouched(tmp_path: Path) -> None:
+    """边界对照：WeCom 分支保持既有宽松语义（缺 queue_depth → 0，不判忙）."""
+    _write_stale_world(tmp_path, pid=_dead_pid())
+    (tmp_path / "data" / "wecom_heartbeat.json").write_text(
+        json.dumps({"processing_msg_id": ""}), encoding="utf-8"
+    )
+    state, detail = _state(tmp_path, target="wecom")
+    assert state == "confirmed_idle"
+    assert "wecom busy" not in detail
+
+
+# --- M2-2 复检 P1-B：父侧真实反例——JSONL 补偿缺字段不得默认补全 ---------------
+
+
+def test_regression_parent_case_b_jsonl_minimal_fields_stays_busy(
+    tmp_path: Path,
+) -> None:
+    """父侧反例 B：补偿行只有 receive_id/msg_id/interrupted_at → 必须 busy.
+
+    旧行为默认补 chat_id/CRASH → 记录"合法" → 假忙解除误放行。
+    """
+    now = time.time()
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        comp_lines=[
+            json.dumps(
+                {
+                    "receive_id": "oc_matrix",
+                    "msg_id": MSG_ID,
+                    "interrupted_at": _iso_local(now + 1.0),
+                }
+            )
+        ],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "compensation_unreadable" in detail
+
+
+def test_jsonl_missing_reply_type_stays_busy(tmp_path: Path) -> None:
+    record = _valid_comp_record()
+    record.pop("reply_type")
+    _write_stale_world(tmp_path, pid=_dead_pid(), comp_lines=[json.dumps(record)])
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert _no_comp_detail() in detail
+
+
+def test_jsonl_missing_interrupt_cause_stays_busy(tmp_path: Path) -> None:
+    record = _valid_comp_record()
+    record.pop("interrupt_cause")
+    _write_stale_world(tmp_path, pid=_dead_pid(), comp_lines=[json.dumps(record)])
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert _no_comp_detail() in detail
+
+
+def test_jsonl_missing_both_stays_busy(tmp_path: Path) -> None:
+    record = _valid_comp_record()
+    record.pop("reply_type")
+    record.pop("interrupt_cause")
+    _write_stale_world(tmp_path, pid=_dead_pid(), comp_lines=[json.dumps(record)])
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert _no_comp_detail() in detail
+
+
+# --- M2-2 复检：NaN/±Inf 时戳不得绕过 stale/fresh 比较 --------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_field",
+    ["ts", "processing_since", "last_message_ts"],
+    ids=["hb-ts", "processing-since", "last-message-ts"],
+)
+def test_nonfinite_timestamps_stay_busy(tmp_path: Path, bad_field: str) -> None:
+    """NaN 绕过全部数值比较（NaN>x / NaN<=0 / now-NaN<stale 全 False）→ 必须 busy."""
+    for bad_value in (float("nan"), float("inf"), float("-inf")):
+        world = tmp_path / f"case-{bad_field}-{bad_value!r}"
+        _write_stale_world(world, pid=_dead_pid(), hb_overrides={bad_field: bad_value})
+        state, _ = _state(world)
+        assert state == "confirmed_busy", f"{bad_field}={bad_value!r}"
+
+
+def test_history_nonfinite_ts_stays_busy(tmp_path: Path) -> None:
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        history_overrides=[{"ts": float("nan")}, {}, {}],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_ts_invalid" in detail
+
+
+# --- M2-2 复检：history 快照 ts 链与字段一致性加强 ------------------------------
+
+
+def test_history_missing_queue_depth_stays_busy(tmp_path: Path) -> None:
+    """history 行缺 queue_depth：不得 int(None or 0) 归零后放行."""
+    _write_stale_world(tmp_path, pid=_dead_pid())
+    hist_path = tmp_path / "data" / "feishu_heartbeat_history.jsonl"
+    rows = [json.loads(x) for x in hist_path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    rows[0].pop("queue_depth", None)
+    hist_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_queue_depth_invalid" in detail
+
+
+@pytest.mark.parametrize(
+    "history_overrides,expected_tag",
+    [
+        ([{"ts": None}], "history_ts_invalid"),
+        ([{"ts": -1.0}], "history_ts_invalid"),
+    ],
+    ids=["ts-null", "ts-negative"],
+)
+def test_history_row_ts_invalid_stays_busy(
+    tmp_path: Path, history_overrides: list[dict], expected_tag: str
+) -> None:
+    _write_stale_world(tmp_path, pid=_dead_pid(), history_overrides=history_overrides)
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert expected_tag in detail
+
+
+def test_history_duplicate_ts_stays_busy(tmp_path: Path) -> None:
+    """相邻两行 ts 相同 → 非严格递增 → 快照链不可信."""
+    heartbeat = _write_stale_world(tmp_path, pid=_dead_pid())
+    hb_ts = heartbeat["ts"]
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        history_overrides=[{"ts": hb_ts - 30.0}, {"ts": hb_ts - 30.0}, {}],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_ts_not_monotonic" in detail
+
+
+def test_history_non_monotonic_ts_stays_busy(tmp_path: Path) -> None:
+    heartbeat = _write_stale_world(tmp_path, pid=_dead_pid())
+    hb_ts = heartbeat["ts"]
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        history_overrides=[{"ts": hb_ts}, {}, {}],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_ts_not_monotonic" in detail
+
+
+def test_history_gap_too_large_stays_busy(tmp_path: Path) -> None:
+    """相邻间隔超过 2×watchdog 周期+容差（65s）→ 快照链断裂（挂钟暂停等）."""
+    heartbeat = _write_stale_world(tmp_path, pid=_dead_pid())
+    hb_ts = heartbeat["ts"]
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        history_overrides=[{"ts": hb_ts - 30.0 - 200.0}, {}, {}],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_gap_too_large" in detail
+
+
+def test_history_latest_ts_mismatch_stays_busy(tmp_path: Path) -> None:
+    """最新行 ts 与主心跳 ts 不精确一致 → 主文件与 history 非同 tick 写出."""
+    heartbeat = _write_stale_world(tmp_path, pid=_dead_pid())
+    hb_ts = heartbeat["ts"]
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        history_overrides=[{}, {}, {"ts": hb_ts - 29.5}],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_latest_mismatch" in detail
+
+
+def test_history_processing_since_mismatch_stays_busy(tmp_path: Path) -> None:
+    heartbeat = _write_stale_world(tmp_path, pid=_dead_pid())
+    _write_stale_world(
+        tmp_path,
+        pid=_dead_pid(),
+        history_overrides=[{}, {}, {"processing_since": heartbeat["processing_since"] + 1.0}],
+    )
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_state_changed" in detail
+
+
+def test_history_missing_ts_row_stays_busy(tmp_path: Path) -> None:
+    """history 行完全缺 ts 字段 → ts 链不完整 → busy."""
+    _write_stale_world(tmp_path, pid=_dead_pid())
+    hist_path = tmp_path / "data" / "feishu_heartbeat_history.jsonl"
+    rows = [json.loads(x) for x in hist_path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    rows[1].pop("ts", None)
+    hist_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    state, detail = _state(tmp_path)
+    assert state == "confirmed_busy"
+    assert "history_ts_invalid" in detail
