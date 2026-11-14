@@ -33,3 +33,15 @@ M4-C 在隔离 Web Host 真实执行一次 GLM-5.3 T1 Run：read_file 和 edit_f
 ## 非目标与剩余 HOLD
 
 不自动续跑旧 Run；不回收 UNKNOWN 的 Provider 账单；不以新 root 绕过旧 root 的未决债务；不推断外部 Provider 已终止；不自动写文件；不将“操作员预检通过”当作“生产级自动崩溃恢复”。需要更强的跨进程隔离或实际恢复执行时，先做独立设计审查再另行授权。
+
+
+## 首轮独立审查与补修（同一候选族）
+
+独立 GLM-5.3 Reviewer 对冻结 SHA `e83716cd1bb490757dbe691ade5db17f954eba29` 返回 completed/REVISE/P0=0/P1=2/P2=5。P1-1：未知 provider/tool/run 事件被忽略，错误地允许失败/中断证据下 PASS；P1-2：EventStore 与 TaskBudgetStore 仅按计数对账，无法识别已结算回执错配。修复后：
+
+- 显式列举本门禁允许的 provider/tool/run/llm 事件，未知事件及中断事件一律 HOLD；provider.call 与 provider.transport 都要求已结算、成功并配对。
+- 真实 Provider 预算 `webt1ev:<settled_event_id>:<digest16>` 与唯一的 EventStore settled event_id 逐笔绑定；Tool 预算 `dispatch-receipt-<reservation_id>` 及 tool_id 与唯一 read_file/edit_file 的 finished/committed 事实、result_state_sha256、status=success 对账。现有 EventStore 未记录 Tool reservation_id 与 execution_id 的直接交叉键，因此不伪造不存在的映射；正向门槛限制恰好一读一写、各一次。
+- 事件、账本、目标文件在发出 PASS 前二次核验；EventStore 目录缺失即 HOLD，不新建；目标超过现有 T1 2MiB 限额即 HOLD。
+- 以真实 EventStore/TaskBudgetStore API 合成 37 项正负/竞态测试，扩展回归 159 项 PASS；真实 M4-C 残留 dispatched Provider 仍 HOLD，源证据字节不变。
+
+以上为只读操作员预检，不修改运行时授权边界。即使 PRE-FLIGHT PASS，也不能称为物理静默证明或已完成自动续跑；必须另由操作员创建新 Session、新 authorization_id，并通过原 T1 受控入口执行。独立复审与完整 R9 仍为后续门禁。

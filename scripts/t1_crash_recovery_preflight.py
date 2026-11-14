@@ -15,6 +15,7 @@ import os
 import re
 import stat
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ):
         ap.add_argument(name, required=True)
     ap.add_argument("--old-host-stopped-attested", action="store_true")
-    ap.add_argument("--json", action="store_true", help="Output JSON (the only supported output)")
+    ap.add_argument("--json", action="store_true", required=True, help="Required: one-line JSON output")
     return ap.parse_args(argv)
 
 
@@ -91,6 +92,8 @@ def _validate_target(a: argparse.Namespace) -> tuple[Path, Path, str]:
             _hold("target_symlink_component")
         if not stat.S_ISREG(os.lstat(target).st_mode):
             _hold("target_not_regular_file")
+        if target.stat().st_size > 2 * 1024 * 1024:
+            _hold("target_exceeds_t1_size_limit")
         if not target.is_relative_to(root):
             _hold("target_outside_workspace")
         # No path walk through a symlink, including an intermediate directory.
@@ -153,31 +156,62 @@ def _budget_checks(a: argparse.Namespace, root: Path) -> tuple[TaskBudgetStore, 
     return store, budget, report
 
 
-def _event_checks(a: argparse.Namespace, root: Path, target: Path, budget: dict[str, Any]) -> dict[str, int]:
+def _event_checks(
+    a: argparse.Namespace, root: Path, target: Path, budget: dict[str, Any],
+) -> tuple[dict[str, int], list[tuple[str, int, str, dict[str, Any]]]]:
+    event_dir = Path(a.data_dir) / "event_logs"
+    if not event_dir.is_dir():
+        _hold("source_event_store_missing")
     try:
-        events = EventStore(Path(a.data_dir) / "event_logs", enabled=True).read(a.source_session_id)
+        events = EventStore(event_dir, enabled=True).read(a.source_session_id)
     except Exception:
         _hold("source_event_store_unavailable")
     if not events:
         _hold("source_event_log_missing")
+    # Never ignore an unrecognized provider/tool/run event that may represent
+    # a failed, cancelled or still-running physical action.
+    allowed = {
+        "provider.call.opened", "provider.call.settled",
+        "provider.transport.opened", "provider.transport.settled",
+        "provider.structure.validated",
+        "tool.execution.declared", "tool.execution.started",
+        "tool.execution.finished", "tool.execution.receipt_committed",
+        "tool.execution.effect_prepared", "tool.execution.effect_observed",
+        "llm.partial_checkpoint",
+    }
     calls: dict[str, str] = {}
-    opened: dict[str, dict[str, Any]] = {}
-    settled: dict[str, dict[str, Any]] = {}
-    started: dict[str, dict[str, Any]] = {}
-    committed: dict[str, dict[str, Any]] = {}
-    prepared: dict[str, dict[str, Any]] = {}
+    call_settled: dict[str, dict[str, Any]] = {}
+    opened: dict[str, Any] = {}
+    settled: dict[str, Any] = {}
+    tool_facts: dict[str, dict[str, dict[str, Any]]] = {
+        name: {} for name in (
+            "tool.execution.declared", "tool.execution.started",
+            "tool.execution.finished", "tool.execution.receipt_committed",
+            "tool.execution.effect_prepared",
+        )
+    }
     effects: list[dict[str, Any]] = []
     for event in events:
         kind = event.type
         payload = event.payload if isinstance(event.payload, dict) else {}
         if kind == "run.end":
             _hold("source_run_already_ended")
-        if kind == "provider.call.opened":
+        if kind.startswith(("provider.", "tool.", "run.", "llm.")) and kind not in allowed:
+            _hold("unknown_evidence_event_kind")
+        if kind == "provider.structure.validated":
+            if payload.get("valid") is not True:
+                _hold("provider_structure_invalid")
+        elif kind == "provider.call.opened":
             call_id = payload.get("call_id")
             generation = payload.get("origin_run_generation")
             if not call_id or call_id in calls or generation != a.source_run_generation:
                 _hold("provider_call_generation_or_identity_mismatch")
             calls[call_id] = generation
+        elif kind == "provider.call.settled":
+            call_id = payload.get("call_id")
+            if not call_id or call_id in call_settled or payload.get("outcome") != "success":
+                _hold("provider_call_not_successfully_settled")
+            call_settled[call_id] = payload
         elif kind in {"provider.transport.opened", "provider.transport.settled"}:
             attempt_id = payload.get("attempt_id")
             if (
@@ -189,11 +223,8 @@ def _event_checks(a: argparse.Namespace, root: Path, target: Path, budget: dict[
             table = opened if kind.endswith("opened") else settled
             if attempt_id in table:
                 _hold("duplicate_provider_transport_attempt")
-            table[attempt_id] = payload
-        elif kind in {
-            "tool.execution.started", "tool.execution.receipt_committed",
-            "tool.execution.effect_prepared", "tool.execution.effect_observed",
-        }:
+            table[attempt_id] = event
+        elif kind.startswith("tool.execution."):
             execution_id = payload.get("execution_id")
             if (
                 not isinstance(execution_id, str) or not execution_id
@@ -204,18 +235,24 @@ def _event_checks(a: argparse.Namespace, root: Path, target: Path, budget: dict[
             if kind == "tool.execution.effect_observed":
                 effects.append(payload)
                 continue
-            table = {
-                "tool.execution.started": started,
-                "tool.execution.receipt_committed": committed,
-                "tool.execution.effect_prepared": prepared,
-            }[kind]
+            table = tool_facts[kind]
             if execution_id in table:
                 _hold("duplicate_tool_execution_fact")
             table[execution_id] = payload
+            if kind == "tool.execution.finished" and payload.get("status") != "success":
+                _hold("tool_execution_finished_not_success")
+            if kind == "tool.execution.receipt_committed" and payload.get("outcome") not in (None, "success"):
+                _hold("tool_receipt_outcome_mismatch")
     if not opened or set(opened) != set(settled):
         _hold("provider_transport_unsettled_or_missing")
-    for attempt_id, opened_fact in opened.items():
-        settled_fact = settled[attempt_id]
+    if set(calls) != set(call_settled):
+        _hold("provider_call_unsettled_or_missing")
+    if set(calls) != {e.payload.get("call_id") for e in opened.values()}:
+        _hold("provider_call_without_transport")
+    for attempt_id, opened_event in opened.items():
+        opened_fact = opened_event.payload
+        settled_event = settled[attempt_id]
+        settled_fact = settled_event.payload
         call_id = opened_fact.get("call_id")
         if (
             call_id not in calls or settled_fact.get("call_id") != call_id
@@ -224,14 +261,27 @@ def _event_checks(a: argparse.Namespace, root: Path, target: Path, budget: dict[
             or settled_fact.get("usage_observations") != 1
         ):
             _hold("provider_transport_unqualified_settlement")
-    if not started or set(started) != set(committed):
+    declared = tool_facts["tool.execution.declared"]
+    started = tool_facts["tool.execution.started"]
+    finished = tool_facts["tool.execution.finished"]
+    committed = tool_facts["tool.execution.receipt_committed"]
+    prepared = tool_facts["tool.execution.effect_prepared"]
+    if not started or set(started) != set(finished) or set(started) != set(committed):
         _hold("tool_execution_uncommitted")
-    if (
-        sum(x["tool_name"] == "read_file" for x in started.values()) != 1
-        or sum(x["tool_name"] == "edit_file" for x in started.values()) != 1
-    ):
+    if declared and set(declared) != set(started):
+        _hold("tool_execution_declared_not_started")
+    for execution_id, item in started.items():
+        if (
+            item["tool_name"] != finished[execution_id]["tool_name"]
+            or item["tool_name"] != committed[execution_id]["tool_name"]
+            or not _HEX64.fullmatch(str(finished[execution_id].get("result_state_sha256") or ""))
+            or finished[execution_id].get("result_state_sha256")
+            != committed[execution_id].get("result_state_sha256")
+        ):
+            _hold("tool_receipt_finished_mismatch")
+    if Counter(x["tool_name"] for x in started.values()) != Counter({"read_file": 1, "edit_file": 1}):
         _hold("source_tool_sequence_not_one_read_one_edit")
-    if len(effects) != 1:
+    if len(effects) != 1 or len(prepared) != 1:
         _hold("source_edit_effect_count_mismatch")
     effect = effects[0]
     execution_id = effect["execution_id"]
@@ -250,25 +300,53 @@ def _event_checks(a: argparse.Namespace, root: Path, target: Path, budget: dict[
         or effect.get("matches_expected") is not True
     ):
         _hold("source_edit_effect_not_durably_verified")
-    rows = tuple(budget["reservations"].values())
-    if (
-        sum(x["kind"] == "physical_attempts" and x["phase"] == "settled" for x in rows) != len(opened)
-        or sum(x["kind"] == "tool_invocations" and x["phase"] == "settled" for x in rows) != len(committed)
-    ):
+    rows = tuple(budget["reservations"].items())
+    provider_rows = [x for _, x in rows if x["kind"] == "physical_attempts" and x["phase"] == "settled"]
+    tool_rows = [(rid, x) for rid, x in rows if x["kind"] == "tool_invocations" and x["phase"] == "settled"]
+    if len(provider_rows) != len(opened) or len(tool_rows) != len(committed):
         _hold("source_event_budget_count_mismatch")
-    return {"provider_attempts": len(opened), "tool_receipts": len(committed), "observed_edits": 1}
+    # Real T1 provider settlement receipt encodes the exact EventStore
+    # provider.transport.settled event_id. A count-only join is not enough.
+    event_ids = {e.event_id for e in settled.values()}
+    bound_ids: list[str] = []
+    for row in provider_rows:
+        parts = str(row["receipt_ref"]).split(":")
+        if len(parts) != 3 or parts[0] != "webt1ev" or len(parts[2]) != 16:
+            _hold("provider_budget_receipt_not_bound")
+        bound_ids.append(parts[1])
+    if set(bound_ids) != event_ids or len(set(bound_ids)) != len(bound_ids):
+        _hold("provider_budget_event_identity_mismatch")
+    if (
+        Counter(x["tool_id"] for _, x in tool_rows)
+        != Counter(x["tool_name"] for x in committed.values())
+        or any(x["receipt_ref"] != f"dispatch-receipt-{rid}" for rid, x in tool_rows)
+    ):
+        _hold("tool_budget_receipt_identity_mismatch")
+    signature = [(e.event_id, e.seq, e.type, e.payload) for e in events]
+    return {
+        "provider_attempts": len(opened),
+        "tool_receipts": len(committed),
+        "observed_edits": 1,
+    }, signature
 
 
 def evaluate(a: argparse.Namespace) -> dict[str, Any]:
     _validate_args(a)
     root, target, sha = _validate_target(a)
     store, budget, _ = _budget_checks(a, root)
-    counts = _event_checks(a, root, target, budget)
+    counts, event_signature = _event_checks(a, root, target, budget)
     # No silent pass if the durable ledger changes while it is being examined.
     if store.read(budget["grant"]["budget_id"]) != budget:
         _hold("source_budget_changed_during_preflight")
     if hashlib.sha256(target.read_bytes()).hexdigest() != sha:
         _hold("target_changed_during_preflight")
+    event_dir = Path(a.data_dir) / "event_logs"
+    try:
+        reread = EventStore(event_dir, enabled=True).read(a.source_session_id)
+    except Exception:
+        _hold("source_events_changed_during_preflight")
+    if [(e.event_id, e.seq, e.type, e.payload) for e in reread] != event_signature:
+        _hold("source_events_changed_during_preflight")
     return {
         "status": "PREFLIGHT_PASS_OPERATOR_ACTION_REQUIRED",
         "eligible_for_new_authorization": True,
