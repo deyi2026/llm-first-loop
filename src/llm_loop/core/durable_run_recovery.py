@@ -91,6 +91,18 @@ def _strict_snapshot(store: EventStore, session_id: str) -> tuple[list[Event], s
     return events, digest.hexdigest()
 
 
+def _has_unattributed_pre_run_activity(events: list[Event]) -> bool:
+    """Only session creation and user ingress predate a zero-effect M5 Run."""
+    return any(
+        event.type != "session.created"
+        and not (
+            event.type == "message.appended"
+            and event.payload.get("role") == "user"
+        )
+        for event in events
+    )
+
+
 def assess_durable_run(
     *,
     event_store: EventStore,
@@ -144,7 +156,8 @@ def assess_durable_run(
         or member.get("run_generation") != run_generation
     ):
         return verdict(HOLD, "budget_identity_mismatch", **evidence)
-    if budget.get("phase") not in {"stop_requested", "closed_uncertain"}:
+    # A merely closed_uncertain budget cannot prove a clean zero-effect terminal.
+    if budget.get("phase") != "stop_requested":
         return verdict(HOLD, "budget_not_stopped", **evidence)
     if budget.get("reservations"):
         return verdict(HOLD, "external_budget_liability_or_history", **evidence)
@@ -161,6 +174,8 @@ def assess_durable_run(
     ):
         return verdict(HOLD, "durable_run_protocol_incomplete", **evidence)
     (opened_pos, opened), (fenced_pos, fenced), (terminal_pos, terminal) = run_events
+    if _has_unattributed_pre_run_activity(second[:opened_pos]):
+        return verdict(HOLD, "unattributed_pre_run_activity", **evidence)
     if not opened_pos < fenced_pos < terminal_pos:
         return verdict(HOLD, "durable_run_event_order_invalid", **evidence)
     for _, event in run_events:

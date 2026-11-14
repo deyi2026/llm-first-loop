@@ -247,9 +247,10 @@ def test_generation_mismatch_is_hold(tmp_path: Path) -> None:
 
 
 def test_budget_revision_drift_is_hold(tmp_path: Path) -> None:
-    events, budget, row = _complete_zero_effect_fixture(tmp_path)
-    row = budget.mark_settling(BID, expected_revision=row["revision"])
-    budget.close_uncertain(BID, expected_revision=row["revision"])
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    row = _stop(budget, row)
+    _terminal(events, row["revision"] - 1)
     assert _assess(events, budget).reason == "budget_revision_fence_mismatch"
 
 
@@ -437,3 +438,96 @@ def test_strict_writer_cross_process_monotonic_seq(tmp_path: Path) -> None:
     assert len(rows) == 2
     assert [event.seq for event in rows] == [1, 2]
     assert len({event.event_id for event in rows}) == 2
+
+
+def test_pre_open_provider_activity_is_hold_even_if_settled(tmp_path: Path) -> None:
+    events, budget, row = _fixture(tmp_path)
+    events.append(SID, "provider.call.opened", {
+        "call_id": "earlier-run", "origin_run_generation": "c" * 32,
+    })
+    events.append(SID, "provider.transport.settled", {
+        "call_id": "earlier-run", "attempt_id": "old-attempt",
+        "outcome": "success",
+    })
+    _open(events, row["revision"])
+    row = _stop(budget, row)
+    _terminal(events, row["revision"])
+    verdict = _assess(events, budget)
+    assert verdict.decision == HOLD
+    assert verdict.reason == "unattributed_pre_run_activity"
+
+
+def test_pre_open_tool_effect_activity_is_hold(tmp_path: Path) -> None:
+    events, budget, row = _fixture(tmp_path)
+    events.append(SID, "tool.execution.effect_observed", {
+        "execution_id": "old-effect", "matches_expected": True,
+    })
+    _open(events, row["revision"])
+    row = _stop(budget, row)
+    _terminal(events, row["revision"], outcome="completed", end_id="bogus")
+    assert _assess(events, budget).reason == "unattributed_pre_run_activity"
+
+
+def test_pre_open_tool_receipt_message_is_hold(tmp_path: Path) -> None:
+    events, budget, row = _fixture(tmp_path)
+    events.append(SID, "message.appended", {
+        "role": "tool", "content": "old tool receipt",
+    })
+    _open(events, row["revision"])
+    row = _stop(budget, row)
+    _terminal(events, row["revision"])
+    assert _assess(events, budget).reason == "unattributed_pre_run_activity"
+
+
+def test_pre_open_session_created_and_user_ingress_are_allowed(tmp_path: Path) -> None:
+    events, budget, row = _fixture(tmp_path)
+    events.append(SID, "session.created", {"session_id": SID})
+    events.append(SID, "message.appended", {
+        "role": "user", "content": "synthetic no-effect turn",
+    })
+    _open(events, row["revision"])
+    row = _stop(budget, row)
+    _terminal(events, row["revision"])
+    assert _assess(events, budget).decision == REPLAN
+
+
+def test_closed_uncertain_even_without_reservations_is_hold(tmp_path: Path) -> None:
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    row = _stop(budget, row)
+    row = budget.mark_settling(BID, expected_revision=row["revision"])
+    row = budget.close_uncertain(BID, expected_revision=row["revision"])
+    assert row["reservations"] == {}
+    _terminal(events, row["revision"])
+    assert _assess(events, budget).reason == "budget_not_stopped"
+
+
+def test_mixed_legacy_and_strict_cross_process_append_share_seq_lock(
+    tmp_path: Path,
+) -> None:
+    events = EventStore(tmp_path / "events")
+    source_root = Path(__file__).resolve().parents[2] / "src"
+    env = {**os.environ, "PYTHONPATH": str(source_root)}
+    common = (
+        "from llm_loop.event_log.store import EventStore;"
+        f"s=EventStore({str(events._dir)!r});"
+    )
+    legacy = common + f"s.append({SID!r},'session.created',{{'source':'legacy'}})"
+    strict = (
+        common
+        + "from llm_loop.core.durable_run_recovery import OPENED,SCHEMA;"
+        + f"s.append_durable_run_fact({SID!r},OPENED,"
+        + f"{{'schema':SCHEMA,'run_generation':{GEN!r},"
+        + f"'authorization_id':{AUTH!r},'budget_id':{BID!r},"
+        + "'budget_revision':2})"
+    )
+    children = [
+        subprocess.Popen([sys.executable, "-c", script], env=env)
+        for script in (legacy, strict)
+    ]
+    assert all(child.wait(timeout=15) == 0 for child in children)
+    fresh = EventStore(events._dir)
+    rows = fresh.read(SID)
+    assert len(rows) == 2
+    assert [row.seq for row in rows] == [1, 2]
+    assert {row.type for row in rows} == {"session.created", OPENED}

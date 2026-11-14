@@ -27,11 +27,13 @@
 
 | 裁决 | 必须具备的证据 | 权限 |
 | --- | --- | --- |
-| `completed_verified` | 严格 opened/fenced/terminal 三事件、关联的 `run.end` 为 completed、无任何外部活动、预算无 reservation 且已停止、revision 一致 | 仅报告完成，不触发新调用 |
-| `safe_to_replan_verified` | 严格三事件、终态为 `aborted_before_dispatch`、无 Provider/Tool/其他活动、预算无 reservation 且已停止 | 只说明可另行申请**新授权**重新规划；旧 Run 不能重放 |
-| `unknown_HOLD` | 任何缺失、损坏、身份漂移、并发修改、Provider/Tool 活动、未结预算、无严格终态或副作用因果不明 | 不自动重试、不重放、不放行 |
+| `completed_verified` | 严格 opened/fenced/terminal 三事件、关联的 `run.end` 为 completed、无任何外部活动、预算无 reservation 且 phase=stop_requested、revision 一致 | 仅报告完成，不触发新调用 |
+| `safe_to_replan_verified` | 严格三事件、终态为 `aborted_before_dispatch`、无 Provider/Tool/其他活动、预算无 reservation 且 phase=stop_requested | 只说明可另行申请**新授权**重新规划；旧 Run 不能重放 |
+| `unknown_HOLD` | 任何缺失、损坏、身份漂移、并发修改、未归属的前序活动、Provider/Tool 活动、未结预算、无严格终态或副作用因果不明 | 不自动重试、不重放、不放行 |
 
 `auto_resume_allowed=false` 和 `old_run_replay_allowed=false` 对全部裁决恒成立。
+
+前序事件还必须仅含 `session.created` 或 `message.appended(role=user)`；同一 Session 的早期 Provider/Tool/其他未知事件不能自动归因到其他 Run，统一 HOLD。预算 `closed_uncertain` 即使 reservations 为空也不能给出零副作用正向裁决。
 
 为了先守住安全边界，本批只支持**零外部动作**的正向裁决；即使 Provider 已有本地 settled、Tool 文件 SHA 与预期一致，也一律 HOLD，等待后续实现精确的账本-事件-回执关联。旧 M4-C 不具备 M5 严格事件，仍 HOLD。
 
