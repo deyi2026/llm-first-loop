@@ -19,8 +19,7 @@ import logging
 import os
 import threading
 import uuid
-from collections.abc import Callable
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -583,7 +582,7 @@ class LaneStore:
     # ---------------- lane 生命周期收尾（DESIGN-20261114 §4.3） ----------------
 
     @staticmethod
-    def _idle_hours(entry: dict, now_dt: "datetime | None") -> "float | None":
+    def _idle_hours(entry: dict, now_dt: datetime | None) -> float | None:
         """距 max(last_activity, closing_since) 的小时数；naive/不可解析返回 None。"""
         if now_dt is None:
             return None
@@ -621,8 +620,8 @@ class LaneStore:
         *,
         ttl_hours: float = 168.0,
         limit: int = 20,
-        liveness_probe: "Callable[[str], str] | None" = None,
-        tree_probe: "Callable[[str], str] | None" = None,
+        liveness_probe: Callable[[str], object] | None = None,
+        tree_probe: Callable[[str], str] | None = None,
         now: str | None = None,
     ) -> dict:
         """纯读：筛出超时 lane 并按三判据分三态。零写盘、零 git 调用。

@@ -1,0 +1,62 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-lane-reap-ruff-ratchet",
+  "summary": "Mechanical correction of ten newly introduced Ruff diagnostics in the already merged Lane lifecycle P2 code; no behavioral or authority changes, no new service or gate exceptions. Includes exact 132-line AST measurement registration for previously merged run_lane_reap, preserving the original >=120 guard and zero-growth ratchet.",
+  "components": [
+    {
+      "component_id": "lane-reap-static-ratchet-repair",
+      "paths": [
+        "src/llm_loop/introspection/lane.py",
+        "tests/unit/test_lane_reap.py",
+        "docs/governance/submissions/20261114-lane-reap-ruff-ratchet.json",
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing LaneStore lifecycle and lane_reap tests",
+      "disposition": "Reuse original LaneStore and lane_reap behavior. Remove redundant annotation quotes and import split, accurately type the liveness callback as returning object (its result is normalized by str), remove unnecessary UTF-8 header, and rename ambiguous local comprehension variables. No gate relaxation, new state, changed authorization, worktree deletion, or runtime side effect. Register the existing 132-line run_lane_reap at its exact AST-measured size in the original function_lines baseline; no threshold increase or exemption.",
+      "evidence": [
+        "tests/unit/test_lane_reap.py",
+        "tests/unit/test_lane_store.py",
+        "tests/unit/test_lane_tools.py",
+        "tests/unit/test_arch_guards.py"
+      ],
+      "verification_level": "Ruff on changed Python files: 0 errors (10 newly introduced errors resolved); 186 Lane-focused pytest tests passed. Independent GLM-5.3 review, original full R9 and remote CI required before integration. Architecture guard previously rejected unregistered run_lane_reap (132 lines); exact-size registration and full tier0/R9 must pass.",
+      "model_evidence_veto_recovery_exit": "Reviewer or test success cannot bypass the original Ruff ratchet. Any new diagnostics, changed LaneStore behavior, or unexpected source diff vetoes merge; revert this isolated patch without changing deployed services.",
+      "rollback_route": "Revert the four-file mechanical patch and exact-size guard registration; original lane lifecycle behavior remains intact and production is unchanged.",
+      "declaration_id": "lane-ruff-reuse"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "lane-ruff-reuse",
+      "g1": {
+        "necessity": "The latest main added ten Ruff diagnostics in Lane lifecycle source and tests, causing the PR merge CI static debt ratchet to reject otherwise unrelated M4-D changes. Preserve the ratchet rather than ignoring the new debt. Original full R9 also found that the already merged 132-line run_lane_reap was absent from the >=120 AST function-size registration."
+      },
+      "g2": {
+        "authority_owner": "Existing LaneStore and lane_reap lifecycle implementation; original Ruff and Pyright static ratchet gates",
+        "relationship": "reuse",
+        "non_duplication": "No new Lane authority, liveness controller, daemon, CI exception, second ledger, or change to existing failure classifications. Only type annotation, formatting, and local test variable names; no runtime logic changes. Existing function-size baseline is extended by exactly one measured key, not a new exemption or higher threshold."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_lane_reap.py",
+          "tests/unit/test_lane_store.py",
+          "tests/unit/test_lane_tools.py",
+          "tests/unit/test_arch_guards.py"
+        ],
+        "recovery_or_reason": "The original main lane code is not modified in place. If focused tests, static diagnostics, independent review, full R9, or GitHub CI fail, stop before integration. No old Run is replayed."
+      },
+      "g4": {
+        "rollback": "Revert the four changed paths on an isolated branch; no production files or managed service generations were touched.",
+        "verification": [
+          "Changed files Ruff check: PASS, 0 diagnostics",
+          "Lane-focused pytest: 186 passed",
+          "Independent GLM-5.3 Reviewer: PENDING",
+          "Original full R9 on frozen SHA: PENDING",
+          "GitHub A.5/privacy/CI on frozen SHA: PENDING",
+          "run_lane_reap exact AST 132-line registration: to be verified by architecture guard"
+        ]
+      }
+    }
+  ]
+}

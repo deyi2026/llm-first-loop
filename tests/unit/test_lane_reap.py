@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """lane_reap（P2）单元测试：超时≠死亡、三判据、三态输出、dry_run 零写。"""
 
 from __future__ import annotations
@@ -166,7 +165,7 @@ def test_tool_suspect_flags_without_closing(tmp_path):
     host = SimpleNamespace(audit_dir=str(path.parent), lane_liveness_probe=lambda s: "dead")
     res = run_lane_reap(None, host, {"dry_run": False, "ttl_hours": 24})
     assert "标疑" in _msg(res)
-    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["status"] == "verifying"
     events = (path.parent / "lane_events.jsonl").read_text(encoding="utf-8")
     assert "lane.stale_suspected" in events
@@ -178,7 +177,7 @@ def test_tool_applied_closes_conclusive_only(tmp_path):
     host = SimpleNamespace(audit_dir=str(path.parent), lane_liveness_probe=lambda s: "dead")
     res = run_lane_reap(None, host, {"dry_run": False, "ttl_hours": 24})
     msg = _msg(res)
-    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     # worktree 不存在 → tree 探测返回 unknown → suspect，不收口
     assert rows[0]["status"] == "verifying"
     assert "标疑" in msg
@@ -199,7 +198,7 @@ def test_tool_closes_but_keeps_worktree_by_default(tmp_path):
     store, path = _store(tmp_path, [_entry("lane-a", status="active", worktree=str(wt))])
     host = SimpleNamespace(audit_dir=str(path.parent), lane_liveness_probe=lambda s: "dead")
     res = run_lane_reap(None, host, {"dry_run": False, "ttl_hours": 24})
-    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["status"] == "abandoned"
     assert wt.exists(), "默认不得删除工作树目录"
     assert "git worktree remove" in _msg(res)
@@ -225,7 +224,7 @@ def test_tool_remove_worktree_with_confirm(tmp_path):
         host,
         {"dry_run": False, "ttl_hours": 24, "remove_worktree": True, "confirm": True},
     )
-    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["status"] == "abandoned"
     events = (path.parent / "lane_events.jsonl").read_text(encoding="utf-8")
     assert "lane.worktree_kept" in events or "已回收工作树" in _msg(res)
