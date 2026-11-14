@@ -131,8 +131,40 @@ LANE_MERGE_REQUEST_TOOL_DEF: dict = {
     },
 }
 
+LANE_REAP_TOOL_DEF: dict = {
+    "name": "lane_reap",
+    "description": (
+        "收尾长期不动的 lane（DESIGN-20261114 §4.3）。"
+        "何时用: 发现 lane 卡在非终态（如停在 verifying）数日，需要按可证判据收敛时。"
+        "硬约束（裁决）: 三判据必须同时成立才收口——超时 + 注入式 liveness 探针判 dead + 工作树干净；"
+        "判死只认探针，「超时」只是筛候选（超时≠死亡）。"
+        "liveness 谓词不可用时一律不收口（fail-closed），只输出 liveness_unavailable。"
+        "收口状态固定 abandoned。收口不等于清理（D2）：工作树删除是独立的不可逆第二步，"
+        "默认不执行，只在回执里给出可粘贴的 git worktree remove 命令；"
+        "确需自动删除时必须同时传 remove_worktree=true 与 confirm=true。"
+        "何时不用: 只想看谁在途用 coordination_status；带 --force 的清理不在本工具权限内。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "dry_run": {"type": "boolean", "description": "只报告不动作（默认 true）"},
+            "ttl_hours": {"type": "number", "description": "闲置判据阈值小时数（默认 168）"},
+            "limit": {"type": "integer", "description": "本次最多处理候选数（默认 20）"},
+            "remove_worktree": {
+                "type": "boolean",
+                "description": "收口后是否回收工作树目录（不可逆；默认 false，且需 confirm=true）",
+            },
+            "confirm": {
+                "type": "boolean",
+                "description": "不可逆动作（删工作树）的显式二次确认（默认 false）",
+            },
+        },
+    },
+}
+
 LANE_TOOL_DEFS = [
     LANE_OPEN_TOOL_DEF,
+    LANE_REAP_TOOL_DEF,
     LANE_UPDATE_TOOL_DEF,
     LANE_CLOSE_TOOL_DEF,
     LANE_MERGE_REQUEST_TOOL_DEF,
@@ -510,3 +542,180 @@ def run_lane_merge_request(ctx: Any, host: Any, args: dict) -> ToolResult:
         "",
         "lane_merge_request",
     )
+
+
+# ---------------- lane 生命周期收尾（P2，DESIGN-20261114 §4.3） ----------------
+
+
+def _probe_tree_state(worktree: str) -> str:
+    """工作树状态：clean / dirty / unknown。只读，不动工作树。"""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", worktree, "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if proc.returncode != 0:
+        return "unknown"
+    return "clean" if not (proc.stdout or "").strip() else "dirty"
+
+
+def _liveness_probe(host: Any):
+    """取宿主注入的 liveness 探针；未注入 → None（不可用 → 一律不收口）。"""
+    probe = getattr(host, "lane_liveness_probe", None)
+    return probe if callable(probe) else None
+
+
+def _remove_worktree(worktree: str) -> tuple[bool, str]:
+    """回收工作树目录（不带 --force）；失败只回报事实，不回滚已完成的收口。"""
+    try:
+        proc = subprocess.run(
+            ["git", "worktree", "remove", worktree],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)[:200]
+    if proc.returncode != 0:
+        return False, ((proc.stderr or proc.stdout or "").strip())[:200]
+    return True, ""
+
+
+def run_lane_reap(ctx: Any, host: Any, args: dict) -> ToolResult:
+    """lane 生命周期收尾（P2）。默认 dry_run=true：零写账本、零动工作树。"""
+    store = _store(host)
+    if store is None:
+        return _fail("audit_dir 未装配，lane 账本不可用", "lane_reap", "store_unavailable")
+    dry_run = bool(args.get("dry_run", True))
+    remove_worktree = bool(args.get("remove_worktree", False))
+    confirm = bool(args.get("confirm", False))
+    try:
+        ttl_hours = float(args.get("ttl_hours", 168))
+    except (TypeError, ValueError):
+        return _fail("ttl_hours 必须是数字（小时）", "lane_reap", "invalid_param")
+    try:
+        limit = int(args.get("limit", 20))
+    except (TypeError, ValueError):
+        return _fail("limit 必须是整数", "lane_reap", "invalid_param")
+    probe = _liveness_probe(host)
+    try:
+        result = store.reap_candidates(
+            ttl_hours=ttl_hours,
+            limit=limit,
+            liveness_probe=probe,
+            tree_probe=_probe_tree_state,
+        )
+    except LaneStoreCorruptionError as exc:
+        return _fail(str(exc), "lane_reap", "store_corruption")
+    except OSError as exc:
+        return _fail(f"账本读取失败: {exc}", "lane_reap", "io_error")
+
+    candidates = result.get("candidates") or []
+    counts = result.get("counts") or {}
+    scanned = result.get("scanned")
+    liveness_ok = bool(result.get("liveness_available"))
+
+    if dry_run:
+        lines = [
+            f"[lane_reap dry-run] 扫描在途 {scanned} 条，超时候选 {len(candidates)} 条"
+            f"（conclusive {counts.get('conclusive', 0)} / suspect {counts.get('suspect', 0)}"
+            f" / unavailable {counts.get('unavailable', 0)}）；"
+            f"liveness_available={liveness_ok}；dry_run 不写账本、不动工作树。"
+        ]
+        for cand in candidates[:10]:
+            lines.append(
+                f"  - {cand.get('lane_id')} idle={cand.get('idle_hours')}h"
+                f" liveness={cand.get('liveness')} tree={cand.get('tree_state')}"
+                f" → {cand.get('verdict')}"
+            )
+        return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", "lane_reap")
+
+    if not liveness_ok:
+        return ToolResult(
+            ToolResultStatus.SUCCESS,
+            "[liveness_unavailable] 无可用 liveness 谓词，零动作（fail-closed："
+            "超时≠死亡，探不到不等于已死）。"
+            f"扫描在途 {scanned} 条，超时候选 {len(candidates)} 条，全部未处理。",
+            "",
+            "lane_reap",
+        )
+
+    closed: list[str] = []
+    flagged: list[str] = []
+    kept: list[dict] = []
+    removed: list[str] = []
+    pending_remove: list[dict] = []
+    conflicts: list[dict] = []
+    for cand in candidates:
+        lane_id = str(cand.get("lane_id") or "")
+        verdict = str(cand.get("verdict") or "")
+        if verdict == "conclusive":
+            reason = f"reaped:idle={cand.get('idle_hours')}h;liveness=dead;tree=clean"
+            try:
+                res = store.close_if_live(lane_id, status="abandoned", reason=reason)
+            except LaneConstraintError as exc:
+                conflicts.append(
+                    {"lane_id": lane_id, "result": "constraint_violation", "detail": str(exc)}
+                )
+                continue
+            except (OSError, LaneStoreCorruptionError) as exc:
+                conflicts.append({"lane_id": lane_id, "result": "io_error", "detail": str(exc)})
+                continue
+            if res.get("closed"):
+                closed.append(lane_id)
+                worktree = str(cand.get("worktree") or "")
+                if remove_worktree and confirm and worktree:
+                    ok, detail = _remove_worktree(worktree)
+                    if ok:
+                        removed.append(lane_id)
+                    else:
+                        store.append_lane_event(
+                            "lane.worktree_kept", lane_id=lane_id, detail=detail
+                        )
+                        kept.append({"lane_id": lane_id, "detail": detail})
+                else:
+                    pending_remove.append({"lane_id": lane_id, "worktree": worktree})
+            else:
+                result_kind = (
+                    "conflict"
+                    if res.get("conflict")
+                    else str(res.get("already") or res.get("missing") or "unknown")
+                )
+                conflicts.append({"lane_id": lane_id, "result": result_kind})
+        elif verdict == "suspect":
+            store.append_lane_event(
+                "lane.stale_suspected",
+                lane_id=lane_id,
+                idle_hours=cand.get("idle_hours"),
+                liveness=cand.get("liveness"),
+                tree_state=cand.get("tree_state"),
+            )
+            flagged.append(lane_id)
+
+    lines = [
+        f"[lane_reap applied] 扫描在途 {scanned} 条，超时候选 {len(candidates)} 条；"
+        f"已收口 {len(closed)}、标疑 {len(flagged)}、未处理/冲突 {len(conflicts)}、"
+        f"已回收工作树 {len(removed)}、待人工清理 {len(pending_remove)}、工作树保留 {len(kept)}。"
+    ]
+    for lane_id in closed:
+        lines.append(f"  - 已收口 abandoned: {lane_id}")
+    for lane_id in flagged:
+        lines.append(f"  - 标疑（状态与目录均未动）: {lane_id}")
+    for item in conflicts:
+        lines.append(f"  - 未处理 {item.get('result')}: {item.get('lane_id')}")
+    for item in kept:
+        lines.append(f"  - 工作树保留: {item.get('lane_id')}（{item.get('detail')}）")
+    for lane_id in removed:
+        lines.append(f"  - 工作树已回收: {lane_id}")
+    for item in pending_remove:
+        lines.append(
+            f"  - 待人工清理（D2：收口≠清理，默认不删目录）: git worktree remove "
+            f"{item.get('worktree')}  # lane {item.get('lane_id')}"
+        )
+    return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", "lane_reap")

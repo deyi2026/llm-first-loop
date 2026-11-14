@@ -27,6 +27,10 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_lane import run_lane_close
 
         return run_lane_close(host.ctx, host, args)
+    if name == "lane_reap":
+        from llm_loop.introspection.tools_lane import run_lane_reap
+
+        return run_lane_reap(host.ctx, host, args)
     if name == "lane_merge_request":
         from llm_loop.introspection.tools_lane import run_lane_merge_request
 

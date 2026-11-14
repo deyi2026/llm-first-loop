@@ -1,0 +1,33 @@
+{
+ "A_dry_run_no_probe": {
+  "msg": "[lane_reap dry-run] 扫描在途 3 条，超时候选 1 条（conclusive 0 / suspect 0 / unavailable 1）；liveness_available=False；dry_run 不写账本、不动工作树。\n  - lane-a4e7865d idle=69.791h liveness=unavailable tree=clean → unavailable",
+  "ledger_unchanged": true,
+  "events_created": false
+ },
+ "B_applied_no_probe": {
+  "msg": "[liveness_unavailable] 无可用 liveness 谓词，零动作（fail-closed：超时≠死亡，探不到不等于已死）。扫描在途 3 条，超时候选 1 条，全部未处理。",
+  "ledger_unchanged": true,
+  "events_created": false
+ },
+ "C_dead_clean_closes_but_keeps_dir": {
+  "msg": "[lane_reap applied] 扫描在途 3 条，超时候选 1 条；已收口 1、标疑 0、未处理/冲突 0、已回收工作树 0、待人工清理 1、工作树保留 0。\n  - 已收口 abandoned: lane-a4e7865d\n  - 待人工清理（D2：收口≠清理，默认不删目录）: git worktree remove /tmp/tmpd2denub_/clean-wt  # lane lane-a4e7865d",
+  "a4e7865d_status_after": "abandoned",
+  "worktree_dir_still_exists": true,
+  "events_head": "{\"event\": \"lane.closed\", \"lane_id\": \"lane-a4e7865d\", \"ts\": \"2026-11-14T15:00:01.408988+08:00\", \"status\": \"abandoned\", \"reason\": \"reaped:idle=69.791h;liveness=dead;tree=clean\", \"version\": 4}\n"
+ },
+ "D_dead_dirty_only_flags": {
+  "msg": "[lane_reap applied] 扫描在途 3 条，超时候选 1 条；已收口 0、标疑 1、未处理/冲突 0、已回收工作树 0、待人工清理 0、工作树保留 0。\n  - 标疑（状态与目录均未动）: lane-a4e7865d",
+  "a4e7865d_status_after": "verifying",
+  "dirty_dir_still_exists": true
+ },
+ "E_confirm_remove_attempt": {
+  "msg": "[lane_reap applied] 扫描在途 3 条，超时候选 1 条；已收口 1、标疑 0、未处理/冲突 0、已回收工作树 0、待人工清理 0、工作树保留 1。\n  - 已收口 abandoned: lane-a4e7865d\n  - 工作树保留: lane-a4e7865d（fatal: '/tmp/tmp89kuuydo/clean-wt' is not a working tree）",
+  "a4e7865d_status_after": "abandoned",
+  "worktree_dir_still_exists": true
+ },
+ "F_real_lane_worktree_readonly": {
+  "rc": 0,
+  "dirty_file_count": 0,
+  "sample": []
+ }
+}

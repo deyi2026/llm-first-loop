@@ -20,6 +20,7 @@
 6. **收尾必须三判据同时成立**：超时 + 探针确证失联 + 工作树干净。任一不足只标疑、不改状态。理由：实测 68 条 lane worktree 中 **22 条有未提交改动**，任何「按时间自动回收」都会毁掉真实产物。
 7. **本期不新增第 5 套账本、不新增终态、不改既有工具签名**：全部复用 `close_if_live` / `requeue` / `check_paths_disjoint` / `assess_rebase_replay` 四个既有原语，只做**接线与投影**。
 8. 交付 4 批，P1（诊断性）单独可用且零行为变更；P2（收尾）默认 `dry_run=true`；P3（重投）默认关；P4（开门告警）默认只告警不阻断。
+9. **P2 已落地为「注入式」骨架**（2026-11-14，见 §11）：liveness 谓词由宿主注入，宿主未注入即 `liveness_unavailable` 且零动作——跨进程权威源仍缺（U3），故当前宿主下**收口能力不可达**，这是设计预期而非缺陷；「收口」与「清理」已解耦（D2 强化）：默认不删目录，删除须 `remove_worktree=true` **且** `confirm=true`。
 
 ---
 
@@ -185,11 +186,12 @@ liveness    : probe(session_id) == dead          # 注入谓词；unknown/unavai
 tree_state  : git -C <worktree> status --porcelain == ""   # 仅对 clean 执行 remove
 ```
 
-**liveness 探针优先级**（从强到弱，取第一个可用的）：
+**liveness 谓词：注入式（§10.1 修订，原「自选优先级」写法作废）**
 
-1. `session_registry.is_running(owner_session_id)` → `alive|dead`（权威）
-2. `lane_events.jsonl` 中该 lane 最近事件时间在 `ttl` 内 → `alive`（弱证据，只能证明“可能活”不能证明死）
-3. 无任何可用来源 → `unknown` → **不收口**
+- 宿主经 `host.lane_liveness_probe(session_id) -> alive|dead|unknown` 注入；**不注入即 `liveness_unavailable`，一律不收口**。
+- 实测（U3）：本仓**不存在**跨进程权威源——`BackgroundRunner.is_running` 只查进程内 registry，`web/queue_recovery.py:176` 的 `_alive` 同构，`data/audit/` 无 session/run/lease 账本。任何**自备**谓词都会把「跨进程重启后仍活」误判为死亡，故禁止自选探针。
+- 探针返回 `False`（跨进程不可见）**不是**死亡证据 → 实现归为 `unknown`，不收口。
+- 弱证据（`lane_events.jsonl` 最近事件时间在 `ttl` 内）只用于**否决**（当作活着），不能用于判死。
 
 注意第 2 条只能用于**否决**（当作活着），不能用于判定死亡；判定死亡只认第 1 条。这是 D1 的直接推论。
 
@@ -197,11 +199,13 @@ tree_state  : git -C <worktree> status --porcelain == ""   # 仅对 clean 执行
 
 | 态 | 条件 | 动作 |
 |---|---|---|
-| `conclusive` | 三判据全成立 | `close_if_live(status="abandoned", reason="reaped:idle=<h>h;liveness=dead;tree=clean")` → 成功后 `git worktree remove <path>`（无 `--force`） |
+| `conclusive` | 三判据全成立 | `close_if_live(status="abandoned", reason="reaped:idle=<h>h;liveness=dead;tree=clean")` → **只收口，不删目录**；回执给出可粘贴的 `git worktree remove <path>`（D2，见 §11.1） |
 | `suspect` | 超时但 liveness 非 dead，或树脏 | 只追加 `lane.stale_suspected` 事件，**状态与目录都不动** |
 | `unavailable` | 无 liveness 谓词 | 回执 `liveness_unavailable`，**零动作** |
 
 **顺序为什么是「先收口、后删目录」**：反过来的坏结局更严重——目录删了但 lane 还在非终态，等于「在跑的 lane 被人抽走了工作树」，且不可逆；先收口则即使 `remove` 失败，最强后果只是「lane 已 abandoned、目录残留」，可由人工清理，且账本仍可解释。因此 `remove` 失败**不回滚**收口，只把事实写进事件（`worktree_kept` + 原因）。
+
+**实现期收紧（§11.3 事故后）**：删目录被拆成**独立的第二步**，需同时传 `remove_worktree=true` 与 `confirm=true`；默认只收口 + 给命令。这样「三判据成立」不再等于「目录被删」。
 
 **不做全量扫描**：先按 `idle_ttl` 过滤出候选（当前数据量下 1 条），只对候选跑 `git status`。100 条 worktree × `status` 是几十秒级操作，不能放进读路径。
 
@@ -320,6 +324,19 @@ def precheck(self, *, branch, worktree, goal_id, paths) -> dict:
 
 **回归闸**：`tests/unit/test_lane_store.py`、`test_lane_tools.py`、`test_lane_close_governance.py`、`test_merge_queue.py`、`test_merge_queue_verify_replay.py`、`test_lane_gate.py` 必须全绿；新增用例不得改动既有断言（RULE-AI-24）。
 
+**P2 实测结论（2026-11-14，RULE-AI-35 已跑，证据 `docs/design/receipts/P2-r35-20261114.json`）**：
+
+| 断言 | 应拦输入 | 实测 | 判定 |
+|---|---|---|---|
+| R2-a | `lane_reap(dry_run=true)` | `lanes.jsonl` sha256 不变、无事件文件生成 | PASS |
+| R2-d | 不注入 liveness 谓词 + `dry_run=false` | `[liveness_unavailable]`，账本不变、零事件 | PASS |
+| R2-c | 注入 dead 谓词 + 脏工作树 | 回执「标疑」，状态仍 `verifying`，目录仍在 | PASS |
+| R2-b（弱化版） | 注入 dead 谓词 + 干净工作树 | 收口 `abandoned`，**目录保留**，回执给删除命令 | PASS |
+| D2-1 | 删除失败 | 记 `lane.worktree_kept`，收口不回滚 | PASS |
+| D2-2 | `remove_worktree=true` 未 `confirm` | 不删目录 | PASS |
+
+R2-b 的「能收口 dead lane」在宿主注入谓词后才可验收（U3 前置，见 §10.1）；本轮先证「存活/不可判死的 lane 不被收口」。
+
 ---
 
 ## 7. 边界与失败模式（拷问记录）
@@ -396,13 +413,50 @@ def precheck(self, *, branch, worktree, goal_id, paths) -> dict:
 | `main_head_unknown` 无 rc 时的归类未定义 | 落 `env_config` + `evidence_hint=rc_missing` | fail-closed：不确定不得当成可重投 |
 | 落账字段只在失败时写 | 失败时写；**转 pass 时显式清除** 并重置 `auto_retry_attempt` | 残留字段会让读侧把上次失败当成当前事实 |
 
-**实施进度**：P1（R1 诊断 + R5 视图）已实现；P2/P3/P4 未实现，P2 依赖 U3 基础设施，P3 依赖 P2 的 `lane_dead` 类，P4 可独立先做。
+**实施进度（2026-11-14 更新）**：P1（R1 诊断 + R5 视图）已实现；**P2 已实现为注入式骨架**（`reap_candidates` + `lane_reap` 工具 + registry + 16 个用例，实测见 §11.2），因 U3 前置未解，宿主不注入谓词即零动作、收口不可达；P3 未实现（依赖 P2 的 `lane_dead` 类），P4 未实现（可独立先做）。
 
 **E23 进一步改变了「工作量」的判断。** 33/34 是历史死账，意味着 R3（自动重投）在当期数据上**没有作业对象**（实测该重投=0）。这不是「重投没用」的证据，而是「队列实际已清零、只是账本没清」的证据。据此：
 
 - P3 优先级下调：要等真的出现 `env_transient` 项才有价值；
 - R5 视图必须标 `terminal`，否则人会被 33 条「该 rebase / 该补凭证」误导去返工已经完成的工作；
 - 「账本清理」是独立议题（不属本期）：本期只保证看图的人不被误导。
+
+---
+
+## 11. 实施记录：P2 落地、实测与事故（2026-11-14）
+
+### 11.1 本轮落地的范围
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `LaneStore.reap_candidates()` | 已落地 | 纯读三判据筛选，返回 `conclusive/suspect/unavailable` 三态；零写盘、零 git 调用 |
+| `LaneStore.append_lane_event()` | 已落地 | 追加 `lane.stale_suspected` / `lane.worktree_kept` |
+| `lane_reap` 工具 + registry | 已落地 | 默认 `dry_run=true`；liveness 谓词**注入式**（`host.lane_liveness_probe`），未注入即 `liveness_unavailable` |
+| 收口/清理解耦（D2 强化） | 已落地 | 默认**不删目录**，回执给可粘贴命令；删除需 `remove_worktree=true` **且** `confirm=true` |
+| 跨进程 liveness 基础设施 | **未落地** | U3 前置仍缺；当前宿主下收口能力**不可达**——这是设计预期，不是缺陷 |
+
+### 11.2 实测结论
+
+证据：`docs/design/receipts/P2-r35-20261114.json`（6 用例，账本副本 + 临时工作树，真实 lane 路径只读探测）。
+测试：`tests/unit/test_lane_reap.py`（16 passed）。逐条见 §6 的「P2 实测结论」表。
+
+### 11.3 事故记录（我造成的一次真实 worktree 删除）
+
+- **经过**：首轮实测脚本误用**真实** lane 的 worktree 路径 `.worktrees/ci-gate-flaky`，并用模拟谓词判 dead；
+  `lane_reap` 随即收口并执行 `git worktree remove`，目录被删除。
+- **损失核实**：该工作树**干净**（`git status --porcelain` 为空）；提交 `2a0c2502a` 与分支引用 `fix/ci-gate-flaky-pass-distinguishable` 完好；
+  该提交本就不在 main（`merge-base --is-ancestor 2a0c2502a main` → 否），故**无产物丢失**；真实 lane 账本未被改（实测跑在账本副本上）。
+- **恢复**：`git worktree add .worktrees/ci-gate-flaky fix/ci-gate-flaky-pass-distinguishable` → HEAD=`2a0c2502a`，工作区干净，`git worktree list` 恢复登记。
+- **根因（落动作层，RULE-AI-37）**：①「收口 + 删目录」被实现成一步不可逆动作 → 已解耦为两步 + 双重显式确认；
+  ② 实测脚本未隔离真实 worktree 路径 → 改为副本账本 + 临时工作树，真实 lane 路径只做只读探测。
+- **教训**：收尾类工具即便判据全成立，指向真实工作树的删除也必须是**显式二次确认**的独立动作；
+  实测必须用副本对象，不得用真实对象跑破坏性分支。
+
+### 11.4 对方案的影响（并入 §10.1）
+
+- U3 结论不变：**跨进程 liveness 权威源不存在**。本轮实现不改变该结论，反而把它固化为代码——**没有注入谓词就没有收口**（实测 R2-d PASS）。
+- §4.3 的「探针优先级自选」写法已被 §10.1 取代为**注入式**，实现按注入式落地；
+  §4.3 的「收口后立即 remove」已被 §11.1 的 D2 收紧取代。两处差异均已登记，不做静默漂移。
 
 ---
 
