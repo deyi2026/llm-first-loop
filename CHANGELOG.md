@@ -1,5 +1,11 @@
 # Changelog（公开变更记录）
 
+## v0.6.51 — 按需只读 task_get 任务明细查询（2026-11-13）
+
+- 新增按需只读 `task_get` 工具：按 task_id（goal_id 可选，默认当前会话活动 goal）返回单个 durable Task 的完整明文明细，含 acceptance、done_when、blocked_reason、evidence refs 与核验状态、依赖与期限等元数据，不截断。
+- 复用既有 TaskStore 任务图与 GoalStore 归属校验：不新增状态机、不写任何状态、不自动注入 prompt 上下文；task_frontier 图视图的截断字段（blocked reason 截 50 字符、无 acceptance 全文）需要全文时改用本工具。
+- 发行面最小递增：任务功能代码与测试不随本版改动，仅同步版本声明（pyproject、uv.lock、README 中英文、Web SERVICE_VERSION）。
+
 ## v0.6.50 — 发行事件测试隔离与竞速记录修正（2026-11-12）
 
 - 承接 v0.6.49 的 Peer 确认快照、持久防重放与恢复一致性修复，Peer 运行时代码不变。

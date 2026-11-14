@@ -1,0 +1,92 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261113-m2-feishu-stale-heartbeat",
+  "summary": "A.5 submission for PR #13 (fix/lfl-m2-feishu-stale-heartbeat-20261113): stop a dead Feishu worker's stale processing heartbeat from false-blocking the existing idle gate by tightening the existing waiting_for_idle/idle evidence. This manifest-only commit restores exact changed-path coverage after remote CI A.5 found 0 manifests; it changes no business code, test, workflow, checker or baseline.",
+  "components": [
+    {
+      "component_id": "feishu-stale-processing-admission",
+      "paths": [
+        "src/llm_loop/feishu/compensation.py",
+        "src/llm_loop/runtime/feishu_compensation_reader.py",
+        "src/llm_loop/runtime/service_control.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing managed service_control / Feishu lifecycle",
+      "disposition": "Reuse-only tightening of the existing waiting_for_idle/idle evidence: a dead worker's stale processing_msg_id no longer holds the idle gate false-busy once live PID, heartbeat age, queue depth, follow-up enqueue signs and an exact durable compensation all prove staleness. No new authority, state store or state machine; whether the model requests a restart is unchanged.",
+      "evidence": [
+        "Remote CI job log on prior push 7bc81b939274be84c0869976ee396be07773be42: A.5 failed with 'expected exactly one changed architecture-submission manifest under docs/governance/submissions/; found 0' while privacy-scan succeeded",
+        "Commits 6239a2479..7bc81b939 on this branch carry the stale-heartbeat fix under review"
+      ],
+      "verification_level": "Independent GLM-5.3 reviewer on the code patch: PASS with P0=P1=0; targeted suite 328 passed; original full R9 exit 0 (14753 passed / 158 skipped / 3 xfailed) before this manifest commit; remote CI re-runs on the new push SHA.",
+      "rollback_route": "Revert this patch returns to the conservative old judgment; a stale processing_msg_id may again hold the gate false-busy, but nothing unsafe is relaxed.",
+      "declaration_id": "existing-managed-service-lifecycle",
+      "model_evidence_veto_recovery_exit": "The model observes live PID, heartbeat age, queue_depth, processing_msg_id, processing_since, last_message_ts, history snapshots and the exact durable compensation for that msg_id; on any missing or corrupted fact, a live or unknown PID, a non-zero queue, a follow-up enqueue, or an invalid compensation it stays confirmed_busy (fail-closed). Whether to request a restart remains the model's decision through existing service_control."
+    },
+    {
+      "component_id": "stale-processing-regression-tests",
+      "paths": [
+        "tests/feishu/test_compensation_readonly.py",
+        "tests/unit/test_runtime_feishu_compensation_reader.py",
+        "tests/unit/test_service_control_feishu_stale_processing.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing pytest regression suites (tests/feishu, tests/unit)",
+      "disposition": "Regression tests for the stale-processing admission evidence and its fail-closed edges; no runtime control paths.",
+      "evidence": [
+        "Targeted run on this branch: 328 passed"
+      ],
+      "verification_level": "Included in the targeted 328 passed and in the original full R9 exit 0 (14753 passed / 158 skipped / 3 xfailed); remote CI re-runs on the new push SHA.",
+      "model_evidence_veto_recovery_exit": "Tests only; no live runtime decision. Test failures veto merging through the existing CI gates.",
+      "rollback_route": "Revert this patch removes the regression tests together with the code under test."
+    },
+    {
+      "component_id": "a5-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261113-m2-feishu-stale-heartbeat.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance/submissions A.5 architecture-submission gate",
+      "disposition": "New A.5 submission manifest covering exactly the seven changed paths of this branch; documentation only, adds no runtime behavior.",
+      "evidence": [
+        "git diff --name-only origin/main...HEAD at 7bc81b939274be84c0869976ee396be07773be42 lists the six non-manifest paths declared above"
+      ],
+      "verification_level": "Local scripts/check_architecture_submission.py --base origin/main --head HEAD must exit 0 on the commit that adds this manifest; remote CI A.5 re-runs on the pushed SHA. This manifest is a new file and was not part of the independent review of the code patch.",
+      "model_evidence_veto_recovery_exit": "The model can re-run the local A.5 checker, re-inspect git diff --name-status origin/main...<push SHA>, and read the remote CI job log; any mismatch fails the gate closed.",
+      "rollback_route": "Revert the manifest commit restores the pre-manifest state; remote A.5 then fails exactly as before, which is the honest signal."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-managed-service-lifecycle",
+      "g1": {
+        "necessity": "A dead Feishu worker leaves a stale processing_msg_id that the existing idle gate treats as busy, so waiting_for_idle blocks indefinitely on evidence no live actor can ever clear. Proving staleness needs live PID, heartbeat age, queue depth, follow-up enqueue signs and the exact durable compensation for that msg_id; with any evidence missing the gate stays busy (fail-closed)."
+      },
+      "g2": {
+        "authority_owner": "existing generation-bound managed service_control / Feishu lifecycle",
+        "relationship": "reuse",
+        "non_duplication": "No new restart authority, state store or state machine; the existing service_control generation/ownership machinery and the existing durable compensation records remain the only control surfaces."
+      },
+      "g3": {
+        "model_evidence": [
+          "live PID of the worker owning processing_msg_id",
+          "heartbeat age of that worker",
+          "queue_depth of the Feishu queue",
+          "processing_msg_id with processing_since timestamps",
+          "last_message_ts of the queue",
+          "history snapshots of prior observations",
+          "exact durable compensation record for that msg_id"
+        ],
+        "recovery_or_reason": "If any evidence is missing or corrupted, the PID is live or unknown, the queue is non-zero, a follow-up enqueue appears, or the compensation record is invalid, the gate stays confirmed_busy; the model still decides whether to request a restart through existing service_control."
+      },
+      "g4": {
+        "rollback": "Revert this patch returns to the conservative old judgment; a stale processing_msg_id may keep the gate false-busy, but no safety property is relaxed.",
+        "verification": [
+          "Independent GLM-5.3 reviewer on the code patch: PASS with P0=P1=0",
+          "Targeted suite on this branch: 328 passed",
+          "Original full R9 on the code patch: exit 0 (14753 passed / 158 skipped / 3 xfailed)",
+          "This manifest is a new file and was not part of that independent review; it must pass the local A.5 checker with exact coverage, and remote CI A.5 must re-run on the pushed SHA"
+        ]
+      }
+    }
+  ]
+}

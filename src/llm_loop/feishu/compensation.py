@@ -13,13 +13,34 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from llm_loop.runtime.feishu_compensation_reader import (
+    CRASH,
+    INTERRUPT_CAUSES,
+    REPLY_TYPES,
+    legacy_interrupted_path,
+    read_compensation_records,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    DRAIN_TIMEOUT as DRAIN_TIMEOUT,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    PROCESS_TIMEOUT as PROCESS_TIMEOUT,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    QUEUE_FULL as QUEUE_FULL,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    WATCHDOG_EXIT as WATCHDOG_EXIT,
+)
+from llm_loop.runtime.feishu_compensation_reader import (
+    compensation_path as compensation_path,
+)
 from llm_loop.runtime.resolver import business_config_snapshot
 from llm_loop.timekeeping import system_local_now
 
@@ -27,41 +48,67 @@ logger = logging.getLogger(__name__)
 
 _COMPENSATION_CONFIG = business_config_snapshot("feishu_compensation")
 
-# 结构化中断原因五类（FTR-DFX-08：禁止脆弱文本匹配分类）
-WATCHDOG_EXIT = "watchdog_exit"
-QUEUE_FULL = "queue_full"
-DRAIN_TIMEOUT = "drain_timeout"
-PROCESS_TIMEOUT = "process_timeout"
-CRASH = "crash"
+# 结构化中断原因五类与路径解析事实（FTR-DFX-08）的单一事实源已下沉 kernel 侧
+# llm_loop.runtime.feishu_compensation_reader（M2-2 runtime→feishu 架构边偿还：
+# service_control 不得函数内 import 本 capability 模块）；此处 re-export 保持
+# 既有公共 API（bridge/tests 引用）不变。InterruptCause 类型别名与 kernel 侧
+# 校验枚举语义一致。
 InterruptCause = Literal[
     "watchdog_exit", "queue_full", "drain_timeout", "process_timeout", "crash"
 ]
-INTERRUPT_CAUSES: tuple[str, ...] = (
-    WATCHDOG_EXIT,
-    QUEUE_FULL,
-    DRAIN_TIMEOUT,
-    PROCESS_TIMEOUT,
-    CRASH,
-)
 
-_REPLY_TYPES = frozenset({"chat_id", "open_id"})
-
-_COMPENSATION_PATH_ENV = "FEISHU_COMPENSATION_PATH"
-_DEFAULT_COMPENSATION_PATH = "data/feishu_compensation.jsonl"
-_LEGACY_INTERRUPTED_PATH_ENV = "FEISHU_INTERRUPTED_PATH"
-_DEFAULT_LEGACY_INTERRUPTED_PATH = "data/feishu_interrupted.json"
+_REPLY_TYPES = REPLY_TYPES
 
 _NOTIFY_TIMEOUT_S = float(_COMPENSATION_CONFIG.get("FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S", "1"))
 
 
-def compensation_path() -> str:
-    """补偿记录 JSONL 路径（默认 data/feishu_compensation.jsonl，可经 env 配置）."""
-    return os.environ.get(_COMPENSATION_PATH_ENV, "") or _DEFAULT_COMPENSATION_PATH
+def read_only_compensation_records(
+    runtime_root: str | Path | None = None,
+) -> list[InterruptionCompensationRecord] | None:
+    """纯只读补偿记录读取（M2-2；供 service_control 空闲判定，零写副作用）.
 
+    解析与校验事实在 kernel 侧 ``llm_loop.runtime.feishu_compensation_reader``
+    （M2-2 runtime→feishu 架构边偿还）；本层把 immutable DTO 包装为
+    InterruptionCompensationRecord，公共 API 与行为保持不变：绝不调用
+    ``_ensure_migrated()``（迁移会改写 JSONL 并删除 legacy 单文件——只读判定
+    不得有写副作用，spec M2-2 安全边界 4）；单行损坏整体失败返回 None
+    （fail-closed：无法排除目标 msg_id 恰在损坏行中，“跳过”会把证据不足
+    误判为无补偿）。
 
-def legacy_interrupted_path() -> str:
-    """旧单文件补偿路径（默认 data/feishu_interrupted.json，启动迁移数据源）."""
-    return os.environ.get(_LEGACY_INTERRUPTED_PATH_ENV, "") or _DEFAULT_LEGACY_INTERRUPTED_PATH
+    校验等价性说明（R9 审查修订）：kernel reader 已同序复刻 dataclass
+    ``__post_init__`` 的三项 raise 校验（receive_id 非空 / reply_type 枚举 /
+    cause 枚举）并前置拦截空 interrupted_at（历史注释提到的 msg_id↔cause
+    组合校验在 dataclass 中实际不存在，勿臆造）；包装构造仍置于
+    try/except 内——与下沉前原实现结构一致，dataclass 未来新增校验时
+    依旧 fail-closed None，而不是向 service_control 逃逸未捕获异常。
+
+    Args:
+        runtime_root: 桥运行根目录（相对路径解析基准，与 bridge cwd=runtime_root
+            语义一致）；绝对路径配置不受影响；相对路径且 runtime_root=None → None。
+
+    Returns:
+        解析成功：记录列表（JSONL 与 legacy 均缺失/空 = []，不创建任何文件）；
+        读取/解析失败：None（调用方必须按证据不足处理，不得视作“无补偿”）。
+    """
+    data = read_compensation_records(runtime_root)
+    if data is None:
+        return None
+    try:
+        return [
+            InterruptionCompensationRecord(
+                receive_id=item.receive_id,
+                reply_type=item.reply_type,
+                interrupt_cause=item.interrupt_cause,
+                interrupted_at=item.interrupted_at,
+                context_ref=item.context_ref,
+                msg_id=item.msg_id,
+            )
+            for item in data
+        ]
+    except (OSError, ValueError) as exc:
+        # 与下沉前原实现等价的构造期 fail-closed（防 dataclass 校验演进）
+        logger.warning("补偿记录包装构造失败（fail-closed，按证据不足处理）: %s", exc)
+        return None
 
 
 def _now_iso() -> str:

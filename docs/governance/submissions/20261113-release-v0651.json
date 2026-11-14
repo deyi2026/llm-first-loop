@@ -1,0 +1,47 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261113-release-v0651",
+  "summary": "PR #12 (branch release/task-intelligence-0.6.51-r2-20261113) is version-metadata-only: it aligns the public version surfaces to 0.6.51 (CHANGELOG entry, README zh/en badges, pyproject version, uv.lock, Web SERVICE_VERSION) for the on-demand read-only task_get tool that already shipped in base main 55e9e810 (present in src/llm_loop/introspection/registry_task.py and tools_task.py at that commit). No code, test, workflow, or control-machinery change. Remote CI A.5 on PR #12 failed with: expected exactly one changed architecture-submission manifest under 'docs/governance/submissions/'; found 0: []. This manifest is the single added governance file and exists solely to satisfy that mechanical exact changed-path coverage convention for the exact seven-path final diff.",
+  "components": [
+    {
+      "component_id": "v0651-version-surface",
+      "paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "README.en.md",
+        "pyproject.toml",
+        "uv.lock",
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Public release version surfaces: CHANGELOG, README zh/en version badges, pyproject version, uv.lock package version, Web SERVICE_VERSION string",
+      "disposition": "Version-string/metadata alignment 0.6.50 -> 0.6.51 only. task_get and its task feature code/tests are already in base main 55e9e810 and are untouched by this PR; the only source-tree line changed is the SERVICE_VERSION constant in src/llm_loop/web/routes.py, kept in sync with pyproject by the existing version-consistency test. This PR adds no runtime authority, no new tool, no workflow, and no control machinery.",
+      "evidence": [
+        "Exact six-path release diff 55e9e810..7c33d31f is +11/-5: CHANGELOG.md +6/-0 (v0.6.51 entry), README.en.md +1/-1, README.md +1/-1, pyproject.toml +1/-1, src/llm_loop/web/routes.py +1/-1 (SERVICE_VERSION 0.6.50 -> 0.6.51), uv.lock +1/-1.",
+        "task_get confirmed present in base main 55e9e810 (git grep task_get 55e9e810 -- 'src/llm_loop/*.py' hits src/llm_loop/introspection/registry_task.py and src/llm_loop/introspection/tools_task.py); this PR does not modify those files.",
+        "Release orchestration record: independent GLM-5.3 Reviewer PASS and original full R9 exit 0 were obtained on the six-file release candidate at 7c33d31f before this manifest was created.",
+        "Remote CI A.5 failure on PR #12 (scripts/check_architecture_submission.py via .github/workflows/architecture-review.yml, runs on every PR): expected exactly one changed architecture-submission manifest under 'docs/governance/submissions/'; found 0: []."
+      ],
+      "verification_level": "For the six-file candidate at 7c33d31f: independent GLM-5.3 Reviewer PASS and full R9 exit 0 are confirmed (obtained before this manifest existed). This new governance manifest was added AFTER those checks, so those results do not cover the exact final candidate: before merge, the exact final diff (six files plus this manifest) must receive a fresh independent Reviewer PASS and a fresh full R9 exit 0. Remote PR A.5 has FAILED so far on the six-file head; no A.5 pass is claimed for the current or final head, and A.5 is expected to pass only on the next CI run over the branch that includes this manifest.",
+      "model_evidence_veto_recovery_exit": "Abort merge if: the final changed-path set differs from these six paths plus this manifest; any component would need control_machinery=true; the routes.py change turns out to be more than the SERVICE_VERSION constant; or the fresh independent review or fresh full R9 on the exact final candidate fails or is skipped. Mechanical A.5 coverage PASS never substitutes for independent semantic review or full R9.",
+      "rollback_route": "Revert the release-branch commits against base main 55e9e810 (git revert or branch reset before any merge); this PR touches no tags, no releases, and no base-main state."
+    },
+    {
+      "component_id": "a5-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261113-release-v0651.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture-submission governance manifest (declarative release metadata only)",
+      "disposition": "Single new declarative JSON manifest declaring exactly the seven changed paths of this PR, partitioned into two non-control components. It grants no runtime authority, encodes no architecture change, and exists solely so scripts/check_architecture_submission.py finds exactly one changed manifest whose path partition equals the exact changed-path set.",
+      "evidence": [
+        "scripts/check_architecture_submission.py v0.1 requires schema lfl.architecture_submission.v0.1, non-empty submission_id, non-empty components with all required fields, declarations list, and exact bidirectional equality between manifest path set and PR changed paths; non-control components must not carry declaration_id.",
+        "This file is added after the recorded independent Reviewer PASS and full R9 exit 0 for the six-file candidate at 7c33d31f; it is new unreviewed material and is explicitly in scope for the required fresh independent review and fresh full R9 on the exact final candidate."
+      ],
+      "verification_level": "Deterministic local mechanical check only: python3 scripts/check_architecture_submission.py --base 55e9e810c82448e7e93b48efe366fef3f10b0678 --head HEAD after commit, plus git diff --check and exact numstat/name-status inspection. Remote PR A.5 must be observed green on the next CI run; fresh independent Reviewer PASS and full R9 exit 0 on the exact final candidate remain required before merge.",
+      "model_evidence_veto_recovery_exit": "If the checker reports any coverage mismatch (missing/extra/duplicate path) or schema error, fix this manifest before merging; never bypass or weaken the A.5 gate, never edit .github/workflows/architecture-review.yml or the checker for this release, and never present the six-file review/R9 results as if they covered this manifest.",
+      "rollback_route": "Delete this single manifest file and return the branch to the six-file candidate at 7c33d31f, which remains the last independently reviewed, full-R9-green state."
+    }
+  ],
+  "declarations": []
+}

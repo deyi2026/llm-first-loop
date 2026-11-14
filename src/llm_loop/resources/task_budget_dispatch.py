@@ -155,6 +155,13 @@ class TaskBudgetExecution:
             raise TaskBudgetDeniedError("signed_model_identity_mismatch")
         if grant["profile"] not in {
             "web-glm-one-physical-attempt-v3",
+            # M2 T1 budgeted-write profile (task_budget_t1_web_profile.PROFILE;
+            # kept literal here to avoid an import cycle). Cross-review P1:
+            # the T1 profile MUST receive the identical positive-profile
+            # endpoint/wire/transport gate — without this entry a bound T1
+            # execution wrongly admitted any scheme/host (synthetic
+            # http://evil.invalid counterexample entered the send scope).
+            "web-glm-t1-budgeted-write-v1",
             knowledge_profile.PROFILE,
             subagent_profile.PROFILE,
         }:
@@ -271,6 +278,15 @@ class TaskBudgetExecution:
         # allocation stays conservatively charged.
         self._cas_mutate("mark_dispatched", reservation_id=reservation_id)
         return reservation_id
+
+    def note_prepared_request(self, prepared: Mapping[str, Any] | None) -> None:
+        """Offer the real pre-send request facts before a physical reserve.
+
+        Base profiles ignore them (default unchanged); an envelope-qualified
+        profile (T1) validates and arms the exact precharge from
+        projected_bytes / controls.max_tokens and refuses the send otherwise.
+        """
+        del prepared  # default: no envelope qualification
 
     def settle(self, reservation_id: str, *, outcome: str, complete: bool) -> None:
         self._cas_mutate(
@@ -404,8 +420,15 @@ def bind_task_budget(
 def checked_provider_attempt(
     *, provider_id: str = "", model_id: str = "",
     wire_protocol: str = "", target_url: str = "",
+    prepared: Mapping[str, Any] | None = None,
 ) -> Iterator[None]:
-    """Physical transport reservation before the HTTP client sends any bytes."""
+    """Physical transport reservation before the HTTP client sends any bytes.
+
+    ``prepared`` (the real pre-send request facts: projected_bytes and
+    controls) is offered to the bound execution BEFORE reserving so an
+    envelope-qualified profile (T1) can precharge the exact proxy; the
+    base-class hook is a no-op and default behavior is unchanged.
+    """
     budget = active_task_budget()
     if budget is None:
         yield
@@ -414,6 +437,8 @@ def checked_provider_attempt(
         provider_id=provider_id, model_id=model_id,
         wire_protocol=wire_protocol, target_url=target_url,
     )
+    if prepared is not None:
+        budget.note_prepared_request(prepared)
     rid = budget.reserve(BudgetDimension.PHYSICAL_ATTEMPTS)
     token = _DISPATCHED_ATTEMPT.set((budget.budget_id, rid))
     outcome = "interrupted"
@@ -452,6 +477,17 @@ def checked_tool_dispatch(
         subagent_profile.assert_parent_tool_action(
             name, arguments, child_members=members
         )
+    elif snapshot["grant"]["profile"] == "web-glm-t1-budgeted-write-v1":
+        # Cross-review P1-3: the T1 gate checks the actual argument pattern
+        # (read_file snapshot=True on the attested target, edit_file with
+        # the bound expected_snapshot_ref), never just the tool name. The
+        # name allowlist verdict stays first so a foreign tool reports
+        # tool_not_allowed exactly like every other budget profile.
+        # Deferred import: the T1 profile module imports this module.
+        from llm_loop.resources import task_budget_t1_web_profile as t1_web_profile
+
+        budget.assert_tool_allowed(name)
+        t1_web_profile.assert_tool_action(budget, name, arguments)
     rid = budget.reserve(BudgetDimension.TOOL_INVOCATIONS, tool_id=name)
     outcome = "interrupted"
     try:
