@@ -114,6 +114,89 @@ def _finite_time(now: float) -> float:
     return float(now)
 
 
+# T1 web-profile single-flight scope (parent cross-review 2026-11-14 07:44):
+# the unresolved-action kinds the GLOBAL single-flight gate counts across
+# kinds inside one reserve CAS.
+_T1_ACTION_KINDS = frozenset(
+    {
+        BudgetDimension.PHYSICAL_ATTEMPTS.value,
+        BudgetDimension.TOOL_INVOCATIONS.value,
+    }
+)
+
+
+def _assert_subagent_canary_reserve_gate(
+    row: dict[str, Any],
+    kind: BudgetDimension,
+    member: TaskBudgetMember,
+    budget_id: str,
+    tool_id: str,
+) -> None:
+    """Per-profile hard gates inside one reserve CAS (subagent canary)."""
+    reserved = row["reservations"]
+    if kind == BudgetDimension.TOOL_INVOCATIONS:
+        if member.member_id != budget_id or tool_id not in {
+            "spawn_subagent", "subagent_result"
+        }:
+            raise TaskBudgetDeniedError("subagent_canary_child_tools_denied")
+        seen = sum(1 for entry in reserved.values()
+            if entry["kind"] == BudgetDimension.TOOL_INVOCATIONS.value
+            and entry["tool_id"] == tool_id
+            and entry["phase"] != ReservationPhase.ABORTED_BEFORE_DISPATCH.value)
+        if seen >= (1 if tool_id == "spawn_subagent" else 2):
+            raise TaskBudgetDeniedError("subagent_canary_tool_once_limit")
+    elif kind == BudgetDimension.PHYSICAL_ATTEMPTS:
+        if member.member_id != budget_id and member.ingress_kind != "subagent":
+            raise TaskBudgetDeniedError("subagent_canary_member_role_invalid")
+        # A real transport failure/interruption, or an attempt
+        # still pending/uncertain of physical dispatch, is NOT a
+        # license to send the next call. A successfully returned
+        # response with unknown *usage* is charged in full but
+        # may continue within the frozen root allowance.
+        if any(
+            entry["kind"] == BudgetDimension.PHYSICAL_ATTEMPTS.value
+            and (
+                entry["phase"] in {"reserved", "dispatched"}
+                or entry["outcome"] in {"failure", "interrupted", "cancelled"}
+            )
+            for entry in reserved.values()
+        ):
+            raise TaskBudgetDeniedError("subagent_canary_provider_retry_denied")
+
+
+def _assert_t1_single_flight_gate(
+    row: dict[str, Any],
+    kind: BudgetDimension,
+) -> None:
+    """T1 single-flight hard gate (parent cross-review 2026-11-14 07:21
+    per-kind; 07:44 widened to GLOBAL): the T1 web session is one serial
+    worker — at most ONE unresolved ACTION reservation (provider OR tool)
+    may exist on the root at any time, across kinds. Open phases (reserved/
+    dispatched/unknown) hold the gate for BOTH fresh executions and nested
+    scopes inside the same execution — provider-in-provider, tool-in-tool,
+    provider-in-tool and tool-in-provider alike; only settled or
+    aborted-before-dispatch rows release it. This lives in the reserve CAS
+    itself, so a crash between reserve and settle, a fresh
+    T1WebBudgetExecution on the same store/member, or any nested scope hits
+    the same durable denial — no local latch, no second ledger, no new
+    lock. The legal serial engine flow (provider settles -> tool dispatch
+    -> tool settles -> next provider) never holds two open rows."""
+    if kind.value in _T1_ACTION_KINDS and any(
+        entry["kind"] in _T1_ACTION_KINDS
+        and entry["phase"] in {
+            ReservationPhase.RESERVED.value,
+            ReservationPhase.DISPATCHED.value,
+            ReservationPhase.UNKNOWN.value,
+        }
+        for entry in row["reservations"].values()
+    ):
+        raise TaskBudgetDeniedError(
+            "t1_single_flight_provider_denied"
+            if kind == BudgetDimension.PHYSICAL_ATTEMPTS
+            else "t1_single_flight_tool_denied"
+        )
+
+
 def _valid_reservations(value: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(value, dict) or len(value) > _MAX_RESERVATIONS:
         raise ValueError("invalid reservation collection")
@@ -541,34 +624,12 @@ class TaskBudgetStore:
                 if names is not None and tool_id not in names:
                     raise TaskBudgetDeniedError("tool_not_allowed")
             if row["grant"]["profile"] == "web-glm-direct-subagent-canary-v1":
-                if kind == BudgetDimension.TOOL_INVOCATIONS:
-                    if member.member_id != budget_id or tool_id not in {
-                        "spawn_subagent", "subagent_result"
-                    }:
-                        raise TaskBudgetDeniedError("subagent_canary_child_tools_denied")
-                    seen = sum(1 for entry in reserved.values()
-                        if entry["kind"] == BudgetDimension.TOOL_INVOCATIONS.value
-                        and entry["tool_id"] == tool_id
-                        and entry["phase"] != ReservationPhase.ABORTED_BEFORE_DISPATCH.value)
-                    if seen >= (1 if tool_id == "spawn_subagent" else 2):
-                        raise TaskBudgetDeniedError("subagent_canary_tool_once_limit")
-                elif kind == BudgetDimension.PHYSICAL_ATTEMPTS:
-                    if member.member_id != budget_id and member.ingress_kind != "subagent":
-                        raise TaskBudgetDeniedError("subagent_canary_member_role_invalid")
-                    # A real transport failure/interruption, or an attempt
-                    # still pending/uncertain of physical dispatch, is NOT a
-                    # license to send the next call. A successfully returned
-                    # response with unknown *usage* is charged in full but
-                    # may continue within the frozen root allowance.
-                    if any(
-                        entry["kind"] == BudgetDimension.PHYSICAL_ATTEMPTS.value
-                        and (
-                            entry["phase"] in {"reserved", "dispatched"}
-                            or entry["outcome"] in {"failure", "interrupted", "cancelled"}
-                        )
-                        for entry in reserved.values()
-                    ):
-                        raise TaskBudgetDeniedError("subagent_canary_provider_retry_denied")
+                _assert_subagent_canary_reserve_gate(
+                    row, kind, member, budget_id, tool_id
+                )
+            if row["grant"]["profile"] == "web-glm-t1-budgeted-write-v1":
+                # T1 single-flight gate — see _assert_t1_single_flight_gate.
+                _assert_t1_single_flight_gate(row, kind)
             descriptor["policy_generation"] = row["grant"]["generation"]
             if len(reserved) >= _MAX_RESERVATIONS:
                 raise TaskBudgetDeniedError("reservation_capacity_reached")

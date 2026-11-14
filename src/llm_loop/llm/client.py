@@ -1292,6 +1292,7 @@ class LLMClient:
             with checked_provider_attempt(
                 provider_id=self.provider, model_id=model_id,
                 wire_protocol=self.wire_protocol, target_url=target_url,
+                prepared=prepared,
             ), observation:
                 yield
 

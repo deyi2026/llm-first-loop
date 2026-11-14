@@ -1,0 +1,194 @@
+{
+  "schema": "m1-fx05-receipt-v3r2",
+  "generated_at_local": "2026-11-14T00:30:00+08:00",
+  "budget": {
+    "root_id": "m1fx05-8b3741c3ffa4461cb4e8002918429e21",
+    "session_id": "f5b6bc77-ebdf-4db6-8eea-492f623d58f0",
+    "run_generation": "5e8dbe260ec74fd1891034c8c6ff7d7c",
+    "terminal_phase": "stop_requested",
+    "final_revision": 24,
+    "grant_profile": "m1-t1-fx05-bounded-cli-v3"
+  },
+  "run": {
+    "run_incomplete": false,
+    "rounds": 4,
+    "physical_attempts": 4,
+    "tool_invocations": 3,
+    "tool_sequence": [
+      "read_file",
+      "edit_file",
+      "read_file"
+    ]
+  },
+  "ledger_receipt_ref_format": "legacy_m1fx05u",
+  "ledger_receipt_ref_note": "the accepted historical run settled under m1fx05u:<attempt_id>:<digest16>; the ledger is append-only and was NOT rewritten to the new m1fx05ev prefix. New code writes m1fx05ev:<event_id>:<digest16> for future runs (proven by synthetic tests).",
+  "recomputed_digest_matches": true,
+  "digest_recompute_note": "every legacy digest16 was recomputed from durable EventStore events alone (transport.opened reserved triple + transport.settled observed) and matches the ledger receipt_ref exactly; verified both by an independent script and by running the new _verify_ledger_alignment end-to-end over this historical root (aligned=true, 4/4 joined, no extra events).",
+  "event_store": {
+    "event_logs_dir": "data/m1-budgeted-run/event_logs",
+    "isolated_in_worktree": true,
+    "session_log": "f5b6bc77-ebdf-4db6-8eea-492f623d58f0.jsonl",
+    "provider_transport_settled_events": 4,
+    "provider_transport_opened_events": 4,
+    "call_opened_generation_match": "5e8dbe260ec74fd1891034c8c6ff7d7c",
+    "event_store_join": "verified"
+  },
+  "attempts": [
+    {
+      "reservation_id": "dispatch-160cbe1a191a47dfb111700af1c3bf71",
+      "attempt_id": "pattempt:292a6971e7f1460e821942b27b54376d",
+      "transport_opened_event_id": "2e0b9b38-830b-4958-a2b4-0cd575b4ca71",
+      "transport_settled_event_id": "60b0fb72-ccb7-4d80-90cf-cd1c195a52e8",
+      "provider": "glm",
+      "model": "glm-5.3",
+      "status_code": 200,
+      "outcome": "success",
+      "usage_observations": 1,
+      "observed": {
+        "input_tokens": 3598,
+        "output_tokens": 132,
+        "cached_input_tokens": 3264
+      },
+      "reserved": {
+        "input_tokens": 35746,
+        "output_tokens": 3000,
+        "payload_bytes": 13873
+      },
+      "usage_sha256": "10b9b434db19168682fb31afb955ee6171c5b1a844ed6d1bc5f4266cf915b83a",
+      "ledger_receipt_ref": "m1fx05u:pattempt:292a6971e7f1460e821942b27b54376d:41fdfd4b8ed8b748",
+      "recomputed_digest_matches": true,
+      "provider_event_ref": ""
+    },
+    {
+      "reservation_id": "dispatch-20b40c2d81494e7d872c46a074a78ba0",
+      "attempt_id": "pattempt:65b3134bdc86485cbc5bed6b63dceefa",
+      "transport_opened_event_id": "385c3845-5a6a-429a-b83f-369a047b9f94",
+      "transport_settled_event_id": "cd8d3b11-805b-471c-ab50-9589f9c00f07",
+      "provider": "glm",
+      "model": "glm-5.3",
+      "status_code": 200,
+      "outcome": "success",
+      "usage_observations": 1,
+      "observed": {
+        "input_tokens": 2432,
+        "output_tokens": 38,
+        "cached_input_tokens": 0
+      },
+      "reserved": {
+        "input_tokens": 27352,
+        "output_tokens": 3000,
+        "payload_bytes": 9676
+      },
+      "usage_sha256": "563a0b332b00ca55c04e2696b46a0e22a5e7093ff4c6c8bcbc45337e703eea87",
+      "ledger_receipt_ref": "m1fx05u:pattempt:65b3134bdc86485cbc5bed6b63dceefa:5223eb284baabe62",
+      "recomputed_digest_matches": true,
+      "provider_event_ref": ""
+    },
+    {
+      "reservation_id": "dispatch-3c63c7326b5349c3a3f2a9bd413ffb62",
+      "attempt_id": "pattempt:0ef8348ddf3045a4bc03cdfef5d1454f",
+      "transport_opened_event_id": "6fc4476c-e862-4b3d-808f-6ce4e1977bb0",
+      "transport_settled_event_id": "71e34b20-0327-4121-8682-7f848a118602",
+      "provider": "glm",
+      "model": "glm-5.3",
+      "status_code": 200,
+      "outcome": "success",
+      "usage_observations": 1,
+      "observed": {
+        "input_tokens": 2821,
+        "output_tokens": 130,
+        "cached_input_tokens": 2368
+      },
+      "reserved": {
+        "input_tokens": 30196,
+        "output_tokens": 3000,
+        "payload_bytes": 11098
+      },
+      "usage_sha256": "bede38fef2e1bbaefcb546295de7b40e97b37c02f941bd85dfe27c5060839a55",
+      "ledger_receipt_ref": "m1fx05u:pattempt:0ef8348ddf3045a4bc03cdfef5d1454f:182f866331261450",
+      "recomputed_digest_matches": true,
+      "provider_event_ref": ""
+    },
+    {
+      "reservation_id": "dispatch-dab7d2c9d2374ad698d9317418f5ad35",
+      "attempt_id": "pattempt:74c5ae28b66c4032a4c239075b856d94",
+      "transport_opened_event_id": "cb6042b6-8c0c-4efb-9658-101dab58bbf2",
+      "transport_settled_event_id": "d908e861-f322-4cc7-bff2-e770b9be769f",
+      "provider": "glm",
+      "model": "glm-5.3",
+      "status_code": 200,
+      "outcome": "success",
+      "usage_observations": 1,
+      "observed": {
+        "input_tokens": 3305,
+        "output_tokens": 32,
+        "cached_input_tokens": 2816
+      },
+      "reserved": {
+        "input_tokens": 33372,
+        "output_tokens": 3000,
+        "payload_bytes": 12686
+      },
+      "usage_sha256": "9a2cce367c9419bc46e6fa3db229790b22f0551b3c820eb822d08715859bd1f0",
+      "ledger_receipt_ref": "m1fx05u:pattempt:74c5ae28b66c4032a4c239075b856d94:bfa128cf446c0ad7",
+      "recomputed_digest_matches": true,
+      "provider_event_ref": ""
+    }
+  ],
+  "tool_reservations": [
+    {
+      "reservation_id": "dispatch-0d351c5722e2420ca4ab780fbf555c4d",
+      "tool_id": "read_file",
+      "receipt_ref": "dispatch-receipt-dispatch-0d351c5722e2420ca4ab780fbf555c4d"
+    },
+    {
+      "reservation_id": "dispatch-bbf2364f270d4bdc9cc0990c805f138d",
+      "tool_id": "edit_file",
+      "receipt_ref": "dispatch-receipt-dispatch-bbf2364f270d4bdc9cc0990c805f138d"
+    },
+    {
+      "reservation_id": "dispatch-d0f65f2444b8444b95b6b1c339cd5e06",
+      "tool_id": "read_file",
+      "receipt_ref": "dispatch-receipt-dispatch-d0f65f2444b8444b95b6b1c339cd5e06"
+    }
+  ],
+  "totals": {
+    "input_tokens": 12156,
+    "output_tokens": 332,
+    "cached_input_tokens": 8448,
+    "payload_bytes": 47333,
+    "reserved_input_proxy_total": 126666
+  },
+  "target": {
+    "path": "t1-sandbox/outputs/fx05-v3r2-fixture-20261113.md",
+    "before_sha256": "845ae7e8c2799cb731886384237da31289e73d9513707c9a7f729f469a715399",
+    "after_sha256": "b548db797c0c60c65930eb6644d55a7fb9f20dc3a2611f9c30fa4ce1802b64f1",
+    "bytes": 610,
+    "byte_proof": {
+      "line_anchor": "- Review window opens: 2026-11-13 -> 2026-11-06",
+      "occurrences": 1,
+      "reversed_sha256_matches_attestation": true,
+      "note": "line-anchored reverse edit reproduces the prepared-target attestation exactly; the file's first date (line 7) is a different, untouched date"
+    }
+  },
+  "reserved_source": "rebuilt from durable EventStore provider.transport.opened payload.prepared (projected_bytes, controls.max_tokens); input proxy invariant 2*payload+8000 verified; output limit taken from the per-request event (3000 here), never a global constant; settle() additionally cross-checks this triple against the local pre-send envelope",
+  "usage_sha256_canonical": "{event_id, attempt_id, provider_id, model_id, usage} from the EventStore provider.transport.settled payload",
+  "digest_canonical": "{attempt_id, provider_event_ref:\"\", observed, reserved}",
+  "historical_targets_untouched": {
+    "t1-sandbox/outputs/fx05-draft.md": "6ec241cd185f1c4145d26d4adb847b6bf055e7a813ad8adb12eb5bd3609e5129",
+    "docs/receipts/M1-FX05-20261113.json": "preserved, not overwritten"
+  },
+  "verification_matrix": {
+    "py_compile": "exit 0",
+    "ruff": "All checks passed (exit 0)",
+    "pyright": "0 errors, 0 warnings",
+    "m1_suite": "36 passed",
+    "task_budget_regression": "335 passed, 4 skipped (included in the 639 via -k budget)",
+    "m1_or_budget": "639 passed, 4 skipped",
+    "interpreter": "../../.venv/bin/python (3.13)"
+  },
+  "sidecar_removed": "usage-receipts.jsonl second ledger removed from code; the stale file is runtime-ignored data, not in Git, not an authority",
+  "cached_input_note": "cached order 0/2368/2816/3264 per attempt (65b3/0ef8/74c5/292a), total 8448 included in input=12156, never deducted; output total 332",
+  "provider_event_ref_note": "provider_event_ref is honestly empty on every attempt (the provider usage payload carries no event id; usage['id'] was a wrong field to read). EventStore event ids remain separate independent fields (transport_settled_event_id / transport_opened_event_id) and never impersonate a provider_event_ref.",
+  "negative_fix_round": "v3.5+: (1) unknown-kind rows fail-closed in ANY phase; (2) tool allowlist single truth FX05_ALLOWED_TOOLS shared by grant and verifier; (3) UNKNOWN receipt exact match; (4) cross-call transport.opened/settled splice rejected at join; (5) cached 0<=cached<=input bounds; (6) cached=None normalized from the authoritative event; (7) UNKNOWN tool rows must ALSO be allowlisted (parent-side reproduced miss: tool_id=exec_command with forged-exact dispatch-receipt now fails, join_status=tool_not_allowed)"
+}

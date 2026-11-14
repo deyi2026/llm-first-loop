@@ -1,0 +1,396 @@
+{
+  "schema": "m2-t1-web-cutover-receipt",
+  "generated_at_local": "2026-11-14T09:32:47+08:00",
+  "m1_baseline": {
+    "head": "db6a2546a9d61a35c8497420413445aee6bc90e6",
+    "m1_staged_index_tree": "59d73bfb2b4ef60c6c07c93dd772df226704e42f",
+    "note": "M1 frozen candidate stays staged and untouched; every M2 delta is unstaged/untracked"
+  },
+  "m2_files": {
+    "src/llm_loop/resources/task_budget_t1_web_profile.py": {
+      "sha256": "9d117a33687b4740922a0963aa589cac1ca5f62abaf69a552eb144912a47fc69",
+      "bytes": 51992
+    },
+    "tests/unit/test_task_budget_t1_web_profile.py": {
+      "sha256": "c0505e04393d331a6ad76861eb80ff217b85746eb7b9baea01440fc322403bb7",
+      "bytes": 129545
+    },
+    "src/llm_loop/web/task_budget_canary.py": {
+      "sha256": "e3bec090a86193eea7d96070475d726a447e7c721a3734ecfc61364dafe16243",
+      "bytes": 18363
+    },
+    "src/llm_loop/web/__init__.py": {
+      "sha256": "050dff03a6ea5b79b66da6884f6523a80e68a19af54132d7fbdce81a50f79811",
+      "bytes": 36038
+    },
+    "src/llm_loop/core/loop/lifecycle.py": {
+      "sha256": "05dcc6c14ce97c1b82c19e136fc2a8f6c69c4bce6cc6b9b46fcfadb7f2222c75",
+      "bytes": 29879
+    },
+    "src/llm_loop/llm/client.py": {
+      "sha256": "db8a89593f3ff564e1954abc55b14274f743cacc3eb71eed4afda943cb520fec",
+      "bytes": 162125
+    },
+    "src/llm_loop/resources/task_budget_dispatch.py": {
+      "sha256": "de83f9a0318c1115e48050dfba7543bc277f0dba6da7a22add256db89f1752f4",
+      "bytes": 21485
+    },
+    "src/llm_loop/tools/registry.py": {
+      "sha256": "f976e763587eadb0b16006ed2b48c1a8e4609354b27febe397428e7165af51fd",
+      "bytes": 133212
+    },
+    "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md": {
+      "sha256": "ee7726a5e1ba24af707009030da7c9d44bb9a00f7e8e72c885c926af396afcd0",
+      "bytes": 20189
+    },
+    "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md": {
+      "sha256": "0bd30c62437f33675dd328d68d1c66956293fec4335e3463b5a49ecc128093c7",
+      "bytes": 40311
+    },
+    "src/llm_loop/resources/task_budget_store.py": {
+      "sha256": "e629facb49d64d966534b12790a7f06fc999d2d4eb9819f51b4643adb6dced8b",
+      "bytes": 37311
+    },
+    "src/llm_loop/resources/text_normalization.py": {
+      "sha256": "a3f03e8d22d553b251d1154b98016f3196c6da72ed13965f0b80601bcd47802a",
+      "bytes": 1083
+    },
+    "src/llm_loop/workspace/file_service.py": {
+      "sha256": "5e472fe313a768aca880833fb0583526420f9b7160f6c1c341cbbc6b45a5dc52",
+      "bytes": 32241
+    }
+  },
+  "m2_files_note": "top manifest refreshed to the R9-minimal-repair frozen candidate commit 0dcc82ecdaccd8a0f2b3634cf99f87f14347294e / tree 96b88ac7e89b3c62f6caf07f94315b1b22f54ec4 (source frozen 2026-11-14 ~08:5x; this receipt-only reconciliation at 2026-11-14 09:4x changed no runtime source or tests). Earlier 'final tree state 2026-11-14 08:37' described the pre-R9-repair candidate 06a5ce649 and no longer applies to the top manifest; batches[] keep their own per-batch historical manifests as immutable snapshots of their respective trees.",
+  "m2_changed_unstaged": [
+    " M src/llm_loop/core/loop/lifecycle.py",
+    " M src/llm_loop/llm/client.py",
+    " M src/llm_loop/resources/task_budget_dispatch.py",
+    " M src/llm_loop/tools/registry.py",
+    " M src/llm_loop/web/__init__.py",
+    " M src/llm_loop/web/task_budget_canary.py",
+    "?? docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md",
+    "?? docs/receipts/M2-T1-WEB-CUTOVER-20261114.json",
+    "?? src/llm_loop/resources/task_budget_t1_web_profile.py",
+    "?? tests/unit/test_task_budget_t1_web_profile.py",
+    "MM docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md"
+  ],
+  "what_is_synthetic": [
+    "engine-scope e2e: production bind_web_canary(T1) -> engine.run_stream -> real LLMClient parse, FakeLLM synthetic SSE frames",
+    "HTTP route tests: real FastAPI app via TestClient; BackgroundRunner.start is a mock spy (zero run side effect, zero provider traffic)",
+    "no real GLM request anywhere; no production deployment, no canary enabled, no service restart"
+  ],
+  "real_http_route_coverage": {
+    "positive": "POST /api/v1/chat/stream (registered session, authenticated, model glm/glm-5.3) -> 200, BackgroundRunner.start receives the operator-pinned T1 plan as signed_web_canary; sync /api/v1/chat -> 409 budget_canary_requires_stream",
+    "negative": "unauthenticated -> 403 budget_canary_not_qualified; wrong model -> 403 budget_canary_not_qualified; queue_id -> 409 queue-claim (fail-closed layer ahead of the canary gate); attachments -> 400 attachment-ownership (same). All four: zero runner dispatch, zero budget allocation on disk"
+  },
+  "budget_event_ledger": {
+    "authority": "EventStore provider.transport.opened + provider.transport.settled joined 1:1 by real pattempt:<32hex>",
+    "reserved_source": "opened.prepared: input=2*projected_bytes+8000 (identity-verified), output=controls.max_tokens (per-request, never a global 3000), payload=projected_bytes",
+    "settlement": "single CAS commit point; receipt_ref=m1fx05ev:<event_id>:<digest16>; UNKNOWN never impersonates settled; F18 cross-instance guard t1_root_has_unsettled_liability",
+    "edit_size_gate": "2MiB pre-write bound isomorphic to production FileService.edit (CRLF restore/replace_all/LF injection exactly covered; parent counterexample 3,300,000B pre-rejected)"
+  },
+  "verification_matrix": {
+    "py_compile": "exit 0",
+    "ruff_m2_files": "All checks passed, parent targeted 8 files, exit 0",
+    "pyright_m2_files": "0 errors, 0 warnings, parent targeted 8 files, exit 0",
+    "t1_suite": "60 passed, parent independent, exit 0",
+    "m1_suite": "36 passed, parent independent, exit 0",
+    "sweep_canary_t1_budget": "750 passed, 10546 deselected, 7 warnings, parent -p no:cacheprovider, exit 0",
+    "skips": "Older author sandbox run 747 passed/4 skipped; parent latest environment 750 passed/0 skipped. Different environments/snapshots; not combined.",
+    "interpreter": "../../.venv/bin/python (3.13)",
+    "arch_guards": "3 original R9 blockers 3 passed parent exit 0; full arch 52 passed author"
+  },
+  "not_done_honest": [
+    "no production deployment / canary / restart (wiring exists only in this isolated worktree candidate)",
+    "no real HTTP-process e2e (auth stack, queue store, worker process); load_operator_web_canary file-path loading not covered by an assembly-level e2e",
+    "non-stream / error-frame / mid-SSE-interrupt route e2e not built (engine-layer failure paths unit-tested)"
+  ],
+  "m1_staged_only": [
+    "A  docs/receipts/M1-FX05-v3r2-20261113.json",
+    "A  t1-sandbox/inputs/fx05-v3r2-prompt-20261113.md",
+    "A  t1-sandbox/outputs/fx05-v3r2-fixture-20261113.md",
+    "M  scripts/m1_fx05_budgeted_run.py",
+    "M  tests/unit/test_m1_fx05_budgeted_run.py"
+  ],
+  "m2_single_flight_gate_20261114_0721": {
+    "trigger": "parent zero-network probe: nested provider/tool scopes double-entered; crash DISPATCHED debt re-enterable by fresh instance",
+    "fix": "TaskBudgetStore.reserve apply: T1 profile per-kind single-flight hard gate — open phases (reserved/dispatched/unknown) deny new same-kind reserve (t1_single_flight_provider_denied / t1_single_flight_tool_denied); settled/aborted_before_dispatch release; gate lives in the reserve CAS itself (crash debt, fresh instances, nested scopes all hit the same durable denial); no new ledger, no new lock; execution-layer F18 first-spend guard retained",
+    "fixture_corrections": "4 positive tool blocks in 2 legacy tests now set outcome['complete']=True (real engine registry.py does this on success); the old fixtures simulated success-without-completion (unknown liability) and were correctly blocked by the new gate",
+    "tests": {
+      "t1_suite": "47 passed (43 -> 47: +nested provider, +crash debt raw-store & fresh-instance denial, +local-latch same-instance on CAS failure, +nested tool)",
+      "serial_positive_covered_by": "test_consecutive_attempts_each_bind_both_events (3 consecutive settled)",
+      "lint": "ruff All checks passed (SIM117x2 fixed); pyright 0 errors",
+      "regression": "pytest tests/unit -k \"canary or t1 or budget\": 733 passed, 4 skipped (729 -> 733)"
+    },
+    "parent_side_reported_defects": "parent reported Ruff SIM105 x1 / Pyright x8 on their probe draft copy; this candidate tree is clean (difference recorded honestly)"
+  },
+  "batches": [
+    {
+      "batch": "m2_f18_global_gate_20261114_0744",
+      "parent_review": "07:44 independent acceptance: focused 83P / composite 737P exit0, M1 staged tree 59d73bfb verified unchanged, 11-file SHA/bytes MATCH; P1-A (F18 revocation lacked an authoritative action) + P1-B (per-kind gate admitted provider-open nested tool) + P2 (receipt counts 43 vs 47) raised",
+      "p1_a_f18_revocation": {
+        "authority": "operator 0600 config file itself; deletion/unreadable/any-byte-rotation = revocation; startup pins sha256 of the exact validated bytes",
+        "enforcement": [
+          "choose_signed_web_canary: re-verify per web request (deny new run; defensive getattr keeps duck-typed legacy harnesses unaffected)",
+          "prepare_t1_web_event_budget: re-verify before issuing a new root",
+          "T1WebBudgetExecution.reserve: re-verify before EVERY provider/tool action; on revocation request_stop('t1_operator_canary_revoked') durable (idempotent vs already-stopped root: CAS conflict suppressed, first stop reason preserved) + deny"
+        ],
+        "restart_semantics": "loader returns None on OSError (config path set but file gone): no canary, ordinary web unaffected, T1 path naturally denied; stopped root denies all further actions via durable phase",
+        "negative_tests": [
+          "deletion denies new run at choose+prepare (no new root issued)",
+          "revocation between read and edit: first read settles, unlink, edit reserve denied + root stop_requested + same-instance later denial",
+          "process restart: loader None, rotated bytes never restore authority, stopped root denies provider",
+          "rotation (any byte change) = revocation via pinned sha256",
+          "idempotent on already-stopped root (suppress conflict, still denied)"
+        ]
+      },
+      "p1_b_global_single_flight": {
+        "widen": "gate now cross-kind GLOBAL: any open action-kind reservation (reserved/dispatched/unknown) rejects ANY new action reserve in the same reserve CAS (_T1_ACTION_KINDS)",
+        "negatives": [
+          "provider-open nested tool denied (tool reservation never created, provider liability stays unresolved)",
+          "tool-open nested provider denied",
+          "serial mixed legality: 3 provider + armed-read/bound-edit tool all settled passes"
+        ],
+        "legal_flow_proof": "parent full-stack stream acceptance (real runner + real LLMClient + synthetic SSE: 3 provider/2 tool settled, webt1ev: joins, observed allocations) green at 48-baseline"
+      },
+      "p2_receipt_alignment": "design main matrix now 56/36/742+4S matching this final snapshot; commands+exits identical in form to the parent 07:44 measurement",
+      "concurrent_write_disclosure": "tests file mtime changed externally at 07:50 and 07:55 (2441->2448 lines; SSE assertion replaced by frame_types parsing) despite the 07:45 no-parallel-write instruction; sole writer (model) did not author those bytes; work resumed on the parent's final version after mtime stability",
+      "files": {
+        "src/llm_loop/resources/task_budget_store.py": {
+          "bytes": 37527,
+          "sha256": "a0014384fdf1738b36b3d394157fe420ea11d83e5268cfccb8ae3240d2e63d5e"
+        },
+        "src/llm_loop/web/task_budget_canary.py": {
+          "bytes": 16159,
+          "sha256": "044435b56875c8ec9c5e68dd5ea44e0753082924e6e5e8f0a7e6e6f6ab496add"
+        },
+        "src/llm_loop/resources/task_budget_t1_web_profile.py": {
+          "bytes": 48273,
+          "sha256": "73c3c63514c42fe8dad9da1dfe037ce02d746090ae9d3039b95cdace4fb9071d"
+        },
+        "src/llm_loop/core/loop/lifecycle.py": {
+          "bytes": 28913,
+          "sha256": "cd4f07e124b83da6fe88a32817d5761d3ef3a7b8f8489916e65c060e800c4f54"
+        },
+        "src/llm_loop/llm/client.py": {
+          "bytes": 162125,
+          "sha256": "db8a89593f3ff564e1954abc55b14274f743cacc3eb71eed4afda943cb520fec"
+        },
+        "src/llm_loop/resources/task_budget_dispatch.py": {
+          "bytes": 21485,
+          "sha256": "de83f9a0318c1115e48050dfba7543bc277f0dba6da7a22add256db89f1752f4"
+        },
+        "src/llm_loop/tools/registry.py": {
+          "bytes": 133212,
+          "sha256": "f976e763587eadb0b16006ed2b48c1a8e4609354b27febe397428e7165af51fd"
+        },
+        "src/llm_loop/web/__init__.py": {
+          "bytes": 36821,
+          "sha256": "ff21a5f9d075f93c68ea4624f4df5a24a1042813f934e2c547524148898a1d38"
+        },
+        "tests/unit/test_task_budget_t1_web_profile.py": {
+          "bytes": 119672,
+          "sha256": "0d45423a3a05eefcaef6e31a3309ee5b02bfc7584715f346f25949bc3e080ee5"
+        }
+      },
+      "verification": {
+        "py_compile": "exit 0",
+        "ruff": "All checks passed (I001 x7 fixed via --fix, import blocks only)",
+        "pyright": "0 errors, 0 warnings (4 files)",
+        "t1_suite": "56 passed (48 -> 56: +8)",
+        "m1_suite": "36 passed (no regression)",
+        "regression": "pytest tests/unit -k \"canary or t1 or budget\": 742 passed, 4 skipped (737 -> 742; also fixed 7 pre-existing canary api-auth tests broken by premature selected.plan access on SimpleNamespace stubs)",
+        "interpreter": "../../.venv/bin/python (3.13)"
+      },
+      "git": {
+        "m1_staged_index_tree": "59d73bfb2b4ef60c6c07c93dd772df226704e42f (unchanged, write-tree re-verified)",
+        "m2_delta": "all unstaged; zero real GLM / Reviewer / R9 / commit / push / main / restart / deploy"
+      }
+    },
+    {
+      "batch": "m2_operator_identity_recheck_20261114_0750",
+      "parent_review": "07:50 P1 supplement: bytes-only operator_revoked() missed chmod-0644, unlink+symlink to byte-identical 0600 twin, and FIFO/oversized blocking-unbounded reads (parent TemporaryDirectory probes, exit0)",
+      "fix": {
+        "where": "src/llm_loop/resources/task_budget_t1_web_profile.py",
+        "mechanism": "_operator_config_intact(): O_NOFOLLOW|O_NONBLOCK open (symlink->ELOOP revoked, FIFO open returns immediately), fstat identity (S_ISREG, owner in {root,geteuid}, mode & 0o077 == 0, nlink == 1, size <= 16384 checked before any read), one bounded os.read(16385), sha256 vs startup-pinned fingerprint; any failure = revoked. operator_revoked() now delegates; choose/prepare/reserve fail-closed call sites unchanged; no new state store"
+      },
+      "negative_probes": [
+        "chmod 0644 -> revoked (+fence deny); restore 0600 -> re-authorized same inode",
+        "unlink + symlink to byte-identical 0600 twin -> revoked (O_NOFOLLOW)",
+        "hardlink nlink=2 -> revoked; unlink -> restored",
+        "mkfifo at pinned path -> revoked, non-blocking",
+        "16385-byte oversized -> revoked from fstat, zero reads"
+      ],
+      "loader_to_fence_test": "test_t1_build_app_autowires_real_operator_config_loader_to_fence: REAL 0600 config through build_app production wiring (load_operator_web_canary identity validation + sha pinning + T1 plan mount, no manual app.state injection) -> HTTP /api/v1/chat/stream admitted with canary injected into runner.start -> chmod 0644 on the SAME app instance refuses the next request (runner call count stays 1); existing deletion/rotation negatives keep covering delete/replace",
+      "concurrent_write_disclosure_0744_stands": "tests/unit/test_task_budget_t1_web_profile.py was externally modified twice (07:50/07:55) during the prior batch; this batch builds on the parent's final version (mtime stable 20s+ before edits)",
+      "files": {
+        "src/llm_loop/resources/task_budget_t1_web_profile.py": "d5c69509eb9805efd79e383ee1fec46597d4161df0e02426fea3fee35d09da8d",
+        "tests/unit/test_task_budget_t1_web_profile.py": "82c45f4c4158876bff857e58d48ac5f9356e0a6c73af08992990ab77e2210753",
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md": "13e7739a0da327925517f36320c03e3544d67d90ad83eb117aee99e1297af351"
+      },
+      "verification": {
+        "py_compile": "exit 0",
+        "ruff": "All checks passed (exit 0)",
+        "pyright": "0 errors, 0 warnings (2 files)",
+        "t1_suite": "58 passed (56->58)",
+        "m1_suite": "36 passed (no regression)",
+        "canary_or_t1_or_budget": "744 passed, 4 skipped (742->744)",
+        "interpreter": "../../.venv/bin/python (3.13)"
+      },
+      "git": {
+        "m1_staged_index_tree": "59d73bfb2b4ef60c6c07c93dd772df226704e42f (untouched)",
+        "m2_increment": "unstaged only",
+        "no": "real GLM / Reviewer / R9 / commit / push / main / restart / deploy"
+      }
+    },
+    {
+      "id": "m2_f18_fixture_fixes_and_typed_fail_closed_startup_20261114_0801",
+      "trigger": "parent ruling 2026-11-14 08:01: parent actually ran the -k filter (operator_config_deletion|revocation_|provider_open_rejects_nested_tool|tool_open_rejects_nested_provider|serial_mixed) on the then-tree: real exit 1, 5 failed / 2 passed / 49 deselected; verdict = fixture errors, not proven production regressions, EXCEPT item 3 which is a real fail-OPEN semantic hole",
+      "fixture_corrections_confirmed": {
+        "1_bearer": "test_t1_operator_config_deletion... now sends the request through _request_for(canary) with authorization Bearer unit-key (line ~2506) and the sanity 'chosen is canary' assert proves the choose path was actually reached",
+        "2_real_read_success": "test_t1_revocation_between_read_and_edit... now drives a REAL checked_tool_dispatch('read_file', complete=True) plus production execution.note_t1_read_result(...) arming artifact://v1/revoked-mid-run; the subsequent edit_file carries that exact armed expected_snapshot_ref and is denied at the authority layer (t1_operator_canary_revoked), not at parameter layer",
+        "3_typed_fail_closed_startup": "SECURITY SEMANTIC CHANGE (this batch): load_operator_web_canary no longer returns None when the configured path is missing. New typed error TaskBudgetCanaryConfigMissingError(RuntimeError) propagates through build_app (src/llm_loop/web/__init__.py assigns it directly with no try/except), so the Web process refuses to boot: a previously restricted session can never silently fall back to the unbudgeted default path. Absent PATH still means default OFF (ordinary web unaffected; cutover suite 9 passed proves it). In-process deletion keeps the 07:50 _operator_config_intact identity re-check (chmod/symlink/hardlink/FIFO/oversize all revoke).",
+        "4_no_list_ids": "test_t1_revocation_stop_is_idempotent... no longer calls the nonexistent TaskBudgetStore.list_ids; it asserts phase/stop_reason on the durable row directly",
+        "5_fresh_root": "test_t1_serial_mixed... uses _setup+/_open fresh root; 3 provider attempts settle with seeded EventStore evidence, then read (complete=True) -> note_t1_read_result -> edit (complete=True); asserts 3 physical settled + 2 tools settled"
+      },
+      "tests": {
+        "updated": "test_t1_revocation_survives_process_restart: asserts pytest.raises(TaskBudgetCanaryConfigMissingError) on load + durable store-phase denial of the old root persists",
+        "added": "test_t1_configured_but_missing_config_fails_build_app_closed: real build_test_engine + monkeypatched business_config_snapshot pointing at a missing file; asserts the REAL build_app call itself raises TaskBudgetCanaryConfigMissingError (typed propagation, fail-closed boot)",
+        "parent_filter_now": "8 passed, 51 deselected (parent's 7-item filter + the new build_app propagation test)"
+      },
+      "changed_files_sha256": {
+        "src/llm_loop/web/task_budget_canary.py": "f1ee96763cade6fcb329856c93030c5137a4d81f66f54c163693375553aa5453",
+        "tests/unit/test_task_budget_t1_web_profile.py": "dadf7e63ef2bf2aa0c660381abe0e7acd00665bda0dd7e09001c8bce22f8b325"
+      },
+      "verification_matrix": {
+        "py_compile": "exit 0",
+        "ruff": "All checks passed (both files)",
+        "pyright": "0 errors, 0 warnings (both files)",
+        "t1_suite": "59 passed (58 -> 59)",
+        "m1_suite": "36 passed (no regression)",
+        "web_cutover_suite": "9 passed (default-OFF semantics intact)",
+        "canary_family": "test_task_budget_canary_api_auth + test_web_direct_subagent_canary: 55 passed",
+        "sweep_canary_t1_budget": "745 passed, 4 skipped (744 -> 745)",
+        "interpreter": "../../.venv/bin/python (3.13)"
+      },
+      "git": "M1 staged index untouched; this batch is unstaged M2 delta only; no commit/push/main/R9/restart/deploy/reviewer/real GLM",
+      "parent_independently_proved": "global cross-kind nested rejection, new-run denial after config deletion, full-stack TestClient->real Runner->LLMClient synthetic 1 passed",
+      "honest_notes": "items 1/2/4/5 of the 08:01 ruling were already fixed in the 07:44-07:50 batches (the parent ran the filter against an older tree); item 3 is genuinely new production code in this batch. P1 metadata chmod-0644/symlink same-bytes remains queued per the parent's previous message and was closed in the 07:50 batch (identity relaxation probes) pending parent re-verification."
+    },
+    {
+      "id": "m2_final_stats_alignment_20261114_0837",
+      "actor": "closure agent session 76ea82c8 (the 07:41 dispatch recipient: 'parent-side' full-stack stream acceptance author)",
+      "scope": "stats/SHA unification only per the 07:41 dispatch; zero production-code changes in this batch",
+      "changes": [
+        "design doc M2-T1-WEB-CUTOVER-FREEZE-20261114.md verification matrix: 56/742 -> 59/745 passed, 4 skipped (chain 43->47->48->56->58->59 / 729->733->737->742->744->745), matrix header re-dated to the 08:2x independent re-run window",
+        "receipt top m2_files manifest refreshed to final tree bytes (5 entries: profile d5c69509/50617, tests dadf7e63/128594, canary f1ee9676/17198, store a0014384/37527, design doc c54e5469/18028); batch-level historical manifests untouched",
+        "concurrent-write attribution clarified: the 07:50:23/07:55:55 tests-file writes flagged in batch[0] concurrent_write_disclosure were authored by this closure agent under the 07:41 dispatch authorization (full-stack chained e2e + SSE frame-type assertions); the dev agent's 'sole writer did not author those bytes' statement is accurate from its own writer-of-record perspective and no unauthorized write occurred"
+      ],
+      "full_stack_e2e_reference": "test_t1_full_stack_stream_route_real_runner_real_llmclient_synthetic_sse: real TestClient POST /api/v1/chat/stream -> REAL BackgroundRunner.start daemon thread (signed_web_canary.bind inside runner._consume) -> real engine.run_stream -> real LLMClient parsing synthetic SSE (only client_mod._task_budget_provider_stream stubbed, zero real GLM); asserts frame order run_started->tool_round->done with zero error frames, exactly 3 provider rounds, controlled edit lands, EventStore 3x opened + 3x settled, single ledger row 3 physical + 2 tool all settled/success, allocations [90,120,120], every physical receipt_ref prefixed webt1ev:",
+      "verification_matrix": {
+        "t1_suite": "59 passed, exit 0 (measured 08:21 and 08:26 on final tree)",
+        "sweep_canary_t1_budget": "745 passed, 4 skipped, 10546 deselected, exit 0 (measured 08:21 and 08:26)",
+        "ruff": "All checks passed (10 M2-surface files, 08:11)",
+        "pyright": "0 errors, 0 warnings (10 M2-surface files, 08:11)",
+        "m1_staged_index_tree": "59d73bfb2b4ef60c6c07c93dd772df226704e42f (write-tree re-verified 08:11/08:21/08:26: unchanged)",
+        "git_diff_check": "clean (08:11)"
+      },
+      "interpreter": "../../.venv/bin/python -m pytest (3.13)",
+      "git": "M1 staged index untouched; docs/receipt-only batch, unstaged; no commit/push/main/R9/restart/deploy/reviewer/real GLM"
+    },
+    {
+      "id": "m2_precommit_privacy_hygiene_20261114",
+      "scope": "docs/receipts only path redaction; design status and independent verification update",
+      "security_scan": "original staged commit blocked on seven local home absolute paths and two long fake API-key fixture literals; sanitized paths and shortened both synthetic-only keys to k, no allowlist/bypass",
+      "m1_receipt_path_redactions": 2,
+      "m2_receipt_path_redactions": 5,
+      "runtime_code_changed": false,
+      "independent_verification": {
+        "m1_m2_focused": "95 passed, exit 0",
+        "f18_and_cross_kind": "10 passed, exit 0",
+        "related_sweep": "749 passed, 10546 deselected, 7 warnings, exit 0; -p no:cacheprovider",
+        "ruff": "All checks passed, exit 0",
+        "pyright": "0 errors, 0 warnings, exit 0",
+        "full_r9": "NOT_RUN, requires independent Reviewer PASS"
+      },
+      "test_fixture_literals_shortened": 2
+    },
+    {
+      "batch": "R9-first-round-minimal-repair",
+      "date_local": "2026-11-14 09:20",
+      "trigger": "parent release-gate run exit=1 on frozen candidate 06a5ce649/tree 4cab3bfd: three tier0 architecture failures",
+      "scope": "semantic minimal extraction only in the same isolated tree; NO baseline/guard/gate-script/exemption changes; single writer; no independent reviewer / R9 / push / main",
+      "changes": [
+        {
+          "fix": "kernel_import_edges",
+          "before": "new resources->workspace edge from T1 profile import of file_service text helpers",
+          "after": "pure helpers moved verbatim to new resources/text_normalization.py; file_service re-exports (workspace->resources is not a kernel edge); T1 profile imports from its own plane; identity anti-drift test added (test_t1_and_file_service_share_one_text_normalization_implementation asserts `is` identity and no llm_loop.workspace import in the profile source)"
+        },
+        {
+          "fix": "function_lines_ratchet (5 items)",
+          "after": {
+            "web/__init__.py::build_app": "158 -> 144 (P1-1 fence block extracted to task_budget_canary.restricted_session_id)",
+            "core/loop/lifecycle.py::run_stream": "337 -> 311 (operator plan dispatch extracted to module-level _dispatch_operator_event_budget, function-local imports preserved)",
+            "resources/task_budget_store.py::reserve": "150 -> 92 (subagent-canary and T1 single-flight gates extracted to module-level _assert_subagent_canary_reserve_gate / _assert_t1_single_flight_gate inside the same reserve CAS semantics)",
+            "resources/task_budget_t1_web_profile.py::settle": "184 -> 99 (fail-closed tail _t1_fail_closed; event attribute gate _t1_transport_evidence; generation/call binding _t1_call_generation_bound; usage gate _t1_observed_usage_view returning (values, reason) with exact stop reasons preserved)",
+            "web/task_budget_canary.py::load_operator_web_canary": "159 -> 100 (admin-once and T1 plan builders extracted to _admin_once_plan_from_config / _t1_plan_from_config)"
+          }
+        },
+        {
+          "fix": "global_redline_300",
+          "after": "run_stream 311 <= legacy registered 312"
+        }
+      ],
+      "verification": {
+        "three_targeted_tier0": "4 passed (ratchet_within_baseline, global_redline_300, kernel_import_edges x2)",
+        "arch_guards_full": "52 passed",
+        "tier0_marker_full": "341 passed, 10955 deselected",
+        "t1_plus_m1": "96 passed (60 T1 incl. identity test + 36 M1), parent independently verified, exit 0",
+        "canary_or_t1_or_budget": "747 passed, 4 skipped",
+        "webui": "615 passed",
+        "static_diagnostics_ruff_ledger": "PASS historical=67 current=27 new=0 resolved=40 touched-files-clean",
+        "static_diagnostics_pyright_ledger": "PASS historical=45 current=10 new=0 resolved=35 touched-files-clean",
+        "py_compile": "exit 0",
+        "interpreter": ".venv/bin/python (3.13, repo virtualenv)"
+      },
+      "note": "semantic invariants preserved: all extractions are pure moves; stop reasons, gate denial codes, dispatch/receipt_ref formats and CAS boundaries unchanged; old reviewer PASS invalidated by code change per contract - a fresh independent reviewer PASS is required before the parent re-runs the original release gate"
+    },
+    {
+      "batch": "R9-guard-parent-reconciliation",
+      "date_local": "2026-11-14T09:30:48+08:00",
+      "scope": "receipt/design alignment only; no runtime source or tests changed; top manifest re-audited file-by-file against commit 0dcc82ecd (0 mismatch)",
+      "parent_independent": {
+        "arch_three_blockers": "3 passed, exit 0",
+        "t1_focused": "60 passed, exit 0",
+        "m1_focused": "36 passed, exit 0",
+        "combined_focused": "96 passed, exit 0",
+        "previous_author_97": "corrected arithmetic; 60+36=96",
+        "new_reviewer": "NOT_RUN",
+        "original_full_r9": "NOT_RUN on repair commit",
+        "combined_regression": "pytest -q tests/unit -k 'canary or t1 or budget' -p no:cacheprovider -> 750 passed / 10546 deselected / 7 warnings, exit 0 (parent, 2026-11-14 09:31, commit 0dcc82ecd)",
+        "author_combined_regression": "same -k selection WITHOUT -p no:cacheprovider, .venv/bin/python 3.13 repo virtualenv -> 747 passed, 4 skipped (author run recorded in batches[5].verification; different command/environment, recorded separately and never merged with the parent 750 figure)"
+      }
+    },
+    {
+      "batch": "top_level_final_consistency",
+      "date_local": "2026-11-14T09:32:47+08:00",
+      "scope": "receipt-only top-level current snapshot correction; historical batches preserved",
+      "corrections": [
+        "m2_files_note current 13 paths, not 08:37 11-path snapshot",
+        "top verification_matrix current parent 60+36 and 750 sweep",
+        "final_state distinguishes old failed R9 from repaired candidate pending gates"
+      ],
+      "runtime_code_changed": false
+    }
+  ],
+  "final_state": {
+    "m1_frozen_index_tree_preserved": "59d73bfb2b4ef60c6c07c93dd772df226704e42f remains the M1 layer inside the merged history",
+    "r9_candidate_before_repair": "commit 06a5ce649 / tree 4cab3bfd (reviewer PASSed, release gate exit=1)",
+    "repair_source_commit": "0dcc82ecdaccd8a0f2b3634cf99f87f14347294e",
+    "current_candidate_identity": "Use Git HEAD/tree and Goal checkpoint (no self-reference inside the receipt)",
+    "independent_reviewer_after_repair": "NOT_RUN",
+    "original_full_r9_after_repair": "NOT_RUN",
+    "r9_repaired_candidate": "commit 0dcc82ecdaccd8a0f2b3634cf99f87f14347294e / tree 96b88ac7e89b3c62f6caf07f94315b1b22f54ec4 (current frozen candidate after R9 tier-0 minimal repair; git clean; fresh independent reviewer PASS + full original R9 exit 0 still pending, NOT_RUN by this writer)"
+  },
+  "batches_note": "batches[0..4] are immutable historical snapshots recorded against their own trees/timestamps (M2 development loop, frozen-hygiene pass); batches[5]=R9-first-round-minimal-repair (source commit 0dcc82ecd), batches[6]=R9-guard-parent-reconciliation (receipt-only). Counts inside historical batches are NOT restated to match later trees."
+}
