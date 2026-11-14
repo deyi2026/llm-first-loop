@@ -13,7 +13,8 @@
 
 1. **v1 的前半程已经闭合**：lane 实体、写前 CAS、merge-tree 零副作用预检、S1 十条机检、自动回滚绑定、Board 只读、协助收件箱均已落地并有账本证据（61 条 lane / 74 项队列 / 60 张凭证 / 169 次 merge commit）。
 2. **未闭合的是后半程**：失败原因不可区分、lane 不会自己收口、返工全靠人。本期只做这三件事，不重做并发协议。
-3. **主因口径纠正**：34 次队列失败按「机检顺序取首个失败项」分类为 `base_stale` 17 / `main_head_unknown` 7 / `verify_required` 7 / `verify_stale` 3。**`merge_conflict` 作为主因出现 0 次**。瓶颈不是冲突检测，是 base 新鲜度与凭证齐备度。
+3. **主因口径纠正**：34 次队列失败按「机检顺序取首个失败项」分类为 `base_stale` 17 / `main_head_unknown` 7 / `verify_required` 7 / `verify_stale` 3。**`merge_conflict` 作为主因出现 0 次**。
+   **但「瓶颈」这个推论在 v2 被真实账本推翻**：这 34 项里 **33 项的 lane 已处于终态**（merged 32 / abandoned 1），在途待修的真实失败只有 **1 项**（E23）。所谓「base 新鲜度瓶颈」是把历史死账当成了当前工作量——`base_stale` 那 17 项对应的 lane 早已合并完成，不需要任何 rebase。R5 视图的真实价值因此不是「教你修」，而是「告诉你不必修」，以及让剩下那 1 项不被 33 项噪音淹没。
 4. **`main_head_unknown` 与 `merge_tree_unavailable` 是同一根因的级联**（见 §1 E7），不是两个独立故障；上轮把 7+7 记作 14 次环境返工属重复计数。
 5. **不加 `blocked` 状态**：`LANE_STATUSES` 里没有 blocked，新增状态要连带改状态迁移表、S1 的收口计时口径（`_CLOSING_STATUSES`）、Board 渲染与 push 门 30min 截止判定。本期用「**事件标疑 + 确证后 `close(abandoned)`**」替代。
 6. **收尾必须三判据同时成立**：超时 + 探针确证失联 + 工作树干净。任一不足只标疑、不改状态。理由：实测 68 条 lane worktree 中 **22 条有未提交改动**，任何「按时间自动回收」都会毁掉真实产物。
@@ -48,6 +49,8 @@
 | E20 | 全仓无 lane 回收/巡检实现：`grep -rn 'reap|reclaimer|sweep' src/llm_loop` 仅命中 web 的 `human_turn_queue._reap_stale_claims_locked` 与 `queue_recovery._alive`，与 lane 无关 | 实测 |
 | E21 | 既有「超时≠死亡」的正确先例：`queue_recovery` 的 `_alive(sid)` 为**注入谓词**，能力缺失时**保守跳过**，绝不把「探不到」判成「已死」 | `web/queue_recovery.py`（recovery 段） |
 | E22 | 现有 34 项 failed 中 `base_stale` 17 项：`note_main_advanced` 只标 **queued** 项 stale，已 failed 的项不会被告知「main 已前进，可重投」 | `merge_queue.py:908` 区段 |
+| E23 | **34 项 failed 中 33 项的 lane 已终态**（merged 32 / abandoned 1），在途仅 1 项；`base_stale` 17 项对应 lane **全部已 merged** | `_collect_merge_queue` 读 `lanes.jsonl` 交叉核对，实测 `terminal_total=33`（2026-11-14）；同法核 U4 的 10 项 verify 失败→全 merged/abandoned |
+| E24 | 真实账本下 R5 四类计数为 `该重投=0 / 该 rebase=17 / 该补凭证=10 / 该人看=7`，**和=34 闭合**；但 33 项标 `terminal=true`，可执行命令只在 1 项上成立 | 同上实测；修复前该视图对 33 项历史项均给出必然失败的命令（如对 merged lane 调 `lane_merge_request`） |
 
 ---
 
@@ -393,7 +396,13 @@ def precheck(self, *, branch, worktree, goal_id, paths) -> dict:
 | `main_head_unknown` 无 rc 时的归类未定义 | 落 `env_config` + `evidence_hint=rc_missing` | fail-closed：不确定不得当成可重投 |
 | 落账字段只在失败时写 | 失败时写；**转 pass 时显式清除** 并重置 `auto_retry_attempt` | 残留字段会让读侧把上次失败当成当前事实 |
 
-**实施进度**：P1（R1 诊断 + R5 视图）已实现并通过 19 项新验收测试；P2/P3/P4 未实现，P2 依赖 U3 基础设施，P3 依赖 P2 的 `lane_dead` 类，P4 可独立先做。
+**实施进度**：P1（R1 诊断 + R5 视图）已实现；P2/P3/P4 未实现，P2 依赖 U3 基础设施，P3 依赖 P2 的 `lane_dead` 类，P4 可独立先做。
+
+**E23 进一步改变了「工作量」的判断。** 33/34 是历史死账，意味着 R3（自动重投）在当期数据上**没有作业对象**（实测该重投=0）。这不是「重投没用」的证据，而是「队列实际已清零、只是账本没清」的证据。据此：
+
+- P3 优先级下调：要等真的出现 `env_transient` 项才有价值；
+- R5 视图必须标 `terminal`，否则人会被 33 条「该 rebase / 该补凭证」误导去返工已经完成的工作；
+- 「账本清理」是独立议题（不属本期）：本期只保证看图的人不被误导。
 
 ---
 
@@ -443,3 +452,4 @@ worktree 规模（`git worktree list --porcelain` 解析）：100 条 = main 1 +
 |---|---|---|
 | 2026-11-14 | v1 草案 | 初稿；含 §2 对上一轮口头判断的 6 处自我修正 |
 | 2026-11-14 | v2 | 填入 U3/U4 实测结论（U3 无权威 liveness 源、U4 0 项值得补签）；新增 §10.1：P2 降级为「谓词注入 + 本轮不实现收口」，登记 4 处实现期修正；P1 已实现并通过 19 项验收测试 |
+| 2026-11-14 | v3 | 真实账本实测推翻「base 新鲜度瓶颈」：34 项 failed 中 33 项 lane 已终态（新增 E23/E24）；R5 增 `terminal` 标记与历史项文案，修掉「对已 merged lane 给可执行命令」的缺陷（+3 回归测试）；P3 优先级下调 |

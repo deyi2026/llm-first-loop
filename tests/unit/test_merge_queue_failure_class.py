@@ -279,3 +279,82 @@ def test_probe_failure_carries_rc_and_stderr(tmp_path):
     chk = check_base_main_current({"base_main_sha": "a" * 40}, "", probe=detail)
     assert chk["evidence"]["rc"] == detail["rc"]
     assert chk["evidence"]["stderr_tail"] == detail["stderr_tail"]
+
+
+# ---- 终态 lane 不得被给可执行命令（真实账本跑出来的缺陷回归）----
+#
+# 实测 data/audit/merge_queue.jsonl 时发现：10 项 verify 类失败对应的 lane 全部
+# 已 merged/abandoned，而视图仍给出 `lane_merge_request(...)`——那是一条必然失败的
+# 命令。R5-c 要求「可直接粘贴」，给一条注定报错的命令比不给更糟。
+
+
+def test_terminal_lane_gets_no_executable_command(tmp_path):
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q-done",
+                "lane_id": "l-done",
+                "status": "failed",
+                "last_preflight": {
+                    "checks": [_chk("verify_covers_base", "verify_required")]
+                },
+            }
+        ],
+    )
+    (tmp_path / "lanes.jsonl").write_text(
+        '{"lane_id":"l-done","status":"merged"}\n', encoding="utf-8"
+    )
+    block, _ = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["terminal_total"] == 1
+    item = mq["buckets"]["verify"]["items"][0]
+    assert item["terminal"] is True
+    assert item["lane_status"] == "merged"
+    assert not item["next_command"].startswith("lane_merge_request")
+    assert "历史项" in item["next_command"]
+
+
+def test_non_terminal_lane_keeps_executable_command(tmp_path):
+    """修缺陷不能把正常路径一起关掉：在途 lane 仍须拿到可执行命令。"""
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q-live",
+                "lane_id": "l-live",
+                "status": "failed",
+                "last_preflight": {
+                    "checks": [_chk("verify_covers_base", "verify_required")]
+                },
+            }
+        ],
+    )
+    (tmp_path / "lanes.jsonl").write_text(
+        '{"lane_id":"l-live","status":"verifying"}\n', encoding="utf-8"
+    )
+    block, _ = _collect_merge_queue(str(tmp_path))
+    item = block["merge_queue"]["buckets"]["verify"]["items"][0]
+    assert item["terminal"] is False
+    assert item["next_command"].startswith('lane_merge_request(lane_id="l-live")')
+
+
+def test_render_surfaces_terminal_count(tmp_path):
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q-done",
+                "lane_id": "l-done",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            }
+        ],
+    )
+    (tmp_path / "lanes.jsonl").write_text(
+        '{"lane_id":"l-done","status":"abandoned"}\n', encoding="utf-8"
+    )
+    block, _ = _collect_merge_queue(str(tmp_path))
+    text = render_coordination({**block, "degraded": []})
+    assert "历史=1" in text
+    assert "历史项" in text

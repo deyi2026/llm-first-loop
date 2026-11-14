@@ -751,12 +751,53 @@ _QUEUE_BUCKET_LABELS = {
 }
 
 
-def _queue_next_command(entry: dict, diag: dict) -> str:
-    """给每条失败项一条可直接粘贴的下一步命令（R5-c：不是“请排查”这种空话）。"""
+#: lane 终态：已合并/已关闭/已放弃。对这些 lane 再 requeue/rebase 必然失败。
+_TERMINAL_LANE_STATUSES = frozenset({"merged", "closed", "abandoned"})
+
+
+def _lane_status_map(audit_dir: str) -> dict[str, str]:
+    """只读 lanes.jsonl → {lane_id: status}（同 id 取最后一行，即最新状态）。
+
+    读失败返回空 dict：分诊退化为「不带 lane 上下文」，仍然逐项给出明细，
+    不因旁证缺失丢掉主结果（R5-a 只要求零写，不要求读全）。
+    """
+    path = Path(audit_dir) / "lanes.jsonl"
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict) and row.get("lane_id"):
+                    out[str(row["lane_id"])] = str(row.get("status") or "")
+    except OSError:
+        return {}
+    return out
+
+
+def _queue_next_command(entry: dict, diag: dict, lane_status: str = "") -> str:
+    """给每条失败项一条可直接粘贴的下一步命令（R5-c：不是“请排查”这种空话）。
+
+    关键约束：lane 已终态时**不**给可执行命令。对已 merged 的 lane 执行
+    requeue/rebase 是必然失败的动作，给出它比不给更糟——R5-c 的「可直接粘贴」
+    不等于「随便给一条能粘的」。此时给出的是无需动作的历史项说明。
+    """
     lid = str(entry.get("lane_id") or "")
     qid = str(entry.get("queue_id") or "")
     if not lid:
         return f"# 队列项 {qid} 缺 lane_id，人工核对 merge_queue.jsonl"
+    if lane_status in _TERMINAL_LANE_STATUSES:
+        return (
+            f"# 历史项：lane {lid} 已 {lane_status}，无需动作"
+            f"（queue={qid}；账本清理另行判定）"
+        )
     cls = str(diag.get("failure_class") or "")
     if cls == "env_transient":
         return f'lane_queue_submit(lane_id="{lid}")  # 环境类，修好后重投'
@@ -778,6 +819,7 @@ def _collect_merge_queue(
     from llm_loop.introspection.merge_queue import classify_failure
 
     path = Path(audit_dir) / "merge_queue.jsonl"
+    lane_status = _lane_status_map(audit_dir)
     buckets = {
         key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
         for key in _QUEUE_BUCKET_LABELS
@@ -789,6 +831,7 @@ def _collect_merge_queue(
         )
 
     failed_total = 0
+    terminal_total = 0
     malformed = 0
     try:
         with path.open("r", encoding="utf-8") as fh:
@@ -810,6 +853,10 @@ def _collect_merge_queue(
                     diag = {"failure_class": "", "primary_reason": "classify_error"}
                 bucket = _QUEUE_BUCKETS.get(str(diag.get("failure_class") or ""), "human")
                 buckets[bucket]["count"] += 1
+                lane_state = lane_status.get(str(entry.get("lane_id") or ""), "")
+                is_terminal = lane_state in _TERMINAL_LANE_STATUSES
+                if is_terminal:
+                    terminal_total += 1
                 if len(buckets[bucket]["items"]) < limit_per_bucket:
                     buckets[bucket]["items"].append(
                         {
@@ -818,7 +865,9 @@ def _collect_merge_queue(
                             "failure_class": str(diag.get("failure_class") or "") or "unknown",
                             "primary_reason": str(diag.get("primary_reason") or ""),
                             "evidence_hint": str(diag.get("evidence_hint") or ""),
-                            "next_command": _queue_next_command(entry, diag),
+                            "lane_status": lane_state,
+                            "terminal": is_terminal,
+                            "next_command": _queue_next_command(entry, diag, lane_state),
                         }
                     )
     except OSError as exc:
@@ -844,6 +893,7 @@ def _collect_merge_queue(
                 "bucket_sum": summed,
                 "closure_ok": closure_ok,
                 "malformed_lines": malformed,
+                "terminal_total": terminal_total,
             }
         },
         notes,
@@ -1096,6 +1146,7 @@ def render_coordination(snapshot: dict) -> str:
             lines.append(
                 f"  队列分诊 failed={mq.get('failed_total')} "
                 f"闭合={'ok' if mq.get('closure_ok') else 'BROKEN'}({mq.get('bucket_sum')}) "
+                f"历史={mq.get('terminal_total', 0)} "
                 + " ".join(parts)
             )
             for key in ("retry", "rebase", "verify", "human"):
