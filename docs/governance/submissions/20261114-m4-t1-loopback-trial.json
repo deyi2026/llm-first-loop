@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-m4-t1-loopback-trial",
+  "summary": "M4-A test-only real loopback HTTP/Uvicorn acceptance for the already-reviewed M1/M2 T1 canary; reuses existing assertions and synthetic Provider, adds no production authorization or control machinery.",
+  "components": [
+    {
+      "component_id": "m4-loopback-acceptance-evidence",
+      "paths": [
+        "tests/unit/test_m4_t1_loopback_smoke.py",
+        "docs/design/M4-T1-CONTROLLED-TRIAL-20261114.md",
+        "docs/receipts/M4-T1-LOOPBACK-20261114.json",
+        "docs/governance/submissions/20261114-m4-t1-loopback-trial.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing pytest acceptance harness and design/receipt governance",
+      "disposition": "Reuses the existing M2 route/Runner/LLMClient/EventStore/budget/actual-file assertions with TestClient replaced by a single-request loopback Uvicorn socket adapter; no new production control, budget, service, policy or write authority.",
+      "evidence": [
+        "tests/unit/test_m4_t1_loopback_smoke.py",
+        "docs/receipts/M4-T1-LOOPBACK-20261114.json"
+      ],
+      "verification_level": "96 M1/M2 tests passed; 7 new real loopback socket tests passed; 103 combined passed; Ruff and Pyright 0 errors; zero external Provider calls.",
+      "model_evidence_veto_recovery_exit": "Synthetic SSE is explicitly not real GLM evidence. Existing operator config, revocation, CAS, budget and Runner veto remain production authorities; reviewer/operator can refuse M4-B.",
+      "rollback_route": "Revert only M4 test/docs/receipt/governance additions; deployed generation 408 and its default-OFF canary are untouched."
+    }
+  ],
+  "declarations": []
+}
