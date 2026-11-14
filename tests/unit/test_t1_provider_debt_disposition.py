@@ -320,7 +320,7 @@ def test_unknown_reservation_not_refundable(tmp_path: Path) -> None:
         f, "--expected-budget-sha256",
         hashlib.sha256(f["budget_file"].read_bytes()).hexdigest(),
     )
-    with pytest.raises(audit.EvidenceInvalidError):
+    with pytest.raises(audit.EvidenceInvalidError, match="source_authority_unavailable_or_corrupt"):
         _inspect(f)
 
 
@@ -330,6 +330,29 @@ def test_invalid_cli_arguments_return_machine_readable_hold(capsys: pytest.Captu
     result = json.loads(capsys.readouterr().out)
     assert result["audit_status"] == "HOLD_INVALID_EVIDENCE"
     assert result["reason"] == "invalid_cli_arguments"
+
+
+def test_help_is_not_an_exit_zero_admission(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert audit.main(["--help"]) == 3
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["audit_status"] == "HOLD_INVALID_EVIDENCE"
+    assert result["reason"] == "invalid_cli_arguments"
+    assert result["source_run_replay_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    "invalid_sid",
+    ["a" * 36, "0" * 36, "11111111-1111-1111-1111-111111111111",
+     "11111111-1111-4111-8111-11111111111A"],
+)
+def test_session_id_requires_canonical_uuid4(tmp_path: Path, invalid_sid: str) -> None:
+    f = _fixture(tmp_path)
+    _replace_arg(f, "--source-session-id", invalid_sid)
+    with pytest.raises(audit.EvidenceInvalidError, match="invalid_session_id"):
+        _inspect(f)
 
 
 def test_noncanonical_relative_target_rejected(tmp_path: Path) -> None:

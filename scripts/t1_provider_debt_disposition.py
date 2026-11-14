@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import sys
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,15 @@ class _HoldParser(argparse.ArgumentParser):
 def _require(condition: bool, code: str) -> None:
     if not condition:
         raise EvidenceInvalidError(code)
+
+
+def _valid_session_uuid4(value: str) -> bool:
+    """Accept only canonical lowercase UUIDv4 session identities."""
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return parsed.version == 4 and str(parsed) == value
 
 
 def _digest(path: Path, max_bytes: int) -> str:
@@ -72,10 +82,7 @@ def inspect(args: argparse.Namespace) -> dict[str, Any]:
     _require(bool(_HEX32.fullmatch(args.source_run_generation)), "invalid_run_generation")
     for name in ("expected_events_sha256", "expected_budget_sha256", "expected_target_sha256"):
         _require(bool(_HEX64.fullmatch(getattr(args, name))), "invalid_expected_digest")
-    _require(
-        bool(re.fullmatch(r"[0-9a-f-]{36}", args.source_session_id)),
-        "invalid_session_id",
-    )
+    _require(_valid_session_uuid4(args.source_session_id), "invalid_session_id")
     data = _canonical_dir(args.data_dir)
     workspace = _canonical_dir(args.workspace_root)
     target = _target(workspace, args.target_path)
@@ -347,7 +354,7 @@ def inspect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _args(argv: list[str] | None) -> argparse.Namespace:
-    parser = _HoldParser(description=__doc__)
+    parser = _HoldParser(description=__doc__, add_help=False)
     for name in (
         "data-dir", "workspace-root", "source-session-id",
         "source-authorization-id", "source-run-generation", "target-path",
