@@ -157,3 +157,30 @@ AC1–AC10 全部 PASS**。
 当前其他 M5F Goal 正独占运行原版 R9；本 Goal 待其退出后
 再运行原版完整 `bash scripts/ci_gate.sh`。设计/代码 Reviewer PASS
 **不能代替 R9 exit 0 或生产验收**。
+
+
+## 原版完整 R9：真实 PASS / exit 0
+
+对隔离候选 `5acc085ea59c7b66fb7bd2dddb96bf505d752fea`
+原样执行 `bash scripts/ci_gate.sh`，真实 `exit 0`。
+该候选 `src/tests` Git tree 与独立 GLM-5.3 Reviewer
+PASS 的 `a291a05da0e6f0229040294ed193d5b556df7be9`
+逐字节相同；仅文档回执增加。
+
+- Ruff 全树 ratchet PASS；Pyright 全树 ratchet PASS；
+  env-pin PASS。
+- Vitest：`57 files / 600 tests` 全通过。
+- Tier0 `341 passed/2 skipped`；Tier1 `7 passed/2 skipped`；
+  Tier2 `3 passed/2 skipped`。
+- 原版完整 pytest：`15,023 passed / 158 skipped / 3 xfailed`；
+  serial_signal `1 passed`。
+- 未与其他 Goal 并发 R9。
+
+正式回执：
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-original-R9-PASS.json`。
+
+**下一门禁**：受审查隔离分支 push → GitHub 远端 CI/精确 SHA →
+保护现有脏 main 和其他 Goal 工作树后再考虑集成。
+此 R9 PASS 不证明历史 Ornith-MLX 模型身份，也不证明
+事故 `3698` 字符预算下每次都可恢复；未经生产资格化
+不得发布或重启。
