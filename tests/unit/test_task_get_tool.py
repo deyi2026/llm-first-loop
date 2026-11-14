@@ -99,6 +99,31 @@ def test_strict_session_default_resolution(tmp_path):
     assert "[无任务] 当前无活动 goal" in got2.content
 
 
+def test_cross_session_no_goal_response_guides_explicit_read_without_leak(tmp_path):
+    """跨会话冷启动的 task_id 不可误判为不存在或诱导新建 Goal."""
+    other_goal, other_t = _seed_goal_task(tmp_path, session_id=OTHER_SID)
+    host = _host(tmp_path)
+    task_file = Path(tmp_path) / "tasks" / f"{other_goal.id}.jsonl"
+    before = task_file.read_bytes()
+
+    missing = run_task_get(host.ctx, host, {"task_id": other_t.task_id})
+    assert missing.status == ToolResultStatus.SUCCESS  # 保持既有空视图契约
+    assert "[无任务] 当前无活动 goal" in missing.content
+    assert "仅当前会话" in missing.content
+    assert "跨会话只读恢复" in missing.content
+    assert "goal_id + task_id" in missing.content
+    assert "无需 create_goal" in missing.content
+    assert other_goal.id not in missing.content  # 不枚举/泄漏其他会话 Goal
+    assert task_file.read_bytes() == before
+
+    recovered = run_task_get(
+        host.ctx, host, {"goal_id": other_goal.id, "task_id": other_t.task_id}
+    )
+    assert recovered.status == ToolResultStatus.SUCCESS
+    assert LONG_REASON in recovered.content
+    assert task_file.read_bytes() == before
+
+
 def test_explicit_goal_id_reads_any_goal(tmp_path):
     """显式 goal_id 可跨会话读取（读取面宽松，与 task_frontier 显式路径一致）."""
     other_goal, other_t = _seed_goal_task(tmp_path, session_id=OTHER_SID)
@@ -131,6 +156,8 @@ def test_schema_has_no_write_surface():
     assert set(props) == {"goal_id", "task_id"}
     assert TASK_GET_TOOL_DEF["parameters"]["required"] == ["task_id"]
     assert TASK_GET_TOOL_DEF["name"] == "task_get"
+    assert "跨会话只读恢复" in TASK_GET_TOOL_DEF["description"]
+    assert "原 goal_id" in props["goal_id"]["description"]
 
 
 def test_unknown_task_id_deterministic_failure(tmp_path):
