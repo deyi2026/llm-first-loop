@@ -60,7 +60,7 @@
       "bytes": 32241
     }
   },
-  "m2_files_note": "Current top manifest: 13 paths verified against the latest repaired candidate bytes as of 2026-11-14 09:30 +08:00. Older batch[] manifests are historical snapshots, not the current tree. Exact final Git commit/tree is the Git object + Goal checkpoint, never a self-referential field.",
+  "m2_files_note": "top manifest refreshed to the R9-minimal-repair frozen candidate commit 0dcc82ecdaccd8a0f2b3634cf99f87f14347294e / tree 96b88ac7e89b3c62f6caf07f94315b1b22f54ec4 (source frozen 2026-11-14 ~08:5x; this receipt-only reconciliation at 2026-11-14 09:4x changed no runtime source or tests). Earlier 'final tree state 2026-11-14 08:37' described the pre-R9-repair candidate 06a5ce649 and no longer applies to the top manifest; batches[] keep their own per-batch historical manifests as immutable snapshots of their respective trees.",
   "m2_changed_unstaged": [
     " M src/llm_loop/core/loop/lifecycle.py",
     " M src/llm_loop/llm/client.py",
@@ -358,7 +358,7 @@
     {
       "batch": "R9-guard-parent-reconciliation",
       "date_local": "2026-11-14T09:30:48+08:00",
-      "scope": "receipt/design alignment only; no runtime source or tests changed",
+      "scope": "receipt/design alignment only; no runtime source or tests changed; top manifest re-audited file-by-file against commit 0dcc82ecd (0 mismatch)",
       "parent_independent": {
         "arch_three_blockers": "3 passed, exit 0",
         "t1_focused": "60 passed, exit 0",
@@ -366,7 +366,9 @@
         "combined_focused": "96 passed, exit 0",
         "previous_author_97": "corrected arithmetic; 60+36=96",
         "new_reviewer": "NOT_RUN",
-        "original_full_r9": "NOT_RUN on repair commit"
+        "original_full_r9": "NOT_RUN on repair commit",
+        "combined_regression": "pytest -q tests/unit -k 'canary or t1 or budget' -p no:cacheprovider -> 750 passed / 10546 deselected / 7 warnings, exit 0 (parent, 2026-11-14 09:31, commit 0dcc82ecd)",
+        "author_combined_regression": "same -k selection WITHOUT -p no:cacheprovider, .venv/bin/python 3.13 repo virtualenv -> 747 passed, 4 skipped (author run recorded in batches[5].verification; different command/environment, recorded separately and never merged with the parent 750 figure)"
       }
     },
     {
@@ -387,6 +389,8 @@
     "repair_source_commit": "0dcc82ecdaccd8a0f2b3634cf99f87f14347294e",
     "current_candidate_identity": "Use Git HEAD/tree and Goal checkpoint (no self-reference inside the receipt)",
     "independent_reviewer_after_repair": "NOT_RUN",
-    "original_full_r9_after_repair": "NOT_RUN"
-  }
+    "original_full_r9_after_repair": "NOT_RUN",
+    "r9_repaired_candidate": "commit 0dcc82ecdaccd8a0f2b3634cf99f87f14347294e / tree 96b88ac7e89b3c62f6caf07f94315b1b22f54ec4 (current frozen candidate after R9 tier-0 minimal repair; git clean; fresh independent reviewer PASS + full original R9 exit 0 still pending, NOT_RUN by this writer)"
+  },
+  "batches_note": "batches[0..4] are immutable historical snapshots recorded against their own trees/timestamps (M2 development loop, frozen-hygiene pass); batches[5]=R9-first-round-minimal-repair (source commit 0dcc82ecd), batches[6]=R9-guard-parent-reconciliation (receipt-only). Counts inside historical batches are NOT restated to match later trees."
 }
