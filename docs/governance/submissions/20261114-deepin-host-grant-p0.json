@@ -36,16 +36,18 @@
         "docs/design/DESIGN-20261114-deepin-host-grant-closure.md",
         "docs/governance/submissions/20261114-deepin-host-grant-p0.json",
         "tests/conftest.py",
+        "tests/fixtures/runtime_env_access_baseline.json",
         "tests/guards/function_size_baseline.json",
         "tests/integration/test_host_grant_e2e.py",
         "tests/unit/test_host_grant_closure.py",
         "tests/unit/test_host_grant_registration.py",
         "tests/unit/test_host_grant_store_auth.py",
-        "tests/unit/test_host_grant_web.py"
+        "tests/unit/test_host_grant_web.py",
+        "tests/web/test_auth.py"
       ],
       "control_machinery": false,
       "owning_subsystem": "existing test harness and architecture governance",
-      "disposition": "Document scope and explicit exclusions, cover positive and negative approval/consumption/bwrap paths, assert a single data/grants/audit.jsonl root, and declare the exact changed-path set for the A.5 gate. The per-test grant home is a sibling of the default writable cwd so security overlap checks remain enforced without breaking legacy tests. R9 architecture guard baseline is regenerated with exact AST sizes for two newly tracked functions and two explicitly raised existing functions; this is a reviewed ratchet registration, not a test bypass.",
+      "disposition": "Document scope and explicit exclusions, cover positive and negative approval/consumption/bwrap paths, assert a single data/grants/audit.jsonl root, and declare the exact changed-path set for the A.5 gate. The per-test grant home is a sibling of the default writable cwd so security overlap checks remain enforced without breaking legacy tests. R9 architecture guard baseline is regenerated with exact AST sizes for two newly tracked functions and two explicitly raised existing functions; this is a reviewed ratchet registration, not a test bypass. R9 runtime environment one-way ratchet records six exact new safe-home guard read signatures, two retired Feishu signatures, and an explicit reason; CI-HOME positive tests now use a fake safe home and negative tests prove workspace HOME is rejected. Legacy loopback login test is aligned with explicit browser login form.",
       "evidence": [
         "tests/integration/test_host_grant_e2e.py",
         "tests/unit/test_host_grant_closure.py",
@@ -86,7 +88,8 @@
           "Future production acceptance must demonstrate a real browser-approved single-file operation and persisted audit after managed wheel release, without disabling bwrap.",
           "Main-integrated focused regression: 698 passed, 2 skipped; full R9, GLM-5.3 independent reviewer and remote CI remain required.",
           "2026-11-15 P1 repair: external relative deny matching, bwrap O_NOFOLLOW FD-pinned bind, loopback login Origin gate; 701 focused passed / 3 skipped; disposable Deepin bwrap FD pin and symlink swap passed, production untouched.",
-          "R9 architecture guard regeneration: 2 new function registrations, 2 explicit measured raises; head_commit 004fdb49a, no other ratchet changes."
+          "R9 architecture guard regeneration: 2 new function registrations, 2 explicit measured raises; head_commit 004fdb49a, no other ratchet changes.",
+          "R9 post-review integration: 4 new-red tests identified; safe HOME fixture isolation, explicit browser-login expectation, and runtime-env baseline signed reason applied. Must re-run full R9 and reviewer."
         ]
       }
     }

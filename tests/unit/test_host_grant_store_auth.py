@@ -346,8 +346,9 @@ def test_home_symlink_redirect_into_workspace_rejected(monkeypatch, tmp_path, is
 
 
 def test_default_home_outside_writable_roots(monkeypatch, isolated_data_dir):
-    # 无 env：默认 ~/.local/state/lfl-host-grants——与 workspace/缓存/tmp
-    # 分离；只读推导不建目录（绝不触碰真实 home 的写）。
+    # CI sets HOME under the writable worktree: that is correctly unsafe.
+    # For this positive case, use a read-only derived fake home outside it.
+    monkeypatch.setenv("HOME", "/opt/lfl-host-grant-test-user")
     monkeypatch.delenv("LFL_HOST_GRANT_HOME", raising=False)
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     home = host_grant_store_home()
@@ -355,6 +356,14 @@ def test_default_home_outside_writable_roots(monkeypatch, isolated_data_dir):
     assert "state" in str(home)
     assert not str(home).startswith(str(_WORKSPACE_ROOT))
     assert not str(home).startswith("/tmp")
+
+
+def test_default_home_inside_writable_worktree_rejected(monkeypatch, isolated_data_dir):
+    monkeypatch.setenv("HOME", str(_WORKSPACE_ROOT / "data" / ".ci-test-home"))
+    monkeypatch.delenv("LFL_HOST_GRANT_HOME", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    with pytest.raises(HostGrantError, match="grant_store_insecure"):
+        host_grant_store_home()
 
 
 # ── 工具层：execute_command 拒绝路径 ───────────────────────
@@ -390,8 +399,8 @@ def test_execute_command_workdir_grant_home_guard(
 
 
 def test_grant_home_guard_candidates_env_and_default(monkeypatch, isolated_data_dir):
-    # 候选推导正例：env 指向合法位置（真实 home 下独立目录，非危险根）时，
-    # 候选=生效 env home + 平台默认 home；env 非法（/tmp）时仅默认 home。
+    # Use a synthetic safe HOME, not the CI worktree-local writable HOME.
+    monkeypatch.setenv("HOME", "/opt/lfl-host-grant-test-user")
     good = Path.home() / ".local" / "state-guard-unit-probe"
     monkeypatch.setenv("LFL_HOST_GRANT_HOME", str(good))
     cands = esc.grant_home_guard_candidates()
