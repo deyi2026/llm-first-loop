@@ -1,11 +1,11 @@
-# 本地大模型「反复重复」根因分析 + 修复优化方案（v0.3 研究对照修订）
+# 本地大模型「反复重复」根因分析 + 修复优化方案（v0.4 独立审查反馈修订）
 
 - 日期：2026-11-14
 - 分析对象：会话 `bc3e7780-af3b-4ea4-97e2-85cec88dbb96`（19:49:46 → 20:17:17，模型 `cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX`）
 - 证据源：`data/event_logs/bc3e7780-….jsonl`（原始事件）、`data/providers.local.json`、`src/llm_loop/**`（当前代码）
-- 状态：**事件、LFL 现有机制与 `$RESEARCH_ROOT` 研究已交叉复核；修复未实施、未独立 Reviewer PASS**（只修订分析/方案，不改业务代码或生产配置）
+- 状态：**事件、LFL 现有机制与 `$RESEARCH_ROOT` 研究已交叉复核；独立 GLM-5.3 首审有效 HOLD（P0=0/P1=0/P2=4），v0.4 待复审；代码修复未实施**。
 - 2026-11-14 复核：调用 LFL 内置 `grill_me`（`depth=3`，五领域，`design_anchored` 8 锚点）；该工具只自动生成首层问题，第 2/3 层由本次证据驱动的人工反例拷问补齐，**不是三轮独立模型审查**。
-- **阅读优先级：`0–7` 为初稿及其证据，含被否决的实现提议；`8–12` 为 v0.2 拷问记录；`13–17` 为 v0.3 研究对照后的正式裁决。冲突时以最新章节为准。不得直接照搬初稿 R1–R7 或 v0.2 V2-2 的自动停机设想编码。**
+- **阅读优先级：第 0–7 节为初稿及其证据，含被否决的实现提议；第 8–12 节为 v0.2 拷问记录；第 13–17 节为 v0.3 研究对照；第 18 节为独立 Reviewer 后的 v0.4 纠正。冲突时以最新章节为准。初稿 R1–R7、D1–D4 的原始 P0 和 v0.2 V2-2 自动停机均已废止，严禁直接据此实施。**
 
 ---
 
@@ -110,9 +110,9 @@ prompt 投影反复回到 `messages=2 / history=3246`，同一结构指纹及 `t
 与连续 `model_catalog({})` 高度一致。若要证明**实际请求字节相同**，仍需在传输前以同一序列化口径
 记录请求摘要并核对生成参数、工具 schema、system、运行时注入、模型模板及后端身份。
 
-### ⑥ 动作层没有任何闭环（放大器）
+### ⑥ 动作层没有阻断这次闭环（放大器）
 - `_maybe_repeat_guard_hint()`（`src/llm_loop/core/loop/engine_services/tool_cycle.py:258-313`）注释写明：**「每键至多一次；不阻断、不改状态码、不改工具真值」**；阈值 `_REPEAT_GUARD_AT=3`（同 tool+精确参数第 3 次成功）才追加一行文本。
-- 更致命：该提示是**追加在工具回执 content 里**的（`tool_cycle.py:303`），而这条回执下一轮就被压缩归档 → **提示从未活到下一次决策**。
+- 更致命：该提示是**追加在工具回执 content 里**的（事故树 `tool_cycle.py:303`）；事件 `seq=85` 的 tool `message.appended` 含 `[repeat_guard]`，随后 `seq=87/88` 归档 assistant→tool 原子组，下一次 `seq=96` 的 `request.meta` 仍是 `messages_count=2`、`history_chars=3246`。**至少这一轮的提示没有进入下一次模型可见决策上下文**；不是仅凭当前 main 猜测。
 - `convergence.observation` 同样只观测（`prompt_chars=0`，`tool_cycle.py:1085/1095`）。
 - 全库 grep 无 `no_progress` / `loop_breaker` / `identical_call` 之类的硬闸（已核，零命中）。
 
@@ -123,7 +123,9 @@ prompt 投影反复回到 `messages=2 / history=3246`，同一结构指纹及 `t
 
 ---
 
-## 3. 初稿缺陷清单（原始分级，修订裁决见第 9 节）
+## 3. 初稿缺陷清单（**SUPERSEDED：原始 P0/P1 分级不是当前实施阻断项**）
+
+> 本表仅保留事故分析史。D1–D4 的「P0」是初稿判断，已被第 9、15、18 节的反例和现有能力核验取代；不得把这里的分级、阈值或机制直接转成任务清单。
 
 | # | 缺陷 | 位置 | 严重度 | 后果 |
 |---|---|---|---|---|
@@ -137,12 +139,12 @@ prompt 投影反复回到 `messages=2 / history=3246`，同一结构指纹及 `t
 
 ---
 
-## 4. 初稿修复提案（**非实施授权**；第 10 节已纠正不成立的阈值、断路器及工具发现假设）
+## 4. 初稿修复提案（**SUPERSEDED / 不得实施**；第 10、15、18 节已纠正）
 
 设计原则：**程序对「不可能推进的上下文」必须 fail-closed，而不是把决定权交给模型**（RULE-AI-30）。
 所有新增判定都只用机械事实（token 计数、ref、状态指纹），不做语义判断、不注入长提示。
 
-### R1（P0）预算可行域硬门：`budget_viability_check`
+### R1（SUPERSEDED，历史 P0）预算可行域硬门：`budget_viability_check`
 在 `AttemptExecutor.plan()` 产出 `effective_budget` 之后、真正调用 provider 之前：
 
 ```text
@@ -164,7 +166,7 @@ inputs: allowed_input_tokens, tool_schema_reserve_tokens, effective_history_budg
 验收（RULE-AI-35，必须实测「应拦输入」）：构造 `context=65536, max_tokens=32768` 的注册项 + 101 工具，
 发送 `你是什么大模型？` ⇒ 期望 **1 次** `budget.infeasible`、**0 次** `model_catalog` 重复、用户收到诊断文本。
 
-### R2（P0）压缩进展守卫：`compaction_progress_fence`
+### R2（SUPERSEDED，历史 P0）压缩进展守卫：`compaction_progress_fence`
 在 `history.compaction` 决策处（`history.py:1504` 触发点）比较压缩前后状态指纹：
 
 ```text
@@ -181,7 +183,7 @@ if state_fp 与上一轮完全相同（且本轮归档对象是「最新交换�
 建议 `min_post_chars = max(head_keep + MIN_EXCHANGE_CHARS, pre_chars - trigger_excess_chars*2)`，
 即**压缩至少保留刚发生的那一次交换**（新证据优先于旧噪声）。
 
-### R3（P0）动作层重复断路器（`repeat_guard` 从 hint 升级为 fence）
+### R3（SUPERSEDED，历史 P0）动作层重复断路器（`repeat_guard` 从 hint 升级为 fence）
 复用现成指纹（`_stagnation_fingerprint` + `result_state_sha256`），把计数器从「只提示」改成三级：
 
 ```text
@@ -198,7 +200,7 @@ level 3: 第 4 次 → 结束 attempt，reason_code=repeated_exact_call，向用
 - 对 `read_evidence` 分页、`wait`、`job_output` 等「同参不同时」的合法轮询，用 `result_sha` 相同作为判据，天然放行；
 - 全程 fail-open：任何异常不得改变工具真值。
 
-### R4（P0）窗口感知工具投影：`tool_projection_by_window`
+### R4（SUPERSEDED，历史 P0）窗口感知工具投影：`tool_projection_by_window`
 在构建 `tools_param` 处（`engine.py:1818`）加一层确定性投影：
 
 ```text
@@ -212,26 +214,26 @@ cap = floor(allowed_input_tokens × 0.45)      # schema 硬上限，剩余 55% �
 预期：101 工具 28,659 tokens → 核心集约 8,000-10,000 tokens，
 历史额度从 4,109 tokens 回到 ~20,000+ tokens（按 cpt 2.4 约 5 万字符），死循环域直接消失。
 
-### R5（P1）会话账本 pinned（对抗「历史无状态」）
+### R5（SUPERSEDED，历史 P1）会话账本 pinned（对抗「历史无状态」）
 - 每条工具回执落盘后，程序侧自动追加一行到**运行账本**（不是 assistant 消息）：
   `- [r{round}] {tool}({args_digest}) → {status} / ref={ref} / chars={n}`；
 - 账本上限 ~1,500 字符（滚动，最旧可归档），并列入压缩保护（`cache_protected` / head 区）；
 - 目标：即使 assistant 内容为空、即使发生压缩，模型也总能看见「本 run 已做过什么、结果在哪」。
 
-### R6（P1）配置与观测校正
+### R6（SUPERSEDED，历史 P1）配置与观测校正
 - `data/providers.local.json`：ornith 条目 `max_tokens: 32768 → 4096~8192`（本地 35B 模型不需要 32k 输出）；
   并把 `max_input_tokens: 184000` 改为与窗口一致（或删除，让其继承 `context`），避免误导性授权值；
 - `attempt_executor.py:82-87`：把 action 文本改成**完整链路**一行：
   `budget_chain: explicit=1000000 → pre_tool=79979 → schema_reserve=28659tok → history=4109tok → delivered=3698chars`；
   并且只在实际下发值上打 `→`（现在打印的 79,979 与实际 3,698 差 21 倍，属于误导性日志）。
 
-### R7（P2）协议侧
+### R7（SUPERSEDED，历史 P2）协议侧
 - `reasoning_chars=0` 而 `thinking=true`：确认本地服务是否真返回 reasoning 通道；若不返回，就别在请求里声明 `reasoning_effort=max`（白付 token/延迟）；
 - 若返回：评估 `reasoning_replay=full`（同注册器的 `qwen3.8-flash-next` 就是 full），至少让「上一轮意图」进入历史。
 
 ---
 
-## 5. 实施顺序、影响面、风险
+## 5. 初稿实施顺序（**SUPERSEDED：仅留历史，当前顺序见第 15、18 节**）
 
 | 顺序 | 项 | 改动面 | 风险 | 备注 |
 |---|---|---|---|---|
@@ -401,10 +403,15 @@ cap = floor(allowed_input_tokens × 0.45)      # schema 硬上限，剩余 55% �
 - 在上一轮回执完成后记录 `decision_fp`（工具名、规范参数、顺序）、
   `observation_fp`（已持久化结果摘要及来源版本）和进展事实。
   `provider_structure_fp` 只能作为先验线索，不能冒充最终 wire hash。
-- 仅在**同一授权 Run、相同最终请求、相同已完成决策与观察、无新的可见事实或来源版本**
-  重复出现时判定 `exact_no_progress_cycle`；第一次记告警，下一次再次满足则
-  **在新的 Provider 发送前停止该 Run**，返回 `run_incomplete/no_progress` 和可核对引用。
-  **v0.3 修订：本条不能仅凭相同指纹自动上线；需证明「本轮工具结果因投影失真而不可见、且没有合法恢复路径」才可作为容量/协议失效的机械 HOLD。纯重复/变体探索仍以观测为主，参见第 15 节。**
+- **SUPERSEDED：不得根据同一 `request_fp` / `decision_fp` / `observation_fp` 或固定重复次数
+  自动终止 Run。** 这些指纹只能产生 `same_request_observed` 等诊断事实；
+  `exact_no_progress_cycle` 旧名不再作为新门禁。唯一可新增的机械拒绝条件是：
+  上一轮已完成的 assistant→tool 原子组确实存在，**最终发送前 Provider 视图**
+  经协议配对检查后既没有原始组，也没有已经验证的模型可见 exact-ref；
+  同时真实 tokenizer/授权/来源版本核验表明原始组无法容纳、可用 ref 无法合法投影。
+  只有此时才 `context_capacity_unavailable`、`provider_sent=false`、`run_incomplete`。
+  若 ref 已合法投影、轮询对象状态改变、工具结果可见或指纹不完整，
+  不能因「重复」触发该 HOLD。详情以第 15、18 节为准。
 - 若来源版本/用户输入/权限/模型/工具 schema 变化，或指纹计算不完整，
   不得声称 exact cycle；走正常授权路径或以「未知」状态停止，而非假造同一性。
 - 不以固定「第 4 次工具调用」作全局硬闸；阈值按**已证实的同一闭环**而非单纯次数。
@@ -541,8 +548,12 @@ schema + 字符投影 + 最新回执被归档」链条已获强证据支持；�
 事件的 `exact_duplicate_tool_projection.enabled=true, folded_groups=0` 是关键反例：
 **「已经启用去重」不等于「已经保住模型必须看到的最新工具事实」**。
 本次 JSONL 的事件类型计数未见 `tool.repeat_guard`，但该提示使用 `_record_action`
-而非必然写入相同 EventLog 类型，不能据此断言没有触发或事故代码没有该实现；
-需用事故 `git_head/source_tree_fp` 复原对应源码及开关。`request.meta`
+而非必然写入相同 EventLog 类型，不能据此断言没有触发。
+**现已复核事故 Git tree `103e9730de049f3b9715b1429d51d0e17d8fee5c`：
+`tool_cycle.py:258–310` 在成功回执尾部追加 hint，`persist_finished` 在
+`tool_result_to_message` 之前调用它；EventLog `seq=85` 确有 hint，
+`seq=87/88` 归档该交换，`seq=96` 下一次请求回到两条消息。
+这是本样本的直接证据，而非对所有 Run 的普遍断言。`request.meta`
 也没有足够证据证明 S1 selected-raw producer 曾运行。
 
 旧研究中「reasoning replay 缺失」已由当前代码的显式模型合同部分修复。
@@ -653,9 +664,9 @@ producer、用 StateBraid 接管 LFL 任务决策、自动重放副作用工具�
 R9 exit 0 → GitHub/CI → 受管发布顺序执行。设计文档修订**不等于**
 这些测试、Reviewer 或生产验收已经通过。
 
-## 17. v0.3 裁决与执行边界
+## 17. v0.3 历史裁决与执行边界（现由第 18 节更新）
 
-**设计方向：建议采纳 v0.3 最小修复路线，仍待独立 GLM-5.3 Reviewer 审查。**
+**v0.3 当时的设计方向：建议采纳最小修复路线；独立 Reviewer 后续实际返回 HOLD，见第 18 节。**
 优先修**「预算挤压导致最新工具观察不可见」**这一条可重放、可测量的接线断点；
 保留既有 StateBraid、CK1、Working State Fold、antidrift、E1–E5 和模型级
 reasoning replay，不重复造轮子。若离线 RED 证明问题其实出在事故版本与当前
@@ -666,5 +677,75 @@ reasoning replay，不重复造轮子。若离线 RED 证明问题其实出在�
 真实 MLX/GGUF 模型身份与 reasoning 通道、当前远端 main 新增 3 提交是否已包含同族修复。
 上述未知项不构成批准生产变更的证据。
 
-本次操作只修改这份**原有未跟踪 Markdown**；研究仓、StateBraid、LFL 业务源码、
+v0.3 当次操作只修改这份**原有未跟踪 Markdown**；研究仓、StateBraid、LFL 业务源码、
 模型配置、其他并行工作树均不修改；不执行 Provider 调用、main 合并、push 或重启。
+
+---
+
+## 18. v0.4：独立 GLM-5.3 审查、反例处置与剩余门禁
+
+### 18.1 首审是有效 HOLD，不是 PASS
+
+- 审查对象：独立分支 `review/local-model-repetition-v03-20261114`，
+  冻结提交 `3d735072e7f7b51727be0eaa332b8140467a34ca`，
+  **候选文档 SHA256** `70389a9d2df4f5e368d2694e2b8878b4d8b1a9981e628c07e19ede6bfd8db8fc`。
+- 真实 `glm/glm-5.3`，`tools=[]`，1 次 Provider 尝试、无自动重试，
+  `finish_reason=stop`、`truncated=false`，约 70 秒，
+  输入 34,054 tokens、输出 4,041 tokens；结果 JSON 结构与身份核验无错误。
+- **裁决：HOLD，P0=0/P1=0/P2=4**；12 项对抗性验收逐项 PASS，
+  但事故树、真实后端和 exact-ref 资格等尚有证据缺口。
+  审查回执保存在本隔离工作树的 `data/reviews/local-model-repetition-v03/glm53_review_receipt.json`；
+  **首审只绑定 v0.3 冻结 SHA，不自动继承到本 v0.4**。
+
+### 18.2 四项意见与处置
+
+| Reviewer 意见 | 本次处置 | 证据/边界 |
+|---|---|---|
+| F1：冻结候选身份未写入文档 | **改用外部不可自引用的候选清单**记录 `candidate_commit + document_sha256 + review_receipt_sha256`；不把文档自己的 SHA/提交写进正文，因为写入会改变哈希，造成不可能收敛的自引用 | 首审 `3d735072` / `70389a9d…` 由外部 review receipt 绑定；本次 v0.4 需新清单、新审查 |
+| F2：初稿 D1–D4/R1–R7 仍像可执行 P0 | 第 3、4、5 节逐项加 `SUPERSEDED` 标记，历史分级不再是当前门禁 | 正式方案仍以第 15、18 节为准；不复活固定字符阈值、第四次自动停止或关键词裁剪 |
+| F3：`exact_no_progress_cycle` 可能误拦 | 在第 10 节将它降为**诊断**；机械 HOLD 必须同时证明「最终 Provider 视图无原始最新交换/合法 exact-ref」和「真实容量/授权/来源版本使两者都无法交付」 | 若 ref 可见、原始组可见、可变轮询有新版本，均不能用指纹相似阻断 |
+| F4：重复提示放大器只引当前源码 | **补事故树 + EventLog 直接交叉核验** | 事故 release tree HEAD 精确为 `103e9730de049f3b9715b1429d51d0e17d8fee5c`，tracked clean；`tool_cycle.py:258–310` 尾部追加 hint，`persist_finished` 在构造 tool message 前调用；EventLog `seq=85` tool 回执含 `[repeat_guard]`，`seq=87/88` 归档该交换，`seq=96` 下一轮仍为 2 条消息 |
+
+**特别注意 F1 的纠偏**：Reviewer 提议把候选 SHA 和文档 SHA「写入文档头部」，
+但自包含文档不可能同时稳定保存自身字节哈希与提交哈希。
+正确做法是外部审查清单和不可变 Git 对象绑定；不能为了迎合审查意见引入循环更新。
+
+### 18.3 新补充的只读事实
+
+1. 事故 `git_head=103e9730…` 对应的本机 `.releases/103e9730…` 工作树存在、
+   HEAD 精确匹配且 tracked clean。相关 `tool_cycle.py`、`history.py`、
+   `history_projection.py`、`compaction_gate.py`、`routing.py`
+   对比当前本地 `main=71f9572…` 的 Git diff 均为零；
+   因此至少这些关键路径**没有事故树到当前本地 main 的源码漂移**。
+   这不证明 live backend/config 与代码 SHA 一致。
+2. 事故 EventLog 冻结只读采样：`last_seq=2509`、
+   `sha256=01ca4d749bed93d80640dd53cfbb040bb394fa4e0c77cb3bc1318e286089a556`；
+   首 Run 前 8 轮的 `request.meta` 均为 `messages_count=2`、
+   `history_chars=3246`、`tools_count=101`、`provider_structure_fp=de0a18705a0240c813b0044e`、
+   `tool_schema_reserve_tokens=28659`、`effective_history_budget_chars=3698`，
+   `exact_duplicate_tool_projection.enabled=true` 且 `folded_groups=0`。
+   这**不是**实际 HTTP 字节级同一性证明。
+3. 本地 `origin/main` 追踪引用比本地 main 多 3 提交，
+   `git diff --name-only main..origin/main` 显示仅
+   `tools_task.py`、两份 task 测试及一份治理材料，
+   **未改动本事故所涉 history/compaction/routing/tool_cycle 路径**。
+   这是本地追踪引用的只读事实，尚未以新的远端 fetch 证明最新状态。
+
+### 18.4 v0.4 后续严格顺序
+
+1. **候选外部清单**：为本 v0.4 文档冻结新 commit、document SHA、所引用事故/研究证据
+   SHA；首审 HOLD 不复用为新 SHA 的 PASS。
+2. **剩余 P0-A 只读核验**：确定事故时有效 Provider/模型/后端、配置哈希与真实传输前字段；
+   用离线 RED 证明最终 Provider 视图是否确实丢失最新回执，以及已有 exact-ref
+   是否可按 scope/version/paging 真正恢复。不能把未复现的 `context_capacity_unavailable`
+   方案称为已验证修复。
+3. **新候选独立复审**：审查 v0.4 的精确候选 SHA、上述新增事实和剩余未知项；
+   要求真实 completed/PASS、P0/P1=0，审查工具与代码变更权限为零。
+   在此之前**不进入业务代码补修**。
+4. **仅在设计 PASS 后**：独立实施工作树、最小 RED→GREEN 修复、专项回归、
+   冻结代码候选、**再次**独立 GLM-5.3 代码审查、原版完整 R9 exit 0。
+   main/远端 CI/受管发布与重启仍遵循独立门禁和授权，不由设计 PASS 自动放行。
+
+**本阶段未授权事项**：不得因为 v0.3 的 P0/P1=0 就将 HOLD 解释为 PASS；
+不得自动重发事故 Provider/Tool、清理未知副作用、修改模型生产配置、
+开启 S1 producer、复活 `convergence_decide` 或跨越现有 M5 Goal。
