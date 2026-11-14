@@ -247,6 +247,135 @@ def test_tree_commit_missing_sha_has_mode_specific_diagnostic():
     assert "--tree-commit 需要 SHA" in result.stderr
 
 
+def _run_new_branch_pre_push(repo, remote, head=None, *, remote_name="origin"):
+    """Invoke the real hook with Git's zero remote SHA for a new branch."""
+    head = head or rev(repo)
+    line = f"refs/heads/feature {head} refs/heads/feature {'0' * 40}\n"
+    return subprocess.run(
+        ["bash", str(repo / ".githooks" / "pre-push"), remote_name, str(remote)],
+        cwd=repo, input=line, capture_output=True, text=True, timeout=120,
+    )
+
+
+def _historical_private_path_then_sanitize(repo):
+    # The baseline already accepted this historical path; only *new* commits
+    # should be scanned when the actual remote main is a proven ancestor.
+    historical_path = "/Users/" + "fixtureuser/" + "Project/old-export.txt"
+    commit_file(repo, "archive-fixture.txt", historical_path, "historical fixture")
+    commit_file(repo, "archive-fixture.txt", "sanitized fixture", "sanitize fixture")
+
+
+def test_new_branch_first_push_trusted_main_uses_commit_range(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    base = rev(repo)
+    commit_file(repo, "feature.txt", "new clean work", "new feature")
+    result = _run_new_branch_pre_push(repo, remote)
+
+    assert run_scan(repo, "--commit", rev(repo)).returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "远端 main 祖先已核验" in result.stderr
+    assert f"--range {base} {rev(repo)}" in result.stdout
+    assert "--commit" not in result.stdout
+
+
+def test_new_branch_first_push_scans_intermediate_leak(repo, tmp_path):
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    commit_file(repo, "leak.txt", "server 172.16.6.6", "introduced leak")
+    _git(repo, "rm", "-q", "leak.txt")
+    _git(repo, "commit", "-qm", "remove leak", "--no-verify")
+    result = _run_new_branch_pre_push(repo, remote)
+
+    assert result.returncode == 1
+    assert "--range" in result.stdout
+    assert "隐私" in result.stdout or "私网" in result.stdout
+
+
+def test_new_branch_first_push_without_remote_main_keeps_full_scan(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo, push_main=False)
+    commit_file(repo, "feature.txt", "clean", "feature")
+    result = _run_new_branch_pre_push(repo, remote)
+
+    assert result.returncode == 1
+    assert "无可信远端 main 祖先" in result.stderr
+    assert "--commit" in result.stdout
+    assert "本地绝对路径匹配" in result.stdout
+
+
+def test_new_branch_first_push_diverged_main_keeps_full_scan(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    base = rev(repo)
+    _git(repo, "checkout", "-qb", "feature")
+    commit_file(repo, "feature.txt", "clean feature", "feature")
+    feature_head = rev(repo)
+    _git(repo, "checkout", "-qb", "other", base)
+    commit_file(repo, "other.txt", "different clean branch", "other")
+    remote = _bare_origin(tmp_path, repo)
+    _git(repo, "checkout", "-q", "feature")
+    result = _run_new_branch_pre_push(repo, remote, feature_head)
+
+    assert result.returncode == 1
+    assert "无可信远端 main 祖先" in result.stderr
+    assert "--commit" in result.stdout
+    assert "本地绝对路径匹配" in result.stdout
+
+
+def test_new_branch_first_push_remote_url_mismatch_keeps_full_scan(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    commit_file(repo, "feature.txt", "clean feature", "feature")
+    result = _run_new_branch_pre_push(repo, remote, remote_name="untrusted")
+
+    assert result.returncode == 1
+    assert "无可信远端 main 祖先" in result.stderr
+    assert "--commit" in result.stdout
+
+
+def test_new_branch_first_push_missing_local_main_object_keeps_full_scan(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo, push_main=False)
+    other = tmp_path / "independent"
+    other.mkdir()
+    _git(other, "init", "-q")
+    _git(other, "config", "user.email", "t@example.com")
+    _git(other, "config", "user.name", "t")
+    (other / "independent.txt").write_text("independent history")
+    _git(other, "add", ".")
+    _git(other, "commit", "-qm", "independent", "--no-verify")
+    _git(other, "push", str(remote), "HEAD:refs/heads/main")
+    assert subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", rev(other) + "^{commit}"],
+        capture_output=True,
+    ).returncode != 0
+    result = _run_new_branch_pre_push(repo, remote)
+
+    assert result.returncode == 1
+    assert "无可信远端 main 祖先" in result.stderr
+    assert "--commit" in result.stdout
+
+
+def test_new_branch_first_push_new_receipt_placeholder_still_blocks(repo, tmp_path):
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    receipts = repo / "docs" / "receipts"
+    receipts.mkdir(parents=True)
+    (receipts / "new.json").write_text('{"main_sha_after":"待回填"}')
+    _git(repo, "add", "docs/receipts/new.json")
+    _git(repo, "commit", "-qm", "new receipt", "--no-verify")
+    result = _run_new_branch_pre_push(repo, remote)
+
+    assert result.returncode == 1
+    assert "待回填" in result.stderr
+    assert "--range" in result.stdout
+
+
 def test_new_tag_equal_to_remote_main_reuses_main_push_and_ci_checks(repo, tmp_path):
     historical_path = "/Users/" + "fixtureuser/" + "Project/old-export.txt"
     commit_file(repo, "archive-fixture.txt", historical_path, "historical fixture")
