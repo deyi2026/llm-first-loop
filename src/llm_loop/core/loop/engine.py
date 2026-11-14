@@ -48,6 +48,9 @@ from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCa
 from llm_loop.core.loop.engine_services.nonconvergence_guard import (
     NonconvergenceFuseError,
 )
+from llm_loop.core.loop.engine_services.observation_visibility import (
+    ensure_latest_observation_visible,
+)
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -1634,10 +1637,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             # P0-B: final pre-send raw observation authority, delegated to one
             # existing engine-service helper to keep the core loop bounded.
-            from llm_loop.core.loop.engine_services.observation_visibility import (
-                ensure_latest_observation_visible,
-            )
-
             messages, _observation_hold = ensure_latest_observation_visible(
                 self, sess, messages,
                 session_id=session_id,

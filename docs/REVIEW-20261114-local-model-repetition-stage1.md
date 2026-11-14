@@ -115,3 +115,25 @@ GLM-5.3 开发代理此次 exact-ref 补丁输出截断，未被应用；
 由验收方最小实现，**必须交新的独立 GLM-5.3 Reviewer**。
 测试/代码身份回执：
 `docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-GREEN.json`。
+
+
+## R9 第二次阻断：架构棘轮三项（已按官方口径修复）
+
+原版 R9 对 exact-ref 候选 `97ac7665bc06870811fd91a935c6a295708313ae`
+真实 `exit 1`，Tier0 `338 passed / 2 skipped / 3 failed`：
+① `engine._run_stream_inner` AST 长度超登记；
+② 两个新 helper ≥120 行未登记；
+③ engine 函数内 import 增长。**未进入完整 R9。**
+
+已把新增 import 移到模块顶层，使用仓库官方
+`scripts/regen_function_size_baseline.py` 并执行 `--check` 幂等验证；
+engine 新登记 `2215`，两个 helper `174/144` 精确登记，
+同时收紧六项旧登记，未修改 arch guard 断言或降低门禁。
+原三项失败定向复测 `3 passed`；
+合并定向 `228 passed`，Ruff PASS、全树 Pyright ratchet PASS。
+
+正式回执：
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-ratchet-fix.json`。
+
+**候选源码已变化，须重新独立 Reviewer PASS 后再原版完整 R9**；
+不可继承上一候选 PASS。
