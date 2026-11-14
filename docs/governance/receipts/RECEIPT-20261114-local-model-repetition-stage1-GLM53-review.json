@@ -1,0 +1,117 @@
+{
+  "schema": "lfl.code.glm53_review_receipt.v1",
+  "candidate_head": "92176804187da90e0d495961921f102c0f463951",
+  "base_commit": "9c3cc78a98ebf6754ba9ae9f2c701ffd0e671c37",
+  "diff_sha256": "358e7563aa038acd8ac169e3d967a0a36483c70399c0ec9a5af83bc0fe085d54",
+  "request_sha256": "7997063d9ef0a26fbc2bf375eb12434b3921ebe8eaec5496f6d4cab430d7aaa7",
+  "provider": "glm",
+  "model": "glm-5.3",
+  "attempts": 1,
+  "tool_names": [],
+  "elapsed_s": 35.04,
+  "finish_reason": "stop",
+  "truncated": false,
+  "prompt_tokens": 12026,
+  "completion_tokens": 1670,
+  "raw_sha256": "07b8fa8aea9acb3479dc3293fb017ada7fe2be2d3499c2a785956db7d188be76",
+  "validation_errors": [],
+  "error": "",
+  "effective_verdict": "PASS",
+  "reviewer_result": {
+    "schema": "lfl.code.independent_glm53.v1",
+    "candidate_head": "92176804187da90e0d495961921f102c0f463951",
+    "base_commit": "9c3cc78a98ebf6754ba9ae9f2c701ffd0e671c37",
+    "verdict": "PASS",
+    "p0": 0,
+    "p1": 0,
+    "p2": 3,
+    "findings": [
+      {
+        "id": "F1",
+        "severity": "P2",
+        "location": "engine.py guard block (new ~line 1635)",
+        "issue": "Guard depends on _active_turn_ref, _active_run_ingress_ref, _budget_info, effective_budget and _request_preflight whose definitions are not shown in the diff; if _active_turn_ref is None the gate silently bypasses (latest_completed_tool_group returns None).",
+        "minimal_fix": "Add or point to unit coverage proving _active_turn_ref is always a valid index after ingress in the live engine path, or HOLD (not bypass) when ingress identity is unknown."
+      },
+      {
+        "id": "F2",
+        "severity": "P2",
+        "location": "observation_visibility.py group_visible_in_provider_view",
+        "issue": "If active_ingress_ref is set but no provider message carries the marker, function returns False, yielding a HOLD even when the raw group is present upstream of the marker; conservative but can false-HOLD on marker loss.",
+        "minimal_fix": "Distinguish missing-marker (HOLD with distinct reason ingress_marker_missing) from absent group to aid diagnosis."
+      },
+      {
+        "id": "F3",
+        "severity": "P2",
+        "location": "engine.py except path",
+        "issue": "Guard-internal exception yields generic context_capacity_unavailable final answer, conflating gate fault with capacity loss; run_incomplete propagation in this branch is not directly tested.",
+        "minimal_fix": "Use distinct reason observation_guard_fault and add a fault-injection test asserting run_incomplete and provider_sent=false."
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "AC1",
+        "result": "PASS",
+        "evidence": "_call_signature canonicalizes args; group_visible compares exact receipts; tests cover same-ID altered content, args, truncation."
+      },
+      {
+        "id": "AC2",
+        "result": "PASS",
+        "evidence": "latest_completed_tool_group scans after ingress only; incomplete groups returned invalid; stale/None-ref Run isolation tested."
+      },
+      {
+        "id": "AC3",
+        "result": "PASS",
+        "evidence": "Guard placed after projection/rebuild, before send; break with provider_sent=false text; no replay or retry in code."
+      },
+      {
+        "id": "AC4",
+        "result": "PASS",
+        "evidence": "Rebuild reuses _build_conservative_active_run_messages, preflight checked, projected_chars reported; ingress marker honored in visibility scan."
+      },
+      {
+        "id": "AC5",
+        "result": "PASS",
+        "evidence": "Soft budget alone does not block rebuild (limited_by check); physical window uses preflight hard_overflow; overcapacity sends blocked."
+      },
+      {
+        "id": "AC6",
+        "result": "PASS",
+        "evidence": "evidence:// text explicitly not visibility (test); module docstring and scope_limits disclose no qualified exact-ref path; missing-ref case HOLDs."
+      },
+      {
+        "id": "AC7",
+        "result": "PASS",
+        "evidence": "Polling test: 2 probe executions, 3 FakeLLM calls, identical args with changing content, no HOLD; first round no group sends."
+      },
+      {
+        "id": "AC8",
+        "result": "PASS",
+        "evidence": "No ledger, model config, side effects, or merge in diff; only engine guard plus helper module; gates show push/main false."
+      },
+      {
+        "id": "AC9",
+        "result": "PASS",
+        "evidence": "_run_end_reason=context_capacity_unavailable; test asserts run_incomplete True and provider_sent=false text in final answer."
+      },
+      {
+        "id": "AC10",
+        "result": "PASS",
+        "evidence": "211 focused tests pass per receipt; code-vs-release gates separated (design PASS, full R9 NOT_RUN); scope_limits honest. Receipt is external, not independent execution."
+      }
+    ],
+    "unverified_claims": [
+      "Independent execution of the 211 focused tests (receipt-only evidence; log SHA not verified).",
+      "Definitions and invariants of _active_turn_ref, _active_run_ingress_ref, _budget_info, _request_preflight and effective_budget in engine.py outside the diff hunk.",
+      "Behavior of _build_conservative_active_run_messages preserving ingress and tool protocol.",
+      "run_incomplete=True on the guard-exception branch (only happy-HOLD branch tested).",
+      "Historical live backend model identity (Ornith-MLX alias vs Qwen GGUF) remains UNKNOWN, not proven from current process evidence."
+    ],
+    "minimal_revision_order": [
+      "Add test pinning _active_turn_ref/_active_run_ingress_ref always valid after ingress so the gate cannot silently bypass.",
+      "Split guard-fault HOLD reason from context_capacity_unavailable and test fault-injection path for run_incomplete.",
+      "Clarify ingress-marker-missing HOLD as distinct diagnostic reason."
+    ]
+  },
+  "timestamp_utc": "2026-11-14T13:51:05.055613+00:00"
+}

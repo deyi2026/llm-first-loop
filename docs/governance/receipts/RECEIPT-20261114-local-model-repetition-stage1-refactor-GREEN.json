@@ -1,0 +1,46 @@
+{
+  "schema": "lfl.local_model_repetition.stage1_refactor_green.v1",
+  "base_commit": "9367596c9ff7b625e2fc13eed3581f11815b2c83",
+  "design_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+  "reason": "Pyright full-tree ratchet blocked inline guard; moved existing guard into helper without changing raw visibility semantics",
+  "source_files_and_tests": [
+    {
+      "path": "src/llm_loop/core/loop/engine.py",
+      "sha256": "4406a98ce69f2c8905dc5da85fd01c61943e36c65422c3c2608083fe5561197c"
+    },
+    {
+      "path": "src/llm_loop/core/loop/engine_services/observation_visibility.py",
+      "sha256": "32e19d9d0038bc7830f896effa77abb68a64f22139714a857e3e8fb9358b3152"
+    },
+    {
+      "path": "tests/unit/test_local_model_repetition_presend_red.py",
+      "sha256": "630962fafaa788baa48affdc257a5b1d3d46f4d3bc7dde8673ae614cc5c053e8"
+    },
+    {
+      "path": "tests/unit/test_observation_visibility_helper.py",
+      "sha256": "3f17b95217ce2f95ae0aa39c14e836641f45afae6f1775a8c1ee8216f8825c7f"
+    },
+    {
+      "path": "tests/unit/test_observation_visibility_engine.py",
+      "sha256": "c20a6ba3111327cfde2cc1ce8205e50768d2239ee139ffff54cdda28d2de00b8"
+    }
+  ],
+  "focused_tests": {
+    "passed": 212,
+    "exit_code": 0,
+    "log_sha256": "0470b132f94497544485b57f582a8028ef827d2675fa9d1f7e30ad4d251bd373"
+  },
+  "pyright_full_tree_ratchet": {
+    "status": "PASS",
+    "exit_code": 0,
+    "new_diagnostics": 0,
+    "changed_file_diagnostics": 0,
+    "log_sha256": "a0148120e8732c4cab4ed231e89006659c47ee74cba21f8c740acabcfcfab864"
+  },
+  "ruff_targeted": "PASS",
+  "negative_test_added": "guard fault returns observation_guard_fault, second provider send blocked, structured run_incomplete=true",
+  "prior_reviewer_pass_applies_to_old_code_only": true,
+  "new_independent_review": "PENDING",
+  "full_original_r9": "PENDING_RETRY_AFTER_NEW_REVIEW",
+  "no_main_push_deploy_restart": true
+}

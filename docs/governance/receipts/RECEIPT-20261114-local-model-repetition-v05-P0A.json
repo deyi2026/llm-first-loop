@@ -1,0 +1,109 @@
+{
+  "schema": "lfl.local_model_repetition.v05_evidence_binding.v1",
+  "candidate": {
+    "doc_git_commit": "d4735b91a937fc09d5c44bd8ecb5d2720f8ab9d2",
+    "doc_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+    "doc_path": "docs/ANALYSIS-20261114-local-model-repetition-root-cause.md"
+  },
+  "incident": {
+    "git_head": "103e9730de049f3b9715b1429d51d0e17d8fee5c",
+    "event_log_sha256": "01ca4d749bed93d80640dd53cfbb040bb394fa4e0c77cb3bc1318e286089a556",
+    "event_count": 2509,
+    "last_seq": 2509,
+    "providers_effective_sha256": "790e9429f1d0c8d24e89466b6106c72a02cb2d19468cf21c59b23defdf649a6f"
+  },
+  "incident_source_blobs": {
+    "main_git_head": "71f95724459f5d0500a0d19405d9a51d7586d741",
+    "compared_paths": [
+      {
+        "path": "src/llm_loop/core/loop/engine_services/tool_cycle.py",
+        "incident_blob_oid": "be6d6d081cd5b304c533a17a839c6d27b766e604",
+        "main_blob_oid": "be6d6d081cd5b304c533a17a839c6d27b766e604",
+        "same": true
+      },
+      {
+        "path": "src/llm_loop/core/history.py",
+        "incident_blob_oid": "ab7528327a758ff428dfd5f7bb9dba2561279f73",
+        "main_blob_oid": "ab7528327a758ff428dfd5f7bb9dba2561279f73",
+        "same": true
+      },
+      {
+        "path": "src/llm_loop/core/prompt_build/stages/history_projection.py",
+        "incident_blob_oid": "665ce3aeda11ff9b05a05fe5562d0a5bf7f4ece0",
+        "main_blob_oid": "665ce3aeda11ff9b05a05fe5562d0a5bf7f4ece0",
+        "same": true
+      },
+      {
+        "path": "src/llm_loop/core/loop/engine_services/compaction_gate.py",
+        "incident_blob_oid": "ff25d50a1a06e1c6b1655891bd5948fe9cafa398",
+        "main_blob_oid": "ff25d50a1a06e1c6b1655891bd5948fe9cafa398",
+        "same": true
+      },
+      {
+        "path": "src/llm_loop/core/loop/engine_services/routing.py",
+        "incident_blob_oid": "d5c2ebf8c76d47afb745982ed6cf980012183894",
+        "main_blob_oid": "d5c2ebf8c76d47afb745982ed6cf980012183894",
+        "same": true
+      }
+    ],
+    "all_equal": true
+  },
+  "compaction_distribution": {
+    "event_type": "message.cache_compacted",
+    "count": 84,
+    "first_seq": 28,
+    "last_seq": 1459,
+    "first_ts": "2026-11-14T19:52:12.432794+08:00",
+    "last_ts": "2026-11-14T20:15:32.795125+08:00",
+    "effective_budget_counts": {
+      "3698": 14,
+      "10029": 7,
+      "10041": 9,
+      "10043": 41,
+      "10054": 13
+    },
+    "event_log_sha256": "01ca4d749bed93d80640dd53cfbb040bb394fa4e0c77cb3bc1318e286089a556"
+  },
+  "v04_offline_p0a": {
+    "receipt_sha256": "4be5099619412ba0af303a11afdc0dffaacf40c13ef40bc2c8bd0db37699b955",
+    "path": "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-P0A-offline.json",
+    "first_run_rounds": 8,
+    "archived_and_hydrated_transitions": 7,
+    "backend_current": "llama-server/Qwen3.8-Flash-Next-GGUF",
+    "historical_backend_exactly_proven": false
+  },
+  "v04_glm53_review_attempt": {
+    "raw_sha256": "e081b9cf972e33234d38dfff7b3b44bae2bcef02761f7e456c6d29f6509dff4f",
+    "provider": "glm",
+    "model": "glm-5.3",
+    "attempts": 1,
+    "finish_reason": "stop",
+    "truncated": false,
+    "validation_errors": [
+      "invalid_json",
+      "parsed_not_object"
+    ],
+    "formal_verdict": "HOLD_INVALID_JSON",
+    "advisory_self_reported_verdict": "HOLD",
+    "advisory_self_reported_p0": 0,
+    "advisory_self_reported_p1": 0,
+    "advisory_self_reported_p2": 3,
+    "advisory_is_formal_review": false
+  },
+  "remaining_unknown": [
+    "incident wire-level model identity and request bytes",
+    "incident read_evidence presence among 101 schemas",
+    "incident full effective config",
+    "pre-send raw/exact-ref actual delivery",
+    "historical model weight hash and backend qualification"
+  ],
+  "gates": {
+    "v05_independent_design_review": "PENDING",
+    "code_change": "NOT_AUTHORIZED_BY_DESIGN_HOLD",
+    "full_R9": "NOT_RUN",
+    "main_merge": false,
+    "push": false,
+    "deploy": false,
+    "restart": false
+  }
+}

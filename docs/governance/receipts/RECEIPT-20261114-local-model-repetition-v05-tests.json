@@ -1,0 +1,43 @@
+{
+  "schema": "lfl.local_model_repetition.v05_test_receipt.v1",
+  "reviewed_doc_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+  "reviewed_doc_commit": "d4735b91a937fc09d5c44bd8ecb5d2720f8ab9d2",
+  "evidence_head_at_test": "f8caec64fc530f842dae37de72045093dd8c77f5",
+  "src_tree_git_oid": "40c74172f1b08b04e28a5515ce5b9efb5edc6115",
+  "tests_tree_git_oid": "72dafff5a605814b879002b541bf7a407eea631a",
+  "test_runs": [
+    {
+      "name": "continuity",
+      "file": "data/reviews/local-model-repetition-v05/continuity_105.log",
+      "passed": 105,
+      "files": [
+        "tests/unit/test_evo_305716fa_repeated_exploration.py",
+        "tests/unit/test_convergence_boundary.py",
+        "tests/unit/test_loop_stagnation.py",
+        "tests/integration/test_antidrift_replay.py",
+        "tests/unit/test_tool_working_set_projection.py",
+        "tests/unit/test_ingress_exempt_lockdown.py",
+        "tests/unit/test_recent_continuity.py",
+        "tests/unit/test_reasoning_tail.py"
+      ],
+      "log_sha256": "25d4af497d85b9d374d378cc37a02c464d90537b5d57bf715b954cc5085b68a9",
+      "exit_code": 0,
+      "command": "PYTHONPATH=src ../../.venv/bin/python -m pytest -q -o addopts='' tests/unit/test_evo_305716fa_repeated_exploration.py tests/unit/test_convergence_boundary.py tests/unit/test_loop_stagnation.py tests/integration/test_antidrift_replay.py tests/unit/test_tool_working_set_projection.py tests/unit/test_ingress_exempt_lockdown.py tests/unit/test_recent_continuity.py tests/unit/test_reasoning_tail.py"
+    },
+    {
+      "name": "evidence",
+      "file": "data/reviews/local-model-repetition-v05/evidence_72.log",
+      "passed": 72,
+      "files": [
+        "tests/unit/test_evidence_phase4.py",
+        "tests/unit/test_tool_result_factualization.py",
+        "tests/unit/test_evidence_factory_shadow.py",
+        "tests/unit/test_evo_305716fa_repeated_exploration.py"
+      ],
+      "log_sha256": "d974f34ba7e714fc47f89fbc0389633f66f1871c1f3ae00e694e8c523455c708",
+      "exit_code": 0,
+      "command": "PYTHONPATH=src ../../.venv/bin/python -m pytest -q -o addopts='' tests/unit/test_evidence_phase4.py tests/unit/test_tool_result_factualization.py tests/unit/test_evidence_factory_shadow.py tests/unit/test_evo_305716fa_repeated_exploration.py"
+    }
+  ],
+  "caveat": "Tests are offline current-code regressions; they do not substitute for incident-budget code-level RED, code reviewer, full original R9 or production acceptance."
+}
