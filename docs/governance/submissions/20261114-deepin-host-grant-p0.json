@@ -1,0 +1,91 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-deepin-host-grant-p0",
+  "summary": "Close the reproducible Deepin bwrap external-file authorization gap with one-file, one-use, human-browser-approved grants. Reuse existing EscalationStore, HostCapabilityGrantStore, WebSessionStore, command scope and sandbox; do not add system privilege or an unrestricted directory grant. P0-1 security closeout: HMAC-authenticated single-use grant/audit chain, dedicated non-sandbox-writable grant home, and fail-closed workdir overlap rejection; no broad directory grant or sudo.",
+  "components": [
+    {
+      "component_id": "host-grant-runtime-controls",
+      "paths": [
+        "src/llm_loop/core/command_scope_guard.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/builtin/escalation.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/builtin/host_access.py",
+        "src/llm_loop/tools/escalation.py",
+        "src/llm_loop/tools/sandbox.py",
+        "src/llm_loop/web/auth_routes.py",
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "host-grant-reused-authority",
+      "owning_subsystem": "existing escalation, host capability grant, Web authentication, command scope and Linux sandbox",
+      "disposition": "Add host_access_request and explicit browser-session approval, issue/consume a single-use exact-file grant, reject incomplete binding and expired/revoked/consumed grants, and mount only the approved existing file in bwrap. Keep ordinary commands and catastrophic escalation separate; no sudo, directory-wide write, or default sandbox disablement. P0-1 signs grant records and audit epochs with an in-process HMAC, rejects tampering/replay across restart, and isolates grant state outside every sandbox-writable workdir.",
+      "evidence": [
+        "tests/unit/test_host_grant_closure.py",
+        "tests/unit/test_host_grant_web.py",
+        "tests/integration/test_host_grant_e2e.py",
+        "docs/design/DESIGN-20261114-deepin-host-grant-closure.md"
+      ],
+      "verification_level": "Merged candidate on latest main: 698 related tests passed, 2 platform skips; Ruff/Pyright clean; independent GLM-5.3 review, original full R9, and remote CI are pending.",
+      "model_evidence_veto_recovery_exit": "Model can request a narrowly specified file operation but cannot approve it. Only a valid human browser login session may approve; no login, stale SHA, missing binding, revoked/expired/used grant, unsafe path or unsupported sandbox yields fail-closed rejection. The operator may deny or revoke.",
+      "rollback_route": "Revert the feature commits and retain prior 0.6.52 wheel, configuration, data and verified backup. No new grant files are migrated or enabled on production until an independently reviewed later wheel is deployed."
+    },
+    {
+      "component_id": "host-grant-tests-design-and-manifest",
+      "paths": [
+        "docs/design/DESIGN-20261114-deepin-host-grant-closure.md",
+        "docs/governance/submissions/20261114-deepin-host-grant-p0.json",
+        "tests/conftest.py",
+        "tests/integration/test_host_grant_e2e.py",
+        "tests/unit/test_host_grant_closure.py",
+        "tests/unit/test_host_grant_registration.py",
+        "tests/unit/test_host_grant_store_auth.py",
+        "tests/unit/test_host_grant_web.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing test harness and architecture governance",
+      "disposition": "Document scope and explicit exclusions, cover positive and negative approval/consumption/bwrap paths, assert a single data/grants/audit.jsonl root, and declare the exact changed-path set for the A.5 gate. The per-test grant home is a sibling of the default writable cwd so security overlap checks remain enforced without breaking legacy tests.",
+      "evidence": [
+        "tests/integration/test_host_grant_e2e.py",
+        "tests/unit/test_host_grant_closure.py",
+        "tests/unit/test_host_grant_web.py",
+        "scripts/check_architecture_submission.py"
+      ],
+      "verification_level": "698 passed, 2 skipped on integrated main+P0 focused regression; A.5, Ruff, Pyright gates to be rerun on the frozen candidate; original full R9 and independent review pending.",
+      "model_evidence_veto_recovery_exit": "Tests and documents are evidence, not a new authorization source. Human approval, persistent grant CAS, sandbox kernel and command-scope deny decisions remain authoritative.",
+      "rollback_route": "Revert these test/design/governance paths with the feature; no production runtime state is changed by this manifest."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-grant-reused-authority",
+      "g1": {
+        "necessity": "The model cannot grant itself host filesystem access, and the Linux kernel bwrap mount namespace will not honor a Web approval unless the exact file is explicitly bound. Human authentication and an OS-level one-file bind are therefore required for the previously reproduced Deepin denial."
+      },
+      "g2": {
+        "authority_owner": "Existing EscalationStore request/decision records, HostCapabilityGrantStore durable single-use CAS, WebSessionStore human login, WriteScope and bwrap sandbox.",
+        "relationship": "reuse",
+        "non_duplication": "No second authorization ledger or generic shell superuser. The request points to one persisted grant; the Web reviewer and execution tool use the same data root, and the sandbox enforces the approved file mount."
+      },
+      "g3": {
+        "model_evidence": [
+          "Exact canonical path, operation, session, cwd, command digest, original file digest and expiration are frozen in the request.",
+          "The Web reviewer sees the proposed command and expected SHA; a browser login session is mandatory for host grants.",
+          "The execution path rechecks grant lifecycle, mandatory binding, command scope, and the bwrap mount; one-use consumption is durable and audited.",
+          "P0-1: grant records and audit chain have an in-process HMAC, untrusted records cannot be re-signed; the ledger home must not overlap a sandbox-writable workdir."
+        ],
+        "recovery_or_reason": "The operator can deny/revoke or let a grant expire; a consumed or UNKNOWN write is never automatically retried. Missing browser authentication, unsupported backend, path replacement or failed CAS yields a reasoned denial."
+      },
+      "g4": {
+        "rollback": "Do not change Deepin 0.6.52/gen15 until independent PASS, original R9 and CI. Keep the previous release and cold backup for controlled rollback; revert the isolated feature if any authorization or audit invariant fails.",
+        "verification": [
+          "Independent parent focused 44 passed, 1 skipped; Ruff PASS; Pyright 0 errors.",
+          "Deepin disposable-file bwrap canary: default external write denied, ro-bind readable but not writable, exact rw-bind writes host file, other host file remains unchanged.",
+          "A.5 manifest path coverage must pass; independent GLM-5.3 Reviewer PASS P0/P1=0 and original full R9 exit 0 are required.",
+          "Future production acceptance must demonstrate a real browser-approved single-file operation and persisted audit after managed wheel release, without disabling bwrap.",
+          "Main-integrated focused regression: 698 passed, 2 skipped; full R9, GLM-5.3 independent reviewer and remote CI remain required."
+        ]
+      }
+    }
+  ]
+}

@@ -276,8 +276,64 @@ def sandbox_mode(raw: str = "none") -> str:
     return "none"
 
 
-def bwrap_argv(command: str, workdir: str) -> list[str]:
-    """构造 bwrap argv（shell=False 执行，避免 shell=True 引号地狱）."""
+def validate_file_binds(
+    binds: Sequence[tuple[str, str, str]] | None,
+) -> list[tuple[str, str, str]]:
+    """host-grant 单文件绑定校验（fail-closed，DESIGN-20261114 §4）.
+
+    每项 (host_path, sandbox_path, "ro"|"rw")：host 必须是**既存常规文件**且
+    本身不是 symlink（realpath 归一由授权层完成，此处拒绝符号链接本体）；
+    两个路径都必须绝对；access 仅 ro/rw。
+    """
+    out: list[tuple[str, str, str]] = []
+    for item in binds or ():
+        try:
+            host, sbx, access = item
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid file bind entry: {item!r}") from exc
+        host, sbx, access = str(host), str(sbx), str(access)
+        if access not in ("ro", "rw"):
+            raise ValueError(f"file bind access must be ro|rw, got {access!r}")
+        if not os.path.isabs(host) or not os.path.isabs(sbx):
+            raise ValueError("file bind paths must be absolute")
+        if os.path.islink(host):
+            raise ValueError(f"file bind host is a symlink (refused): {host}")
+        if not os.path.isfile(host):
+            raise ValueError(f"file bind host is not an existing regular file: {host}")
+        out.append((host, sbx, access))
+    return out
+
+
+def _bwrap_bind_args(host: str, sbx: str, access: str) -> list[str]:
+    """单文件 bind 的 bwrap 参数段：缺失祖先目录 --dir 逐级创建，再 ro-bind/bind.
+
+    祖先目录只到父目录为止（dest 文件本身由 bind 挂载点创建）。
+    --dir 对已存在目录是 mkdir -p 语义（EEXIST 容忍），系统 ro-bind 目录
+    与 /tmp tmpfs 重复 --dir 无害。
+    """
+    argv: list[str] = []
+    sbx_parts = sbx.split("/")
+    # sbx_parts 形如 ['', 'home', 'u', 'x', 'f']；祖先从根下第一级到父目录
+    for i in range(2, len(sbx_parts)):
+        ancestor = "/" + "/".join(sbx_parts[1:i])
+        argv += ["--dir", ancestor]
+    flag = "--ro-bind" if access == "ro" else "--bind"
+    argv += [flag, host, sbx]
+    return argv
+
+
+def bwrap_argv(
+    command: str,
+    workdir: str,
+    *,
+    extra_file_binds: Sequence[tuple[str, str, str]] | None = None,
+) -> list[str]:
+    """构造 bwrap argv（shell=False 执行，避免 shell=True 引号地狱）.
+
+    extra_file_binds（DESIGN-20261114 host-grant）：授权单文件精确 bind——
+    (host_path, sandbox_path, "ro"|"rw")，挂载点祖链 --dir 逐级创建。
+    bind 段位于系统 ro-bind 之后、workdir bind 之前。
+    """
     argv = [
         "bwrap",
         "--unshare-pid",
@@ -287,6 +343,8 @@ def bwrap_argv(command: str, workdir: str) -> list[str]:
     for path in _BWRAP_RO_BINDS:
         argv += ["--ro-bind", path, path]
     argv += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
+    for host, sbx, access in validate_file_binds(extra_file_binds):
+        argv += _bwrap_bind_args(host, sbx, access)
     argv += ["--bind", workdir, workdir, "--chdir", workdir]
     argv += ["/bin/sh", "-c", command]
     return argv
@@ -366,6 +424,19 @@ def sandbox_exec_argv(
     return [_SANDBOX_EXEC, "-p", profile, "/bin/bash", "-lc", command]
 
 
+def _file_binds_note(file_binds: Sequence[tuple[str, str, str]]) -> str:
+    """grant 单文件 bind 的 note（S2-6 如实描述，不夸大）。"""
+    if not file_binds:
+        return ""
+    parts = [
+        f"{access}:{sbx}" for _h, sbx, access in file_binds
+    ]
+    return (
+        "（host-grant 单文件精确绑定已生效：" + "、".join(parts) + "；"
+        "仅授权文件可见/可写，其余路径不变）"
+    )
+
+
 _DROPPED_ROOTS_NOTE = (
     "（注意：writable_roots 仅 sandbox-exec 后端消费，当前后端未强制追加可写根）"
 )
@@ -388,6 +459,7 @@ def sandbox_argv(
     mode: str = "none",
     image: str = _DEFAULT_IMAGE,
     writable_roots: Sequence[str] = (),
+    extra_file_binds: Sequence[tuple[str, str, str]] | None = None,
 ) -> tuple[list[str] | None, str]:
     """按 EXEC_SANDBOX 返回 (argv, note)。
 
@@ -402,8 +474,14 @@ def sandbox_argv(
       ``sandbox_exec_argv``（叠加进 profile 的 allow subpath）；bwrap/docker 的可写域
       结构性固定为工作区（无追加根机制），该参数对它们无效果。默认 ``()`` 与不传
       完全等价（既有行为字节级不变）。
+    - extra_file_binds（DESIGN-20261114 host-grant P0）：授权单文件精确 bind，
+      (host, sandbox, "ro"|"rw")。bwrap → 精确 --ro-bind/--bind（含 --dir 祖链）；
+      sandbox-exec → rw 项追加 writable_roots（ro 项读侧本就不受限）；docker →
+      拒绝（P0 未实现）；none → 调用方必须先行拒绝（本函数返回无沙箱 argv，
+      grant 边界将不存在）。默认 None 与不传完全等价。
     """
     mode = sandbox_mode(mode)
+    file_binds = validate_file_binds(extra_file_binds)
     workdir = os.path.abspath(workdir)
     if mode == "auto":
         backend, reasons = resolve_auto_backend()
@@ -424,8 +502,17 @@ def sandbox_argv(
                 "fail-closed：命令未执行。请安装 bubblewrap（Linux: apt install bubblewrap）"
                 "或改用 EXEC_SANDBOX=docker（macOS 可用）或 EXEC_SANDBOX=none。"
             )
-        return (bwrap_argv(command, workdir), _note_with_dropped_roots(_BWRAP_NOTE, writable_roots))
+        binds_note = _file_binds_note(file_binds)
+        return (
+            bwrap_argv(command, workdir, extra_file_binds=file_binds),
+            _note_with_dropped_roots(_BWRAP_NOTE + binds_note, writable_roots),
+        )
     if mode == "docker":
+        if file_binds:
+            raise RuntimeError(
+                "EXEC_SANDBOX=docker 后端暂不支持 host-grant 单文件绑定"
+                "（P0 范围：bwrap / sandbox-exec）——fail-closed：命令未执行。"
+            )
         if shutil.which("docker") is None:
             raise RuntimeError(
                 "EXEC_SANDBOX=docker 已显式配置，但系统找不到 docker CLI——"
@@ -442,9 +529,14 @@ def sandbox_argv(
                 "——fail-closed：命令未执行。"
                 "可改用 EXEC_SANDBOX=auto 自动解析或 EXEC_SANDBOX=none。"
             )
+        grant_roots = [sbx for _h, sbx, access in file_binds if access == "rw"]
         return (
-            sandbox_exec_argv(command, workdir, writable_roots=writable_roots),
-            _SANDBOX_EXEC_NOTE,
+            sandbox_exec_argv(
+                command,
+                workdir,
+                writable_roots=[*writable_roots, *grant_roots],
+            ),
+            _SANDBOX_EXEC_NOTE + _file_binds_note(file_binds),
         )
     return (None, "")
 
