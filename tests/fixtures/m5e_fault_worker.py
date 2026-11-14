@@ -22,7 +22,10 @@ from llm_loop.core.trace_leak.ingress_token import issue_ingress
 from llm_loop.event_log.store import EventStore
 from llm_loop.resources.task_budget_contracts import BudgetDimension, TaskBudgetMember
 from llm_loop.resources.task_budget_dispatch import exact_workspace_scope
-from llm_loop.resources.task_budget_store import TaskBudgetStore
+from llm_loop.resources.task_budget_store import (
+    TaskBudgetConflictError,
+    TaskBudgetStore,
+)
 from llm_loop.resources.task_budget_t1_web_profile import (
     T1WebBudgetExecution,
     T1WebEventPlan,
@@ -298,8 +301,12 @@ def cas() -> None:
             kind=BudgetDimension.PHYSICAL_ATTEMPTS,
             expected_revision=row["revision"],
         )
-    except Exception as exc:
-        result({"outcome": "denied", "exception": type(exc).__name__})
+    except TaskBudgetConflictError as exc:
+        result({
+            "outcome": "denied",
+            "exception": type(exc).__name__,
+            "reason": str(exc),
+        })
     else:
         result({"outcome": "reserved", "revision": updated["revision"]})
 

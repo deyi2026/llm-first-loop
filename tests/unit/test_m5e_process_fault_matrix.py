@@ -351,6 +351,9 @@ def test_m5e_two_process_budget_cas_only_one_wins(
             for m in markers
         ]
         assert sorted(r["outcome"] for r in results) == ["denied", "reserved"]
+        denied = next(r for r in results if r["outcome"] == "denied")
+        assert denied["exception"] == "TaskBudgetConflictError"
+        assert "stale budget revision CAS" in denied["reason"]
         row = _stores(root)[1].read(BID)
         assert len(row["reservations"]) == 1
         assert next(iter(row["reservations"].values()))["phase"] == "reserved"
