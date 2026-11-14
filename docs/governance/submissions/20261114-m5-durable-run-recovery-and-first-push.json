@@ -1,6 +1,6 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
-  "submission_id": "20261114-m5-durable-run-recovery-first-push",
+  "submission_id": "20261114-m5-durable-run-recovery-and-first-push",
   "summary": "M5-A..F minimal durable Run facts, real T1 admission fencing, read-only effect evidence and crash tests. Exact M5 patch preserved over PR19 remote main; no auto Provider/Tool replay. Old M4-C remains quarantined unresolved HOLD.",
   "components": [
     {
@@ -40,7 +40,7 @@
         "M5-E SIGKILL matrix",
         "Read-only Web recovery route tests"
       ],
-      "verification_level": "M5-E prior GLM-5.3 review and original R9; integrated candidate requires remote CI.",
+      "verification_level": "M5-E independent GLM-5.3 review of 7671f81a589f7a13d45ed42d7f260b5c8467f187 PASS P0/P1=0; integrated code adfc84f original full R9 exit 0; final manifest-only commit requires GitHub CI.",
       "model_evidence_veto_recovery_exit": "Unattributed events, missing upstream request ID, uncertain transport, unmatched effect or missing permission forces HOLD; read-only projection never grants execution authority.",
       "rollback_route": "Revert effect projection and Web read-only endpoint; no stored evidence or budget modified.",
       "declaration_id": "m5-effect-evidence-reuse"
@@ -82,7 +82,8 @@
       "disposition": "Test real SIGKILL, cross-worker CAS, budget seal, strict terminal, duplicate/unknown Provider and Tool effects, plus Web read-only projection.",
       "evidence": [
         "204 merged focused tests passed",
-        "M5-F original full R9 15093 Python passed and 600 WebUI passed"
+        "Original M5-F b25992d full R9: 15093 Python passed and 600 WebUI passed",
+        "Integrated code adfc84f full R9: 15095 Python passed, 158 skipped, 3 xfailed and 600 WebUI passed"
       ],
       "verification_level": "Final exact SHA original full R9 required; GitHub CI required.",
       "model_evidence_veto_recovery_exit": "A failed negative or fault test blocks integration; no test fixture is a settlement receipt.",
