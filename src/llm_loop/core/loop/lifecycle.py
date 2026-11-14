@@ -263,11 +263,17 @@ class _RunEntrypointMixin:
             )
             from llm_loop.resources.task_budget_run_scope import prepare_offline_run_budget
             from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+            from llm_loop.resources.task_budget_t1_web_profile import (
+                active_t1_web_plan,
+                prepare_t1_web_event_budget,
+            )
 
             _event_plan = active_signed_web_event_plan()
             _admin_plan = active_admin_once_plan()
+            _t1_plan = active_t1_web_plan()
             if sum((
                 _event_plan is not None, _admin_plan is not None,
+                _t1_plan is not None,
                 active_signed_web_budget_intent() is not None,
             )) > 1:
                 raise TaskBudgetDeniedError("operator_budget_mutually_exclusive_authority")
@@ -275,9 +281,16 @@ class _RunEntrypointMixin:
             # unbounded/default Run through queue-recovery, direct Engine,
             # interjection, or another alternate Web endpoint.
             _restricted_sid = getattr(self, "_task_budget_restricted_session_id", None)
-            if _restricted_sid == session_id and _admin_plan is None and _event_plan is None:
+            if (
+                _restricted_sid == session_id
+                and _admin_plan is None and _event_plan is None and _t1_plan is None
+            ):
                 raise TaskBudgetDeniedError("restricted_web_session_requires_budget_plan")
-            if _event_plan is None and _admin_plan is None:
+            # Cross-review P1: a bound T1 plan is a dedicated budget path —
+            # the signed-web/offline fixture preparation must NOT run first
+            # (the missing ``_t1_plan is None`` term let a T1 session fall
+            # back into prepare_signed_web_run_budget / the offline budget).
+            if _event_plan is None and _admin_plan is None and _t1_plan is None:
                 _budget_execution = prepare_signed_web_run_budget(
                     session_id=session_id,
                     workspace_root=run_workspace,
@@ -308,17 +321,27 @@ class _RunEntrypointMixin:
 
             def _on_human_event(event: Any) -> None:
                 nonlocal _budget_execution
-                if _event_plan is None and _admin_plan is None:
+                if _event_plan is None and _admin_plan is None and _t1_plan is None:
                     return
                 if _budget_execution is not None or _event_step_scope is None:
                     raise TaskBudgetDeniedError("operator_budget_event_scope_invalid")
-                _chosen_plan = _admin_plan if _admin_plan is not None else _event_plan
+                _chosen_plan = (
+                    _admin_plan if _admin_plan is not None
+                    else _t1_plan if _t1_plan is not None
+                    else _event_plan
+                )
                 assert _chosen_plan is not None
                 if getattr(self, "_event_store", None) is not _chosen_plan.event_store:
                     raise TaskBudgetDeniedError("operator_budget_event_store_mismatch")
                 if _admin_plan is not None:
                     _budget_execution = prepare_admin_once_event_budget(
                         plan=_admin_plan, event=event, session_id=session_id,
+                        workspace_root=run_workspace, run_generation=run_generation,
+                        user_text=user_text, ingress=ingress,
+                    )
+                elif _t1_plan is not None:
+                    _budget_execution = prepare_t1_web_event_budget(
+                        plan=_t1_plan, event=event, session_id=session_id,
                         workspace_root=run_workspace, run_generation=run_generation,
                         user_text=user_text, ingress=ingress,
                     )
@@ -340,7 +363,9 @@ class _RunEntrypointMixin:
                 run_save_token=_run_save_token, on_run_acquired=on_run_acquired,
                 ingress=ingress, user_metadata=user_metadata,
                 on_human_event_appended=(
-                    _on_human_event if _event_plan is not None or _admin_plan is not None else None
+                    _on_human_event
+                    if _event_plan is not None or _admin_plan is not None or _t1_plan is not None
+                    else None
                 ),
             )
 

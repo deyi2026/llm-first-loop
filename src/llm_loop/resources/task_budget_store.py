@@ -114,6 +114,17 @@ def _finite_time(now: float) -> float:
     return float(now)
 
 
+# T1 web-profile single-flight scope (parent cross-review 2026-11-14 07:44):
+# the unresolved-action kinds the GLOBAL single-flight gate counts across
+# kinds inside one reserve CAS.
+_T1_ACTION_KINDS = frozenset(
+    {
+        BudgetDimension.PHYSICAL_ATTEMPTS.value,
+        BudgetDimension.TOOL_INVOCATIONS.value,
+    }
+)
+
+
 def _valid_reservations(value: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(value, dict) or len(value) > _MAX_RESERVATIONS:
         raise ValueError("invalid reservation collection")
@@ -569,6 +580,42 @@ class TaskBudgetStore:
                         for entry in reserved.values()
                     ):
                         raise TaskBudgetDeniedError("subagent_canary_provider_retry_denied")
+            if row["grant"]["profile"] == "web-glm-t1-budgeted-write-v1":
+                # T1 single-flight hard gate (parent cross-review 2026-11-14
+                # 07:21 per-kind; 07:44 widened to GLOBAL): the T1 web
+                # session is one serial worker — at most ONE unresolved
+                # ACTION reservation (provider OR tool) may exist on the
+                # root at any time, across kinds. Open phases (reserved/
+                # dispatched/unknown) hold the gate for BOTH fresh
+                # executions and nested scopes inside the same execution —
+                # provider-in-provider, tool-in-tool, provider-in-tool and
+                # tool-in-provider alike; only settled or aborted-before-
+                # dispatch rows release it. This lives in the reserve CAS
+                # itself, so a crash between reserve and settle, a fresh
+                # T1WebBudgetExecution on the same store/member, or any
+                # nested scope hits the same durable denial — no local
+                # latch, no second ledger, no new lock. The legal serial
+                # engine flow (provider settles -> tool dispatch -> tool
+                # settles -> next provider) never holds two open rows.
+                inflight_kind = (
+                    kind.value
+                    if kind in ACTION_DIMENSIONS
+                    else ""
+                )
+                if inflight_kind and any(
+                    entry["kind"] in _T1_ACTION_KINDS
+                    and entry["phase"] in {
+                        ReservationPhase.RESERVED.value,
+                        ReservationPhase.DISPATCHED.value,
+                        ReservationPhase.UNKNOWN.value,
+                    }
+                    for entry in reserved.values()
+                ):
+                    raise TaskBudgetDeniedError(
+                        "t1_single_flight_provider_denied"
+                        if kind == BudgetDimension.PHYSICAL_ATTEMPTS
+                        else "t1_single_flight_tool_denied"
+                    )
             descriptor["policy_generation"] = row["grant"]["generation"]
             if len(reserved) >= _MAX_RESERVATIONS:
                 raise TaskBudgetDeniedError("reservation_capacity_reached")

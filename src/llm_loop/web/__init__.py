@@ -416,12 +416,20 @@ def build_app(settings=None, engine=None) -> FastAPI:
     app.state.task_budget_web_canary = load_operator_web_canary(engine)
     # Central Run admission fence: no queue/sync/direct-Engine bypass of a
     # startup-authorized single-use session after its quota has been spent.
+    # M2 P1-1: the fence binds BOTH operator plan kinds — an admin-once CAS
+    # plan and a T1 web event plan. Without binding the T1 kind here a T1
+    # restricted session driven through any non-stream entrypoint (queue,
+    # direct Engine.run, alternate route) could fall back to the unbudgeted
+    # default path; the fence is what makes the restricted session refuse
+    # any Run without its plan bound in the same process.
     from llm_loop.resources.task_budget_admin_once import AdminOnceEventPlan
+    from llm_loop.resources.task_budget_t1_web_profile import T1WebEventPlan
 
     _canary = app.state.task_budget_web_canary
     engine._task_budget_restricted_session_id = (
         _canary.session_id
-        if _canary is not None and isinstance(_canary.plan, AdminOnceEventPlan)
+        if _canary is not None
+        and isinstance(_canary.plan, (AdminOnceEventPlan, T1WebEventPlan))
         else None
     )
     app.state.web_sessions = WebSessionStore()

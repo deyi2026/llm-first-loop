@@ -1375,6 +1375,26 @@ class ToolRegistry:
             with checked_tool_dispatch(call.name, arguments=call.arguments) as budget_outcome:
                 result = self._run_with_timeout(tool, call)
                 budget_outcome["complete"] = result.status != ToolResultStatus.TIMEOUT
+                # M2 P1-3: arm the T1 edit gate ONLY from a real, successful
+                # read_file result — the execution object extracts the read's
+                # own snapshot ref from the result text; a failed/timeout/
+                # ref-less read leaves the gate unarmed (fail-closed later at
+                # the next edit dispatch, never silently here). Non-T1
+                # budgets expose no such hook and are untouched.
+                if call.name == "read_file" and result.status == ToolResultStatus.SUCCESS:
+                    from llm_loop.resources.task_budget_dispatch import (
+                        active_task_budget,
+                    )
+
+                    arm_from_result = getattr(
+                        active_task_budget(), "note_t1_read_result", None
+                    )
+                    if callable(arm_from_result):
+                        with contextlib.suppress(Exception):
+                            # Authority: the SUCCESS result's artifact_facts
+                            # [0].artifact_ref IS the read's physical
+                            # snapshot_ref (never a regex over content text).
+                            arm_from_result(call.arguments, result.artifact_facts)
             duration_ms = (time.perf_counter() - start) * 1000
             result.duration_ms = duration_ms
             # EVO-20261029-04c73530：静态源转换如实标注进回执（不伪装成原样执行）
