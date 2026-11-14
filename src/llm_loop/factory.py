@@ -145,6 +145,7 @@ from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.escalation import EscalationRequestTool, EscalationWaitTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+from llm_loop.tools.builtin.host_access import HostAccessRequestTool
 from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
@@ -1865,6 +1866,10 @@ def build_engine(
     # execute_command.escalation_token + registry 灾难层令牌校验 + web 弹窗审批）
     _register_basic("escalation_request", EscalationRequestTool(store=_escalation_store))
     _register_basic("escalation_wait", EscalationWaitTool(store=_escalation_store))
+    # DESIGN-20261114（Deepin P0）: 沙盒外单文件 read/write 人工授权申请
+    # （配套 web 审批端点 host-grant 登录会话强制 + HostCapabilityGrantStore
+    # 持久签发 + execute_command host_grant_id 单次消费）
+    _register_basic("host_access_request", HostAccessRequestTool(store=_escalation_store))
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))

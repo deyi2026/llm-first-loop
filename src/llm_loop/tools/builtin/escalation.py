@@ -168,6 +168,31 @@ class EscalationWaitTool:
             token = str(rec.get("token", "") or "")
             exp = str(rec.get("token_expires_at", "") or "")
             note = str(rec.get("decision_note", "") or "")
+            if rec.get("request_kind") == "host_grant":
+                # DESIGN-20261114: host-grant 类批准不铸灾难令牌，凭持久 grant_id 消费
+                gid = str(rec.get("host_grant_id", "") or "")
+                if not gid:
+                    return _fail(
+                        self.name,
+                        f"[状态异常] host-grant 申请已批准但持久授权签发中断（无 grant_id）。"
+                        f"该申请不可复用，请重新提交 host_access_request: {rid}",
+                    )
+                hr = rec.get("host_request", {}) or {}
+                return ToolResult(
+                    status=ToolResultStatus.SUCCESS,
+                    content=(
+                        f"[已批准] host-grant request_id={rid}\n"
+                        f"审批备注: {note or '(无)'}\n"
+                        f"grant_id={gid}\n"
+                        f"授权: {hr.get('host_operation', '?')} {hr.get('host_canonical_path', '?')}"
+                        f"（单次，过期时间 {hr.get('host_expires_at', '见 grant 记录')}）\n"
+                        f"用法: execute_command(host_grant_id={gid}, "
+                        f"command=<与申请逐字一致的命令>, workdir=<与申请一致或省略>) "
+                        f"—— grant 绑定精确命令文本/cwd/会话/路径，任何一项不同都会被拒。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             if not token:
                 return _fail(self.name, f"[状态异常] approved 但令牌缺失，请重新申请: {rid}")
             return ToolResult(

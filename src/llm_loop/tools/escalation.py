@@ -38,8 +38,10 @@ import secrets
 import stat
 import threading
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from llm_loop.timekeeping import system_local_now
 
@@ -112,6 +114,11 @@ def _effective_status(rec: dict) -> str:
     """
     if rec.get("status") != "approved":
         return str(rec.get("status") or "")
+    if rec.get("request_kind") == "host_grant":
+        # DESIGN-20261114（Deepin P0）: host-grant 类不铸一次性令牌，生命周期由
+        # 持久 grant 文件的 expires_at 承担（执行消费侧全维度校验）；
+        # approved+无 host_grant_id 的签发中断态由 escalation_wait 显式提示重新申请。
+        return "approved"
     exp = str(rec.get("token_expires_at") or "")
     if not exp:
         return "expired"
@@ -301,6 +308,8 @@ class EscalationStore:
         justification: str,
         session_id: str = "",
         requested_by: str = "ai",
+        kind: str = "command",
+        extra: Mapping[str, Any] | None = None,
     ) -> dict:
         """创建提权申请（同会话同命令的 pending 请求幂等复用）.
 
@@ -311,6 +320,8 @@ class EscalationStore:
         与执行侧实际基准不一致，令牌在 consume/consume_for_execution 时必然校验
         失败（fail-closed，放行永远不会发生，只是浪费一轮人工审批）。
         """
+        if kind not in ("command", "host_grant"):
+            raise ValueError(f"unknown escalation kind: {kind}")
         sha = hashlib.sha256(command.encode("utf-8")).hexdigest()
         created: dict | None = None
 
@@ -345,7 +356,14 @@ class EscalationStore:
                 "decision_note": "",
                 "token": "",
                 "token_expires_at": "",
+                "request_kind": kind,
             }
+            if extra:
+                # host-grant 类申请的冻结字段（嵌套 host_request dict；键须 host_ 前缀）
+                for k in extra:
+                    if not str(k).startswith("host_"):
+                        raise ValueError(f"bad extra key: {k}")
+                rec["host_request"] = dict(extra)
             records.append(rec)
             created = rec
             self._log("request_created", rec)
@@ -408,6 +426,7 @@ class EscalationStore:
         ttl_minutes: int = 10,
         expected_sha256: str = "",
         channel: str = "",
+        host_grant_id: str = "",
     ) -> tuple[dict | None, str]:
         """人工决定（仅 pending 可决；approved 铸造一次性令牌 + TTL）.
 
@@ -422,6 +441,8 @@ class EscalationStore:
         """
         if decision not in ("approved", "denied"):
             return None, f"非法决定值: {decision}"
+        if host_grant_id and decision != "approved":
+            return None, "host_grant_id 仅在 approved 决定时可携带"
 
         result: dict | None = None
         reason = ""
@@ -455,10 +476,17 @@ class EscalationStore:
                 r["decision_channel"] = channel
                 r["decision_note"] = note[:1000]
                 if decision == "approved":
-                    r["token"] = secrets.token_urlsafe(24)
-                    r["token_expires_at"] = (
-                        system_local_now() + timedelta(minutes=max(1, int(ttl_minutes)))
-                    ).isoformat()
+                    if host_grant_id:
+                        # host_grant 类：批准即由调用方关联持久 HostCapabilityGrant，
+                        # 本记录不铸一次性灾难令牌（token 恒空）。
+                        r["token"] = ""
+                        r["token_expires_at"] = ""
+                        r["host_grant_id"] = host_grant_id
+                    else:
+                        r["token"] = secrets.token_urlsafe(24)
+                        r["token_expires_at"] = (
+                            system_local_now() + timedelta(minutes=max(1, int(ttl_minutes)))
+                        ).isoformat()
                 result = r
                 self._log(
                     "decided",
@@ -875,6 +903,7 @@ class HostCapabilityGrantStore:
         ttl_s: int,
         approver_identity: str = "authenticated-local-user",
         grant_id: str | None = None,
+        request_binding: Mapping[str, Any] | None = None,
     ) -> dict:
         if operation not in _GRANT_OPERATIONS:
             raise HostGrantError("invalid_grant: unknown operation")
@@ -898,6 +927,13 @@ class HostCapabilityGrantStore:
                     "grant_store_insecure: grant file exists or is a symlink"
                 )
             now = system_local_now()
+            binding = dict(request_binding) if request_binding else {}
+            policy_hash = ""
+            if binding:
+                policy_hash = hashlib.sha256(
+                    json.dumps(binding, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":")).encode()
+                ).hexdigest()
             grant = {
                 "schema": GRANT_SCHEMA,
                 "grant_id": gid,
@@ -912,7 +948,8 @@ class HostCapabilityGrantStore:
                 "uses": 0,
                 "version": 1,
                 "expires_at": (now + timedelta(seconds=ttl_s)).isoformat(),
-                "policy_hash": "",
+                "policy_hash": policy_hash,
+                "request_binding": binding,
                 "approver_identity": approver_identity,
                 "status": "approved",
                 "issued_at": now.isoformat(),
@@ -939,6 +976,14 @@ class HostCapabilityGrantStore:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
+
+    def peek(self, grant_id: str) -> dict:
+        """只读快照（不消费、不改状态）：消费方先取 canonical_path/绑定字段再消费.
+
+        与 check/consume 的区别：peek 不做 scope 校验（调用方随后必须以
+        check/consume 全维度校验），仅保证 grant 文件可读且 schema 匹配。
+        """
+        return dict(self._read_grant(grant_id))
 
     def check(
         self,
@@ -1046,3 +1091,18 @@ class HostCapabilityGrantStore:
                 self._append_audit("revoke", fresh, revoked_by)
             finally:
                 os.close(fd)
+
+
+def host_grant_store_home() -> Path:
+    """host-grant 持久目录唯一推导（DESIGN-20261114：web 审批端点与工具消费侧同源）.
+
+    与 web/routes.py escalation 端点的 base 推导保持一致（LFL_DATA_DIR env >
+    代码根/data），避免 settings.DATA_DIR 与 LFL_DATA_DIR 的既有命名分歧
+    造成「签发在 A、消费在 B」的路径漂移。
+    """
+    import os
+
+    env = os.environ.get("LFL_DATA_DIR", "").strip()
+    if env:
+        return Path(env) / "grants"
+    return Path(__file__).resolve().parents[3] / "data" / "grants"

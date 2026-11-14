@@ -63,6 +63,7 @@ P1-a 保留命令工具，把约束改到命令语义层——识别**写盘命�
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import shlex
@@ -90,7 +91,9 @@ from llm_loop.core.command_options import (
     OptionScan,
     scan_options,
 )
-from llm_loop.core.write_scope import WriteScope, scope_allows
+from llm_loop.core.write_scope import MODE_DENY, WriteScope, scope_allows
+from llm_loop.core.write_scope import _expand_deny_pattern as _ws_expand_deny
+from llm_loop.core.write_scope import _matches as _ws_matches
 
 MAX_TOKENS = 512
 MAX_SEGMENTS = 64
@@ -2535,13 +2538,43 @@ def _git_action_args(args: Sequence[str]) -> list[str]:
     return [str(a) for a in _non_flag_args(tokens[1:])]
 
 
+def _extra_path_denied(scope: WriteScope, abs_path: str, workspace_root: str) -> bool:
+    """host-grant 豁免路径的 deny 检查（DESIGN-20261114）：deny 集对绝对路径补
+    显式 fnmatch（相对 rel 匹配对 root 外路径天然盲区）."""
+    pats = list(getattr(scope, "deny_paths", ()) or ())
+    if getattr(scope, "mode", "") == MODE_DENY:
+        pats += list(getattr(scope, "paths", ()) or ())
+    if not pats:
+        return False
+    root = os.path.realpath(os.path.expanduser(str(workspace_root)))
+    try:
+        rel = os.path.relpath(abs_path, root)
+    except ValueError:
+        rel = ""
+    for pat in pats:
+        if rel and _ws_matches(_ws_expand_deny(pat), rel):
+            return True
+        if fnmatch.fnmatch(abs_path, pat):
+            return True
+    return False
+
+
 class _Scanner:
     """一次命令串的写侧扫描器（状态在段间累积：cwd 位移、审计清单）。"""
 
-    def __init__(self, scope: WriteScope, workspace_root: str, cwd: str) -> None:
+    def __init__(
+        self,
+        scope: WriteScope,
+        workspace_root: str,
+        cwd: str,
+        extra_write_allowed: frozenset[str] = frozenset(),
+    ) -> None:
         self.scope = scope
         self.workspace_root = workspace_root
         self.cwd = cwd
+        # DESIGN-20261114（Deepin P0）: host-grant 授权单文件（绝对路径精确集）。
+        # 仅豁免 root 边界与 allow 匹配；deny 清单仍优先（_check_target 内判）。
+        self.extra_write_allowed = frozenset(extra_write_allowed)
         self.unverified: list[tuple[str, str]] = []
         self.cwd_unstable = False
 
@@ -3198,6 +3231,18 @@ class _Scanner:
                 )
             abs_path = os.path.realpath(os.path.join(self.cwd, token))
         allowed, reason = scope_allows(self.scope, abs_path, self.workspace_root)
+        if not allowed and abs_path in self.extra_write_allowed:
+            # DESIGN-20261114（Deepin P0）: 授权单文件（绝对路径精确匹配）豁免
+            # root 边界/allow 匹配；deny 清单仍优先——绝对路径显式 fnmatch 兜底
+            # （deny pattern 常规为相对 root 形式，root 外 rel 带 ../ 前缀，
+            # 相对匹配覆盖不到，父级明确禁止不可被 host-grant 绕过）。
+            if _extra_path_denied(self.scope, abs_path, self.workspace_root):
+                return (
+                    False,
+                    "write_target_denied_by_deny_list",
+                    f"{token} → {abs_path}（host-grant 不可绕过父 deny 清单）",
+                )
+            return True, "", ""
         if not allowed:
             return False, f"write_target_{reason}", f"{token} → {abs_path}（{reason}）"
         return True, "", ""
@@ -3230,6 +3275,7 @@ def check_command_scope(
     scope: WriteScope | None,
     workspace_root: str,
     workdir: str = "",
+    extra_write_allowed: frozenset[str] = frozenset(),
 ) -> CommandScopeDecision:
     """命令写侧判定入口。
 
@@ -3240,5 +3286,5 @@ def check_command_scope(
         return CommandScopeDecision(True)
     root = os.path.realpath(os.path.expanduser(str(workspace_root)))
     base = os.path.realpath(os.path.expanduser(str(workdir))) if workdir else root
-    scanner = _Scanner(scope, root, base)
+    scanner = _Scanner(scope, root, base, extra_write_allowed=extra_write_allowed)
     return scanner.scan(command)
