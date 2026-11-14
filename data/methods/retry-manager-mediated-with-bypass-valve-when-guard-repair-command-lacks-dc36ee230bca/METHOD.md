@@ -1,6 +1,6 @@
 ---
 method_id: retry-manager-mediated-with-bypass-valve-when-guard-repair-command-lacks-dc36ee230bca
-name: retry-manager-mediated-with-bypass-valve-when-guard-repair-command-lacks-tool
+name: retry-manager-mediated-with-bypass-valve-when-guard-repair-command-lacks
 description: 命令被项目预检守卫拦截、回执自述『修复命令+逃生阀』两条出路，而按修复命令直连 venv 解释器仍报缺工具模块时，把『工具由哪一层注入』当唯一未知量：dev/测试工具是包管理器 run 时注入、并非 venv 常驻依赖，直接改用管理器中介调用并挂上回执给出的逃生阀，跳过 venv 目录勘察与全局工具路径搜索；绕行后须核对实际环境与守卫声明一致，并把确切调用形式写进复现摩擦备注。
 aliases: 预检拦截跑不了测试, uv run 被环境预检挡住, venv 里找不到 pytest, 跳过环境预检复现, 修复命令失败换逃生阀
 status: candidate
