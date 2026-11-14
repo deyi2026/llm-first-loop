@@ -56,6 +56,22 @@ class WebTaskBudgetCanary:
         return bind_web_canary(self)
 
 
+def restricted_session_id(canary: WebTaskBudgetCanary | None) -> str | None:
+    """Central Run admission fence: no queue/sync/direct-Engine bypass of a
+    startup-authorized single-use session after its quota has been spent.
+    M2 P1-1: the fence binds BOTH operator plan kinds — an admin-once CAS
+    plan and a T1 web event plan. Without binding the T1 kind here a T1
+    restricted session driven through any non-stream entrypoint (queue,
+    direct Engine.run, alternate route) could fall back to the unbudgeted
+    default path; the fence is what makes the restricted session refuse
+    any Run without its plan bound in the same process."""
+    if canary is None:
+        return None
+    if isinstance(canary.plan, (AdminOnceEventPlan, T1WebEventPlan)):
+        return canary.session_id
+    return None
+
+
 def _deny() -> NoReturn:
     raise TaskBudgetDeniedError("web_task_budget_canary_unqualified")
 
@@ -165,6 +181,86 @@ def _public_pem(raw: Any) -> bytes:
         _deny()
 
 
+def _admin_once_plan_from_config(
+    engine: Any, config: dict[str, Any], session_id: str
+) -> AdminOnceEventPlan:
+    """Administrator approves ONE immutable Run quota. No credential,
+    signature service, operator mailbox or user-facing switch exists."""
+    if config["model_ref"] != "glm/glm-5.3":
+        _deny()
+    if not isinstance(getattr(engine, "_event_store", None), EventStore):
+        _deny()
+    runner = getattr(engine, "runner", None)
+    if runner is None or runner.enabled is not True:
+        _deny()
+    data_dir = Path(engine.settings.data_dir).expanduser().resolve()
+    try:
+        return AdminOnceEventPlan(
+            session_id=session_id,
+            workspace_scope=exact_workspace_scope(config["workspace_root"]),
+            authorization_id=config["authorization_id"],
+            valid_from_epoch_s=config["valid_from_epoch_s"],
+            valid_until_epoch_s=config["valid_until_epoch_s"],
+            event_store=engine._event_store,
+            budget_store=TaskBudgetStore(
+                data_dir / (
+                    "task_budget_subagent_canary"
+                    if config["schema"] == subagent_profile.CONFIG_SCHEMA
+                    else "task_budget_admin_once"
+                )
+            ),
+            provider_proxy=config.get("provider_proxy"),
+            profile=(
+                subagent_profile.PROFILE
+                if config["schema"] == subagent_profile.CONFIG_SCHEMA
+                else knowledge_profile.PROFILE
+                if config["schema"] == knowledge_profile.CONFIG_SCHEMA
+                else "web-glm-one-physical-attempt-v3"
+            ),
+        )
+    except (TypeError, ValueError):
+        _deny()
+
+
+def _t1_plan_from_config(
+    engine: Any,
+    config: dict[str, Any],
+    session_id: str,
+    *,
+    config_path: str,
+    validated_bytes: list[bytes],
+) -> T1WebEventPlan:
+    """T1 budgeted-write plan bound to the operator config artifact bytes."""
+    if config["model_ref"] != "glm/glm-5.3":
+        _deny()
+    if not isinstance(getattr(engine, "_event_store", None), EventStore):
+        _deny()
+    if not engine._event_store.enabled:
+        _deny()
+    runner = getattr(engine, "runner", None)
+    if runner is None or runner.enabled is not True:
+        _deny()
+    data_dir = Path(engine.settings.data_dir).expanduser().resolve()
+    try:
+        return T1WebEventPlan(
+            session_id=session_id,
+            workspace_scope=exact_workspace_scope(config["workspace_root"]),
+            authorization_id=config["authorization_id"],
+            target_path=config["target_path"],
+            prepared_target_sha256=config["prepared_target_sha256"],
+            valid_from_epoch_s=config["valid_from_epoch_s"],
+            valid_until_epoch_s=config["valid_until_epoch_s"],
+            event_store=engine._event_store,
+            budget_store=TaskBudgetStore(data_dir / "task_budget_t1_web"),
+            operator_config_path=str(Path(config_path).resolve()),
+            operator_config_sha256=hashlib.sha256(
+                validated_bytes[0]
+            ).hexdigest(),
+        )
+    except (TypeError, ValueError):
+        _deny()
+
+
 def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
     """The ONLY startup switch. Absent config => default OFF, no side effects."""
     config_path = business_config_snapshot("web").get(
@@ -198,72 +294,13 @@ def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
         knowledge_profile.CONFIG_SCHEMA,
         subagent_profile.CONFIG_SCHEMA,
     }:
-        # Administrator approves ONE immutable Run quota. No credential,
-        # signature service, operator mailbox or user-facing switch exists.
-        if config["model_ref"] != "glm/glm-5.3":
-            _deny()
-        if not isinstance(getattr(engine, "_event_store", None), EventStore):
-            _deny()
-        runner = getattr(engine, "runner", None)
-        if runner is None or runner.enabled is not True:
-            _deny()
-        data_dir = Path(engine.settings.data_dir).expanduser().resolve()
-        try:
-            plan = AdminOnceEventPlan(
-                session_id=session_id,
-                workspace_scope=exact_workspace_scope(config["workspace_root"]),
-                authorization_id=config["authorization_id"],
-                valid_from_epoch_s=config["valid_from_epoch_s"],
-                valid_until_epoch_s=config["valid_until_epoch_s"],
-                event_store=engine._event_store,
-                budget_store=TaskBudgetStore(
-                    data_dir / (
-                        "task_budget_subagent_canary"
-                        if config["schema"] == subagent_profile.CONFIG_SCHEMA
-                        else "task_budget_admin_once"
-                    )
-                ),
-                provider_proxy=config.get("provider_proxy"),
-                profile=(
-                    subagent_profile.PROFILE
-                    if config["schema"] == subagent_profile.CONFIG_SCHEMA
-                    else knowledge_profile.PROFILE
-                    if config["schema"] == knowledge_profile.CONFIG_SCHEMA
-                    else "web-glm-one-physical-attempt-v3"
-                ),
-            )
-        except (TypeError, ValueError):
-            _deny()
+        plan = _admin_once_plan_from_config(engine, config, session_id)
         return WebTaskBudgetCanary(session_id=session_id, plan=plan)
     if config["schema"] == "web-task-budget-t1/v1":
-        if config["model_ref"] != "glm/glm-5.3":
-            _deny()
-        if not isinstance(getattr(engine, "_event_store", None), EventStore):
-            _deny()
-        if not engine._event_store.enabled:
-            _deny()
-        runner = getattr(engine, "runner", None)
-        if runner is None or runner.enabled is not True:
-            _deny()
-        data_dir = Path(engine.settings.data_dir).expanduser().resolve()
-        try:
-            plan = T1WebEventPlan(
-                session_id=session_id,
-                workspace_scope=exact_workspace_scope(config["workspace_root"]),
-                authorization_id=config["authorization_id"],
-                target_path=config["target_path"],
-                prepared_target_sha256=config["prepared_target_sha256"],
-                valid_from_epoch_s=config["valid_from_epoch_s"],
-                valid_until_epoch_s=config["valid_until_epoch_s"],
-                event_store=engine._event_store,
-                budget_store=TaskBudgetStore(data_dir / "task_budget_t1_web"),
-                operator_config_path=str(Path(config_path).resolve()),
-                operator_config_sha256=hashlib.sha256(
-                    validated_bytes[0]
-                ).hexdigest(),
-            )
-        except (TypeError, ValueError):
-            _deny()
+        plan = _t1_plan_from_config(
+            engine, config, session_id,
+            config_path=config_path, validated_bytes=validated_bytes,
+        )
         return WebTaskBudgetCanary(session_id=session_id, plan=plan)
     web_uid, human_uid, issuer_uid, web_gid = (
         os.geteuid(), config["operator_uid"], config["issuer_uid"],

@@ -41,6 +41,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from llm_loop.resources.text_normalization import (  # noqa: F401  (re-export)
+    detect_line_ending,
+    normalize_lf,
+)
 from llm_loop.workspace.artifacts import ArtifactError, WorkspaceArtifactStore
 from llm_loop.workspace.file_effects import FileArtifactProvenance, FileEffectSink
 
@@ -61,16 +65,11 @@ _PROCESS_LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: weakref.WeakValueDictionary[str, threading.RLock] = weakref.WeakValueDictionary()
 
 
-def detect_line_ending(text: str) -> str:
-    """Return CRLF when it is the dominant original newline style, otherwise LF."""
-    crlf = text.count("\r\n")
-    lf_only = text.count("\n") - crlf
-    return "\r\n" if crlf > lf_only else "\n"
-
-
-def normalize_lf(text: str) -> str:
-    """Normalize CRLF/CR to LF for content matching only."""
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+# Single shared implementation (moved verbatim to
+# llm_loop.resources.text_normalization and re-exported above): the
+# FileService edit path and the T1 web budget profile import the SAME
+# functions — two copies would drift apart and silently disagree on
+# byte-exact edit previews.
 
 
 @dataclass(frozen=True, slots=True)

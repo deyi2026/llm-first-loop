@@ -55,6 +55,64 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _dispatch_operator_event_budget(
+    *,
+    engine_event_store: Any,
+    admin_plan: Any,
+    t1_plan: Any,
+    event_plan: Any,
+    event: Any,
+    session_id: str,
+    workspace_root: str,
+    run_generation: str,
+    user_text: str,
+    ingress: object,
+) -> Any:
+    """Pick the ONE active operator plan (mutual exclusion is enforced by
+    the caller) and prepare its per-event budget execution: admin-once CAS
+    plan, T1 budgeted-write plan, or the signed web event plan. The plan's
+    event store must be the engine's own EventStore instance — a foreign
+    store binding fails closed. Imports stay function-local exactly like
+    the original inline branches (no new module-level cross-plane imports)."""
+    from llm_loop.resources.task_budget_admin_once import (
+        prepare_admin_once_event_budget,
+    )
+    from llm_loop.resources.task_budget_event_authority import (
+        prepare_signed_web_event_budget,
+    )
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+    from llm_loop.resources.task_budget_t1_web_profile import (
+        prepare_t1_web_event_budget,
+    )
+
+    chosen = (
+        admin_plan if admin_plan is not None
+        else t1_plan if t1_plan is not None
+        else event_plan
+    )
+    if chosen is None:
+        raise TaskBudgetDeniedError("operator_budget_event_scope_invalid")
+    if engine_event_store is not chosen.event_store:
+        raise TaskBudgetDeniedError("operator_budget_event_store_mismatch")
+    if admin_plan is not None:
+        return prepare_admin_once_event_budget(
+            plan=admin_plan, event=event, session_id=session_id,
+            workspace_root=workspace_root, run_generation=run_generation,
+            user_text=user_text, ingress=ingress,
+        )
+    if t1_plan is not None:
+        return prepare_t1_web_event_budget(
+            plan=t1_plan, event=event, session_id=session_id,
+            workspace_root=workspace_root, run_generation=run_generation,
+            user_text=user_text, ingress=ingress,
+        )
+    return prepare_signed_web_event_budget(
+        plan=event_plan, event=event, session_id=session_id,
+        workspace_root=workspace_root, run_generation=run_generation,
+        user_text=user_text, ingress=ingress,
+    )
+
+
 class _RunEntrypointMixin:
     def _retire_runtime_session_state(self, session_id: str) -> None:
         """Drop evicted process-local session hints while preserving every durable SoT."""
@@ -246,7 +304,6 @@ class _RunEntrypointMixin:
             # ingress exist. Ordinary production routes install no intent.
             from llm_loop.resources.task_budget_admin_once import (
                 active_admin_once_plan,
-                prepare_admin_once_event_budget,
             )
             from llm_loop.resources.task_budget_authority import (
                 active_signed_web_budget_intent,
@@ -259,14 +316,10 @@ class _RunEntrypointMixin:
             )
             from llm_loop.resources.task_budget_event_authority import (
                 active_signed_web_event_plan,
-                prepare_signed_web_event_budget,
             )
             from llm_loop.resources.task_budget_run_scope import prepare_offline_run_budget
             from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
-            from llm_loop.resources.task_budget_t1_web_profile import (
-                active_t1_web_plan,
-                prepare_t1_web_event_budget,
-            )
+            from llm_loop.resources.task_budget_t1_web_profile import active_t1_web_plan
 
             _event_plan = active_signed_web_event_plan()
             _admin_plan = active_admin_once_plan()
@@ -325,33 +378,12 @@ class _RunEntrypointMixin:
                     return
                 if _budget_execution is not None or _event_step_scope is None:
                     raise TaskBudgetDeniedError("operator_budget_event_scope_invalid")
-                _chosen_plan = (
-                    _admin_plan if _admin_plan is not None
-                    else _t1_plan if _t1_plan is not None
-                    else _event_plan
+                _budget_execution = _dispatch_operator_event_budget(
+                    engine_event_store=getattr(self, "_event_store", None),
+                    admin_plan=_admin_plan, t1_plan=_t1_plan, event_plan=_event_plan,
+                    event=event, session_id=session_id, workspace_root=run_workspace,
+                    run_generation=run_generation, user_text=user_text, ingress=ingress,
                 )
-                assert _chosen_plan is not None
-                if getattr(self, "_event_store", None) is not _chosen_plan.event_store:
-                    raise TaskBudgetDeniedError("operator_budget_event_store_mismatch")
-                if _admin_plan is not None:
-                    _budget_execution = prepare_admin_once_event_budget(
-                        plan=_admin_plan, event=event, session_id=session_id,
-                        workspace_root=run_workspace, run_generation=run_generation,
-                        user_text=user_text, ingress=ingress,
-                    )
-                elif _t1_plan is not None:
-                    _budget_execution = prepare_t1_web_event_budget(
-                        plan=_t1_plan, event=event, session_id=session_id,
-                        workspace_root=run_workspace, run_generation=run_generation,
-                        user_text=user_text, ingress=ingress,
-                    )
-                else:
-                    assert _event_plan is not None
-                    _budget_execution = prepare_signed_web_event_budget(
-                        plan=_event_plan, event=event, session_id=session_id,
-                        workspace_root=run_workspace, run_generation=run_generation,
-                        user_text=user_text, ingress=ingress,
-                    )
                 _register_budget(_budget_execution)
                 _event_step_scope.enter_context(
                     bind_task_budget(_budget_execution, cleanup_scope=True)

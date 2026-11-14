@@ -402,7 +402,10 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         preview); dry_run previews are held to the same bound. Non-UTF-8
         targets and already-oversized targets are denied before any write.
         """
-        from llm_loop.workspace.file_service import detect_line_ending, normalize_lf
+        from llm_loop.resources.text_normalization import (
+            detect_line_ending,
+            normalize_lf,
+        )
 
         target_path = self._t1_target_path or ""
         root = self._t1_workspace_root or ""
@@ -600,6 +603,19 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         with suppress(TaskBudgetDeniedError, TaskBudgetConflictError):
             self.request_stop(reason=reason)
 
+    def _t1_fail_closed(
+        self,
+        reservation_id: str,
+        *,
+        outcome: str,
+        complete: bool,
+        reason: str,
+    ) -> None:
+        """Shared fail-closed tail: keep the I2 unknown liability (no
+        refund, no rewrite) and latch a durable stop for this reason."""
+        super().settle(reservation_id, outcome=outcome, complete=complete)
+        self._t1_request_stop(reason)
+
     def _t1_unbound_events(self, kind: str) -> list[Event]:
         grant = self.store.read(self.budget_id).get("grant") or {}
         session_id = grant.get("session_id") or ""
@@ -751,26 +767,116 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         )
         return recomputed == digest16
 
+    def _t1_settle_unreconciled(
+        self, reservation_id: str, *, outcome: str, complete: bool
+    ) -> None:
+        """P1-2 (measured by the parent): a physical attempt that failed,
+        was interrupted or cancelled — or a physical settle without its
+        arming envelope — leaves an UNKNOWN liability whose usage can never
+        be reconciled. Keep the I2 unknown bookkeeping and IMMEDIATELY
+        latch a durable stop so no further provider send (or tool use) can
+        happen on this root, across restarts. Tool reservations settle
+        through the normal I2 path (no envelope, no provider usage) and
+        are untouched by this latch."""
+        entry = self.store.read(self.budget_id)["reservations"].get(reservation_id)
+        physical = isinstance(entry, dict) and entry.get(
+            "kind"
+        ) == BudgetDimension.PHYSICAL_ATTEMPTS.value
+        super().settle(reservation_id, outcome=outcome, complete=complete)
+        if physical:
+            self._t1_request_stop(STOP_OUTCOME_UNKNOWN)
+
+    def _t1_call_generation_bound(self, settled_event: Event, opened_event: Event) -> bool:
+        """Cross-review point 2: never join over raw unfiltered session
+        events. First restrict provider.call.opened to THIS run generation,
+        then require the settled event's call_id to belong to that set
+        (exactly one matching call) and the joined transport.opened event
+        to carry the SAME call_id — foreign-run pollution, missing or
+        duplicated call bindings all fail closed."""
+        call_id = (settled_event.payload or {}).get("call_id")
+        grant = self.store.read(self.budget_id).get("grant") or {}
+        session_id = grant.get("session_id") or ""
+        if self._t1_event_store is None or not session_id:
+            return False
+        run_calls = [
+            event
+            for event in self._t1_event_store.read(session_id)
+            if event.type == "provider.call.opened"
+            and (event.payload or {}).get("origin_run_generation")
+            == self.member.run_generation
+        ]
+        same_call = [
+            event
+            for event in run_calls
+            if (event.payload or {}).get("call_id") == call_id
+        ]
+        return bool(
+            isinstance(call_id, str)
+            and call_id
+            and len(same_call) == 1
+            and (opened_event.payload or {}).get("call_id") == call_id
+        )
+
+    @staticmethod
+    def _t1_transport_evidence(settled_event: Event, opened_event: Event):
+        """Attribute gate for BOTH joined events: the settled event must
+        carry a real pattempt id, glm/glm-5.3, success, one usage
+        observation and HTTP 200; the opened event must bind the SAME
+        attempt with qualified prepared (projected_bytes, max_tokens).
+        Returns (attempt_id, projected_bytes, max_tokens) or None."""
+        payload = settled_event.payload or {}
+        attempt_id = payload.get("attempt_id") or ""
+        if (
+            not _ATTEMPT_ID.fullmatch(attempt_id)
+            or payload.get("provider_id") != "glm"
+            or payload.get("model_id") != "glm-5.3"
+            or payload.get("outcome") != "success"
+            or payload.get("usage_observations") != 1
+            or payload.get("status_code") != 200
+        ):
+            return None
+        opened_payload = opened_event.payload or {}
+        prepared = opened_payload.get("prepared")
+        controls = prepared.get("controls") if isinstance(prepared, Mapping) else None
+        projected = prepared.get("projected_bytes") if isinstance(prepared, Mapping) else None
+        max_tokens = controls.get("max_tokens") if isinstance(controls, Mapping) else None
+        if (
+            opened_payload.get("attempt_id") != attempt_id
+            or opened_payload.get("provider_id") != "glm"
+            or opened_payload.get("model_id") != "glm-5.3"
+            or type(projected) is not int
+            or type(max_tokens) is not int
+        ):
+            return None
+        return attempt_id, projected, max_tokens
+
+    @staticmethod
+    def _t1_observed_usage_view(payload: Mapping[str, Any], envelope):
+        """Usage gate returning (values, "") on success or (None, reason).
+        Cross-review point 3: cached input must be a legitimate integer
+        within [0, input]; the receipt digest uses the M1 canonical
+        observed view {input, output, cached_input} + reserved — never the
+        raw usage mapping (extra provider fields would change the digest
+        and must not be trusted into the hash)."""
+        usage = payload.get("usage") or {}
+        observed_in, observed_out = usage.get("input_tokens"), usage.get("output_tokens")
+        cached = usage.get("cached_input_tokens")
+        if (
+            type(observed_in) is not int or observed_in < 0
+            or type(observed_out) is not int or observed_out < 0
+            or observed_in > envelope[0] or observed_out > envelope[1]
+        ):
+            return None, STOP_USAGE_EXCEEDED
+        if type(cached) is not int or not 0 <= cached <= observed_in:
+            return None, STOP_EVENT_JOIN
+        return (observed_in, observed_out, cached), ""
+
     def settle(self, reservation_id: str, *, outcome: str, complete: bool) -> None:
         envelope = self._t1_envelopes.get(reservation_id)
         if complete is not False or outcome != "success" or envelope is None:
-            # P1-2 (measured by the parent): a physical attempt that failed,
-            # was interrupted or cancelled — or a physical settle without
-            # its arming envelope — leaves an UNKNOWN liability whose usage
-            # can never be reconciled. Keep the I2 unknown bookkeeping and
-            # IMMEDIATELY latch a durable stop so no further provider send
-            # (or tool use) can happen on this root, across restarts. Tool
-            # reservations settle through the normal I2 path (no envelope,
-            # no provider usage) and are untouched by this latch.
-            entry = self.store.read(self.budget_id)["reservations"].get(
-                reservation_id
+            self._t1_settle_unreconciled(
+                reservation_id, outcome=outcome, complete=complete
             )
-            physical = isinstance(entry, dict) and entry.get(
-                "kind"
-            ) == BudgetDimension.PHYSICAL_ATTEMPTS.value
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            if physical:
-                self._t1_request_stop(STOP_OUTCOME_UNKNOWN)
             return
         existing = self.store.read(self.budget_id)["reservations"].get(reservation_id)
         if (
@@ -806,101 +912,31 @@ class T1WebBudgetExecution(TaskBudgetExecution):
             settled = self._t1_unbound_events("provider.transport.settled")
             opened = self._t1_unbound_events("provider.transport.opened")
         except TaskBudgetDeniedError:
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_LEDGER_MISMATCH)
+            self._t1_fail_closed(reservation_id, outcome=outcome, complete=complete, reason=STOP_LEDGER_MISMATCH)
             return
         if len(settled) != 1 or len(opened) != 1:
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_EVENT_JOIN)
+            self._t1_fail_closed(reservation_id, outcome=outcome, complete=complete, reason=STOP_EVENT_JOIN)
             return
         settled_event, opened_event = settled[0], opened[0]
-        payload = settled_event.payload or {}
-        attempt_id = payload.get("attempt_id") or ""
-        if (
-            not _ATTEMPT_ID.fullmatch(attempt_id)
-            or payload.get("provider_id") != "glm"
-            or payload.get("model_id") != "glm-5.3"
-            or payload.get("outcome") != "success"
-            or payload.get("usage_observations") != 1
-            or payload.get("status_code") != 200
+        evidence = self._t1_transport_evidence(settled_event, opened_event)
+        if evidence is None or not self._t1_call_generation_bound(
+            settled_event, opened_event
         ):
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_EVENT_JOIN)
+            self._t1_fail_closed(reservation_id, outcome=outcome, complete=complete, reason=STOP_EVENT_JOIN)
             return
-        opened_payload = opened_event.payload or {}
-        prepared = opened_payload.get("prepared")
-        controls = prepared.get("controls") if isinstance(prepared, Mapping) else None
-        projected = prepared.get("projected_bytes") if isinstance(prepared, Mapping) else None
-        max_tokens = controls.get("max_tokens") if isinstance(controls, Mapping) else None
-        call_id = payload.get("call_id")
-        if (
-            opened_payload.get("attempt_id") != attempt_id
-            or opened_payload.get("provider_id") != "glm"
-            or opened_payload.get("model_id") != "glm-5.3"
-            or type(projected) is not int
-            or type(max_tokens) is not int
-        ):
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_EVENT_JOIN)
-            return
-        # Cross-review point 2: never join over raw unfiltered session
-        # events. First restrict provider.call.opened to THIS run
-        # generation, then require the settled event's call_id to belong
-        # to that set (exactly one matching call) and the joined
-        # transport.opened event to carry the SAME call_id — foreign-run
-        # pollution, missing or duplicated call bindings all fail closed.
-        grant = self.store.read(self.budget_id).get("grant") or {}
-        session_id = grant.get("session_id") or ""
-        if self._t1_event_store is None or not session_id:
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_EVENT_JOIN)
-            return
-        run_calls = [
-            event
-            for event in self._t1_event_store.read(session_id)
-            if event.type == "provider.call.opened"
-            and (event.payload or {}).get("origin_run_generation")
-            == self.member.run_generation
-        ]
-        same_call = [
-            event
-            for event in run_calls
-            if (event.payload or {}).get("call_id") == call_id
-        ]
-        if (
-            not isinstance(call_id, str)
-            or not call_id
-            or len(same_call) != 1
-            or opened_payload.get("call_id") != call_id
-        ):
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_EVENT_JOIN)
-            return
+        attempt_id, projected, max_tokens = evidence
         reserved_view = (2 * projected + INPUT_PROXY_CONST, max_tokens, projected)
         if reserved_view != envelope:
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_LEDGER_MISMATCH)
+            self._t1_fail_closed(reservation_id, outcome=outcome, complete=complete, reason=STOP_LEDGER_MISMATCH)
             return
-        usage = payload.get("usage") or {}
-        observed_in, observed_out = usage.get("input_tokens"), usage.get("output_tokens")
-        cached = usage.get("cached_input_tokens")
-        if (
-            type(observed_in) is not int or observed_in < 0
-            or type(observed_out) is not int or observed_out < 0
-            or observed_in > envelope[0] or observed_out > envelope[1]
-        ):
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_USAGE_EXCEEDED)
+        values, usage_reason = self._t1_observed_usage_view(
+            settled_event.payload or {}, envelope
+        )
+        if usage_reason:
+            self._t1_fail_closed(reservation_id, outcome=outcome, complete=complete, reason=usage_reason)
             return
-        # Cross-review point 3: cached input must be a legitimate integer
-        # within [0, input]; the receipt digest uses the M1 canonical
-        # observed view {input, output, cached_input} + reserved — never
-        # the raw usage mapping (extra provider fields would change the
-        # digest and must not be trusted into the hash).
-        if type(cached) is not int or not 0 <= cached <= observed_in:
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_EVENT_JOIN)
-            return
+        assert values is not None  # (values, "") on the success path
+        observed_in, observed_out, cached = values
         observed_view = {
             "input": observed_in,
             "output": observed_out,
@@ -923,8 +959,7 @@ class T1WebBudgetExecution(TaskBudgetExecution):
                 payload_bytes=envelope[2],
             )
         except (TaskBudgetDeniedError, TaskBudgetConflictError, ValueError):
-            super().settle(reservation_id, outcome=outcome, complete=complete)
-            self._t1_request_stop(STOP_SETTLE_CAS)
+            self._t1_fail_closed(reservation_id, outcome=outcome, complete=complete, reason=STOP_SETTLE_CAS)
             return
         # Cross-review point 1: bind BOTH the settled and the opened event
         # ids so the NEXT attempt's unbound scan excludes this attempt's

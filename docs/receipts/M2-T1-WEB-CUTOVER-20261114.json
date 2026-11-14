@@ -305,6 +305,50 @@
         "full_r9": "NOT_RUN, requires independent Reviewer PASS"
       },
       "test_fixture_literals_shortened": 2
+    },
+    {
+      "batch": "R9-first-round-minimal-repair",
+      "date_local": "2026-11-14 09:20",
+      "trigger": "parent release-gate run exit=1 on frozen candidate 06a5ce649/tree 4cab3bfd: three tier0 architecture failures",
+      "scope": "semantic minimal extraction only in the same isolated tree; NO baseline/guard/gate-script/exemption changes; single writer; no independent reviewer / R9 / push / main",
+      "changes": [
+        {
+          "fix": "kernel_import_edges",
+          "before": "new resources->workspace edge from T1 profile import of file_service text helpers",
+          "after": "pure helpers moved verbatim to new resources/text_normalization.py; file_service re-exports (workspace->resources is not a kernel edge); T1 profile imports from its own plane; identity anti-drift test added (test_t1_and_file_service_share_one_text_normalization_implementation asserts `is` identity and no llm_loop.workspace import in the profile source)"
+        },
+        {
+          "fix": "function_lines_ratchet (5 items)",
+          "after": {
+            "web/__init__.py::build_app": "158 -> 144 (P1-1 fence block extracted to task_budget_canary.restricted_session_id)",
+            "core/loop/lifecycle.py::run_stream": "337 -> 311 (operator plan dispatch extracted to module-level _dispatch_operator_event_budget, function-local imports preserved)",
+            "resources/task_budget_store.py::reserve": "150 -> 92 (subagent-canary and T1 single-flight gates extracted to module-level _assert_subagent_canary_reserve_gate / _assert_t1_single_flight_gate inside the same reserve CAS semantics)",
+            "resources/task_budget_t1_web_profile.py::settle": "184 -> 99 (fail-closed tail _t1_fail_closed; event attribute gate _t1_transport_evidence; generation/call binding _t1_call_generation_bound; usage gate _t1_observed_usage_view returning (values, reason) with exact stop reasons preserved)",
+            "web/task_budget_canary.py::load_operator_web_canary": "159 -> 100 (admin-once and T1 plan builders extracted to _admin_once_plan_from_config / _t1_plan_from_config)"
+          }
+        },
+        {
+          "fix": "global_redline_300",
+          "after": "run_stream 311 <= legacy registered 312"
+        }
+      ],
+      "verification": {
+        "three_targeted_tier0": "4 passed (ratchet_within_baseline, global_redline_300, kernel_import_edges x2)",
+        "arch_guards_full": "52 passed",
+        "tier0_marker_full": "341 passed, 10955 deselected",
+        "t1_plus_m1": "97 passed (60 T1 incl. identity test + 37 M1)",
+        "canary_or_t1_or_budget": "747 passed, 4 skipped",
+        "webui": "615 passed",
+        "static_diagnostics_ruff_ledger": "PASS historical=67 current=27 new=0 resolved=40 touched-files-clean",
+        "static_diagnostics_pyright_ledger": "PASS historical=45 current=10 new=0 resolved=35 touched-files-clean",
+        "py_compile": "exit 0",
+        "interpreter": ".venv/bin/python (3.13, repo virtualenv)"
+      },
+      "note": "semantic invariants preserved: all extractions are pure moves; stop reasons, gate denial codes, dispatch/receipt_ref formats and CAS boundaries unchanged; old reviewer PASS invalidated by code change per contract - a fresh independent reviewer PASS is required before the parent re-runs the original release gate"
     }
-  ]
+  ],
+  "final_state": {
+    "m1_frozen_index_tree_preserved": "59d73bfb2b4ef60c6c07c93dd772df226704e42f remains the M1 layer inside the merged history",
+    "r9_candidate_before_repair": "commit 06a5ce649 / tree 4cab3bfd (reviewer PASSed, release gate exit=1)"
+  }
 }

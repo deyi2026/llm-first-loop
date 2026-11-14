@@ -3014,3 +3014,22 @@ def test_t1_build_app_autowires_real_operator_config_loader_to_fence(
         )
     assert refused.status_code != 200
     assert len(captured) == 1  # the runner never saw the revoked request
+
+
+def test_t1_and_file_service_share_one_text_normalization_implementation() -> None:
+    """Single shared algorithm (R9 tier0 fix 2026-11-14): the T1 profile and
+    FileService.edit must import the VERY SAME functions from
+    resources.text_normalization — two drifted copies would silently
+    disagree on byte-exact edit previews. Identity, not behaviour-equality:
+    re-export keeps ``file_service.detect_line_ending`` bound to the same
+    function object the T1 profile imports."""
+    import llm_loop.resources.text_normalization as shared
+    import llm_loop.workspace.file_service as fs
+
+    assert fs.detect_line_ending is shared.detect_line_ending
+    assert fs.normalize_lf is shared.normalize_lf
+    # No kernel cross-plane edge: resources must not import workspace.
+    import llm_loop.resources.task_budget_t1_web_profile as profile
+
+    source = Path(profile.__file__).read_text(encoding="utf-8")
+    assert "llm_loop.workspace.file_service" not in source
