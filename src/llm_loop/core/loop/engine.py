@@ -1632,6 +1632,108 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             },
                         )
 
+            # P0-B pre-send observation visibility guard: after final projection
+            # (incl. compaction gate / conservative / minimal rebuild), if the
+            # latest completed assistant→tool atomic group after the current
+            # ingress is absent from the exact provider view, fail CLOSED.
+            # No verified owner-scoped exact-ref path exists in this patch, so
+            # durable storage or repeat_guard hints never substitute visibility.
+            try:
+                from llm_loop.core.loop.engine_services.observation_visibility import (
+                    group_visible_in_provider_view,
+                    latest_completed_tool_group,
+                )
+
+                _latest_group = latest_completed_tool_group(
+                    sess.messages, _active_turn_ref
+                )
+                _latest_raw_visible = group_visible_in_provider_view(
+                    _latest_group, messages, active_ingress_ref=_active_run_ingress_ref
+                )
+                if not _latest_raw_visible and _latest_group and _latest_group.get("valid"):
+                    # Reuse the existing side-effect-free durable-Session projection.
+                    # A soft/operator history target alone is not proof that raw
+                    # observation cannot fit the provider's physical input window.
+                    _raw_rebuild = self._build_conservative_active_run_messages(
+                        sess,
+                        max_chars=effective_budget,
+                        model=model,
+                        planned_label=planned_label,
+                        logical_round=rounds,
+                    )
+                    _physically_limited = _budget_info.get("limited_by") in (
+                        "model_window", "input_token_budget"
+                    )
+                    _raw_fits = (
+                        _raw_rebuild.state == "rebuilt"
+                        and (
+                            not _physically_limited
+                            or _raw_rebuild.projected_chars <= effective_budget
+                        )
+                    )
+                    _raw_messages = list(_raw_rebuild.messages) if _raw_fits else []
+                    if _raw_messages and callable(_request_preflight):
+                        _raw_preflight = dict(
+                            _request_preflight(
+                                _raw_messages, tools_param, model=chat_model_arg
+                            ) or {}
+                        )
+                        _raw_fits = not bool(_raw_preflight.get("hard_overflow", False))
+                    if _raw_fits and group_visible_in_provider_view(
+                        _latest_group,
+                        _raw_messages,
+                        active_ingress_ref=_active_run_ingress_ref,
+                    ):
+                        messages = _raw_messages
+                        _latest_raw_visible = True
+                        self._event_append(
+                            session_id,
+                            "request.observation_visibility",
+                            {
+                                "round": rounds,
+                                "action": "raw_group_rebuilt_from_current_session",
+                                "group_index": _latest_group["index"],
+                                "projected_chars": _raw_rebuild.projected_chars,
+                                "budget_chars": effective_budget,
+                            },
+                        )
+                if not _latest_raw_visible:
+                    self._event_append(
+                        session_id,
+                        "request.observation_visibility",
+                        {
+                            "round": rounds,
+                            "group_index": _latest_group["index"] if _latest_group else None,
+                            "call_ids": (_latest_group or {}).get("call_ids", []),
+                            "visible": False,
+                            "action": "provider_send_blocked",
+                            "reason": "context_capacity_unavailable",
+                        },
+                    )
+                    self._record_action(
+                        "action.llm_decide",
+                        "observation_visibility_hold",
+                        (
+                            "latest_completed_tool_group_not_in_provider_view;"
+                            "provider_sent=false;run_incomplete"
+                        ),
+                    )
+                    _run_end_reason = "context_capacity_unavailable"
+                    final_answer = (
+                        "[context_capacity_unavailable] 最新已完成的工具交换"
+                        "在最终 Provider 视图中既无原始配对组，也无经验证的精确引用；"
+                        "已阻止发送（provider_sent=false，run_incomplete）。"
+                    )
+                    break
+            except Exception:  # noqa: BLE001 — guard itself must not fabricate success
+                logger.exception("observation visibility guard failed; blocking send")
+                _run_end_reason = "context_capacity_unavailable"
+                final_answer = (
+                    "[context_capacity_unavailable] 观察可见性门禁自身故障；"
+                    "已阻止发送（provider_sent=false，run_incomplete）。"
+                )
+                break
+
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。
             from llm_loop.core.history import compute_breakdown_from_dicts

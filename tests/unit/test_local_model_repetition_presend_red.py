@@ -121,6 +121,7 @@ def test_completed_tool_exchange_must_be_visible_or_second_send_blocked(
         # A pre-send HOLD is acceptable, but not a fake success or silent stop.
         assert "context_capacity_unavailable" in result.final_answer
         assert "provider_sent=false" in result.final_answer
+        assert result.run_incomplete is True
         return
 
     assert len(fake.calls) == 2, "unexpected extra provider attempt"
