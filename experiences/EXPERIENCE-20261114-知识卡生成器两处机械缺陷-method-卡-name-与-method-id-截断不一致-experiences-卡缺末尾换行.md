@@ -6,7 +6,8 @@ solution: "修复口径：name 一律取 method_id 去掉末尾 12 位哈希（�
 evidence: "evidence://v1/195856f953363e7abfac0fda2635e0d59dc93f51cb35b2d13a8ea91ce1d52f22"
 tags: [knowledge-pipeline, review-gate, consistency-check]
 source: {}
-status: active
+status: superseded
+superseded_by: 知识卡生成器两处机械缺陷：method 卡 name 与 method_id 截断不一致、experiences 卡缺末尾换行
 record_kind: lesson
 verification_state: verified
 created_at: "2026-11-14T13:44:00+08:00"
