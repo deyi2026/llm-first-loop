@@ -732,6 +732,124 @@ def _collect_claim_metrics(audit_dir: str) -> tuple[dict, list[str]]:
     return block, notes
 
 
+# ---------------- 合并队列失败分诊（R5：只读，零写） ----------------
+
+#: failure_class(6) → 四类可行动桶(4)。未知/空一律归 human（fail-closed，不漏项）。
+_QUEUE_BUCKETS = {
+    "env_transient": "retry",
+    "needs_rebase": "rebase",
+    "verify_missing": "verify",
+    "env_config": "human",
+    "true_conflict": "human",
+    "needs_serialize": "human",
+}
+_QUEUE_BUCKET_LABELS = {
+    "retry": "该重投",
+    "rebase": "该 rebase",
+    "verify": "该补凭证",
+    "human": "该人看",
+}
+
+
+def _queue_next_command(entry: dict, diag: dict) -> str:
+    """给每条失败项一条可直接粘贴的下一步命令（R5-c：不是“请排查”这种空话）。"""
+    lid = str(entry.get("lane_id") or "")
+    qid = str(entry.get("queue_id") or "")
+    if not lid:
+        return f"# 队列项 {qid} 缺 lane_id，人工核对 merge_queue.jsonl"
+    cls = str(diag.get("failure_class") or "")
+    if cls == "env_transient":
+        return f'lane_queue_submit(lane_id="{lid}")  # 环境类，修好后重投'
+    if cls == "needs_rebase":
+        return f"git -C <lane-worktree> rebase origin/main && lane_queue_submit(lane_id=\"{lid}\")"
+    if cls == "verify_missing":
+        return f'lane_merge_request(lane_id="{lid}")  # 补/重签凭证后再排队'
+    return f"# 需人工判定：{diag.get('primary_reason') or 'unknown'}（queue={qid}）"
+
+
+def _collect_merge_queue(
+    audit_dir: str, *, limit_per_bucket: int = 3
+) -> tuple[dict, list[str]]:
+    """把 merge_queue.jsonl 的 failed 项压成四类计数 + 每类前 N 条（R5）。
+
+    只读：本函数不调用 MergeQueueStore 的任何写方法，不落任何账本。
+    不变量（R5-b）：四类计数之和必须等于 failed 总数；不成立时显式降级，不静默丢项。
+    """
+    from llm_loop.introspection.merge_queue import classify_failure
+
+    path = Path(audit_dir) / "merge_queue.jsonl"
+    buckets = {
+        key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
+        for key in _QUEUE_BUCKET_LABELS
+    }
+    if not path.exists():
+        return (
+            {"merge_queue": {"available": False, "failed_total": 0, "buckets": buckets}},
+            ["merge_queue: 账本不存在"],
+        )
+
+    failed_total = 0
+    malformed = 0
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    malformed += 1
+                    continue
+                if not isinstance(entry, dict) or str(entry.get("status")) != "failed":
+                    continue
+                failed_total += 1
+                try:
+                    diag = classify_failure(entry)
+                except Exception:  # 分诊本身出错不能拖垮整个协调视图
+                    diag = {"failure_class": "", "primary_reason": "classify_error"}
+                bucket = _QUEUE_BUCKETS.get(str(diag.get("failure_class") or ""), "human")
+                buckets[bucket]["count"] += 1
+                if len(buckets[bucket]["items"]) < limit_per_bucket:
+                    buckets[bucket]["items"].append(
+                        {
+                            "queue_id": entry.get("queue_id"),
+                            "lane_id": entry.get("lane_id"),
+                            "failure_class": str(diag.get("failure_class") or "") or "unknown",
+                            "primary_reason": str(diag.get("primary_reason") or ""),
+                            "evidence_hint": str(diag.get("evidence_hint") or ""),
+                            "next_command": _queue_next_command(entry, diag),
+                        }
+                    )
+    except OSError as exc:
+        return (
+            {"merge_queue": {"available": False, "failed_total": 0, "buckets": buckets}},
+            [f"merge_queue 不可读: {exc}"],
+        )
+
+    notes: list[str] = []
+    if malformed:
+        notes.append(f"merge_queue 有 {malformed} 行不可解析（未计入分诊）")
+    summed = sum(int(b["count"]) for b in buckets.values())
+    closure_ok = summed == failed_total
+    if not closure_ok:  # R5-b：实现错误必须自证，不允许把项丢掉
+        notes.append(f"merge_queue 分诊不闭合: 四类合计 {summed} != failed {failed_total}")
+
+    return (
+        {
+            "merge_queue": {
+                "available": True,
+                "failed_total": failed_total,
+                "buckets": buckets,
+                "bucket_sum": summed,
+                "closure_ok": closure_ok,
+                "malformed_lines": malformed,
+            }
+        },
+        notes,
+    )
+
+
 def coordination_snapshot(
     audit_dir: str,
     *,
@@ -761,6 +879,9 @@ def coordination_snapshot(
     degraded.extend(events_notes)
     claims_block, claims_notes = _collect_claim_metrics(audit_dir)
     degraded.extend(claims_notes)
+    # R5：队列失败分诊（只读；四类计数闭合性由 closure_ok 自证）
+    queue_block, queue_notes = _collect_merge_queue(audit_dir)
+    degraded.extend(queue_notes)
     goals_out: list[dict] = []
     sessions: dict[str, dict] = {}
     capacity: dict = {
@@ -803,8 +924,13 @@ def coordination_snapshot(
             "running": running,
             **events_block,
             **claims_block,
-            # running/events 都是真实采到的事实，账本失败不连坐它们。
-            "degraded": running_notes + events_notes + claims_notes + [f"goal 账本不可读: {exc}"],
+            **queue_block,
+            # running/events/queue 都是真实采到的事实，账本失败不连坐它们。
+            "degraded": running_notes
+            + events_notes
+            + claims_notes
+            + queue_notes
+            + [f"goal 账本不可读: {exc}"],
         }
 
     from llm_loop.introspection.task_store import TaskStore
@@ -850,6 +976,7 @@ def coordination_snapshot(
         "running": running,
         **events_block,
         **claims_block,
+        **queue_block,
         "evolution_completion_handoffs": evolution_handoffs,
         "degraded": degraded,
     }
@@ -956,6 +1083,27 @@ def render_coordination(snapshot: dict) -> str:
             f" bad={ce.get('bad_lines', 0)} bytes={ce.get('bytes', 0)}"
             f" write_failures={fails}"
         )
+    mq = snapshot.get("merge_queue") or {}
+    if mq:
+        if not mq.get("available"):
+            lines.append("  队列分诊 merge_queue=<不可用>")
+        else:
+            bt = mq.get("buckets") or {}
+            parts = [
+                f"{(bt.get(k) or {}).get('label') or k}={(bt.get(k) or {}).get('count', 0)}"
+                for k in ("retry", "rebase", "verify", "human")
+            ]
+            lines.append(
+                f"  队列分诊 failed={mq.get('failed_total')} "
+                f"闭合={'ok' if mq.get('closure_ok') else 'BROKEN'}({mq.get('bucket_sum')}) "
+                + " ".join(parts)
+            )
+            for key in ("retry", "rebase", "verify", "human"):
+                for it in (bt.get(key) or {}).get("items") or []:
+                    lines.append(
+                        f"      [{key}] {it.get('lane_id') or '-'} "
+                        f"{it.get('primary_reason') or '-'} → {it.get('next_command') or '-'}"
+                    )
     for note in snapshot.get("degraded") or []:
         lines.append(f"  ⚠ degraded: {note}")
     return "\n".join(lines)

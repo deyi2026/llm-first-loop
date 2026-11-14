@@ -121,6 +121,15 @@ class QueueEntry:
     stale_since_main: str = ""
     last_preflight: dict[str, Any] = field(default_factory=dict)
     failure_reasons: list[str] = field(default_factory=list)
+    # 失败分诊（D3：读时纯函数算出，落账只为「首次可查询」；老记录缺字段由 classify_failure 现算）
+    failure_class: str = ""
+    primary_check: str = ""
+    primary_reason: str = ""
+    cascade_of: str = ""
+    evidence_hint: str = ""
+    auto_retry_attempt: int = 0
+    next_retry_at: str = ""
+    needs_human: bool = False
     close_reason: str = ""
     slot_acquired_at: str = ""
     slot_owner: str = ""  # 显示用，不作鉴权（与 lane 口径一致）
@@ -178,16 +187,211 @@ def _check(check: str, ok: bool, reason_code: str, evidence: dict) -> dict:
     }
 
 
-def check_base_main_current(entry: dict, main_head: str) -> dict:
-    """机检 a: lane.base_main_sha 是否为当前 main head。不是则 stale（fail-closed，未知也算不通过）。"""
+# ---------------- 失败分诊（纯函数，零 I/O） ----------------
+
+CHECK_ORDER = (CHECK_BASE, CHECK_MERGE_TREE, CHECK_PATHS, CHECK_VERIFY)
+
+#: failure_class 取值域封闭（R1-c）。未知 reason_code 一律落 env_config（RULE-AI-30）。
+FAILURE_CLASSES = (
+    "env_transient",
+    "env_config",
+    "needs_rebase",
+    "verify_missing",
+    "true_conflict",
+    "needs_serialize",
+)
+
+#: 可直接按 reason_code 定类的码；需要 rc 上下文才能定类的码在 classify_failure 内分支处理。
+_STATIC_FAILURE_CLASS = {
+    "base_stale": "needs_rebase",
+    "verify_required": "verify_missing",
+    "verify_stale": "verify_missing",
+    "verify_invalid": "verify_missing",
+    "verify_expired": "verify_missing",
+    "verify_layer_not_enabled": "env_config",
+    "merge_conflict": "true_conflict",
+    "paths_overlap": "needs_serialize",
+}
+
+#: 只有 env_transient 允许自动重投（R3-a：true_conflict 永不自动重投）。
+_AUTO_RETRY_CLASSES = frozenset({"env_transient"})
+
+#: 下游码 → 上游主因；只用于 cascade_of 标注，不参与计数（避免一因多计）。
+_CASCADE_OF = {"merge_tree_unavailable": "main_head_unknown"}
+
+#: stderr 关键词 → 类别。刻意收窄：'lock' 会误命中 'blocked'，故只认 index.lock/lock file。
+_ENV_CONFIG_HINTS = (
+    "not a git repository",
+    "does not exist",
+    "no such file",
+    "not configured",
+    "unknown revision",
+    "bad revision",
+)
+_ENV_TRANSIENT_HINTS = (
+    "timed out",
+    "timeout",
+    "index.lock",
+    "lock file",
+    "could not lock",
+    "resource temporarily unavailable",
+    "connection reset",
+    "connection refused",
+)
+
+
+def _stderr_hint_kind(stderr: str) -> tuple[str, str]:
+    """把 stderr 归到 env_config / env_transient；无法归类时 return stderr_unclassified 由调用方 fail-closed。"""
+    low = (stderr or "").lower()
+    for hint in _ENV_CONFIG_HINTS:
+        if hint in low:
+            return "env_config", f"stderr:{hint}"
+    for hint in _ENV_TRANSIENT_HINTS:
+        if hint in low:
+            return "env_transient", f"stderr:{hint}"
+    return "", "stderr_unclassified"
+
+
+def _classify_main_head_unknown(evidence: dict) -> tuple[str, str]:
+    """区分「配置错」与「临时失败」。信息不足一律 env_config——不把不确定当成可重试。"""
+    rc = evidence.get("rc")
+    if rc is None:
+        return "env_config", "rc_missing"
+    if isinstance(rc, int) and rc < 0:
+        return "env_config", "probe_unwired"
+    kind, hint = _stderr_hint_kind(str(evidence.get("stderr_tail") or ""))
+    return (kind or "env_config"), hint
+
+
+def _evidence_hint(evidence: dict) -> str:
+    """生成 ≤200 字符的可读证据摘要（R1-b：rc + stderr_tail）。"""
+    if not isinstance(evidence, dict):
+        return ""
+    parts: list[str] = []
+    if "rc" in evidence:
+        parts.append(f"rc={evidence.get('rc')}")
+    tail = str(evidence.get("stderr_tail") or "").strip()
+    if tail:
+        parts.append(f"stderr_tail={tail[:200]}")
+    if evidence.get("rc_missing"):
+        parts.append("rc_missing=true")
+    return " ".join(parts)[:200]
+
+
+def classify_failure(entry: dict) -> dict:
+    """把一条队列项失败分诊为「主因 + 类别 + 是否可自动重试」。纯读，不写盘、不读盘。
+
+    主因按机检顺序取第一个 verdict!=pass 的项（使历史数据可回算）；无 last_preflight
+    时退回 failure_reasons 首个码。未知码落 env_config（RULE-AI-30 fail-closed）。
+    """
+    empty = {
+        "primary_check": "",
+        "primary_reason": "",
+        "failure_class": "",
+        "retryable": False,
+        "cascade_of": "",
+        "evidence_hint": "",
+    }
+    lf = (entry or {}).get("last_preflight") or {}
+    checks = [c for c in (lf.get("checks") or []) if isinstance(c, dict)]
+    by_name = {str(c.get("check")): c for c in checks}
+    failed = [c for c in checks if str(c.get("verdict")) != "pass"]
+
+    primary = next(
+        (by_name[n] for n in CHECK_ORDER if n in by_name and str(by_name[n].get("verdict")) != "pass"),
+        None,
+    )
+    if primary is not None:
+        primary_check = str(primary.get("check") or "")
+        primary_reason = str(primary.get("reason_code") or "")
+        evidence = primary.get("evidence") or {}
+    else:
+        reasons = [
+            str(r).strip() for r in (entry or {}).get("failure_reasons") or [] if str(r).strip()
+        ]
+        if not reasons:
+            return empty
+        primary_check = ""
+        primary_reason = reasons[0]
+        evidence = {}
+
+    evidence = evidence if isinstance(evidence, dict) else {}
+    if primary_reason == "main_head_unknown":
+        failure_class, hint_kind = _classify_main_head_unknown(evidence)
+    elif primary_reason == "merge_tree_unavailable":
+        # 设计书 §4.2：能成为主因说明 base 机检已过（main_head 有值），
+        # 无法归类 stderr 时按「临时环境失败」处置（可重投）；能归类则尊重 stderr。
+        kind, hint_kind = _stderr_hint_kind(str(evidence.get("stderr_tail") or ""))
+        failure_class = kind or "env_transient"
+    elif primary_reason in _STATIC_FAILURE_CLASS:
+        failure_class = _STATIC_FAILURE_CLASS[primary_reason]
+        hint_kind = ""
+    else:
+        failure_class, hint_kind = "env_config", f"unknown_reason_code={primary_reason}"
+
+    base_hint = _evidence_hint(evidence)
+    evidence_hint = " ".join(p for p in (base_hint, hint_kind) if p)[:200]
+
+    cascade_of = ""
+    if primary_reason != "merge_tree_unavailable":
+        for other in failed:
+            if _CASCADE_OF.get(str(other.get("reason_code") or "")) == primary_reason:
+                cascade_of = primary_reason
+                break
+
+    if failure_class not in FAILURE_CLASSES:  # 取值域外的实现错误也 fail-closed
+        failure_class = "env_config"
+
+    return {
+        "primary_check": primary_check,
+        "primary_reason": primary_reason,
+        "failure_class": failure_class,
+        "retryable": failure_class in _AUTO_RETRY_CLASSES,
+        "cascade_of": cascade_of,
+        "evidence_hint": evidence_hint,
+    }
+
+
+def check_base_main_current(entry: dict, main_head: str, probe: dict | None = None) -> dict:
+    """机检 a: lane.base_main_sha 是否为当前 main head。不是则 stale（fail-closed，未知也算不通过）。
+
+    probe: 本次 main head 探测的 rc/stderr（可选）。缺失时 evidence 不带 rc，
+    classify_failure 会按 rc_missing 落 env_config 而非猜测可重试。
+    """
     base = str(entry.get("base_main_sha") or "").strip()
     if not main_head:
-        return _check(CHECK_BASE, False, "main_head_unknown", {"entry_base": base})
+        evidence: dict = {"entry_base": base}
+        if probe:
+            evidence["rc"] = probe.get("rc")
+            evidence["stderr_tail"] = probe.get("stderr_tail")
+            evidence["command"] = probe.get("command")
+        return _check(CHECK_BASE, False, "main_head_unknown", evidence)
     if base != main_head:
         return _check(
             CHECK_BASE, False, "base_stale", {"entry_base": base, "main_head": main_head}
         )
     return _check(CHECK_BASE, True, "", {"entry_base": base, "main_head": main_head})
+
+
+def merge_tree_conflicts_detail(
+    repo_root: str, main_head: str, head_sha: str
+) -> tuple[list[str], bool, int, str]:
+    """同 merge_tree_conflicts，但保留 rc/stderr（R1-b：环境配置错与临时失败必须可区分）。"""
+    if not head_sha:
+        return [], False, 0, "head_sha 为空"
+    if not main_head:
+        return [], False, 0, "main_head 为空"
+    rc, out, err = _git(
+        repo_root, "merge-tree", "--write-tree", "--name-only", main_head, head_sha
+    )
+    if rc == 0:
+        return [], True, 0, ""
+    if rc == 1:  # 有冲突: 首行是 tree oid，其后为冲突文件名
+        conflicts = [ln.strip() for ln in out.splitlines()[1:] if ln.strip()]
+        return conflicts, True, 1, ""
+    stderr_tail = (err or "").strip()[:200]
+    logger.warning("merge-tree 预检不可用: rc=%s stderr=%s", rc, stderr_tail)
+    return [], False, rc, stderr_tail
 
 
 def merge_tree_conflicts(repo_root: str, main_head: str, head_sha: str) -> tuple[list[str], bool]:
@@ -196,20 +400,10 @@ def merge_tree_conflicts(repo_root: str, main_head: str, head_sha: str) -> tuple
     返回 (conflicts, available): available=False 表示 git 不可用/语法不支持（fail-closed，
     调用方按"预检不可用"处理，不得当作无冲突）。
     """
-    if not head_sha:
-        return [], False
-    if not main_head:
-        return [], False
-    rc, out, err = _git(
-        repo_root, "merge-tree", "--write-tree", "--name-only", main_head, head_sha
+    conflicts, available, _rc, _stderr = merge_tree_conflicts_detail(
+        repo_root, main_head, head_sha
     )
-    if rc == 0:
-        return [], True
-    if rc == 1:  # 有冲突: 首行是 tree oid，其后为冲突文件名
-        conflicts = [ln.strip() for ln in out.splitlines()[1:] if ln.strip()]
-        return conflicts, True
-    logger.warning("merge-tree 预检不可用: rc=%s stderr=%s", rc, (err or "")[:200])
-    return [], False
+    return conflicts, available
 
 
 def check_merge_tree_clean(repo_root: str, entry: dict, main_head: str) -> dict:
@@ -217,13 +411,20 @@ def check_merge_tree_clean(repo_root: str, entry: dict, main_head: str) -> dict:
     theirs = str(entry.get("head_sha") or "").strip()
     if not theirs:
         return _check(CHECK_MERGE_TREE, False, "head_missing", {"head_sha": ""})
-    conflicts, available = merge_tree_conflicts(repo_root, main_head, theirs)
+    conflicts, available, rc, stderr_tail = merge_tree_conflicts_detail(
+        repo_root, main_head, theirs
+    )
     if not available:
         return _check(
             CHECK_MERGE_TREE,
             False,
             "merge_tree_unavailable",
-            {"command": "git merge-tree --write-tree --name-only", "main_head": main_head},
+            {
+                "command": "git merge-tree --write-tree --name-only",
+                "main_head": main_head,
+                "rc": rc,
+                "stderr_tail": stderr_tail,
+            },
         )
     if conflicts:
         return _check(CHECK_MERGE_TREE, False, "merge_conflict", {"conflicts": conflicts})
@@ -852,11 +1053,15 @@ class MergeQueueStore:
                 and str(r.get("status")) not in QUEUE_TERMINAL_STATUSES
             ]
         # ——锁外执行机检（含 git 子进程，不阻塞账本读写）——
-        head = str(main_head or "").strip() or self.probe_main_head()
+        head = str(main_head or "").strip()
+        probe: dict = {}
+        if not head:
+            probe = self.probe_main_head_detail()
+            head = str(probe.get("head") or "")
         receipts = load_receipts(self.receipts_path)
         verify_layer = verify_layer_status(self.receipts_path)
         checks = [
-            check_base_main_current(snapshot_entry, head),
+            check_base_main_current(snapshot_entry, head, probe=probe or None),
             check_merge_tree_clean(self.repo_root, snapshot_entry, head),
             check_paths_disjoint(snapshot_entry, others),
             check_verify_covers_base(snapshot_entry, receipts, layer=verify_layer),
@@ -879,10 +1084,27 @@ class MergeQueueStore:
                 # 让后续 lane 能进队列；确认入口是 request_merge（确认时重新抢槽）。
                 entry["status"] = "ready_for_confirm"
                 entry["slot_acquired_at"] = ""
+                # 过期诊断字段必须清掉：留着会让读侧把「上次失败原因」当成当前事实。
+                for _stale_key in (
+                    "failure_class", "primary_check", "primary_reason",
+                    "cascade_of", "evidence_hint", "next_retry_at",
+                ):
+                    entry.pop(_stale_key, None)
+                entry["auto_retry_attempt"] = 0
+                entry["needs_human"] = False
                 event_name = "queue.preflight_passed"
             else:
                 entry["status"] = "failed"
                 entry["failure_reasons"] = codes
+                diag = classify_failure(
+                    {"last_preflight": entry["last_preflight"], "failure_reasons": codes}
+                )
+                entry["failure_class"] = diag["failure_class"]
+                entry["primary_check"] = diag["primary_check"]
+                entry["primary_reason"] = diag["primary_reason"]
+                entry["cascade_of"] = diag["cascade_of"]
+                entry["evidence_hint"] = diag["evidence_hint"]
+                entry["auto_retry_attempt"] = int(entry.get("auto_retry_attempt") or 0)
                 entry["close_reason"] = "preflight_failed"
                 entry["slot_acquired_at"] = ""
                 event_name = "queue.preflight_failed"
@@ -892,7 +1114,8 @@ class MergeQueueStore:
             self._atomic_rewrite([json.dumps(r, ensure_ascii=False) for r in rows])
             self._append_event(
                 {"event": event_name, "queue_id": entry.get("queue_id"), "lane_id": lane_id,
-                 "ts": now, "verdict": verdict, "reason_codes": codes, "version": entry["version"]}
+                 "ts": now, "verdict": verdict, "reason_codes": codes,
+                 "failure_class": entry.get("failure_class", ""), "version": entry["version"]}
             )
             return {
                 "lane_id": lane_id,
@@ -1158,8 +1381,17 @@ class MergeQueueStore:
 
     def probe_main_head(self) -> str:
         """探测当前 main head（git rev-parse）。失败返回空串（fail-closed 交给机检判定）。"""
-        rc, out, _ = _git(self.repo_root, "rev-parse", self.main_ref)
-        return out.strip() if rc == 0 else ""
+        return str(self.probe_main_head_detail().get("head") or "")
+
+    def probe_main_head_detail(self) -> dict:
+        """同 probe_main_head，但保留 rc/stderr 供分诊区分配置错与临时失败（R1-b）。"""
+        rc, out, err = _git(self.repo_root, "rev-parse", self.main_ref)
+        return {
+            "head": out.strip() if rc == 0 else "",
+            "rc": rc,
+            "stderr_tail": (err or "").strip()[:200],
+            "command": f"git rev-parse {self.main_ref}",
+        }
 
     def get(self, lane_id: str) -> dict | None:
         if not self._state_path.exists():
