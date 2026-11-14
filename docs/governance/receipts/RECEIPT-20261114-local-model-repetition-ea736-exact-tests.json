@@ -1,0 +1,48 @@
+{
+  "schema": "lfl.local_model_repetition.ea736_exact_candidate_test_binding.v1",
+  "candidate_head": "ea736919a786b89ae8cc5ed816b43d7cbf061364",
+  "src_tree_oid": "def46c773b64c6631663e9a372e1dc2e446570f8",
+  "tests_tree_oid": "e19d8498ee77720b7e6968bb95854148fd1a500c",
+  "files": [
+    {
+      "path": "src/llm_loop/core/loop/engine.py",
+      "sha256": "4406a98ce69f2c8905dc5da85fd01c61943e36c65422c3c2608083fe5561197c",
+      "git_blob_oid": "202b81640bac96edba16e5fd4d62f28670c23b70"
+    },
+    {
+      "path": "src/llm_loop/core/loop/engine_services/observation_visibility.py",
+      "sha256": "32e19d9d0038bc7830f896effa77abb68a64f22139714a857e3e8fb9358b3152",
+      "git_blob_oid": "817576ea24f991336dc074982c104617c8554c6f"
+    },
+    {
+      "path": "tests/unit/test_local_model_repetition_presend_red.py",
+      "sha256": "630962fafaa788baa48affdc257a5b1d3d46f4d3bc7dde8673ae614cc5c053e8",
+      "git_blob_oid": "e1b0a5bc9d32fbf03bd7771e85ed96a7c255d0a2"
+    },
+    {
+      "path": "tests/unit/test_observation_visibility_helper.py",
+      "sha256": "3f17b95217ce2f95ae0aa39c14e836641f45afae6f1775a8c1ee8216f8825c7f",
+      "git_blob_oid": "018f94f182590160d120d7e037030c8b26984ca3"
+    },
+    {
+      "path": "tests/unit/test_observation_visibility_engine.py",
+      "sha256": "c20a6ba3111327cfde2cc1ce8205e50768d2239ee139ffff54cdda28d2de00b8",
+      "git_blob_oid": "f8f851aa691e6a6cd40e6f3d44db9a19f5f05bea"
+    }
+  ],
+  "focused_tests": {
+    "passed": 212,
+    "exit_code": 0,
+    "log_sha256": "df0bc3cd5addbc5da32e2a88e81fcb54b57821559c265c707d55ba3ed86fb4f7"
+  },
+  "full_tree_pyright_ratchet": {
+    "status": "PASS",
+    "exit_code": 0,
+    "new_diagnostics": 0,
+    "changed_file_diagnostics": 0,
+    "log_sha256": "1a50ba970fa2778245eca9a1d14a8a0462054d14f26bd9fb92bd98eeb8416860"
+  },
+  "reviewer_binding": "This receipt fixes F1 provenance only; it does not overrule the independent Reviewer P1-2 exact-ref gap.",
+  "r9_full": "NOT_RUN_AFTER_REVISE",
+  "no_main_push_deploy_restart": true
+}

@@ -61,3 +61,28 @@
 **代码 SHA 已变化：前一轮独立 Reviewer PASS 不继承。**
 须冻结新代码候选、重新独立 GLM-5.3 审查，
 PASS/P0=P1=0 后重新原版完整 R9。
+
+
+## 第二次独立审查：REVISE / P0=0、P1=2、P2=3
+
+Pyright 复杂度补修后的候选 `ea736919a786b89ae8cc5ed816b43d7cbf061364`
+已由**新的** GLM-5.3 独立 Reviewer 单次真实调用、零工具、
+合法 JSON、精确 SHA 验证，正式裁决 **REVISE**。
+
+- P1-1：原测试回执绑定的是补修前 base，不是 `ea736`。现已在
+  `ea736` 精确 Git tree 上重新执行 `212 passed` 和全树 Pyright
+  `new=0/PASS`，逐文件 Git blob OID、文件 SHA 和日志 SHA
+  记录于 `RECEIPT-20261114-local-model-repetition-ea736-exact-tests.json`。
+  这只解决证据绑定，**不改写 Reviewer 原始 P1 计数**。
+- P1-2：尚未实现 owner/version/paging 资格化且最终模型可见的
+  `evidence://` exact-ref 交付。当前实现对无法容纳原文的合法 Evidence
+  仍可能 HOLD。必须在下一隔离补修批次实现最小精确恢复，
+  或经独立审查认可的配置级临时隔离门；**当前候选不得上线**。
+- P2：不完整工具组诊断、结构化 provider_sent 字段、
+  重建后的缓存前缀/epoch 对账，待专项补强。
+
+正式 Reviewer 回执：
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-refactor-GLM53-REVISE.json`。
+
+**门禁**：独立代码审查非 PASS，故不运行下一次原版完整 R9，
+不合并 main、不 push、不发布、不重启。旧 M4-C 债务仍 HOLD。
