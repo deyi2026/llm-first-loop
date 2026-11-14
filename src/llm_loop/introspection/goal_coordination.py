@@ -393,6 +393,45 @@ def _degraded_goal_entry(g: dict, *, err: str) -> tuple[dict, list[str]]:
     return entry, [note]
 
 
+def _collect_goal_entries(
+    goals: list[dict],
+    task_store: Any,
+    *,
+    sid: str,
+    now: Any,
+    window_hours: int,
+    only_in_flight: bool,
+) -> tuple[list[dict], dict[str, dict], list[str]]:
+    """逐 goal 组装视图条目；返回 (goals_out, sessions, degraded_notes)。
+
+    单条记录不可解析只降级该条，不拖垮整视图（P1-2）。把它从
+    ``coordination_snapshot`` 抽出来的直接原因：留在一个 130 行的函数里，
+    函数行数守卫棘轮与可读性都会持续变差（RULE-AI-24 防退化）。
+    """
+    goals_out: list[dict] = []
+    sessions: dict[str, dict] = {}
+    notes_out: list[str] = []
+    for g in goals:
+        try:
+            entry, notes = _coordination_goal_entry(
+                g,
+                task_store,
+                sid=sid,
+                now=now,
+                window_hours=window_hours,
+                only_in_flight=only_in_flight,
+            )
+        except Exception as exc:  # noqa: BLE001 — 单条记录不可解析不拖垮整视图（P1-2）
+            entry, notes = _degraded_goal_entry(g, err=str(exc))
+        if entry is None:
+            continue
+        goals_out.append(entry)
+        for note in notes:
+            notes_out.append(f"{entry['goal_id']}: {note}")
+        _rollup_session(sessions, entry, sid=sid)
+    return goals_out, sessions, notes_out
+
+
 def _rollup_session(sessions: dict, entry: dict, *, sid: str) -> None:
     """把 goal 条目并入 session 汇总（纯聚合，无写）。"""
     owner = entry["owner_session_id"]
@@ -932,8 +971,6 @@ def coordination_snapshot(
     # R5：队列失败分诊（只读；四类计数闭合性由 closure_ok 自证）
     queue_block, queue_notes = _collect_merge_queue(audit_dir)
     degraded.extend(queue_notes)
-    goals_out: list[dict] = []
-    sessions: dict[str, dict] = {}
     capacity: dict = {
         "goals_limit": _GOALS_VIEW_LIMIT,
         "goals_in_ledger": 0,
@@ -986,24 +1023,15 @@ def coordination_snapshot(
     from llm_loop.introspection.task_store import TaskStore
 
     task_store = TaskStore(str(audit_dir))
-    for g in goals:
-        try:
-            entry, notes = _coordination_goal_entry(
-                g,
-                task_store,
-                sid=sid,
-                now=now,
-                window_hours=window_hours,
-                only_in_flight=only_in_flight,
-            )
-        except Exception as exc:  # noqa: BLE001 — 单条记录不可解析不拖垮整视图（P1-2）
-            entry, notes = _degraded_goal_entry(g, err=str(exc))
-        if entry is None:
-            continue
-        goals_out.append(entry)
-        for note in notes:
-            degraded.append(f"{entry['goal_id']}: {note}")
-        _rollup_session(sessions, entry, sid=sid)
+    goals_out, sessions, goal_notes = _collect_goal_entries(
+        goals,
+        task_store,
+        sid=sid,
+        now=now,
+        window_hours=window_hours,
+        only_in_flight=only_in_flight,
+    )
+    degraded.extend(goal_notes)
 
     if not goals_out:
         # 空视图必须自证（E9）：区分「真没有」与「被窗口滤掉」——见 _window_empty_note
@@ -1030,6 +1058,36 @@ def coordination_snapshot(
         "evolution_completion_handoffs": evolution_handoffs,
         "degraded": degraded,
     }
+
+
+def _render_merge_queue(lines: list[str], mq: dict) -> None:
+    """渲染 R5 队列分诊段（只读投影；空 dict 不输出任何行）。
+
+    抽成独立函数的直接原因：内联在 ``render_coordination`` 里会让后者越过
+    120 行函数守卫阈值（RULE-AI-24 防退化）。
+    """
+    if not mq:
+        return
+    if not mq.get("available"):
+        lines.append("  队列分诊 merge_queue=<不可用>")
+        return
+    bt = mq.get("buckets") or {}
+    parts = [
+        f"{(bt.get(k) or {}).get('label') or k}={(bt.get(k) or {}).get('count', 0)}"
+        for k in ("retry", "rebase", "verify", "human")
+    ]
+    lines.append(
+        f"  队列分诊 failed={mq.get('failed_total')} "
+        f"闭合={'ok' if mq.get('closure_ok') else 'BROKEN'}({mq.get('bucket_sum')}) "
+        f"历史={mq.get('terminal_total', 0)} "
+        + " ".join(parts)
+    )
+    for key in ("retry", "rebase", "verify", "human"):
+        for it in (bt.get(key) or {}).get("items") or []:
+            lines.append(
+                f"      [{key}] {it.get('lane_id') or '-'} "
+                f"{it.get('primary_reason') or '-'} → {it.get('next_command') or '-'}"
+            )
 
 
 def render_coordination(snapshot: dict) -> str:
@@ -1133,28 +1191,7 @@ def render_coordination(snapshot: dict) -> str:
             f" bad={ce.get('bad_lines', 0)} bytes={ce.get('bytes', 0)}"
             f" write_failures={fails}"
         )
-    mq = snapshot.get("merge_queue") or {}
-    if mq:
-        if not mq.get("available"):
-            lines.append("  队列分诊 merge_queue=<不可用>")
-        else:
-            bt = mq.get("buckets") or {}
-            parts = [
-                f"{(bt.get(k) or {}).get('label') or k}={(bt.get(k) or {}).get('count', 0)}"
-                for k in ("retry", "rebase", "verify", "human")
-            ]
-            lines.append(
-                f"  队列分诊 failed={mq.get('failed_total')} "
-                f"闭合={'ok' if mq.get('closure_ok') else 'BROKEN'}({mq.get('bucket_sum')}) "
-                f"历史={mq.get('terminal_total', 0)} "
-                + " ".join(parts)
-            )
-            for key in ("retry", "rebase", "verify", "human"):
-                for it in (bt.get(key) or {}).get("items") or []:
-                    lines.append(
-                        f"      [{key}] {it.get('lane_id') or '-'} "
-                        f"{it.get('primary_reason') or '-'} → {it.get('next_command') or '-'}"
-                    )
+    _render_merge_queue(lines, snapshot.get("merge_queue") or {})
     for note in snapshot.get("degraded") or []:
         lines.append(f"  ⚠ degraded: {note}")
     return "\n".join(lines)
