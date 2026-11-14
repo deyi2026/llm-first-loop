@@ -36,6 +36,7 @@
         "docs/design/DESIGN-20261114-deepin-host-grant-closure.md",
         "docs/governance/submissions/20261114-deepin-host-grant-p0.json",
         "tests/conftest.py",
+        "tests/guards/function_size_baseline.json",
         "tests/integration/test_host_grant_e2e.py",
         "tests/unit/test_host_grant_closure.py",
         "tests/unit/test_host_grant_registration.py",
@@ -44,7 +45,7 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "existing test harness and architecture governance",
-      "disposition": "Document scope and explicit exclusions, cover positive and negative approval/consumption/bwrap paths, assert a single data/grants/audit.jsonl root, and declare the exact changed-path set for the A.5 gate. The per-test grant home is a sibling of the default writable cwd so security overlap checks remain enforced without breaking legacy tests.",
+      "disposition": "Document scope and explicit exclusions, cover positive and negative approval/consumption/bwrap paths, assert a single data/grants/audit.jsonl root, and declare the exact changed-path set for the A.5 gate. The per-test grant home is a sibling of the default writable cwd so security overlap checks remain enforced without breaking legacy tests. R9 architecture guard baseline is regenerated with exact AST sizes for two newly tracked functions and two explicitly raised existing functions; this is a reviewed ratchet registration, not a test bypass.",
       "evidence": [
         "tests/integration/test_host_grant_e2e.py",
         "tests/unit/test_host_grant_closure.py",
@@ -84,7 +85,8 @@
           "A.5 manifest path coverage must pass; independent GLM-5.3 Reviewer PASS P0/P1=0 and original full R9 exit 0 are required.",
           "Future production acceptance must demonstrate a real browser-approved single-file operation and persisted audit after managed wheel release, without disabling bwrap.",
           "Main-integrated focused regression: 698 passed, 2 skipped; full R9, GLM-5.3 independent reviewer and remote CI remain required.",
-          "2026-11-15 P1 repair: external relative deny matching, bwrap O_NOFOLLOW FD-pinned bind, loopback login Origin gate; 701 focused passed / 3 skipped; disposable Deepin bwrap FD pin and symlink swap passed, production untouched."
+          "2026-11-15 P1 repair: external relative deny matching, bwrap O_NOFOLLOW FD-pinned bind, loopback login Origin gate; 701 focused passed / 3 skipped; disposable Deepin bwrap FD pin and symlink swap passed, production untouched.",
+          "R9 architecture guard regeneration: 2 new function registrations, 2 explicit measured raises; head_commit 004fdb49a, no other ratchet changes."
         ]
       }
     }
