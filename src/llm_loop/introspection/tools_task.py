@@ -159,13 +159,21 @@ TASK_GET_TOOL_DEF: dict = {
         "按需读取单个 durable Task 明细（全文，不截断）：acceptance/done_when/blocked_reason/"
         "evidence_refs+verification/依赖/owner/期限/修订与前提标记。task_frontier 是图视图"
         "（blocked reason 截 50 字符、无 acceptance 全文），需要完整验收标准或阻塞原因全文时用本工具。"
-        "goal_id 省略或 current/active 时解析当前会话活动 goal（同 task_frontier）。只读：不修改"
-        "任务图、不写任何状态、不触发注入。"
+        "goal_id 省略或 current/active 时仅解析当前会话活动 goal（同 task_frontier）；"
+        "跨会话只读恢复已知任务必须显式传入原 goal_id + task_id。"
+        "无当前 goal 不代表目标任务不存在，勿为只读恢复新建 goal。"
+        "只读：不修改任务图、不写任何状态、不触发注入。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "goal_id": {"type": "string", "description": "目标 id（可选，默认当前会话）"},
+            "goal_id": {
+                "type": "string",
+                "description": (
+                    "目标 id（可选；省略仅查当前会话）。跨会话只读恢复已知 task_id "
+                    "必须显式传入原 goal_id；current/active 不能跨会话定位。"
+                ),
+            },
             "task_id": {"type": "string", "description": "任务 id（必填）"},
         },
         "required": ["task_id"],
@@ -419,7 +427,14 @@ def run_task_get(ctx: Any, host: Any, args: dict) -> ToolResult:
             g = None
         goal_id = str((g or {}).get("id", "")) if g else ""
     if not goal_id:
-        return ToolResult(ToolResultStatus.SUCCESS, "[无任务] 当前无活动 goal（先 create_goal + task_create）", "", name)
+        return ToolResult(
+            ToolResultStatus.SUCCESS,
+            "[无任务] 当前无活动 goal（仅当前会话；不代表已知任务不存在）。"
+            "跨会话只读恢复请显式传原 goal_id + task_id；"
+            "无需 create_goal，不会自动遍历或暴露其他会话的 Goal。",
+            "",
+            name,
+        )
     task = TaskStore(audit).get(goal_id, task_id)
     if task is None:
         return ToolResult(
