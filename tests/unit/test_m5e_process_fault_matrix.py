@@ -72,7 +72,7 @@ def _setup(tmp_path: Path, *, operator: bool = False) -> Path:
         ).hexdigest(),
         "user_text": user_text,
         "valid_from_epoch_s": time.time() - 20,
-        "valid_until_epoch_s": time.time() + 600,
+        "valid_until_epoch_s": time.time() + 3500,
     }
     if operator:
         operator_file = root / "operator-config.json"
@@ -252,7 +252,8 @@ def test_m5e_sigkill_provider_local_windows_preserve_unknown_liability(
     assert effect.provider_budget_unsettled == 1
     assert not effect.remote_provider_settlement_proven
     assert not effect.auto_resume_allowed
-    assert _probe(root, "replay_probe", stage)["outcome"] == "denied"
+    probe = _probe(root, "replay_probe", stage)
+    assert probe == {"outcome": "denied", "exception": "TaskBudgetDeniedError"}
     assert len(budget.read(BID)["reservations"]) == 1
 
 
@@ -285,7 +286,8 @@ def test_m5e_sigkill_real_file_service_effect_window_never_proves_causation(
     assert effect.tool_effect_unresolved >= 1
     assert not effect.tool_effect_causation_proven
     assert not effect.auto_resume_allowed
-    assert _probe(root, "replay_probe", stage)["outcome"] == "denied"
+    probe = _probe(root, "replay_probe", stage)
+    assert probe == {"outcome": "denied", "exception": "TaskBudgetDeniedError"}
     assert (root / "docs" / "target.md").read_bytes() == after
 
 
