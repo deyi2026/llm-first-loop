@@ -179,6 +179,9 @@ class T1WebEventPlan:
     # counts as revocation — no second state store, no approval service.
     operator_config_path: str = ""
     operator_config_sha256: str = ""
+    # Production Web operator-config T1 plans require M5 durable Run facts
+    # before any Provider/Tool reservation. Synthetic legacy fixtures opt out.
+    durable_run_admission_required: bool = False
 
     def operator_revoked(self) -> bool:
         """True when the operator authorization no longer holds verbatim.
@@ -230,6 +233,7 @@ class T1WebEventPlan:
             or not isinstance(self.event_store, EventStore)
             or not self.event_store.enabled
             or not isinstance(self.budget_store, TaskBudgetStore)
+            or type(self.durable_run_admission_required) is not bool
             # Revocation facts are both-or-neither; when present the path is
             # absolute and the digest is exactly 64 lowercase hex.
             or bool(self.operator_config_path) != bool(self.operator_config_sha256)
@@ -320,6 +324,10 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         # latches a durable stop on revocation (config deleted, chmod
         # revoked, or bytes rotated — the file IS the authority).
         self._t1_plan: T1WebEventPlan | None = None
+        # Armed only after strict opened + admission_fenced have both been
+        # fsynced and independently read back. Never reconstructed from memory.
+        self._t1_durable_run_fenced: bool = False
+        self._t1_durable_admission_revision: int | None = None
 
     def _t1_assert_operator_authorized(self) -> None:
         """Fail-closed F18 gate: one check before every budget action.
@@ -497,6 +505,21 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         self._t1_pending_envelope = (2 * size + INPUT_PROXY_CONST, output_limit, size)
 
     def reserve(self, kind: BudgetDimension, *, tool_id: str = "") -> str:
+        if self._t1_plan is not None and self._t1_plan.durable_run_admission_required:
+            if not self._t1_durable_run_fenced:
+                raise TaskBudgetDeniedError("t1_durable_run_admission_not_fenced")
+            from llm_loop.core.durable_run_recovery import durable_run_admission_verified
+
+            if not durable_run_admission_verified(
+                event_store=self._t1_plan.event_store,
+                session_id=self._t1_plan.session_id,
+                run_generation=self.member.run_generation,
+                authorization_id=self._t1_plan.authorization_id,
+                budget_revision=self._t1_durable_admission_revision,
+            ):
+                with suppress(Exception):
+                    self.request_stop(reason="t1_durable_run_evidence_unverifiable")
+                raise TaskBudgetDeniedError("t1_durable_run_evidence_unverifiable")
         # F18 operator authorization must hold verbatim before EVERY
         # provider/tool reservation — a revoked (deleted/rotated) operator
         # config durably stops the root and denies this action.
@@ -1037,6 +1060,44 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         raise TaskBudgetDeniedError("t1_settlement_cas_contention_exhausted")
 
 
+def _arm_t1_durable_run_admission(
+    plan: T1WebEventPlan,
+    execution: T1WebBudgetExecution,
+    *,
+    session_id: str,
+    run_generation: str,
+    budget_revision: int,
+) -> None:
+    """Strict evidence after Run lease + budget CAS, before external dispatch.
+
+    The production caller holds the Session run lease and has already durably
+    appended the authenticated human ingress. No external action is allowed
+    until BOTH facts are independently verified by EventStore.
+    """
+    from llm_loop.core.durable_run_recovery import FENCED, OPENED, SCHEMA
+
+    payload = {
+        "schema": SCHEMA,
+        "run_generation": run_generation,
+        "authorization_id": plan.authorization_id,
+        "budget_id": plan.budget_id,
+        "budget_revision": budget_revision,
+    }
+    try:
+        plan.event_store.append_durable_run_fact(session_id, OPENED, payload)
+        plan.event_store.append_durable_run_fact(session_id, FENCED, payload)
+    except Exception as exc:
+        # A partial/UNCERTAIN append is NOT evidence of no external action.
+        # The one-use budget must remain spent; no replay/new authorization.
+        with suppress(Exception):
+            execution.request_stop(reason="t1_durable_run_admission_unverified")
+        raise TaskBudgetDeniedError(
+            "t1_durable_run_admission_unverified"
+        ) from exc
+    execution._t1_durable_admission_revision = budget_revision
+    execution._t1_durable_run_fenced = True
+
+
 def prepare_t1_web_event_budget(
     *,
     plan: T1WebEventPlan,
@@ -1113,6 +1174,11 @@ def prepare_t1_web_event_budget(
     execution._t1_workspace_root = workspace_root  # noqa: SLF001 - plan wiring
     execution._t1_target_path = plan.target_path  # noqa: SLF001 - plan wiring
     execution._t1_target_sha = plan.prepared_target_sha256  # noqa: SLF001 - plan wiring
+    if plan.durable_run_admission_required:
+        _arm_t1_durable_run_admission(
+            plan, execution, session_id=session_id,
+            run_generation=run_generation, budget_revision=row["revision"],
+        )
     return execution
 
 

@@ -12,6 +12,7 @@ import json
 import os
 import stat
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from llm_loop.event_log.model import Event
@@ -52,17 +53,28 @@ def _strict_snapshot(store: EventStore, session_id: str) -> tuple[list[Event], s
     events: list[Event] = []
     ids: set[str] = set()
     digest = hashlib.sha256()
+    root = store._dir.resolve()  # noqa: SLF001 - exact source trust root
     for relative, raw in files:
-        # read_source_files already resolves the path inside the event root.
-        path = store._dir / relative  # noqa: SLF001 - exact source-file trust check
-        info = os.lstat(path)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.geteuid()
-            or info.st_nlink != 1
-            or info.st_mode & 0o022
-        ):
-            raise ValueError("event_source_not_trusted")
+        segment = Path(relative)
+        if segment.is_absolute() or ".." in segment.parts:
+            raise ValueError("event_source_path_escape")
+        path = store._dir / segment  # noqa: SLF001 - exact source-file trust check
+        path.resolve(strict=True).relative_to(root)
+        before = os.lstat(path)
+        with os.fdopen(
+            os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb"
+        ) as source:
+            info = os.fstat(source.fileno())
+            if (
+                (before.st_dev, before.st_ino) != (info.st_dev, info.st_ino)
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+                or info.st_mode & 0o022
+            ):
+                raise ValueError("event_source_not_trusted")
+            if source.read() != raw:
+                raise ValueError("event_source_changed_during_capture")
         if not raw or not raw.endswith(b"\n"):
             raise ValueError("event_source_truncated")
         digest.update(relative.encode("utf-8") + b"\0" + raw + b"\0")
@@ -89,6 +101,48 @@ def _strict_snapshot(store: EventStore, session_id: str) -> tuple[list[Event], s
             ids.add(row["event_id"])
             events.append(Event(**row))
     return events, digest.hexdigest()
+
+
+def durable_run_admission_verified(
+    *,
+    event_store: EventStore,
+    session_id: str,
+    run_generation: str,
+    authorization_id: str,
+    budget_revision: int | None,
+) -> bool:
+    """Read-only M5-B presend check: exact fsynced opened/fenced evidence.
+
+    The owning T1 execution still needs its Session run lease and the
+    TaskBudgetStore CAS before any external action. This check cannot
+    authorize a Run or resolve an unknown Provider/Tool outcome.
+    """
+    if type(budget_revision) is not int:
+        return False
+    payload = {
+        "schema": SCHEMA,
+        "run_generation": run_generation,
+        "authorization_id": authorization_id,
+        "budget_id": "webt1-" + authorization_id,
+        "budget_revision": budget_revision,
+    }
+    try:
+        with event_store._session_flock(session_id, strict=True):  # noqa: SLF001
+            events, _ = _strict_snapshot(event_store, session_id)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return False
+    facts = [
+        (i, event) for i, event in enumerate(events)
+        if event.type.startswith("run.durable.")
+    ]
+    return (
+        len(facts) == 2
+        and facts[0][1].type == OPENED
+        and facts[1][1].type == FENCED
+        and facts[1][0] == facts[0][0] + 1
+        and facts[0][1].payload == payload
+        and facts[1][1].payload == payload
+    )
 
 
 def _has_unattributed_pre_run_activity(events: list[Event]) -> bool:
