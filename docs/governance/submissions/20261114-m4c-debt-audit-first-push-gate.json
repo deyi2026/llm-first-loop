@@ -1,0 +1,135 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-m4c-debt-audit-first-push-gate",
+  "summary": "PR #18: read-only M4-C unsettled Provider debt disposition, canonical identity/CLI fail-closed hardening, and first-branch pre-push incremental security scan only after a verified origin remote-main ancestry proof. This manifest closes the mandatory A.5 path-coverage gate; no production deployment, budget settlement, old Run replay, or privacy-rule weakening.",
+  "components": [
+    {
+      "component_id": "m4c-readonly-debt-auditor",
+      "paths": [
+        "scripts/t1_provider_debt_disposition.py",
+        "docs/M4C-PROVIDER-DEBT-DISPOSITION-AND-AUTO-RESUME-GATES-20261114.md"
+      ],
+      "control_machinery": true,
+      "declaration_id": "m4c-reuse-source-authority",
+      "owning_subsystem": "Existing TaskBudgetStore/EventStore and read-only operator evidence audit",
+      "disposition": "Reuse existing durable budget/event/target authorities; emit HOLD for unresolved Provider debt, exit 2 on consistent unresolved and exit 3 on invalid or incomplete evidence. Never mark settled, replay Run, grant new authorization or create a second ledger.",
+      "evidence": [
+        "Independent GLM-5.3 review of candidate e7944d0e7: PASS P0=0 P1=0 P2=3",
+        "tests/unit/test_t1_provider_debt_disposition.py (22 passed)",
+        "Real M4-C SIGKILL sample audit exit 2 HOLD, source evidence bytes unchanged"
+      ],
+      "verification_level": "Prior five-file code candidate e7944d0e7: original R9 exit 0; Python 14994 passed, 158 skipped, 3 xfailed; WebUI 600 passed; Ruff/Pyright PASS. New manifest requires exact final-SHA A.5 and CI.",
+      "model_evidence_veto_recovery_exit": "Any missing/mismatched/forged Provider receipt, unverified source session/run/authorization, noncanonical UUIDv4, drifted target SHA or unknown liability prevents automatic continuation. Operator can withhold any new grant.",
+      "rollback_route": "Revert PR #18; the old M4-C source budget remains closed_uncertain and HOLD, with no durable state mutated by the auditor."
+    },
+    {
+      "component_id": "first-branch-pre-push-privacy-admission",
+      "paths": [
+        ".githooks/pre-push"
+      ],
+      "control_machinery": true,
+      "declaration_id": "git-prepush-reuse-remote-main",
+      "owning_subsystem": "Existing Git pre-push privacy scan, knowledge flush and receipt completeness gates",
+      "disposition": "For first push of a new branch, use existing per-commit --range only when actual origin push URL and remote main SHA are verified and remote main is an existing ancestor of candidate; otherwise retain --commit full-history scan. Never skip security/knowledge/receipt gates.",
+      "evidence": [
+        "tests/test_privacy_gate.py new first-push adversarial tests",
+        "Real hook stdin first-push simulation returned exit 0 with verified --range 103e9730..e7944d0",
+        "Remote first-push after fix succeeded without --no-verify and exact SHA matched"
+      ],
+      "verification_level": "Prior code candidate e7944d0e7: 86 combined focused tests PASS, original R9 exit 0; independent GLM-5.3 PASS P0/P1=0, P2=3. New manifest requires remote A.5 and CI.",
+      "model_evidence_veto_recovery_exit": "Untrusted remote name/URL, missing or malformed remote main ref, missing commit object, diverged history, unknown identity or failed receipt/knowledge/secret scan retains full scan or blocks push. No model claim overrides mechanical checks.",
+      "rollback_route": "Revert the hook change to restore full-history --commit for all new branch first pushes; the previous historical-path false positive may again block legitimate pushes."
+    },
+    {
+      "component_id": "m4c-and-git-gate-regression-tests",
+      "paths": [
+        "tests/unit/test_t1_provider_debt_disposition.py",
+        "tests/test_privacy_gate.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest regression suites",
+      "disposition": "Tests only, including real pre-push hook invocation and adversarial missing/diverged/untrusted main, intermediate sensitive content, receipt placeholders, UUID and help exit; no runtime authorization.",
+      "evidence": [
+        "86 combined focused tests passed",
+        "Full R9 prior candidate exit 0"
+      ],
+      "verification_level": "Must remain in final exact-SHA R9 and GitHub CI.",
+      "model_evidence_veto_recovery_exit": "Any failed negative test blocks integration; tests do not grant runtime authority.",
+      "rollback_route": "Revert tests together with associated code if PR is rejected."
+    },
+    {
+      "component_id": "a5-exact-path-submission",
+      "paths": [
+        "docs/governance/submissions/20261114-m4c-debt-audit-first-push-gate.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission governance",
+      "disposition": "Exact changed-path manifest and G1-G4 declarations for PR #18. Metadata only; does not change architecture checker or source behavior.",
+      "evidence": [
+        "GitHub A.5 job 132429090116 failed because no changed manifest was present",
+        "Local scripts/check_architecture_submission.py --staged or --base/--head must pass with six changed paths"
+      ],
+      "verification_level": "New manifest was not part of the prior independent review or full R9; recheck on final frozen commit and await remote A.5 success.",
+      "model_evidence_veto_recovery_exit": "Any missing path, extra path, undeclared control machinery or unreviewed change blocks PR merge.",
+      "rollback_route": "Revert the manifest with PR #18; missing manifest intentionally restores A.5 rejection."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "m4c-reuse-source-authority",
+      "g1": {
+        "necessity": "Real M4-C SIGKILL left a dispatched Provider attempt without settlement; ambiguous billing/side effects cannot safely be replayed or declared complete. Read-only deterministic evidence disposition is needed."
+      },
+      "g2": {
+        "authority_owner": "Existing EventStore, TaskBudgetStore CAS, Web T1 operator authorization and exact target file SHA",
+        "relationship": "reuse",
+        "non_duplication": "No new ledger, recovery daemon, Provider settlement authority, Web grant endpoint or automatic Run restart."
+      },
+      "g3": {
+        "model_evidence": [
+          "M4-C real event/budget/target SHA receipts",
+          "tests/unit/test_t1_provider_debt_disposition.py",
+          "Independent GLM-5.3 final code review PASS P0/P1=0"
+        ],
+        "recovery_or_reason": "Unsettled or unknown Provider transport is always QUARANTINED_UNRESOLVED and HOLD; no synthetic receipt, UUID or source claim can clear it. New authorization is a separate operator decision and not issued by this script."
+      },
+      "g4": {
+        "rollback": "Revert read-only audit script, tests and docs without touching source evidence, budget or deployed runtime.",
+        "verification": [
+          "22 auditor tests passed",
+          "Real old sample audit exit 2 with unchanged source bytes",
+          "Independent GLM-5.3 review P0/P1=0",
+          "Original R9 prior candidate exit 0; final candidate requires fresh gates"
+        ]
+      }
+    },
+    {
+      "declaration_id": "git-prepush-reuse-remote-main",
+      "g1": {
+        "necessity": "A new branch first push previously scanned the full historical tree and rejected a preexisting sensitive-path fixture in remote main, even though the candidate changed only three unrelated files. A trusted remote-main ancestor permits precise new-commit coverage without suppressing leak detection."
+      },
+      "g2": {
+        "authority_owner": "Existing Git origin push URL, remote main ref, local commit DAG, git_security_scan.sh, knowledge flush and receipt gates",
+        "relationship": "reuse",
+        "non_duplication": "No new scanner, trust store, security rule exceptions or CI bypass; existing --range scans each new commit, including introduced-then-removed secrets. Unprovable remote trust retains full --commit scan."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/test_privacy_gate.py first-push trusted, absent, diverged, missing-object, wrong-remote, intermediate-leak and receipt-placeholder tests",
+          "Real pre-push hook first-push smoke --range 103e9730..e7944d0 PASS",
+          "Independent GLM-5.3 final code review PASS P0/P1=0"
+        ],
+        "recovery_or_reason": "Unknown origin identity, malformed or missing remote main, absent commit or non-ancestor falls back to full-history scan; any actual leak or incomplete receipt blocks push. Existing pre-push hooks and remote CI remain mandatory."
+      },
+      "g4": {
+        "rollback": "Revert the hook hunk, retaining original full-history scan for new branch first pushes; no changes to security scanner rule definitions.",
+        "verification": [
+          "64 hook-related tests passed",
+          "86 combined focused tests passed",
+          "Actual new branch push with hook enabled succeeded",
+          "Original R9 prior candidate exit 0; final candidate requires exact-SHA A.5 and CI"
+        ]
+      }
+    }
+  ]
+}
