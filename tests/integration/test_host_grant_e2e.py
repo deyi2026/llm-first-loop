@@ -4,7 +4,7 @@
 - 逻辑闭环（全平台）：申请（服务端冻结）→ web 会话审批 → issue+decide →
   escalation_wait 返回 grant_id → execute_command(host_grant_id) 消费，
   grant 单次、审计链完整
-- 沙箱可用（Linux+真 bwrap / 无嵌套限制的 sandbox-exec）→ 真执行：
+- 沙箱可用（Linux+真 bwrap FD 固定绑定）→ 真执行：
   授权单文件写入成功、工作区外任意其他路径仍不可写、字节级核对；
 - 沙箱不可用（如嵌套沙箱环境）→ 真执行分支 fail-closed 断言
   （错误信息含沙箱原因，grant 状态如实）
@@ -114,16 +114,19 @@ def _full_pipeline(store, gstore, ctx, target, *, operation, command):
 # ── 1. 逻辑闭环（全平台）：消费+审计+单次 ─────────────────
 
 def test_grant_consumed_once_with_audit(store, gstore, ctx, isolated_data_dir):
-    target = (ctx / "e2e-target.txt").resolve()
+    # Real Linux bwrap proof: the target is OUTSIDE the workspace bind.
+    outside = ctx.parent / "outside"
+    outside.mkdir()
+    target = (outside / "e2e-target.txt").resolve()
     target.write_text("before", encoding="utf-8")
+    sibling = outside / "not-authorized.txt"
+    sibling.write_text("untouched", encoding="utf-8")
     cmd = f"printf after > {target}"
     gid = _full_pipeline(store, gstore, ctx, target, operation="write", command=cmd)
 
-    tool = ExecuteCommandTool(timeout_s=20, sandbox_mode="sandbox-exec")
-    # 走消费路径（不经 Popen 的维度已由单测覆盖；此处验证 execute_command 集成
-    # 的 grant 解析 → 消费单次语义：把执行层替换为只跑闸逻辑的最小命令）
-    if not _sandbox_usable("sandbox-exec"):
-        pytest.skip("嵌套沙箱环境（sandbox-exec 不可套用）；真执行分支由 CI/Linux 覆盖")
+    tool = ExecuteCommandTool(timeout_s=20, sandbox_mode="bwrap")
+    if not _sandbox_usable("bwrap"):
+        pytest.skip("P0 FD-pinned host grant requires real Linux bwrap; macOS cannot prove this path")
 
     r1 = tool.execute(command=cmd, host_grant_id=gid, workdir=str(ctx))
     if r1.status.name != "SUCCESS":
@@ -133,6 +136,7 @@ def test_grant_consumed_once_with_audit(store, gstore, ctx, isolated_data_dir):
         assert target.read_text(encoding="utf-8") == "after"
         assert "[host-grant] write" in r1.content and "已消费" in r1.content
 
+    assert sibling.read_text(encoding="utf-8") == "untouched"
     grant = gstore.peek(gid)
     assert grant["uses"] >= 1
     # 重放拒绝（单次授权）——P0 补修(2026-11-14): 诊断必须指向生命周期

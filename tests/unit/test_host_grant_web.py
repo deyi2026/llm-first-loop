@@ -241,10 +241,22 @@ def test_loopback_form_login_with_password_sets_cookie(build_test_engine, monkey
     _pw_hash(monkeypatch)
     engine, _f = build_test_engine([{"content": "ok"}])
     loop = TestClient(build_app(engine=engine), base_url="http://127.0.0.1", client=("127.0.0.1", 51423))
-    r = loop.post(_LOGIN, data={"password": "unit-pass-123"}, follow_redirects=False)
+    r = loop.post(_LOGIN, data={"password": "unit-pass-123"}, headers={"Origin": "http://127.0.0.1", "Sec-Fetch-Site": "same-origin"}, follow_redirects=False)
     assert r.status_code in (303, 200), r.text
     assert SESSION_COOKIE_NAME in r.headers.get("set-cookie", "")
 
+
+
+def test_loopback_form_login_requires_browser_origin(build_test_engine, monkeypatch):
+    for var in ("WEB_AUTH_REQUIRE", "WEB_API_KEY", "WEB_ORIGIN_ALLOWLIST"):
+        monkeypatch.delenv(var, raising=False)
+    _pw_hash(monkeypatch)
+    engine, _f = build_test_engine([{"content": "ok"}])
+    loop = TestClient(build_app(engine=engine), base_url="http://127.0.0.1", client=("127.0.0.1", 51423))
+    for headers in ({}, {"Origin": "http://evil.example"}, {"Origin": "http://127.0.0.1", "Sec-Fetch-Site": "cross-site"}):
+        r = loop.post(_LOGIN, data={"password": "unit-pass-123"}, headers=headers, follow_redirects=False)
+        assert r.status_code == 403
+        assert SESSION_COOKIE_NAME not in r.headers.get("set-cookie", "")
 
 
 def test_loopback_json_explicit_login_rejected(build_test_engine, monkeypatch):

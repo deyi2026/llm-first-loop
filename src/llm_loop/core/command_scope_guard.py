@@ -2551,10 +2551,18 @@ def _extra_path_denied(scope: WriteScope, abs_path: str, workspace_root: str) ->
         rel = os.path.relpath(abs_path, root)
     except ValueError:
         rel = ""
+    # Host grants may target files outside the workspace. Relative deny rules
+    # must still apply to a component-aligned suffix of that absolute path:
+    # `.env` and `secrets/**` cannot silently become ineffective outside root.
+    parts = os.path.realpath(abs_path).strip(os.sep).split(os.sep)
+    suffixes = ["/".join(parts[i:]) for i in range(len(parts))]
     for pat in pats:
-        if rel and _ws_matches(_ws_expand_deny(pat), rel):
+        expanded = _ws_expand_deny(pat)
+        if rel and _ws_matches(expanded, rel):
             return True
         if fnmatch.fnmatch(abs_path, pat):
+            return True
+        if not os.path.isabs(pat) and any(_ws_matches(expanded, item) for item in suffixes):
             return True
     return False
 

@@ -451,6 +451,78 @@ def test_gate_never_bypasses_deny_scope(store, gstore, session_ctx, tmp_path, ta
         current_write_scope.reset(tok)
 
 
+def test_host_grant_outside_workspace_respects_relative_deny_patterns(tmp_path):
+    from llm_loop.core.command_scope_guard import check_command_scope
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "external" / "secrets"
+    outside.mkdir(parents=True)
+    target = outside / ".env"
+    target.write_text("test", encoding="utf-8")
+    for deny in (".env", "**/.env", "secrets/**", "external/secrets/**"):
+        scope = WriteScope(mode="deny", paths=(), deny_paths=(deny,), declared=True)
+        decision = check_command_scope(
+            f"printf blocked > {target}", scope=scope,
+            workspace_root=str(root), workdir=str(root),
+            extra_write_allowed=frozenset({str(target)}),
+        )
+        assert not decision.allowed, (deny, decision)
+
+
+def test_pinned_grant_fd_rejects_symlink_and_keeps_original_inode(tmp_path):
+    from llm_loop.tools.builtin.execute_command import (
+        _open_pinned_host_grant_file,
+        _pin_bwrap_bind_source,
+    )
+
+    allowed = tmp_path / "allowed.txt"
+    allowed.write_text("approved", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("never-touch", encoding="utf-8")
+    info = allowed.stat()
+    ctx = {
+        "canonical_path": str(allowed),
+        "st_dev": info.st_dev,
+        "st_ino": info.st_ino,
+        "expected_file_sha256": hashlib.sha256(b"approved").hexdigest(),
+    }
+    fd = _open_pinned_host_grant_file(ctx)
+    try:
+        argv = bwrap_argv(
+            "cat x", str(tmp_path),
+            extra_file_binds=[(str(allowed), str(allowed), "rw")],
+        )
+        pinned = _pin_bwrap_bind_source(argv, str(allowed), fd)
+        assert f"/proc/self/fd/{fd}" in pinned
+        assert pinned.count(str(allowed)) == 1  # destination only
+        allowed.rename(tmp_path / "approved-moved.txt")
+        allowed.symlink_to(secret)
+        assert os.read(fd, 8) == b"approved"
+        assert secret.read_text() == "never-touch"
+    finally:
+        os.close(fd)
+    with pytest.raises(OSError):
+        _open_pinned_host_grant_file(ctx)
+
+
+def test_pinned_grant_fd_rejects_byte_change(tmp_path):
+    from llm_loop.tools.builtin.execute_command import _open_pinned_host_grant_file
+
+    target = tmp_path / "allowed.txt"
+    target.write_text("before", encoding="utf-8")
+    info = target.stat()
+    ctx = {
+        "canonical_path": str(target),
+        "st_dev": info.st_dev,
+        "st_ino": info.st_ino,
+        "expected_file_sha256": hashlib.sha256(b"before").hexdigest(),
+    }
+    target.write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="bytes changed"):
+        _open_pinned_host_grant_file(ctx)
+
+
 # ── 8. sandbox argv 精确单文件 bind ──────────────────────
 
 def test_bwrap_argv_precise_file_bind_with_dir_ancestors(target_file):

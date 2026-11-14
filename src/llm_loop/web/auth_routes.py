@@ -223,6 +223,16 @@ async def login(request: Request):
             status_code=503,
         )
 
+    if not request_auth_required(request) and not wants_json:
+        # A form content-type is not proof of a browser. On the optional
+        # loopback explicit-login path, require an actual same-origin browser
+        # POST before issuing a host-grant-capable session cookie.
+        expected = f"{request.url.scheme}://{request.url.netloc}"
+        origin = request.headers.get("origin", "").strip()
+        fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+        if origin != expected or (fetch_site and fetch_site not in ("same-origin", "none")):
+            return JSONResponse({"error": "explicit_login_origin_required"}, status_code=403)
+
     limiter = getattr(request.app.state, "login_rate_limiter", None)
     if not isinstance(limiter, LoginRateLimiter):
         limiter = LoginRateLimiter()

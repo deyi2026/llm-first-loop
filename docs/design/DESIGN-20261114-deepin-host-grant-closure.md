@@ -121,3 +121,12 @@
 - 完整 R9 exit0 未跑（全量测试需先过独立审查闸）。
 - main/push/部署禁止；Deepin 真机复现（真 bwrap 集成分支 + 浏览器人工审批走查）未执行，需用户在 Deepin 主机安排。
 - bwrap `--bind` 对不存在 dest 文件的自动创建行为在 macOS 无法实测：实现以显式 `--dir` 祖链 + bind 挂载点兜底，真机验收时确认（若 bwrap 版本不支持自动创建文件挂载点，Deepin 集成测试将显式失败，不会静默）。
+
+## §7.5 2026-11-15 最新 main 集成补修（P1 安全边界）
+
+- main 基线 6df6f9394，独立 GLM-5.3 全量候选审查先得 REVISE/P0=0/P1=3，据此补修而非绕过门禁。
+- 外部路径授权不豁免相对 deny 规则：对绝对路径的组件对齐后缀继续匹配 .env、secrets/** 等 deny；新增 workspace 外负例。
+- Linux bwrap 单文件授权在 grant 消费后用 O_NOFOLLOW 打开、校验 inode/sha256、保持 FD，通过 pass_fds 与 /proc/self/fd/N 作为 bwrap 的绑定源。路径替换后仍固定原文件，不跟随新 symlink；其他后端暂不执行 host-grant，避免 macOS sandbox-exec 路径级授权竞态。普通命令不受此限制。
+- loopback 显式表单登录要求同源 Origin，如有 Sec-Fetch-Site 必须为 same-origin/none；缺失或跨站拒绝，不再仅凭表单 content-type 视为浏览器。密码仍需保密，HTTP 头本身不能证明操作者为真人；正式授权仍以可信登录会话和审批为必要条件。
+- Deepin 隔离测试主机只在自动清理的 /tmp/lfl-p0-bwrap-exact-* 临时目录执行 OS 层 bwrap 一次性探针：默认只读写拒绝、ro-bind 写拒绝、精确 rw-bind 写成功、FD-pin 写成功、授权路径换成指向未授权文件的 symlink 后仍只改原 inode，未授权文件字节不变。此项不是完整 LFL Web 人工审批端到端验收；无生产文件或服务变更。
+- 后续闸门：冻结 SHA → GLM-5.3 独立复审 PASS/P0=P1=0 → 原版完整 R9 exit 0 → 受审查远端 PR/CI → 合并 main；Deepin 受管部署与完整人工审批 E2E 另行验收。旧 M4-C Provider 未决债务不变。

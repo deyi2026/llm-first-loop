@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 from collections.abc import Callable
@@ -62,6 +63,47 @@ from llm_loop.workspace.worktree_isolation import (
 )
 
 _argv_logger = logging.getLogger(__name__)
+
+
+def _open_pinned_host_grant_file(ctx: dict) -> int:
+    """Pin the approved inode before bwrap; reject symlink or byte changes.
+
+    Caller closes the fd after process spawn. The child bwrap inherits this
+    fd and uses its procfs path as the bind source, never the mutable pathname.
+    """
+    path = str(ctx["canonical_path"])
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("grant target is not a regular file")
+        if (info.st_dev, info.st_ino) != (ctx["st_dev"], ctx["st_ino"]):
+            raise ValueError("grant target inode changed before execution")
+        with os.fdopen(os.dup(fd), "rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+        if digest != ctx["expected_file_sha256"]:
+            raise ValueError("grant target bytes changed before execution")
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _pin_bwrap_bind_source(argv: list[str], canonical_path: str, fd: int) -> list[str]:
+    """Replace only the validated single-file bind SOURCE, not its target."""
+    if not argv or argv[0] != "bwrap":
+        raise ValueError("host-grant pinned fd requires bwrap")
+    hits = [
+        i + 1 for i in range(len(argv) - 2)
+        if argv[i] in ("--bind", "--ro-bind")
+        and argv[i + 1] == canonical_path and argv[i + 2] == canonical_path
+    ]
+    if len(hits) != 1:
+        raise ValueError("host-grant exact file bind missing or ambiguous")
+    result = list(argv)
+    result[hits[0]] = f"/proc/self/fd/{fd}"
+    return result
 
 # EVO-20260814-61a52baf: 执行环境清洗（Harness defensive-patterns #6）
 # 不给不可信输出 ambient environment：密钥类环境变量一律剔除，白名单基础键强制保留，
@@ -1021,12 +1063,27 @@ class ExecuteCommandTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        try:
+            file_identity = os.stat(canonical, follow_symlinks=False)
+            if not stat.S_ISREG(file_identity.st_mode):
+                raise ValueError("grant target is no longer a regular file")
+        except (OSError, ValueError):
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content="[host-grant 拒绝] 授权文件身份变化，需重新申请",
+                error_type="host_grant_identity_changed",
+                tool_call_id="",
+                tool_name=self.name,
+            )
         return (
             {
                 "grant_id": host_grant_id,
                 "canonical_path": canonical,
                 "operation": operation,
                 "session_id": sid,
+                "expected_file_sha256": str(binding["file_sha256"]),
+                "st_dev": file_identity.st_dev,
+                "st_ino": file_identity.st_ino,
             },
             None,
         )
@@ -1134,6 +1191,7 @@ class ExecuteCommandTool:
         wt_note_in: Callable[[str], str],
         cwd_line: str = "",
         extra_file_binds: list[tuple[str, str, str]] | None = None,
+        pinned_grant_fd: int | None = None,
     ) -> ToolResult:
         """后台分支: effect fence 下 Popen 不阻塞 + JobRegistry 登记 + 启动回执组装."""
         # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
@@ -1141,6 +1199,10 @@ class ExecuteCommandTool:
         if isinstance(wrapped, ToolResult):
             return wrapped
         bg_cmd, bg_sandbox_note = wrapped
+        if pinned_grant_fd is not None:
+            if not extra_file_binds or len(extra_file_binds) != 1:
+                raise ValueError("host-grant exact file bind missing")
+            bg_cmd = _pin_bwrap_bind_source(bg_cmd or [], extra_file_binds[0][0], pinned_grant_fd)
         from llm_loop.core.tool_execution_journal import (
             current_effect_mutation_authority,
             format_effect_denial,
@@ -1180,6 +1242,7 @@ class ExecuteCommandTool:
                 cwd=workdir,
                 env=env,
                 start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
+                pass_fds=(pinned_grant_fd,) if pinned_grant_fd is not None else (),
             )
         job_id = self._register_background_job(proc, spec, workdir)
         if isinstance(job_id, ToolResult):
@@ -1219,12 +1282,17 @@ class ExecuteCommandTool:
         gate_line: str,
         wt_note_in: Callable[[str], str],
         extra_file_binds: list[tuple[str, str, str]] | None = None,
+        pinned_grant_fd: int | None = None,
     ) -> ToolResult | _ForegroundOutcome:
         """前台分支: 沙箱包装 + effect fence + Popen + communicate 兜底超时与句柄清理."""
         wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in, extra_file_binds)
         if isinstance(wrapped, ToolResult):
             return wrapped
         sandbox_cmd, sandbox_note = wrapped
+        if pinned_grant_fd is not None:
+            if not extra_file_binds or len(extra_file_binds) != 1:
+                raise ValueError("host-grant exact file bind missing")
+            sandbox_cmd = _pin_bwrap_bind_source(sandbox_cmd or [], extra_file_binds[0][0], pinned_grant_fd)
         from llm_loop.core.tool_execution_journal import (
             current_effect_mutation_authority,
             format_effect_denial,
@@ -1263,6 +1331,7 @@ class ExecuteCommandTool:
                 # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
                 # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
                 start_new_session=True,
+                pass_fds=(pinned_grant_fd,) if pinned_grant_fd is not None else (),
             )
         self._sandbox_note = sandbox_note
         _proc_key = current_session_id.get() or "__default__"
@@ -1598,7 +1667,21 @@ class ExecuteCommandTool:
         # 严格单次语义：消费即消耗（执行尝试无论成败）；竞态下仅一个赢家。
         host_grant_note = ""
         extra_file_binds: list[tuple[str, str, str]] | None = None
+        pinned_grant_fd: int | None = None
         if grant_ctx is not None:
+            from llm_loop.tools.sandbox import resolve_auto_backend, sandbox_mode
+
+            backend = sandbox_mode(self._sandbox_mode)
+            if backend == "auto":
+                backend, _reasons = resolve_auto_backend()
+            if backend != "bwrap":
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content="[host-grant 拒绝] P0 单文件授权仅支持 Linux bwrap 的 FD 固定挂载；其他后端 fail-closed",
+                    error_type="host_grant_backend_unpinned",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             _store = self._host_grant_store()
             if _store is None:
                 return ToolResult(
@@ -1623,6 +1706,16 @@ class ExecuteCommandTool:
                         "签名失效——如仍必要请重新申请 host_access_request）"
                     ),
                     error_type="host_grant_consume_failed",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            try:
+                pinned_grant_fd = _open_pinned_host_grant_file(grant_ctx)
+            except (OSError, ValueError) as exc:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=f"[host-grant 拒绝] 授权文件固定失败（单次 grant 已消费）：{type(exc).__name__}",
+                    error_type="host_grant_pin_failed",
                     tool_call_id="",
                     tool_name=self.name,
                 )
@@ -1652,13 +1745,14 @@ class ExecuteCommandTool:
             if run_bg:
                 bg_result = self._run_background(
                     spec, workdir, env, gate_line, guard_override_note,
-                    wtrelease.note_in, cwd_line, extra_file_binds,
+                    wtrelease.note_in, cwd_line, extra_file_binds, pinned_grant_fd,
                 )
                 if host_grant_note and isinstance(bg_result, ToolResult) and bg_result.content:
                     bg_result.content = host_grant_note + bg_result.content
                 return bg_result
             fg = self._run_foreground(
-                spec, workdir, env, gate_line, wtrelease.note_in, extra_file_binds
+                spec, workdir, env, gate_line, wtrelease.note_in, extra_file_binds,
+                pinned_grant_fd,
             )
             if isinstance(fg, ToolResult):
                 return fg
@@ -1672,6 +1766,8 @@ class ExecuteCommandTool:
                 error_detail=str(exc),
             )
         finally:
+            if pinned_grant_fd is not None:
+                os.close(pinned_grant_fd)
             wtrelease.release_in_finally()
 
         fg_result = self._compose_foreground_result(

@@ -26,7 +26,7 @@
         "tests/integration/test_host_grant_e2e.py",
         "docs/design/DESIGN-20261114-deepin-host-grant-closure.md"
       ],
-      "verification_level": "Merged candidate on latest main: 698 related tests passed, 2 platform skips; Ruff/Pyright clean; independent GLM-5.3 review, original full R9, and remote CI are pending.",
+      "verification_level": "Integrated P1 repair: 701 focused tests passed, 3 platform skips on Mac; Ruff/Pyright clean; Deepin disposable bwrap default-deny/ro/rw/FD-pin and symlink-swap OS canaries passed. Full LFL Deepin Web approval E2E, independent GLM-5.3 re-review, original R9, remote CI remain pending.",
       "model_evidence_veto_recovery_exit": "Model can request a narrowly specified file operation but cannot approve it. Only a valid human browser login session may approve; no login, stale SHA, missing binding, revoked/expired/used grant, unsafe path or unsupported sandbox yields fail-closed rejection. The operator may deny or revoke.",
       "rollback_route": "Revert the feature commits and retain prior 0.6.52 wheel, configuration, data and verified backup. No new grant files are migrated or enabled on production until an independently reviewed later wheel is deployed."
     },
@@ -51,7 +51,7 @@
         "tests/unit/test_host_grant_web.py",
         "scripts/check_architecture_submission.py"
       ],
-      "verification_level": "698 passed, 2 skipped on integrated main+P0 focused regression; A.5, Ruff, Pyright gates to be rerun on the frozen candidate; original full R9 and independent review pending.",
+      "verification_level": "701 focused tests passed, 3 platform skips on integrated candidate; A.5, Ruff, Pyright clean. Full original R9 and independent re-review pending.",
       "model_evidence_veto_recovery_exit": "Tests and documents are evidence, not a new authorization source. Human approval, persistent grant CAS, sandbox kernel and command-scope deny decisions remain authoritative.",
       "rollback_route": "Revert these test/design/governance paths with the feature; no production runtime state is changed by this manifest."
     }
@@ -83,7 +83,8 @@
           "Deepin disposable-file bwrap canary: default external write denied, ro-bind readable but not writable, exact rw-bind writes host file, other host file remains unchanged.",
           "A.5 manifest path coverage must pass; independent GLM-5.3 Reviewer PASS P0/P1=0 and original full R9 exit 0 are required.",
           "Future production acceptance must demonstrate a real browser-approved single-file operation and persisted audit after managed wheel release, without disabling bwrap.",
-          "Main-integrated focused regression: 698 passed, 2 skipped; full R9, GLM-5.3 independent reviewer and remote CI remain required."
+          "Main-integrated focused regression: 698 passed, 2 skipped; full R9, GLM-5.3 independent reviewer and remote CI remain required.",
+          "2026-11-15 P1 repair: external relative deny matching, bwrap O_NOFOLLOW FD-pinned bind, loopback login Origin gate; 701 focused passed / 3 skipped; disposable Deepin bwrap FD pin and symlink swap passed, production untouched."
         ]
       }
     }
