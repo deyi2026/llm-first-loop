@@ -1,6 +1,6 @@
 {
   "schema": "m2-t1-web-cutover-receipt",
-  "generated_at_local": "2026-11-14T09:30:48+08:00",
+  "generated_at_local": "2026-11-14T09:32:47+08:00",
   "m1_baseline": {
     "head": "db6a2546a9d61a35c8497420413445aee6bc90e6",
     "m1_staged_index_tree": "59d73bfb2b4ef60c6c07c93dd772df226704e42f",
@@ -60,7 +60,7 @@
       "bytes": 32241
     }
   },
-  "m2_files_note": "top manifest refreshed to final tree state 2026-11-14 08:37 by the 07:41-dispatched closure agent (session 76ea82c8); per-batch historical manifests remain authoritative inside batches[]",
+  "m2_files_note": "Current top manifest: 13 paths verified against the latest repaired candidate bytes as of 2026-11-14 09:30 +08:00. Older batch[] manifests are historical snapshots, not the current tree. Exact final Git commit/tree is the Git object + Goal checkpoint, never a self-referential field.",
   "m2_changed_unstaged": [
     " M src/llm_loop/core/loop/lifecycle.py",
     " M src/llm_loop/llm/client.py",
@@ -91,13 +91,14 @@
   },
   "verification_matrix": {
     "py_compile": "exit 0",
-    "ruff_m2_files": "All checks passed (exit 0)",
-    "pyright_m2_files": "0 errors, 0 warnings",
-    "t1_suite": "59 passed",
-    "m1_suite": "36 passed (exit 0)",
-    "sweep_canary_t1_budget": "745 passed, 4 skipped",
-    "skips": "4 skipped = pre-existing RED-12..15 platform limits, unrelated to M2",
-    "interpreter": "../../.venv/bin/python (3.13)"
+    "ruff_m2_files": "All checks passed, parent targeted 8 files, exit 0",
+    "pyright_m2_files": "0 errors, 0 warnings, parent targeted 8 files, exit 0",
+    "t1_suite": "60 passed, parent independent, exit 0",
+    "m1_suite": "36 passed, parent independent, exit 0",
+    "sweep_canary_t1_budget": "750 passed, 10546 deselected, 7 warnings, parent -p no:cacheprovider, exit 0",
+    "skips": "Older author sandbox run 747 passed/4 skipped; parent latest environment 750 passed/0 skipped. Different environments/snapshots; not combined.",
+    "interpreter": "../../.venv/bin/python (3.13)",
+    "arch_guards": "3 original R9 blockers 3 passed parent exit 0; full arch 52 passed author"
   },
   "not_done_honest": [
     "no production deployment / canary / restart (wiring exists only in this isolated worktree candidate)",
@@ -367,10 +368,25 @@
         "new_reviewer": "NOT_RUN",
         "original_full_r9": "NOT_RUN on repair commit"
       }
+    },
+    {
+      "batch": "top_level_final_consistency",
+      "date_local": "2026-11-14T09:32:47+08:00",
+      "scope": "receipt-only top-level current snapshot correction; historical batches preserved",
+      "corrections": [
+        "m2_files_note current 13 paths, not 08:37 11-path snapshot",
+        "top verification_matrix current parent 60+36 and 750 sweep",
+        "final_state distinguishes old failed R9 from repaired candidate pending gates"
+      ],
+      "runtime_code_changed": false
     }
   ],
   "final_state": {
     "m1_frozen_index_tree_preserved": "59d73bfb2b4ef60c6c07c93dd772df226704e42f remains the M1 layer inside the merged history",
-    "r9_candidate_before_repair": "commit 06a5ce649 / tree 4cab3bfd (reviewer PASSed, release gate exit=1)"
+    "r9_candidate_before_repair": "commit 06a5ce649 / tree 4cab3bfd (reviewer PASSed, release gate exit=1)",
+    "repair_source_commit": "0dcc82ecdaccd8a0f2b3634cf99f87f14347294e",
+    "current_candidate_identity": "Use Git HEAD/tree and Goal checkpoint (no self-reference inside the receipt)",
+    "independent_reviewer_after_repair": "NOT_RUN",
+    "original_full_r9_after_repair": "NOT_RUN"
   }
 }
