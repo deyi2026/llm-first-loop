@@ -19,9 +19,11 @@ import logging
 import os
 import threading
 import uuid
+from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from llm_loop.introspection.task_claim import overlapping_paths
@@ -577,6 +579,128 @@ class LaneStore:
         if malformed:
             raise self._corruption_error(malformed, "写入前读取")
         return rows
+
+    # ---------------- lane 生命周期收尾（DESIGN-20261114 §4.3） ----------------
+
+    @staticmethod
+    def _idle_hours(entry: dict, now_dt: "datetime | None") -> "float | None":
+        """距 max(last_activity, closing_since) 的小时数；naive/不可解析返回 None。"""
+        if now_dt is None:
+            return None
+        parsed = []
+        for raw in (
+            str(entry.get("last_activity") or "").strip(),
+            str(entry.get("closing_since") or "").strip(),
+        ):
+            if not raw:
+                continue
+            try:
+                ts = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+            if ts.tzinfo is None:
+                ts = ts.astimezone()
+            parsed.append(ts)
+        if not parsed:
+            return None
+        return (now_dt - max(parsed)).total_seconds() / 3600.0
+
+    def append_lane_event(self, event_type: str, **fields: object) -> bool:
+        """追加一条 lane 事件到 lane_events.jsonl；写失败返回 False（不吞主操作结果）。"""
+        event: dict = {"type": str(event_type), "ts": system_local_now().isoformat()}
+        event.update(fields)
+        try:
+            self._append_event(event)
+            return True
+        except OSError:
+            logger.warning("lane 事件写入失败: %s", event_type, exc_info=True)
+            return False
+
+    def reap_candidates(
+        self,
+        *,
+        ttl_hours: float = 168.0,
+        limit: int = 20,
+        liveness_probe: "Callable[[str], str] | None" = None,
+        tree_probe: "Callable[[str], str] | None" = None,
+        now: str | None = None,
+    ) -> dict:
+        """纯读：筛出超时 lane 并按三判据分三态。零写盘、零 git 调用。
+
+        判据三元组（全部成立才 conclusive）：
+        1. idle_ttl——距 max(last_activity, closing_since) 超过 ttl_hours；
+        2. liveness——注入的探针返回 "dead"（探针缺失/抛错/unknown 一律不收口）；
+        3. tree_state——注入的 tree_probe 返回 "clean"（树脏只标疑，不动目录）。
+
+        「超时≠死亡」（DESIGN-20261114 D1）：时间只用于筛候选，不用于判死。
+        """
+        now_ts = str(now) if now else system_local_now().isoformat()
+        try:
+            now_dt = datetime.fromisoformat(now_ts)
+        except ValueError:
+            now_dt = None
+        if now_dt is not None and now_dt.tzinfo is None:
+            now_dt = now_dt.astimezone()
+        probe = liveness_probe if callable(liveness_probe) else None
+        rows = [
+            r
+            for r in self._read_rows()
+            if str(r.get("status") or "open") not in TERMINAL_STATUSES
+        ]
+        out: list[dict] = []
+        counts = {"conclusive": 0, "suspect": 0, "unavailable": 0}
+        for entry in rows:
+            idle = self._idle_hours(entry, now_dt)
+            if idle is None or idle <= float(ttl_hours):
+                continue
+            owner = str(entry.get("owner_session_id") or "").strip()
+            liveness = "unavailable"
+            if probe is not None:
+                if owner:
+                    try:
+                        raw = str(probe(owner) or "").strip().lower()
+                    except Exception:
+                        raw = ""
+                    liveness = raw if raw in ("alive", "dead") else "unknown"
+                else:
+                    liveness = "unknown"
+            tree_state = "unknown"
+            if callable(tree_probe):
+                worktree = str(entry.get("worktree") or "").strip()
+                if worktree:
+                    try:
+                        tree_state = str(tree_probe(worktree) or "unknown")
+                    except Exception:
+                        tree_state = "unknown"
+            if liveness == "dead" and tree_state == "clean":
+                verdict = "conclusive"
+            elif liveness == "unavailable":
+                verdict = "unavailable"
+            else:
+                verdict = "suspect"
+            counts[verdict] += 1
+            out.append(
+                {
+                    "lane_id": entry.get("lane_id"),
+                    "status": entry.get("status"),
+                    "owner_session_id": owner,
+                    "worktree": entry.get("worktree"),
+                    "idle_hours": round(idle, 3),
+                    "liveness": liveness,
+                    "tree_state": tree_state,
+                    "verdict": verdict,
+                }
+            )
+            if len(out) >= max(1, int(limit)):
+                break
+        return {
+            "now": now_ts,
+            "ttl_hours": float(ttl_hours),
+            "liveness_available": probe is not None,
+            "candidates": out,
+            "counts": counts,
+            "scanned": len(rows),
+        }
 
     def _append_event(self, event: dict) -> None:
         """只追加历史；写失败只告警不吞主写结果（与 goal.py 的 fail-open 口径一致）。"""
