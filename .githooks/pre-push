@@ -150,11 +150,33 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       exit 1
     fi
   elif [[ "$remote_sha" =~ ^0+$ ]]; then
-    RANGE_ARGS=(--commit "$local_sha")   # 新分支首推：没有可信远端基线，扫完整可达历史
+    # 新分支首推：仅信任本次 origin push URL 的真实远端 main，且须为
+    # local_sha 的已存在 commit 祖先。否则沿用完整历史扫描，绝不静默放行。
+    RANGE_ARGS=(--commit "$local_sha")
     RECEIPT_TREE_SHA="$local_sha"
-    if ! changed_receipts="$(git ls-tree -r --name-only "$RECEIPT_TREE_SHA" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
-      echo "[pre-push] 拒绝：无法枚举首推回执（fail-closed）。" >&2
-      exit 1
+    REMOTE_MAIN_LINE=""
+    if [[ "$REMOTE_NAME" == "origin" \
+      && "$REMOTE_URL" == "$(git remote get-url --push origin 2>/dev/null)" ]]; then
+      REMOTE_MAIN_LINE="$(git ls-remote --heads "$REMOTE_URL" refs/heads/main 2>/dev/null)" || REMOTE_MAIN_LINE=""
+    fi
+    REMOTE_MAIN_SHA="${REMOTE_MAIN_LINE%%$'\t'*}"
+    if [[ "$local_ref" == refs/heads/* && "$remote_ref" == refs/heads/* \
+      && "$REMOTE_MAIN_LINE" == "$REMOTE_MAIN_SHA"$'\t'"refs/heads/main" \
+      && "$REMOTE_MAIN_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] \
+      && git cat-file -e "${REMOTE_MAIN_SHA}^{commit}" 2>/dev/null \
+      && git merge-base --is-ancestor "$REMOTE_MAIN_SHA" "$local_sha" 2>/dev/null; then
+      RANGE_ARGS=(--range "$REMOTE_MAIN_SHA" "$local_sha")
+      if ! changed_receipts="$(git diff --name-only --diff-filter=AMRC "$REMOTE_MAIN_SHA" "$local_sha" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
+        echo "[pre-push] 拒绝：无法枚举新分支增量回执（fail-closed）。" >&2
+        exit 1
+      fi
+      echo "[pre-push] 新分支首推：远端 main 祖先已核验，逐提交增量扫描。" >&2
+    else
+      if ! changed_receipts="$(git ls-tree -r --name-only "$RECEIPT_TREE_SHA" -- "$RECEIPT_DIR" "$NEW_RECEIPT_DIR")"; then
+        echo "[pre-push] 拒绝：无法枚举首推回执（fail-closed）。" >&2
+        exit 1
+      fi
+      echo "[pre-push] 新分支首推：无可信远端 main 祖先，保留完整历史扫描。" >&2
     fi
   else
     RANGE_ARGS=(--range "$remote_sha" "$local_sha")
