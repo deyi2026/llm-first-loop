@@ -1,0 +1,49 @@
+{
+  "schema": "lfl.m4d.t1_crash_recovery_preflight.v1",
+  "date": "2026-11-14",
+  "source_main_sha": "f212731bd537d46c01ebb44905979516182aa069",
+  "scope": "read-only operator preflight; no runtime code change; no automatic Run replay",
+  "developer": {
+    "model": "glm/glm-5.3",
+    "attempt_1": "LLMEmptyResponseError; 53417 reasoning characters; no code artifact",
+    "attempt_2": "single-file implementation generated; parent repaired mismatched EventStore and TaskBudgetStore API assumptions",
+    "model_output_not_trusted_without_parent_validation": true
+  },
+  "files": [
+    "docs/design/M4D-T1-CRASH-RECOVERY-NEW-AUTH-20261114.md",
+    "scripts/t1_crash_recovery_preflight.py",
+    "tests/unit/test_t1_crash_recovery_preflight.py",
+    "docs/receipts/M4D-T1-CRASH-RECOVERY-PREFLIGHT-20261114.json"
+  ],
+  "tests": {
+    "synthetic_real_store_api_positive_and_negative": "24 passed",
+    "expanded_T1_runner_and_stream_regression": "146 passed",
+    "ruff_changed_python": "PASS",
+    "real_m4c_sigkill_ledger": {
+      "status": "HOLD",
+      "reason": "source_budget_has_unsettled_liability",
+      "outstanding_provider_attempts": 1,
+      "source_file_unchanged": true,
+      "source_ledger_unchanged": true,
+      "additional_provider_calls": 0,
+      "additional_tool_calls": 0
+    }
+  },
+  "boundaries": {
+    "preflight_is_advisory_not_runtime_authorization": true,
+    "new_session_and_new_operator_config_required": true,
+    "old_run_generation_replay": false,
+    "physical_quiescence_independently_verified": false,
+    "unknown_provider_liability_refunded": false,
+    "production_code_changed": false,
+    "main_modified": false,
+    "production_restarted": false,
+    "external_publication": false
+  },
+  "review": {
+    "independent_glm53": "PENDING",
+    "original_full_r9": "PENDING",
+    "remote_ci": "PENDING",
+    "production_readiness": "HOLD"
+  }
+}
