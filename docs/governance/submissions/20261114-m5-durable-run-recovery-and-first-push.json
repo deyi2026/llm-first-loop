@@ -1,0 +1,164 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-m5-durable-run-recovery-first-push",
+  "summary": "M5-A..F minimal durable Run facts, real T1 admission fencing, read-only effect evidence and crash tests. Exact M5 patch preserved over PR19 remote main; no auto Provider/Tool replay. Old M4-C remains quarantined unresolved HOLD.",
+  "components": [
+    {
+      "component_id": "durable-run-facts-and-real-t1-fence",
+      "paths": [
+        "src/llm_loop/core/durable_run_recovery.py",
+        "src/llm_loop/core/loop/engine_services/run_finalizer.py",
+        "src/llm_loop/event_log/store.py",
+        "src/llm_loop/resources/task_budget_t1_web_profile.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/task_budget_canary.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing EventStore strict append, TaskBudgetStore CAS, T1 Web admission and Run finalizer",
+      "disposition": "Reuse existing strict fsync/readback and budget CAS for run opened/fenced/terminal facts; only fenced real T1 may emit completed local terminal after seal; unknown effects stay HOLD. No duplicate ledger or replay scheduler.",
+      "evidence": [
+        "M5-A/B/F docs and strict tests",
+        "Real SIGKILL dual-worker matrix M5-E",
+        "Independent GLM-5.3 M5-F code review PASS P0/P1=0"
+      ],
+      "verification_level": "M5-F original candidate b25992d original R9 exit 0; merged candidate requires exact-SHA full R9 and remote CI.",
+      "model_evidence_veto_recovery_exit": "Missing/duplicate run.end, invalid generation/authorization/budget revision, unresolved dispatched Provider, uncertain Tool effect, revoked authority or failed strict append never authorizes old Run replay or auto-resume.",
+      "rollback_route": "Revert the M5 code paths together; existing fail-closed old M4-C closed_uncertain ledger is untouched.",
+      "declaration_id": "m5-durable-fact-reuse"
+    },
+    {
+      "component_id": "read-only-provider-tool-effect-evidence",
+      "paths": [
+        "src/llm_loop/core/durable_effect_evidence.py",
+        "src/llm_loop/web/durable_recovery_view.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing Provider settlement events, Tool execution WAL and authenticated Web read-only recovery endpoint",
+      "disposition": "Reuse source event and Tool receipt identities to project completed, safe-to-replan, or unknown-HOLD without writing settlements, making Provider calls or triggering Tool mutations.",
+      "evidence": [
+        "M5-C/D docs and evidence negative tests",
+        "M5-E SIGKILL matrix",
+        "Read-only Web recovery route tests"
+      ],
+      "verification_level": "M5-E prior GLM-5.3 review and original R9; integrated candidate requires remote CI.",
+      "model_evidence_veto_recovery_exit": "Unattributed events, missing upstream request ID, uncertain transport, unmatched effect or missing permission forces HOLD; read-only projection never grants execution authority.",
+      "rollback_route": "Revert effect projection and Web read-only endpoint; no stored evidence or budget modified.",
+      "declaration_id": "m5-effect-evidence-reuse"
+    },
+    {
+      "component_id": "m5-design-and-acceptance-docs",
+      "paths": [
+        "docs/M5-DURABLE-RUN-RECOVERY-MINIMAL-20261114.md",
+        "docs/M5B-T1-DURABLE-ADMISSION-20261114.md",
+        "docs/M5C-PROVIDER-TOOL-EFFECT-EVIDENCE-20261114.md",
+        "docs/M5D-READONLY-RECOVERY-WEB-20261114.md",
+        "docs/M5E-REAL-SIGKILL-DUAL-WORKER-ACCEPTANCE-20261114.md",
+        "docs/M5F-REAL-RUN-TERMINAL-WIRING-20261114.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "M5 design and acceptance documents",
+      "disposition": "Documents only, explicitly record the limits of crash recovery and remote Provider uncertainty.",
+      "evidence": [
+        "Six stage-specific M5-A..F documents",
+        "Old M4-C audit remains QUARANTINED_UNRESOLVED"
+      ],
+      "verification_level": "Review textual claims against source and frozen SHA.",
+      "model_evidence_veto_recovery_exit": "Docs cannot override runtime HOLD or issue authorization.",
+      "rollback_route": "Revert documents with corresponding code changes."
+    },
+    {
+      "component_id": "m5-negative-and-fault-tests",
+      "paths": [
+        "tests/fixtures/m5e_fault_worker.py",
+        "tests/unit/test_durable_effect_evidence.py",
+        "tests/unit/test_durable_run_recovery.py",
+        "tests/unit/test_engine_cancel_reason.py",
+        "tests/unit/test_m5e_process_fault_matrix.py",
+        "tests/unit/test_task_budget_t1_web_profile.py",
+        "tests/web/test_durable_recovery_view.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest and subprocess fault-injection suites",
+      "disposition": "Test real SIGKILL, cross-worker CAS, budget seal, strict terminal, duplicate/unknown Provider and Tool effects, plus Web read-only projection.",
+      "evidence": [
+        "204 merged focused tests passed",
+        "M5-F original full R9 15093 Python passed and 600 WebUI passed"
+      ],
+      "verification_level": "Final exact SHA original full R9 required; GitHub CI required.",
+      "model_evidence_veto_recovery_exit": "A failed negative or fault test blocks integration; no test fixture is a settlement receipt.",
+      "rollback_route": "Revert tests with code if rejected."
+    },
+    {
+      "component_id": "a5-exact-path-submission",
+      "paths": [
+        "docs/governance/submissions/20261114-m5-durable-run-recovery-and-first-push.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission governance",
+      "disposition": "Exact path coverage and G1-G4 declarations for this M5 PR; no runtime effect.",
+      "evidence": [
+        "Local scripts/check_architecture_submission.py --base/--head",
+        "PR A.5 GitHub workflow required"
+      ],
+      "verification_level": "Manifest-only addition after reviewed code and local R9; exact final SHA A.5 and CI required.",
+      "model_evidence_veto_recovery_exit": "Missing path or undeclared control machinery blocks PR merge.",
+      "rollback_route": "Revert this manifest with the M5 PR."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "m5-durable-fact-reuse",
+      "g1": {
+        "necessity": "Cross-process crash recovery previously had only process-local RunHandle and fail-open run.end; safe durable admission/terminal evidence is required to avoid duplicate Provider/Tool effects."
+      },
+      "g2": {
+        "authority_owner": "Existing EventStore strict durable facts, TaskBudgetStore revision CAS, SessionStore lease, T1 operator authorization",
+        "relationship": "reuse",
+        "non_duplication": "No second WAL, second budget ledger, new retry daemon or bypass of old HOLD. Reuses T1 seal_at_run_end and run_generation context."
+      },
+      "g3": {
+        "model_evidence": [
+          "M5-F GLM-5.3 independent PASS P0/P1=0",
+          "M5-E real SIGKILL and dual-worker negative tests",
+          "Existing M4-C audit exit 2 HOLD"
+        ],
+        "recovery_or_reason": "Only an exact completed local run.end and budget seal can produce terminal; external Provider or Tool unknown remains HOLD. Old Run replay is forbidden; new authorization is independent."
+      },
+      "g4": {
+        "rollback": "Revert M5 runtime and tests as one PR, leaving old M4-C source event and budget SHA unchanged.",
+        "verification": [
+          "204 focused integrated tests passed",
+          "Original M5-F full R9 exit 0",
+          "Merged candidate must pass original full R9 and GitHub CI"
+        ]
+      }
+    },
+    {
+      "declaration_id": "m5-effect-evidence-reuse",
+      "g1": {
+        "necessity": "Tool effect bytes and local Provider transport events are not sufficient to prove upstream settlement or causal worker identity; expose conservative read-only recovery evidence."
+      },
+      "g2": {
+        "authority_owner": "Existing ProviderCallSettlementJournal, Tool execution WAL, FileService CAS and authenticated Web read-only API",
+        "relationship": "reuse",
+        "non_duplication": "Projection only; no new Provider settlement authority, Tool write path, idempotency key or automatic replay."
+      },
+      "g3": {
+        "model_evidence": [
+          "M5-C/D independent reviews and negative tests",
+          "M5-E real process SIGKILL matrix",
+          "Old M4-C Provider missing remote authenticated request ID"
+        ],
+        "recovery_or_reason": "If external Provider or Tool effect is uncertain, return HOLD with no replay. Only verifiable zero-effect completed Run can be completed_verified; never equate local terminal to remote billing settlement."
+      },
+      "g4": {
+        "rollback": "Remove read-only projection and endpoint; keep existing EventStore/TaskBudgetStore data unchanged.",
+        "verification": [
+          "M5-C/D/E focused tests",
+          "M5-E real SIGKILL and dual-worker tests",
+          "GitHub A.5 and CI on final SHA required"
+        ]
+      }
+    }
+  ]
+}
