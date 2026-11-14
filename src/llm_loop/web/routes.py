@@ -3057,7 +3057,23 @@ async def escalation_review(request: Request) -> Response:
     if isinstance(host_request, dict) and host_request and payload.decision == "approved":
         from llm_loop.tools.escalation import HostCapabilityGrantStore, host_grant_store_home
 
-        grant_store = HostCapabilityGrantStore(host_grant_store_home())
+        # P0-1（2026-11-14）：构造移入 fail-closed——账本 home 不安全/不可达
+        # （env 污染、路径重叠等）时签发不可完成，决定不落盘（503）。
+        try:
+            grant_store = HostCapabilityGrantStore(host_grant_store_home())
+        except Exception as exc:  # noqa: BLE001 — 账本不可用=审批不可完成
+            _audit(
+                "host_grant_issue_failed",
+                decided_by=decided_by, channel=channel,
+                command_sha256=command_sha256, detail=repr(exc)[:300],
+            )
+            return JSONResponse(
+                content={
+                    "error": "host_grant_issue_failed",
+                    "detail": f"授权账本不可用（fail-closed，决定未落盘）: {exc}",
+                },
+                status_code=503,
+            )
         try:
             grant = grant_store.issue(
                 tool_name=str(rec.get("tool_name") or "execute_command"),

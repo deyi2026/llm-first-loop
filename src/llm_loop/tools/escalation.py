@@ -668,11 +668,57 @@ class HostGrantError(Exception):
     audit_chain_broken / store_io_failed）。"""
 
 
-def _grant_line_hash(record: dict) -> str:
-    payload = {k: v for k, v in record.items() if k != "prev_hash"}
+# ── P0-1（2026-11-14，独立 Reviewer P0）: 授权记录 MAC 防线 ──
+# 威胁：bwrap --bind workdir workdir 下同 UID 模型可写工作区内任何路径；
+# 生产 LFL_DATA_DIR 曾位于 workspace 内 → grants/audit 可被模型改写，
+# 伪造 status=approved + 自洽 request_binding 的 JSON 即可获得无人工审批
+# 的宿主文件 read/write bind。对策（防线 A）：签发方（web 审批端点）与
+# 消费方（execute_command）同进程共享**进程内随机** HMAC 密钥；grant 与
+# 审计链全部带 MAC，缺签/错签/篡改/重放一律拒绝。密钥不落盘、不进 env、
+# 不写日志、不传子进程；服务重启即换钥——旧 grant 失效，需重新人工审批
+# （与 EscalationStore P0-5 的同进程部署契约一致；跨进程签发的记录消费
+# 端验签失败并明确拒绝，不静默放行）。
+_GRANT_SIGNING_KEY = secrets.token_bytes(32)
+_GRANT_KEY_ID = hashlib.sha256(
+    b"lfl.host_grant.key_id.v1" + _GRANT_SIGNING_KEY
+).hexdigest()[:16]
+_GRANT_MAC_DOMAIN = b"lfl.host_grant.mac.v1"
+_GRANT_AUDIT_DOMAIN = b"lfl.host_grant.audit.v1"
+
+
+def _grant_record_mac(record: dict) -> str:
+    """grant 文件 MAC（覆盖含 key_id 在内的全部字段；'mac' 自身除外）。"""
+    payload = {k: v for k, v in record.items() if k != "mac"}
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                      separators=(",", ":")).encode()
-    return hashlib.sha256(raw).hexdigest()
+    return hmac.new(
+        _GRANT_SIGNING_KEY, _GRANT_MAC_DOMAIN + b"\x00" + raw, hashlib.sha256
+    ).hexdigest()
+
+
+def _grant_sig_ok(record: dict) -> bool:
+    """验签（fail-closed）：无 mac / key_id 不是本进程 / HMAC 不符 → False。"""
+    if not isinstance(record, dict):
+        return False
+    mac = str(record.get("mac") or "")
+    if not mac or str(record.get("key_id") or "") != _GRANT_KEY_ID:
+        return False
+    try:
+        return hmac.compare_digest(mac, _grant_record_mac(record))
+    except (TypeError, ValueError):
+        return False
+
+
+def _grant_line_hash(record: dict, prev: str = "") -> str:
+    """审计链链接 MAC（P0-1）：HMAC(prev ‖ record)——无密钥者无法重算链。"""
+    payload = {k: v for k, v in record.items() if k not in ("prev_hash", "mac")}
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":")).encode()
+    return hmac.new(
+        _GRANT_SIGNING_KEY,
+        _GRANT_AUDIT_DOMAIN + b"\x00" + prev.encode("utf-8") + b"\x00" + raw,
+        hashlib.sha256,
+    ).hexdigest()
 
 
 class HostCapabilityGrantStore:
@@ -736,14 +782,16 @@ class HostCapabilityGrantStore:
             raise HostGrantError("grant_store_insecure: fstat failed") from exc
         return fd
 
-    def _audit_chain_intact(self) -> bool:
-        if not self._audit_path.exists():
-            return True
+    def _audit_records(self) -> list[dict] | None:
+        """读 audit 链全部记录（经 _open_private 安全基线）。
+
+        不可读/含不可解析行 → None（fail-closed，不区分原因）。
+        """
         try:
             fd = self._open_private(self._audit_path, os.O_RDONLY)
         except HostGrantError:
-            return False
-        prev = ""
+            return None
+        out: list[dict] = []
         try:
             with os.fdopen(fd, "r", encoding="utf-8") as stream:
                 for line in stream:
@@ -752,34 +800,113 @@ class HostCapabilityGrantStore:
                     try:
                         record = json.loads(line)
                     except ValueError:
-                        return False
-                    if record.get("prev_hash") != prev:
-                        return False
-                    prev = _grant_line_hash(record)
-            return True
-        except (OSError, ValueError):
-            return False
+                        return None
+                    out.append(record)
+            return out
+        except OSError:
+            return None
+
+    def _audit_chain_state(self) -> str:
+        """链状态（P0-1）：absent / current / stale_epoch / broken。
+
+        - stale_epoch: 首行 epoch_start 且 key_id 非本进程——旧密钥 epoch 的
+          链；本进程无旧密钥无法验证其完整性，按 epoch 语义在下次 append 前
+          归档保留证据、开新链（_rotate_stale_audit）。攻击者伪造"旧链"最多
+          触发归档换链，无法获得任何有效签名（grant MAC 独立校验）。
+        - broken: 同 epoch 篡改（prev/mac 链不符）或 legacy 无 MAC 格式 →
+          停止签发（audit_chain_broken），需人工清理后恢复。
+        """
+        if not self._audit_path.exists():
+            return "absent"
+        records = self._audit_records()
+        if records is None or not records:
+            return "broken"
+        first = records[0] if isinstance(records[0], dict) else {}
+        first_key = str(first.get("key_id") or "")
+        if (
+            first.get("event") == "epoch_start"
+            and first_key
+            and first_key != _GRANT_KEY_ID
+        ):
+            return "stale_epoch"
+        prev = ""
+        for record in records:
+            if not isinstance(record, dict):
+                return "broken"
+            mac = str(record.get("mac") or "")
+            if (
+                record.get("prev_hash") != prev
+                or mac != _grant_line_hash(record, prev)
+            ):
+                return "broken"
+            prev = mac
+        return "current"
+
+    def _audit_chain_intact(self) -> bool:
+        # stale_epoch 视为完整：append 时自动归档旧链并开新链（重启后
+        # 审批流仍可用；旧 grant 仍因 MAC 失配被消费侧拒绝）。
+        return self._audit_chain_state() in ("absent", "current", "stale_epoch")
+
+    def _rotate_stale_audit(self) -> None:
+        """旧 epoch 审计链归档（rename 保留证据，权限随 inode 保持 0600）。"""
+        records = self._audit_records() or []
+        first = records[0] if records and isinstance(records[0], dict) else {}
+        old_key = str(first.get("key_id") or "unknown")
+        n = 0
+        while True:
+            dest = self._grants_dir / f"audit.{old_key}.{n}.jsonl"
+            if not dest.exists():
+                break
+            n += 1
+        os.replace(self._audit_path, dest)
 
     def _last_audit_prev(self) -> str:
-        if not self._audit_path.exists():
+        records = self._audit_records()
+        if not records:
             return ""
-        fd = self._open_private(self._audit_path, os.O_RDONLY)
         prev = ""
-        try:
-            with os.fdopen(fd, "r", encoding="utf-8") as stream:
-                for line in stream:
-                    if not line.strip():
-                        continue
-                    record = json.loads(line)
-                    if record.get("prev_hash") != prev:
-                        return ""  # 链不完整：由 _audit_chain_intact 把关
-                    prev = _grant_line_hash(record)
-            return prev
-        except (OSError, ValueError):
-            return ""
+        for record in records:
+            if not isinstance(record, dict):
+                return ""
+            mac = str(record.get("mac") or "")
+            if (
+                record.get("prev_hash") != prev
+                or mac != _grant_line_hash(record, prev)
+            ):
+                return ""  # 链不完整：由 _audit_chain_intact/_append_audit 把关
+            prev = mac
+        return prev
 
     def _append_audit(self, event: str, grant: dict, reason: str = "") -> None:
         assert event in _GRANT_AUDIT_EVENTS
+        state = self._audit_chain_state()
+        if state == "stale_epoch":
+            self._rotate_stale_audit()
+            state = "absent"
+        elif state == "broken":
+            raise HostGrantError("audit_chain_broken: refusing to append")
+        if state == "absent" and not self._audit_path.exists():
+            # 新链根：epoch_start 绑定本进程 key_id（P0-1），MAC 链自此起算。
+            head = {
+                "ts": _now(),
+                "event": "epoch_start",
+                "grant_id": "",
+                "key_id": _GRANT_KEY_ID,
+                "reason": "",
+            }
+            head["prev_hash"] = ""
+            head["mac"] = _grant_line_hash(head, "")
+            fd = self._open_private(
+                self._audit_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            )
+            try:
+                os.write(
+                    fd,
+                    (json.dumps(head, ensure_ascii=False, sort_keys=True) + "\n").encode(),
+                )
+                os.fsync(fd)
+            finally:
+                os.close(fd)
         prev = self._last_audit_prev()
         fd = self._open_private(
             self._audit_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND
@@ -794,8 +921,10 @@ class HostCapabilityGrantStore:
                 "session_id": grant.get("requester_session_id", ""),
                 "ts": _now(),
                 "reason": reason,
+                "key_id": _GRANT_KEY_ID,
             }
             record["prev_hash"] = prev
+            record["mac"] = _grant_line_hash(record, prev)
             line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
             os.write(fd, line.encode())
             os.fsync(fd)
@@ -954,6 +1083,10 @@ class HostCapabilityGrantStore:
                 "status": "approved",
                 "issued_at": now.isoformat(),
             }
+            # P0-1 防线 A：签发即 MAC（进程内密钥）；此后任何字段改动都会
+            # 使消费/撤销侧验签失败。
+            grant["key_id"] = _GRANT_KEY_ID
+            grant["mac"] = _grant_record_mac(grant)
             self._write_grant_atomic(grant_path, grant)
             self._append_audit("issue", grant)
             self._append_index(grant)
@@ -982,8 +1115,14 @@ class HostCapabilityGrantStore:
 
         与 check/consume 的区别：peek 不做 scope 校验（调用方随后必须以
         check/consume 全维度校验），仅保证 grant 文件可读且 schema 匹配。
+        P0-1：验签失败的记录以只读快照返回并附 ``_sig_unverified=True``
+        标记（无密钥者伪造/篡改/他进程签发/服务重启旧记录），消费方
+        （execute_command）必须拒绝此类记录。
         """
-        return dict(self._read_grant(grant_id))
+        out = dict(self._read_grant(grant_id))
+        if not _grant_sig_ok(out):
+            out["_sig_unverified"] = True
+        return out
 
     def check(
         self,
@@ -1001,6 +1140,9 @@ class HostCapabilityGrantStore:
             if "grant_store_insecure" in str(exc):
                 return False, str(exc)
             raise
+        if not _grant_sig_ok(grant):
+            # P0-1：伪造/篡改/他进程签发/服务重启旧记录——一律拒绝。
+            return False, "grant_signature_invalid"
         ok, reason = self._scope_decision(
             grant, tool_name=tool_name, canonical_path=canonical_path,
             operation=operation, requester_session_id=requester_session_id,
@@ -1025,6 +1167,10 @@ class HostCapabilityGrantStore:
         with self._proc_lock:
             self._ensure_layout()
             grant = self._read_grant(grant_id)
+            if not _grant_sig_ok(grant):
+                # P0-1：伪造/篡改/他进程签发/服务重启旧记录——拒绝消费。
+                self._append_audit_safe("deny", grant, "grant_signature_invalid")
+                return None
             ok, reason = self._scope_decision(
                 grant, tool_name=tool_name, canonical_path=canonical_path,
                 operation=operation, requester_session_id=requester_session_id,
@@ -1039,6 +1185,11 @@ class HostCapabilityGrantStore:
                 fcntl.flock(fd, fcntl.LOCK_EX)
                 with os.fdopen(os.dup(fd), "r", encoding="utf-8") as back:
                     fresh = json.loads(back.read())
+                if not _grant_sig_ok(fresh):
+                    # P0-1：锁内窗口被替换为不可信内容（含他进程签名或
+                    # 无密钥伪造）——拒绝，绝不把不可信内容重签洗白。
+                    self._append_audit_safe("deny", fresh, "grant_signature_invalid")
+                    return None
                 if fresh.get("version") != grant["version"]:
                     # CAS 失败：另一消费者已推进版本 → 本方落败。
                     self._append_audit_safe("deny", fresh, "consumed")
@@ -1047,6 +1198,9 @@ class HostCapabilityGrantStore:
                 fresh["version"] = int(fresh["version"]) + 1
                 if fresh["uses"] >= int(fresh["max_uses"]):
                     fresh["status"] = "consumed"
+                # P0-1：状态推进后重签（旧 MAC 随内容失配，防半更新文件）。
+                fresh["key_id"] = _GRANT_KEY_ID
+                fresh["mac"] = _grant_record_mac(fresh)
                 # 同一 flock fd 原地重写：先截断，防止旧内容残留（JSON "Extra data"）。
                 os.ftruncate(fd, 0)
                 os.lseek(fd, 0, os.SEEK_SET)
@@ -1078,8 +1232,18 @@ class HostCapabilityGrantStore:
                 fcntl.flock(fd, fcntl.LOCK_EX)
                 with os.fdopen(os.dup(fd), "r", encoding="utf-8") as back:
                     fresh = json.loads(back.read())
+                if not _grant_sig_ok(fresh):
+                    # P0-1：不可信记录拒绝改写——把伪造内容重签成 revoked
+                    # 等于洗白（文件从此持有本进程有效签名）。拒绝并审计。
+                    self._append_audit_safe("deny", fresh, "grant_signature_invalid")
+                    raise HostGrantError(
+                        "invalid_grant: signature verification failed (refusing revoke)"
+                    )
                 fresh["status"] = "revoked"
                 fresh["version"] = int(fresh.get("version", 0)) + 1
+                # P0-1：状态推进后重签（旧 MAC 随内容失配）。
+                fresh["key_id"] = _GRANT_KEY_ID
+                fresh["mac"] = _grant_record_mac(fresh)
                 os.ftruncate(fd, 0)
                 os.lseek(fd, 0, os.SEEK_SET)
                 with os.fdopen(os.dup(fd), "w", encoding="utf-8") as writer:
@@ -1093,20 +1257,142 @@ class HostCapabilityGrantStore:
                 os.close(fd)
 
 
-def host_grant_store_home() -> Path:
-    """host-grant 持久目录唯一推导（DESIGN-20261114：web 审批端点与工具消费侧同源）.
+def _realpath_str(p: str | Path) -> str:
+    return os.path.realpath(os.path.expanduser(str(p)))
 
-    返回**基准 data 目录**（LFL_DATA_DIR env > 代码根/data）；grants 子目录由
-    HostCapabilityGrantStore.__init__ 统一追加一次（类契约 ``<home>/grants``）。
-    P0 补修(2026-11-14): 此处曾额外拼接 /grants，与 store 内追加叠成
-    data/grants/grants 双层——audit.jsonl 落错层、e2e 审计断言失败。
-    基准目录保持与 web/routes.py escalation 端点的 base 推导一致，避免
-    settings.DATA_DIR 与 LFL_DATA_DIR 的既有命名分歧造成「签发在 A、消费在 B」
-    的路径漂移。
+
+def _paths_overlap(a: str, b: str) -> bool:
+    """a 与 b 任一方是另一方祖先（含相等）即重叠（P0-1 fail-closed 判定）。"""
+    if a == b:
+        return True
+    sep = os.sep
+    na, nb = a.rstrip(sep) + sep, b.rstrip(sep) + sep
+    return a.startswith(nb) or b.startswith(na)
+
+
+def _grant_home_writable_roots() -> list[str]:
+    """沙盒可写根危险集合（防线 B 判定输入）。
+
+    覆盖两类沙盒的真实可写面：
+    - bwrap（Deepin/Linux）：--bind workdir workdir（工作区/代码根）、
+      LFL_DATA_DIR（生产曾位于 workspace 内——本 P0 的根源）、/tmp；
+    - sandbox-exec（macOS）：工作区、/tmp(/private/tmp)、~/.cache、
+      ~/Library/Caches、~/.npm、EXEC_SANDBOX_MACOS_WRITABLE 追加项
+      （与 sandbox.py macos_writable_roots 保持同一危险集合）。
     """
-    import os
+    candidates = [
+        str(Path(__file__).resolve().parents[3]),  # 工作区/代码根
+    ]
+    env_data = os.environ.get("LFL_DATA_DIR", "").strip()
+    if env_data:
+        candidates.append(env_data)
+    for part in os.environ.get("EXEC_SANDBOX_MACOS_WRITABLE", "").split(os.pathsep):
+        if part.strip():
+            candidates.append(part.strip())
+    home = Path.home()
+    candidates += [
+        "/tmp",
+        "/private/tmp",
+        str(home / ".cache"),
+        str(home / "Library" / "Caches"),
+        str(home / ".npm"),
+    ]
+    return candidates
 
-    env = os.environ.get("LFL_DATA_DIR", "").strip()
+
+def ensure_grant_home_isolated(home: str | Path) -> Path:
+    """P0-1 防线 B：grant home 必须位于所有沙盒可写根之外（fail-closed）。
+
+    校验（任何一步不确定即 raise HostGrantError("grant_store_insecure: …")）：
+    1. realpath 解析（消解 symlink 重定向，如 env 指向 workspace 内的链接）；
+    2. 与每个可写根**双向**重叠（相等/互为祖先）即拒绝；
+    3. 已存在祖先链逐级复核：非 symlink 段、属主为本用户或 root、
+       无 group/other 写位（不存在部分由 mkdir(0700) 创建）。
+    """
+    real = _realpath_str(home)
+    for cand in _grant_home_writable_roots():
+        rc = _realpath_str(cand)
+        if _paths_overlap(real, rc):
+            raise HostGrantError(
+                f"grant_store_insecure: grant home {real} overlaps "
+                f"sandbox-writable root {rc}"
+            )
+    node = Path(real)
+    chain: list[Path] = []
+    while True:
+        chain.append(node)
+        if node == node.parent:
+            break
+        node = node.parent
+    for anc in reversed(chain):  # 从根向叶
+        if not anc.exists():
+            continue
+        try:
+            info = anc.lstat()
+        except OSError as exc:
+            raise HostGrantError(
+                f"grant_store_insecure: lstat failed on {anc}"
+            ) from exc
+        if stat.S_ISLNK(info.st_mode):
+            # realpath 已消解；此时尚见 symlink 段说明存在竞态窗口——拒绝。
+            raise HostGrantError(f"grant_store_insecure: symlink segment {anc}")
+        if info.st_uid not in (os.getuid(), 0):
+            raise HostGrantError(
+                f"grant_store_insecure: owner {info.st_uid} on {anc}"
+            )
+        if stat.S_IMODE(info.st_mode) & 0o022:
+            raise HostGrantError(
+                f"grant_store_insecure: group/other-writable {anc}"
+            )
+    return Path(real)
+
+
+def grant_home_guard_candidates() -> list[str]:
+    """workdir 禁区判定候选（execute_command 侧）：生效 home + 平台默认 home。
+
+    env 指向不安全位置时该 env 被整体 fail-closed（授权通道拒绝），但默认
+    home 仍是真实账本候选，继续作为禁区参与判定。
+    """
+    out: list[str] = []
+    env = os.environ.get("LFL_HOST_GRANT_HOME", "").strip()
     if env:
-        return Path(env)
-    return Path(__file__).resolve().parents[3] / "data"
+        with contextlib.suppress(HostGrantError):
+            out.append(
+                _realpath_str(ensure_grant_home_isolated(Path(env).expanduser()))
+            )
+    xdg = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(xdg).expanduser() if xdg else (Path.home() / ".local" / "state")
+    out.append(_realpath_str(base / "lfl-host-grants"))
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+def host_grant_store_home() -> Path:
+    """host-grant 账本 home 唯一推导（P0-1 防线 B：独立安全状态目录）.
+
+    推导顺序：LFL_HOST_GRANT_HOME（显式部署/测试覆盖）>
+    $XDG_STATE_HOME/lfl-host-grants > ~/.local/state/lfl-host-grants。
+    返回**基准目录**；grants 子目录由 HostCapabilityGrantStore.__init__
+    统一追加一次（类契约 ``<home>/grants``）。
+
+    P0-1（2026-11-14，独立 Reviewer P0）：此前基准取 LFL_DATA_DIR env >
+    代码根/data——生产 LFL_DATA_DIR 位于 workspace 内，bwrap --bind
+    workdir 下模型可改写 grants/audit，伪造 approved 记录即获无审批的
+    宿主文件 bind。现改为与普通数据目录**分离**的稳定状态目录，并经
+    ensure_grant_home_isolated() fail-closed 校验（重叠/symlink/属主/
+    权限）。旧不可信 grants 不自动迁移；web 审批与工具消费同源调用本
+    函数（web/routes.py、tools/builtin/execute_command.py）。
+    """
+    env = os.environ.get("LFL_HOST_GRANT_HOME", "").strip()
+    if env:
+        home = Path(env).expanduser()
+    else:
+        xdg = os.environ.get("XDG_STATE_HOME", "").strip()
+        base = Path(xdg).expanduser() if xdg else (Path.home() / ".local" / "state")
+        home = base / "lfl-host-grants"
+    return ensure_grant_home_isolated(home)

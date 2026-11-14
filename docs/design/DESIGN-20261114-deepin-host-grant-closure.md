@@ -65,11 +65,19 @@
 
 ### 7.2 有意的最小化偏差
 
-1. **audit 目录**：grant home 统一由 `host_grant_store_home()`（`LFL_DATA_DIR` env > 代码根/data，与 web escalation 端点同源）推导，**不用** `settings.DATA_DIR`——消除两 env 名（DATA_DIR vs LFL_DATA_DIR）的既有分歧在授权闭环上造成签发/消费路径漂移。
+1. **audit 目录**（P0-1 修订）：grant home 由 `host_grant_store_home()` 推导为**独立安全状态目录**（`LFL_HOST_GRANT_HOME` env > `$XDG_STATE_HOME/lfl-host-grants` > `~/.local/state/lfl-host-grants`；与 web 审批端点、execute_command 同源），并经 `ensure_grant_home_isolated()` fail-closed 校验（realpath 双向不与沙盒可写根重叠——工作区/LFL_DATA_DIR//tmp/缓存目录/EXEC_SANDBOX_MACOS_WRITABLE、祖先属主/权限/symlink）。此前取 `LFL_DATA_DIR` env > 代码根/data 的推导在生产使账本落入 workspace 内（`--bind workdir` 可写面），系独立 Reviewer P0 的根源，已闭合。**不用** `settings.DATA_DIR`（两 env 名分歧的路径漂移问题同前）。
 2. **审批 UI（P0）**：EscalationCenter 不改（command 摘要文本承载审批信息；detail 端点新增 `request_kind`/`host_request` 字段）；grant 徽标 UI 留给后续。
 3. **create/delete/目录/递归**：P0 一律拒绝（`_validate_request`）；无扩大面。
 4. **执行失败不退 grant**：单次语义=执行尝试（无论退出码/沙箱启动失败于 consume 后）即消耗；重新申请需人工再批。fail-closed 方向。
-5. **跨进程部署**：web 审批端点与 AI 会话同进程假设沿用既有 escalation 架构（EscalationStore 进程签名密钥）；HostCapabilityGrantStore 本身无签名、文件持久，重启/跨进程可验证。
+5. **跨进程部署**（P0-1 修订）：web 审批端点与 AI 会话同进程假设沿用既有 escalation 架构（EscalationStore 进程签名密钥）；HostCapabilityGrantStore 现同样持有**进程内随机 HMAC 密钥**（`_GRANT_SIGNING_KEY`，独立 domain，不落盘/env/日志/子进程）：签发即 MAC（grant 落盘带 `key_id`+`mac`），peek 附 `_sig_unverified` 只读标记，consume/revoke/变更前必验签（含锁内 fresh 重读），CAS 写回后重签——伪造/篡改/他进程签发/服务重启旧记录一律拒绝（不假装仍有效，需重新人工审批）；审计链 HMAC 化并按 key epoch 分段（旧 epoch 链归档 `audit.<key_id>.<n>.jsonl` 保留证据、新链以 epoch_start 重开；同 epoch 篡改即 `audit_chain_broken` 停止签发；legacy 无 MAC 链 fail-closed 需人工清理）。跨进程签发的 grant 在消费端验签失败并明确拒绝（同进程部署契约与 escalation 一致）。
+
+### 7.2.1 P0-1 双防线（2026-11-14 增补，独立 Reviewer P0 闭合）
+
+- **防线 A（MAC）**：见 §7.2(5)。核心不变量——**不可信内容绝不重签洗白**（锁内 fresh 验签失败即拒，revoke 拒绝改写不可信记录）；MAC 覆盖含 `key_id` 的全部字段（防换绑）。
+- **防线 B（home 隔离）**：见 §7.2(1)。另加 execute_command **workdir 账本禁区**（workdir 与账本候选——生效 env home+平台默认 home——双向重叠即拒执行，防 `--bind workdir` 圈住账本）；web 审批端点账本构造移入 fail-closed try（不可用即 503、决定不落盘）。
+- **旧数据**：旧不可信 grants/audit **不自动迁移**——重启后旧 grant 验签失败拒绝消费；legacy 审计链 `audit_chain_broken`，恢复动作=人工移走旧 `grants/` 目录（生产当前无存量依赖）。
+- **恢复语义**：服务重启→密钥轮换→旧 grant 失效（需重新人工审批）；审计链自动按 epoch 归档重开，审批流不断。
+- **攻击面收口**：`LFL_HOST_GRANT_*`/XDG env 污染、symlink 重定向、workdir 圈账本、伪造/篡改/重放/跨进程签发，全部负例回归（§7.3 新增行）。
 
 ### 7.3 测试映射（专项）
 
@@ -95,6 +103,15 @@
 | bwrap argv 精确 bind/未授权无 bind | `test_bwrap_argv_precise_file_bind_with_dir_ancestors`、e2e `test_bwrap_argv_bind_shape_for_write` |
 | 真 bwrap 默认拒绝 | e2e `test_real_bwrap_default_deny_and_grant_write`（skipif 无 bwrap；Deepin/CI Linux 跑） |
 | grant 与灾难令牌互斥 | e2e `test_grant_mutually_exclusive_with_catastrophic_token` |
+| **P0-1** 伪造（无 mac / 伪造 mac+key_id / 字段全自洽+request_id 不存在）拒 | `test_host_grant_store_auth.py::test_forged_approved_grant_without_mac_rejected`、`…_with_fake_mac_and_key_id_rejected`、`…_fully_selfconsistent_binding_rejected` |
+| **P0-1** 篡改已签发文件（保留原 mac）拒 | `…::test_tampered_issued_grant_rejected` |
+| **P0-1** 审计链篡改 → 停止签发 | `…::test_audit_tamper_stops_issuance` |
+| **P0-1** 服务重启（密钥轮换）旧 grant 拒 + 旧链 epoch 归档 + 审批流可用 | `…::test_service_restart_rotates_key_and_invalidates_grants` |
+| **P0-1** 不可信记录拒绝改写（防洗白） | `…::test_revoke_refuses_untrusted_record` |
+| **P0-1** 同进程跨 store 对象签发-消费 + 单次重放拒 | `…::test_same_process_cross_store_object_consume` |
+| **P0-1** unsafe home（workspace/LFL_DATA_DIR//tmp/缓存/EXEC_SANDBOX_MACOS_WRITABLE/XDG/symlink）fail-closed | `…::test_unsafe_home_env_rejected`、`…_via_lfl_data_dir_rejected`、`…_xdg_state_home_into_workspace_rejected`、`…_symlink_redirect_into_workspace_rejected`；默认分离 `…::test_default_home_outside_writable_roots` |
+| **P0-1** execute_command 拒伪造 grant / workdir 账本禁区 | `…::test_execute_command_rejects_forged_grant`、`…::test_execute_command_workdir_grant_home_guard` |
+| **P0-1** 真实 bwrap：workdir bind 内不可写账本 | `…::test_bwrap_cannot_write_grant_home`（skipif 无 bwrap；Deepin/Linux 跑） |
 
 回归：tests/unit/test_escalation.py、test_sandbox*.py、test_execute_*.py、tests/test_escalation_*、test_write_scope_*、test_command_scope_guard.py、test_web_auth_csrf.py 全绿（839 passed / 2 skipped，含专项）。
 

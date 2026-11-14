@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -27,7 +28,6 @@ from llm_loop.tools.builtin.host_access import HostAccessRequestTool
 from llm_loop.tools.escalation import (
     EscalationStore,
     HostCapabilityGrantStore,
-    host_grant_store_home,
 )
 from llm_loop.tools.sandbox import sandbox_argv
 
@@ -48,7 +48,7 @@ def store(isolated_data_dir):
 
 @pytest.fixture
 def gstore(isolated_data_dir):
-    return HostCapabilityGrantStore(host_grant_store_home())
+    return HostCapabilityGrantStore(Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve())
 
 
 def _sandbox_usable(mode: str) -> bool:
@@ -133,8 +133,8 @@ def test_grant_consumed_once_with_audit(store, gstore, ctx, isolated_data_dir):
     assert "已用" in r2.content or "消费失败" in r2.content
     # 拒绝路径不得改写目标文件（文件字节不被重写）
     assert target.read_bytes() == after_r1
-    # 审计链
-    audit = (isolated_data_dir / "grants" / "audit.jsonl")
+    # 审计链（P0-1: 独立安全状态目录经同源推导）
+    audit = (Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve() / "grants" / "audit.jsonl")
     assert audit.exists() and gid in audit.read_text(encoding="utf-8")
 
 

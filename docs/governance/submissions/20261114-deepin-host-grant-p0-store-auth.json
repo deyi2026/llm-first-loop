@@ -1,0 +1,66 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-deepin-host-grant-p0-store-auth",
+  "summary": "Close the independent-reviewer P0 on the host capability grant store: the grant/audit ledger lived inside a sandbox-writable root (production LFL_DATA_DIR under the workspace, reachable through bwrap --bind workdir workdir), and grant records carried no MAC so a forged status=approved record with a self-consistent request_binding could be consumed without human approval. Structural dual defense, fail-closed, minimal: (A) in-process random HMAC signing key signs grants and the audit chain (peek/consume/revoke verify MAC, CAS rewrite re-signs, untrusted content is never re-signed; restart rotates the key, old grants fail verification and require fresh human approval, old audit chains rotate per epoch while archives are preserved); (B) the ledger home moves to a dedicated secure state directory (LFL_HOST_GRANT_HOME > $XDG_STATE_HOME/lfl-host-grants > ~/.local/state/lfl-host-grants) with fail-closed realpath/owner/permission checks against every sandbox-writable root, plus an execute_command workdir grant-home guard so --bind workdir cannot enclose the ledger.",
+  "components": [
+    {
+      "component_id": "host-grant-store-mac-defense",
+      "paths": [
+        "src/llm_loop/tools/escalation.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/web/routes.py",
+        "tests/conftest.py",
+        "tests/unit/test_host_grant_closure.py",
+        "tests/unit/test_host_grant_web.py",
+        "tests/unit/test_host_grant_store_auth.py",
+        "tests/integration/test_host_grant_e2e.py",
+        "docs/design/DESIGN-20261114-deepin-host-grant-closure.md",
+        "docs/governance/submissions/20261114-deepin-host-grant-p0-store-auth.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "host-grant-p0-store-auth-dual-defense",
+      "owning_subsystem": "HostCapabilityGrantStore (escalation.py) shared by the web approval endpoint and execute_command",
+      "disposition": "Add an in-process random HMAC signing key (separate domain from EscalationStore state signing; never written to disk, env, logs or child processes). issue() stamps key_id+mac; peek() returns a read-only _sig_unverified marker on failure; check/consume/revoke verify the MAC including a fresh in-lock re-read and refuse to rewrite untrusted content; consume/revoke re-sign after CAS advancement. The audit chain is HMAC-linked with per-record key_id and an epoch_start root; same-epoch tampering stops issuance (audit_chain_broken), a legacy unsigned chain is fail-closed pending manual cleanup, and a stale-epoch chain is archived append-only (audit.<key_id>.<n>.jsonl) while a new epoch starts so approval flow survives restarts. host_grant_store_home() derives the isolated secure home (LFL_HOST_GRANT_HOME > XDG_STATE_HOME/lfl-host-grants > ~/.local/state/lfl-host-grants) and ensure_grant_home_isolated() fail-closes on realpath overlap (both directions) with any sandbox-writable root (workspace/code root, LFL_DATA_DIR, /tmp, /private/tmp, ~/.cache, ~/Library/Caches, ~/.npm, EXEC_SANDBOX_MACOS_WRITABLE), symlink segments, foreign owners, or group/other-writable ancestors. execute_command adds a workdir grant-home guard (both-direction overlap with the effective or default ledger home rejects execution before sandbox construction). The web decide endpoint constructs the store inside a fail-closed try (503, decision not persisted) when the ledger is unavailable. Old untrusted grants/audit are not migrated.",
+      "evidence": [
+        "tests/unit/test_host_grant_store_auth.py",
+        "tests/unit/test_host_grant_closure.py",
+        "tests/unit/test_host_grant_web.py",
+        "tests/integration/test_host_grant_e2e.py",
+        "docs/design/DESIGN-20261114-deepin-host-grant-closure.md §7.2(1)(5), §7.2.1, §7.3"
+      ],
+      "verification_level": "Dev agent focused run (isolated worktree, branch fix/deepin-host-grant-p0-store-auth-20261114): 58 passed / 3 skipped (44 retained host-grant focused tests plus 16 new attack-chain regressions; skips are bwrap-only, macOS cannot run them). Ruff, Pyright, A.5 manifest path coverage, git diff --check, independent GLM-5.3 reviewer PASS with P0/P1=0 and the original full R9 remain required before any integration or deployment (parent responsibility).",
+      "model_evidence_veto_recovery_exit": "A same-UID model that can write the workspace (bwrap --bind workdir workdir) or pollute LFL_HOST_GRANT_*/XDG env cannot forge, tamper, replay, or cross-process-consume a grant: records without a valid in-process HMAC are rejected at peek/check/consume/revoke and the ledger home refuses to resolve into any sandbox-writable root. The operator can deny or revoke; a restart invalidates outstanding grants and requires fresh human approval.",
+      "rollback_route": "Revert this branch only; no production data migration exists (old untrusted grants are intentionally not migrated and old unsigned audit chains fail closed until manually cleared). Keep the prior 0.6.52 wheel and cold backup for controlled rollback."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-grant-p0-store-auth-dual-defense",
+      "g1": {
+        "necessity": "A same-UID model with workspace write access (bwrap --bind workdir workdir) could previously forge or tamper grant/audit JSON inside the sandbox-writable ledger root and consume an unapproved host-file bind. Passwordless integrity cannot be assumed on that root, so an in-process HMAC and an out-of-sandbox ledger location are both structurally required; neither alone survives an attacker who can write the ledger directory."
+      },
+      "g2": {
+        "authority_owner": "HostCapabilityGrantStore in-process HMAC signing key (random per service start, never persisted) plus the isolated secure state directory guarded by ensure_grant_home_isolated(); the human browser approval remains the only way to obtain a signed grant.",
+        "relationship": "reuse",
+        "non_duplication": "No second authorization ledger: the same store/home derivation serves the web approval endpoint and execute_command; escalation request/decision records keep their existing separate state signing domain."
+      },
+      "g3": {
+        "model_evidence": [
+          "issue() stamps key_id+mac over the full record; peek() flags _sig_unverified, and check/consume/revoke verify the MAC before any lifecycle or scope decision, including a fresh in-lock re-read before CAS rewrite.",
+          "The audit chain is HMAC-linked with a per-epoch epoch_start root; same-epoch tampering stops issuance, stale-epoch chains are archived append-only and a new epoch starts after restart.",
+          "host_grant_store_home() fails closed on realpath overlap (either direction) with workspace, LFL_DATA_DIR, /tmp, /private/tmp, ~/.cache, ~/Library/Caches, ~/.npm or EXEC_SANDBOX_MACOS_WRITABLE, on symlink segments, foreign owners, or group/other-writable ancestors; execute_command rejects any workdir that encloses the ledger home."
+        ],
+        "recovery_or_reason": "A restart invalidates outstanding grants (fresh human approval required) while archived audit evidence is preserved; forged/tampered/cross-process-signed records are rejected with explicit reasons; an operator can deny or revoke, and an unsafe ledger home makes issuance fail closed (503) without persisting the decision."
+      },
+      "g4": {
+        "rollback": "Revert this branch only; no production migration exists by design. Keep the prior 0.6.52 wheel and cold backup; old unsigned grant/audit data intentionally fails closed until manually cleared.",
+        "verification": [
+          "Dev agent focused run in the isolated worktree: 58 passed / 3 skipped (44 retained host-grant focused tests + 16 new attack-chain regressions; bwrap-only skips on macOS).",
+          "Ruff clean and Pyright 0 errors on all changed files; A.5 manifest path coverage green for this submission.",
+          "Independent GLM-5.3 reviewer PASS with P0/P1=0 and the original full R9 remain required before integration or deployment (parent responsibility).",
+          "On Deepin/Linux, the real-bwrap regression must run unskipped to demonstrate the workspace bind cannot write the ledger home."
+        ]
+      }
+    }
+  ]
+}

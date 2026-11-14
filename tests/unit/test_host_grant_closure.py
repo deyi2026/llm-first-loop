@@ -33,7 +33,6 @@ from llm_loop.tools.builtin.host_access import HostAccessRequestTool
 from llm_loop.tools.escalation import (
     EscalationStore,
     HostCapabilityGrantStore,
-    host_grant_store_home,
 )
 from llm_loop.tools.sandbox import bwrap_argv, sandbox_argv
 
@@ -46,10 +45,12 @@ def store(isolated_data_dir):
 
 @pytest.fixture
 def gstore(isolated_data_dir):
-    # P0 补修(2026-11-14): home 推导返回**基准 data 目录**（grants 由 store
-    # __init__ 统一追加一次，类契约 <home>/grants）——单层，不再双层 grants
-    assert host_grant_store_home() == isolated_data_dir
-    return HostCapabilityGrantStore(host_grant_store_home())
+    # P0-1（2026-11-14）: conftest 已注入 LFL_HOST_GRANT_HOME（tmp/host-grants）
+    # 并钉模块属性 host_grant_store_home；正向语境直构（生产推导校验由
+    # test_host_grant_store_auth.py 负例覆盖）。
+    home = Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve()
+    assert home.name == "host-grants"
+    return HostCapabilityGrantStore(home)
 
 
 @pytest.fixture
@@ -236,21 +237,28 @@ def test_peek_missing_grant_fails_closed(gstore):
 
 
 def test_grant_store_layout_single_layer(isolated_data_dir, gstore, session_ctx, target_file):
-    """P0 补修(2026-11-14) 回归: 审计/授权文件必须落在 data/grants/（单层）.
+    """P0 补修(2026-11-14) 回归: 审计/授权文件必须落在 <home>/grants/（单层）.
 
     host_grant_store_home() 曾额外拼 /grants，与 store __init__ 内追加叠成
     data/grants/grants 双层，audit.jsonl 落错层（e2e 审计断言失败的根因）。
+    P0-1（2026-11-14）: home 已迁独立安全状态目录（LFL_HOST_GRANT_HOME，
+    conftest 注入 tmp/host-grants），单层断言改为同源推导 home。
     """
+    from llm_loop.tools.escalation import host_grant_store_home as _home
+
     gstore.issue(
         tool_name="execute_command", canonical_path=str(target_file),
         operation="write", requester_session_id="host-grant-unit",
         ttl_s=600, approver_identity="web:session:unit",
         request_binding={"command_sha256": "a" * 64, "cwd": "/ws", "file_sha256": "b" * 64},
     )
-    # audit 恰在 data/grants/audit.jsonl（单层），且不存在双层 grants/grants
-    assert (isolated_data_dir / "grants" / "audit.jsonl").exists()
-    assert not (isolated_data_dir / "grants" / "grants").exists()
-    assert not (isolated_data_dir / "grants" / "grants" / "audit.jsonl").exists()
+    # audit 恰在 <home>/grants/audit.jsonl（单层），且不存在双层 grants/grants
+    grants_dir = _home() / "grants"
+    assert (grants_dir / "audit.jsonl").exists()
+    assert not (grants_dir / "grants").exists()
+    assert not (grants_dir / "grants" / "audit.jsonl").exists()
+    # P0-1: 账本绝不落在 LFL_DATA_DIR（旧生产缺陷——data 曾在 workspace 内）
+    assert not (isolated_data_dir / "grants").exists()
 
 
 # ── 5. escalation_wait: host-grant 分支 ───────────────────

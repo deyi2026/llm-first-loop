@@ -894,6 +894,23 @@ class ExecuteCommandTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # ── P0-1（2026-11-14，独立 Reviewer P0）: MAC 验签优先于一切诊断——
+        # 不可信记录的生命周期/维度诊断本身不可信。伪造（status=approved +
+        # 自洽 request_binding 的无密钥 JSON）、篡改、他进程签发、服务重启后
+        # 的旧记录，一律在此拒绝；不消费、不执行。
+        if grant.get("_sig_unverified"):
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[host-grant 拒绝] grant 签名校验失败（伪造/篡改/他进程签发"
+                    f"或服务已重启，grant …{host_grant_id[-12:]}；不可信记录"
+                    "不消费——host-grant 审批与消费须同进程部署；如仍必要请"
+                    "重新发起 host_access_request 人工审批）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
         # ── P0 补修(2026-11-14): 生命周期诊断优先级——已撤销/已消费/已过期的
         # grant 先于维度比对短路拒绝，避免次生诊断（如"目标文件内容已变化"）
         # 掩盖"授权已用"这一根因。fail-closed 语义不变：仍拒绝、不消费、不执行。
@@ -1430,6 +1447,40 @@ class ExecuteCommandTool:
             write_scope_audit_record_unverified(path, reason)
         return None
 
+    def _grant_home_workdir_guard(self, workdir: str | None) -> ToolResult | None:
+        """P0-1 防线 B：workdir 不得圈住 host-grant 授权账本（fail-closed）。
+
+        bwrap --bind workdir workdir 与 sandbox-exec 可写根都以 workdir 为
+        界——workdir 落在账本内（或为账本祖先）即模型可改写 grants/audit。
+        候选集：生效账本（env 校验通过者）+ 平台默认账本（env 被拒时默认
+        路径仍是真实账本）。只读判定，无副作用。
+        """
+        from llm_loop.tools.escalation import (
+            _paths_overlap,
+            grant_home_guard_candidates,
+        )
+
+        try:
+            effective = os.path.realpath(
+                workdir if workdir else workspace_base()
+            )
+        except OSError:
+            return None
+        for cand in grant_home_guard_candidates():
+            if _paths_overlap(effective, cand):
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=(
+                        "[参数错误] workdir 与 host-grant 授权账本目录重叠"
+                        f"（workdir {effective} vs 账本 {cand}；沙盒以 workdir"
+                        " 为可写根，账本必须在沙盒可写根之外——拒绝执行）"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                    error_type="workdir_overlaps_grant_home",
+                )
+        return None
+
     def _write_scope_reject(self, reason: str, detail: str) -> ToolResult:
         """P1-a 闸的拒绝回执（error_type 与文件写侧越界一致，便于统一观测）。"""
         return ToolResult(
@@ -1457,6 +1508,12 @@ class ExecuteCommandTool:
         if isinstance(flags, ToolResult):
             return flags
         workdir, run_bg, fail_fast, isolation, launch_command = flags
+        # ── P0-1（2026-11-14，独立 Reviewer P0）: workdir 账本禁区——
+        # bwrap --bind workdir workdir / sandbox-exec 可写根以 workdir 为界，
+        # workdir 落在授权账本内（或为其祖先）= 模型可改写 grants/audit。
+        grant_home_guard = self._grant_home_workdir_guard(workdir)
+        if grant_home_guard is not None:
+            return grant_home_guard
         # EVO-20261105-64a037d9: 只对**显式** workdir 回显绝对 cwd（默认路径零噪音）。
         explicit_workdir = workdir is not None
         spec = _CommandSpec(
@@ -1562,8 +1619,8 @@ class ExecuteCommandTool:
                 return ToolResult(
                     status=ToolResultStatus.ERROR,
                     content=(
-                        "[host-grant 拒绝] 授权消费失败（已用/过期/撤销/维度不符——"
-                        "如仍必要请重新申请 host_access_request）"
+                        "[host-grant 拒绝] 授权消费失败（已用/过期/撤销/维度不符/"
+                        "签名失效——如仍必要请重新申请 host_access_request）"
                     ),
                     error_type="host_grant_consume_failed",
                     tool_call_id="",

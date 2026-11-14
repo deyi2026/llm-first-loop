@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,7 +27,6 @@ from llm_loop.tools.builtin.host_access import HostAccessRequestTool
 from llm_loop.tools.escalation import (
     EscalationStore,
     HostCapabilityGrantStore,
-    host_grant_store_home,
 )
 from llm_loop.web import build_app
 from llm_loop.web.auth import SESSION_COOKIE_NAME
@@ -42,7 +43,9 @@ def store(isolated_data_dir):
 
 @pytest.fixture
 def gstore(isolated_data_dir):
-    return HostCapabilityGrantStore(host_grant_store_home())
+    # P0-1（2026-11-14）: home 经 LFL_HOST_GRANT_HOME（conftest 注入
+    # tmp/host-grants）推导，fail-closed 校验通过后构造 store。
+    return HostCapabilityGrantStore(Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve())
 
 
 @pytest.fixture
@@ -86,7 +89,8 @@ def _login_session(client: TestClient) -> None:
 
 
 def _grant_files(isolated_data_dir):
-    d = isolated_data_dir / "grants"
+    # P0-1（2026-11-14）: 账本已与 LFL_DATA_DIR 分离——经同源推导取 home。
+    d = Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve() / "grants"
     return list(d.glob("*.json")) if d.exists() else []
 
 
@@ -192,9 +196,9 @@ def test_stale_review_revokes_orphan_grant(
     assert store.get(rid)["status"] == "pending"
     grants = gstore.list_all() if hasattr(gstore, "list_all") else []
     if not grants:
-        # store 无 list_all：扫描目录（P0 补修: home 为基准 data 目录，
+        # store 无 list_all：扫描目录（P0-1: home 为独立安全状态目录，
         # grant 文件在 home/grants/ 单层）
-        d = host_grant_store_home() / "grants"
+        d = Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve() / "grants"
         grants = [gstore.peek(p.stem) for p in d.glob("*.json")] if d.exists() else []
     for g in grants:
         if g and g.get("status") == "approved" and g.get("request_binding", {}).get("request_id") == rid:

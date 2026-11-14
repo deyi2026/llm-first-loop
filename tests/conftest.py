@@ -364,6 +364,19 @@ def isolated_data_dir(tmp_path, monkeypatch):
     # 解析 env 时落到 tmp_path，绝不在真实 home 建 ~/lfl-workspace（测试污染
     # 防线；与下方 chdir(tmp_path) 的旧 cwd 语义保持行为等价）。
     monkeypatch.setenv("LFL_DEFAULT_WORKSPACE_ROOT", str(tmp_path))
+    # P0-1（2026-11-14，独立 Reviewer P0）: host-grant 授权账本 home 同步
+    # 钉进 tmp——账本已与 LFL_DATA_DIR 分离（生产 LFL_DATA_DIR 曾位于
+    # workspace 内，模型经 --bind workdir 可改写 grants/audit）。所有测试
+    # 经 env 隔离，绝不在真实 ~/.local/state/lfl-host-grants 建账本。
+    # 注意：pytest basetemp 在 /private/tmp（外层沙箱唯一非工作区可写区，
+    # 亦是生产危险根），故正向链路（web 端点/execute_command 的函数内
+    # import）同时把模块属性 host_grant_store_home 钉到该 home——真实
+    # 推导函数的生产校验由负例测试（test_host_grant_store_auth.py）以
+    # 文件顶部绑定直接覆盖，不受本 patch 影响。
+    _grant_home = tmp_path / "host-grants"
+    monkeypatch.setenv("LFL_HOST_GRANT_HOME", str(_grant_home))
+    from llm_loop.tools import escalation as _esc
+    monkeypatch.setattr(_esc, "host_grant_store_home", lambda: _grant_home.resolve())
     # R9-IMM-02（D6 双修·测试面纵深防御）: cwd 锁进沙箱——任何残余相对路径写入
     # （含 path_registry 曾静默回落 "data/" 的洞）都落在 tmp 而非真实仓库 data/。
     # 与生产面 fallback 抛错独立成立。
