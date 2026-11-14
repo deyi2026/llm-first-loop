@@ -444,15 +444,9 @@ class EventStore:
         self._extend_read_cache(event)
         return event
 
-    def append_durable_run_fact(
-        self, session_id: str, event_type: str, payload: dict
-    ) -> Event:
-        """Strict, opt-in M5 Run evidence fence (NOT a dispatch authorization).
-
-        Unlike append(), this never fails open. A post-append I/O/readback
-        failure is UNCERTAIN and must not trigger another physical action.
-        Legacy callers and ordinary run.end retain their existing behavior.
-        """
+    @staticmethod
+    def _validate_durable_run_fact(event_type: str, payload: dict) -> None:
+        """Pure M5 protocol/identity check before any file operation."""
         from llm_loop.core.durable_run_recovery import (
             FENCED,
             OPENED,
@@ -493,6 +487,17 @@ class EventStore:
                 or (outcome == "aborted_before_dispatch" and end_id)
             ):
                 raise EventDurabilityError("invalid_durable_run_terminal")
+
+    def append_durable_run_fact(
+        self, session_id: str, event_type: str, payload: dict
+    ) -> Event:
+        """Strict, opt-in M5 Run evidence fence (NOT a dispatch authorization).
+
+        Unlike append(), this never fails open. A post-append I/O/readback
+        failure is UNCERTAIN and must not trigger another physical action.
+        Legacy callers and ordinary run.end retain their existing behavior.
+        """
+        self._validate_durable_run_fact(event_type, payload)
         try:
             session_id = _validate_session_id(session_id)
         except ValueError as exc:
