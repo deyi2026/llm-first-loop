@@ -19,6 +19,7 @@ from llm_loop.core.durable_run_recovery import (
     REPLAN,
     SCHEMA,
     TERMINAL,
+    append_durable_terminal_from_run_end,
     assess_durable_run,
 )
 from llm_loop.event_log.store import (
@@ -531,3 +532,163 @@ def test_mixed_legacy_and_strict_cross_process_append_share_seq_lock(
     assert len(rows) == 2
     assert [row.seq for row in rows] == [1, 2]
     assert {row.type for row in rows} == {"session.created", OPENED}
+
+
+
+def _produce_completed_terminal(
+    events: EventStore, budget: TaskBudgetStore, revision: int,
+) -> bool:
+    return append_durable_terminal_from_run_end(
+        event_store=events,
+        budget_store=budget,
+        session_id=SID,
+        run_generation=GEN,
+        authorization_id=AUTH,
+        admission_revision=revision,
+    )
+
+
+def test_m5f_real_terminal_producer_completed_zero_effect_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    revision = row["revision"]
+    _open(events, revision)
+    end = events.append(
+        SID, "run.end", {"reason": "completed", "run_generation": GEN}
+    )
+    assert end is not None
+    _stop(budget, row)
+    assert _produce_completed_terminal(events, budget, revision)
+    verdict = _assess(events, budget)
+    assert verdict.decision == COMPLETED
+    assert not verdict.auto_resume_allowed
+    assert not verdict.old_run_replay_allowed
+    terminal = [e for e in events.read(SID) if e.type == TERMINAL]
+    assert len(terminal) == 1
+    assert terminal[0].payload["run_end_event_id"] == end.event_id
+    assert not _produce_completed_terminal(events, budget, revision)
+    assert len([e for e in events.read(SID) if e.type == TERMINAL]) == 1
+
+
+@pytest.mark.parametrize(
+    ("reason", "generation"),
+    [
+        ("cancelled", GEN),
+        ("completed", "c" * 32),
+        ("llm_error", GEN),
+    ],
+)
+def test_m5f_terminal_producer_rejects_noncompleted_or_other_generation(
+    tmp_path: Path, reason: str, generation: str,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    events.append(SID, "run.end", {
+        "reason": reason, "run_generation": generation,
+    })
+    _stop(budget, row)
+    emitted = _produce_completed_terminal(events, budget, row["revision"])
+    assert not emitted
+    assert _assess(events, budget).decision == HOLD
+    assert not any(e.type == TERMINAL for e in events.read(SID))
+
+
+@pytest.mark.parametrize(
+    "extra_event",
+    [None, "provider.transport.opened", "tool.execution.effect_prepared"],
+)
+def test_m5f_terminal_producer_rejects_missing_or_external_evidence(
+    tmp_path: Path, extra_event: str | None,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    if extra_event:
+        events.append(SID, extra_event, {"origin_run_generation": GEN})
+        events.append(SID, "run.end", {
+            "reason": "completed", "run_generation": GEN,
+        })
+    _stop(budget, row)
+    emitted = _produce_completed_terminal(events, budget, row["revision"])
+    assert emitted is (extra_event is not None)
+    assert _assess(events, budget).decision == HOLD
+    assert sum(e.type == TERMINAL for e in events.read(SID)) == int(emitted)
+
+
+def test_m5f_terminal_producer_requires_budget_seal_and_exact_revision(
+    tmp_path: Path,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    events.append(SID, "run.end", {
+        "reason": "completed", "run_generation": GEN,
+    })
+    assert not _produce_completed_terminal(events, budget, row["revision"])
+    assert not _produce_completed_terminal(events, budget, row["revision"] + 1)
+    _stop(budget, row)
+    assert _produce_completed_terminal(events, budget, row["revision"])
+
+
+def test_m5f_terminal_producer_strict_append_failure_is_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    events.append(SID, "run.end", {
+        "reason": "completed", "run_generation": GEN,
+    })
+    _stop(budget, row)
+    def reject(*_args: object, **_kwargs: object) -> None:
+        raise EventDurabilityError("test-only durable append failure")
+    monkeypatch.setattr(events, "append_durable_run_fact", reject)
+    with pytest.raises(EventDurabilityError):
+        _produce_completed_terminal(events, budget, row["revision"])
+    assert _assess(events, budget).decision == HOLD
+    assert not any(e.type == TERMINAL for e in events.read(SID))
+
+
+
+def test_m5f_terminal_producer_preserves_dispatched_provider_hold(
+    tmp_path: Path,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    admission_revision = row["revision"]
+    _open(events, admission_revision)
+    member = TaskBudgetMember.from_dict(row["members"][BID])
+    row = budget.reserve(
+        BID, member=member, reservation_id="dispatch-m5f-provider",
+        kind=BudgetDimension.PHYSICAL_ATTEMPTS,
+        expected_revision=row["revision"],
+    )
+    row = budget.mark_dispatched(
+        BID, "dispatch-m5f-provider", expected_revision=row["revision"]
+    )
+    events.append(SID, "provider.transport.opened", {
+        "origin_run_generation": GEN, "attempt_id": "pattempt:m5f",
+    })
+    events.append(SID, "run.end", {
+        "reason": "completed", "run_generation": GEN,
+    })
+    _stop(budget, row)
+    assert _produce_completed_terminal(events, budget, admission_revision)
+    terminal = [e for e in events.read(SID) if e.type == TERMINAL]
+    assert len(terminal) == 1
+    assert terminal[0].payload["outcome"] == "completed"
+    assert _assess(events, budget).decision == HOLD
+    assert not _assess(events, budget).auto_resume_allowed
+    assert next(iter(budget.read(BID)["reservations"].values()))["phase"] == "dispatched"
+
+
+def test_m5f_terminal_producer_rejects_duplicate_run_end(
+    tmp_path: Path,
+) -> None:
+    events, budget, row = _fixture(tmp_path)
+    _open(events, row["revision"])
+    for _ in range(2):
+        events.append(SID, "run.end", {
+            "reason": "completed", "run_generation": GEN,
+        })
+    _stop(budget, row)
+    assert not _produce_completed_terminal(events, budget, row["revision"])
+    assert _assess(events, budget).decision == HOLD
+    assert not any(e.type == TERMINAL for e in events.read(SID))

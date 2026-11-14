@@ -3206,6 +3206,50 @@ def test_m5b_real_engine_hook_failure_never_reaches_provider(
 
 
 
+def test_m5f_real_t1_lifecycle_does_not_forge_terminal_on_adapter_denial(
+    build_test_engine, tmp_path: Path,
+) -> None:
+    from llm_loop.core.durable_run_recovery import (
+        FENCED,
+        HOLD,
+        OPENED,
+        TERMINAL,
+        assess_durable_run,
+    )
+    from llm_loop.resources.task_budget_t1_web_profile import bind_t1_web_plan
+
+    engine, fake = build_test_engine([])
+    plan, target = _t1_engine_plan(tmp_path, engine, session_id="m5f-adapter-denied")
+    plan = replace(plan, durable_run_admission_required=True)
+    before = target.read_bytes()
+    with bind_t1_web_plan(plan), pytest.raises(
+        TaskBudgetDeniedError, match="provider_adapter_unqualified"
+    ):
+        list(engine.run_stream(
+            plan.session_id, "offline T1 lifecycle test", ingress=issue_ingress("web")
+        ))
+    assert fake.calls == []
+    assert target.read_bytes() == before
+    facts = [
+        e.type for e in plan.event_store.read(plan.session_id)
+        if e.type.startswith("run.durable.")
+    ]
+    assert facts == [OPENED, FENCED]
+    assert TERMINAL not in facts
+    assert plan.budget_store.read(plan.budget_id)["phase"] == "stop_requested"
+    verdict = assess_durable_run(
+        event_store=plan.event_store,
+        budget_store=plan.budget_store,
+        session_id=plan.session_id,
+        run_generation=plan.budget_store.read(plan.budget_id)["members"][
+            plan.budget_id
+        ]["run_generation"],
+        authorization_id=plan.authorization_id,
+    )
+    assert verdict.decision == HOLD
+    assert not verdict.auto_resume_allowed
+
+
 @pytest.mark.parametrize(
     "crash_stage,expected_facts,exit_code",
     [("before_fence", 1, 37), ("after_fence", 2, 38)],

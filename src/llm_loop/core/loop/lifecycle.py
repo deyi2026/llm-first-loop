@@ -452,6 +452,33 @@ class _RunEntrypointMixin:
                         "generation=%s; physical_quiescence_verified=false",
                         session_id, run_generation,
                     )
+                else:
+                    # M5-F: real fenced T1 Run-end evidence after the
+                    # durable seal; external outcomes remain HOLD, never retry.
+                    if getattr(_budget_execution, "_t1_durable_run_fenced", False):
+                        try:
+                            from llm_loop.core.durable_run_recovery import (
+                                append_durable_terminal_from_run_end,
+                            )
+
+                            append_durable_terminal_from_run_end(
+                                event_store=_budget_execution._t1_event_store,
+                                budget_store=_budget_execution.store,
+                                session_id=session_id,
+                                run_generation=run_generation,
+                                authorization_id=_budget_execution.budget_id.removeprefix(
+                                    "webt1-"
+                                ),
+                                admission_revision=(
+                                    _budget_execution._t1_durable_admission_revision
+                                ),
+                            )
+                        except Exception:  # noqa: BLE001 - uncertain stays HOLD
+                            logger.exception(
+                                "M5 strict terminal unconfirmed: session=%s "
+                                "generation=%s; recovery remains HOLD",
+                                session_id, run_generation,
+                            )
             _run_stack.close()
             with self._sync_guard:
                 self._sync_active.discard(session_id)

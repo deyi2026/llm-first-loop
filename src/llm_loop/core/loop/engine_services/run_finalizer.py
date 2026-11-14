@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
+from llm_loop.core.run_context import current_run_generation
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
@@ -506,6 +507,7 @@ class RunFinalizer:
                 "run.end",
                 {
                     "session_id": session_id,
+                    "run_generation": current_run_generation.get(),
                     "reason": _run_end_reason,
                     "cancel_reason": _cancel_reason,
                     "rounds": rounds,

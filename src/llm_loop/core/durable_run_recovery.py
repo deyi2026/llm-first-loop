@@ -145,6 +145,67 @@ def durable_run_admission_verified(
     )
 
 
+def append_durable_terminal_from_run_end(
+    *,
+    event_store: EventStore,
+    budget_store: TaskBudgetStore,
+    session_id: str,
+    run_generation: str,
+    authorization_id: str,
+    admission_revision: int | None,
+) -> bool:
+    """Persist a real Run-end fact after the budget seal, never replay authority.
+
+    A strict terminal means the local finalizer ran, NOT that Provider/Tool
+    effects settled. The read-only reducer still returns HOLD for any external
+    activity or budget reservation, including locally settled Provider events.
+    """
+    if not durable_run_admission_verified(
+        event_store=event_store,
+        session_id=session_id,
+        run_generation=run_generation,
+        authorization_id=authorization_id,
+        budget_revision=admission_revision,
+    ):
+        return False
+    budget_id = "webt1-" + authorization_id
+    row = budget_store.read(budget_id)
+    member = (row.get("members") or {}).get(budget_id) or {}
+    if (
+        row.get("phase") != "stop_requested"
+        or (row.get("grant") or {}).get("session_id") != session_id
+        or member.get("run_generation") != run_generation
+        or member.get("session_id") != session_id
+        or type(row.get("revision")) is not int
+    ):
+        return False
+    # Legacy run.end is fail-open. The exact generation and event ID must
+    # exist in the strict snapshot; a missing append can never be fabricated.
+    with event_store._session_flock(session_id, strict=True):  # noqa: SLF001
+        events, _ = _strict_snapshot(event_store, session_id)
+    fenced = [i for i, e in enumerate(events) if e.type == FENCED]
+    if len(fenced) != 1:
+        return False
+    ends = [
+        e for e in events[fenced[0] + 1 :]
+        if e.type == "run.end" and e.payload.get("run_generation") == run_generation
+    ]
+    if len(ends) != 1 or ends[0].payload.get("reason") != "completed":
+        return False
+    event_store.append_durable_run_fact(session_id, TERMINAL, {
+        "schema": SCHEMA,
+        "run_generation": run_generation,
+        "authorization_id": authorization_id,
+        "budget_id": budget_id,
+        "budget_revision": row["revision"],
+        "outcome": "completed",
+        "run_end_event_id": ends[0].event_id,
+    })
+    # Strict append performs file+directory fsync and readback. It is evidence
+    # of a local terminal only, NOT of completed_verified or effect settlement.
+    return True
+
+
 def _has_unattributed_pre_run_activity(events: list[Event]) -> bool:
     """Only session creation and user ingress predate a zero-effect M5 Run."""
     return any(
