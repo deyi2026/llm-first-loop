@@ -234,6 +234,32 @@ def test_real_registry_allow_one_tool_then_deny_next(tmp_path: Path) -> None:
     assert report["used_or_reserved"][D.TOOL_INVOCATIONS.value] == 1
 
 
+def test_three_tool_hard_limit_blocks_fourth_before_side_effect(tmp_path: Path) -> None:
+    """提示词上限不是门禁；受控 Run 的第4次工具必须在执行前被硬拒绝."""
+    execution = _bound(tmp_path, tool=3, allowed=frozenset({"read_file"}))
+    effects: list[str] = []
+    registry = ToolRegistry()
+    registry.register(_SideEffectTool("read_file", effects))
+    with bind_task_budget(execution):
+        results = [
+            registry.execute(
+                ToolCall(id=f"read-{i}", name="read_file", arguments={})
+            )
+            for i in range(1, 5)
+        ]
+    assert [r.status for r in results] == [
+        ToolResultStatus.SUCCESS,
+        ToolResultStatus.SUCCESS,
+        ToolResultStatus.SUCCESS,
+        ToolResultStatus.BLOCKED,
+    ]
+    assert "budget_exhausted" in results[3].content
+    assert effects == ["read_file"] * 3
+    report = execution.store.report(execution.budget_id)
+    assert report["used_or_reserved"][D.TOOL_INVOCATIONS.value] == 3
+    assert len(execution.store.read(execution.budget_id)["reservations"]) == 3
+
+
 def test_registry_concurrent_calls_share_atomic_one_tool_budget(tmp_path: Path) -> None:
     execution = _bound(
         tmp_path, tool=1,
