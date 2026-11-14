@@ -32,12 +32,17 @@ class RecoveryHoldError(Exception):
     """An unsafe or unproven preflight condition."""
 
 
+class _HoldParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        _hold("invalid_cli_arguments")
+
+
 def _hold(reason: str) -> None:
     raise RecoveryHoldError(reason)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Read-only T1 post-crash operator preflight")
+    ap = _HoldParser(description="Read-only T1 post-crash operator preflight")
     for name in (
         "--data-dir", "--workspace-root", "--source-session-id",
         "--source-authorization-id", "--source-run-generation", "--target-path",
@@ -62,8 +67,6 @@ def _validate_args(a: argparse.Namespace) -> None:
         _hold("invalid_source_run_generation")
     if not _HEX64.fullmatch(a.expected_target_sha256):
         _hold("invalid_expected_target_sha256")
-    if not a.old_host_stopped_attested:
-        _hold("old_host_stop_attestation_required")
 
 
 def _validate_target(a: argparse.Namespace) -> tuple[Path, Path, str]:
@@ -99,7 +102,10 @@ def _validate_target(a: argparse.Namespace) -> tuple[Path, Path, str]:
         # No path walk through a symlink, including an intermediate directory.
         if any(part.is_symlink() for part in (target, *target.parents) if part != root and root in part.parents):
             _hold("target_symlink_component")
-        with target.open("rb") as stream:
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                _hold("target_not_regular_file")
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
     except (OSError, ValueError):
         _hold("workspace_or_target_unavailable")
@@ -147,6 +153,8 @@ def _budget_checks(a: argparse.Namespace, root: Path) -> tuple[TaskBudgetStore, 
     if report["over_limit_dimensions"]:
         _hold("source_budget_exceeded")
     for row in reservations.values():
+        if row["kind"] not in {"physical_attempts", "tool_invocations"}:
+            _hold("source_reservation_unknown_kind")
         if row["run_generation"] != a.source_run_generation:
             _hold("source_reservation_generation_mismatch")
         if row["phase"] not in {"settled", "aborted_before_dispatch"}:
@@ -178,6 +186,8 @@ def _event_checks(
         "tool.execution.finished", "tool.execution.receipt_committed",
         "tool.execution.effect_prepared", "tool.execution.effect_observed",
         "llm.partial_checkpoint",
+        "session.created", "message.appended", "request.meta",
+        "request.usage", "cache.window", "knowledge.discovery",
     }
     calls: dict[str, str] = {}
     call_settled: dict[str, dict[str, Any]] = {}
@@ -196,7 +206,7 @@ def _event_checks(
         payload = event.payload if isinstance(event.payload, dict) else {}
         if kind == "run.end":
             _hold("source_run_already_ended")
-        if kind.startswith(("provider.", "tool.", "run.", "llm.")) and kind not in allowed:
+        if kind not in allowed:
             _hold("unknown_evidence_event_kind")
         if kind == "provider.structure.validated":
             if payload.get("valid") is not True:
@@ -311,7 +321,7 @@ def _event_checks(
     bound_ids: list[str] = []
     for row in provider_rows:
         parts = str(row["receipt_ref"]).split(":")
-        if len(parts) != 3 or parts[0] != "webt1ev" or len(parts[2]) != 16:
+        if len(parts) != 3 or parts[0] != "webt1ev" or not re.fullmatch(r"[0-9a-f]{16}", parts[2]):
             _hold("provider_budget_receipt_not_bound")
         bound_ids.append(parts[1])
     if set(bound_ids) != event_ids or len(set(bound_ids)) != len(bound_ids):
@@ -335,12 +345,16 @@ def evaluate(a: argparse.Namespace) -> dict[str, Any]:
     root, target, sha = _validate_target(a)
     store, budget, _ = _budget_checks(a, root)
     counts, event_signature = _event_checks(a, root, target, budget)
+    if not a.old_host_stopped_attested:
+        _hold("old_host_stop_attestation_required")
     # No silent pass if the durable ledger changes while it is being examined.
     if store.read(budget["grant"]["budget_id"]) != budget:
         _hold("source_budget_changed_during_preflight")
     if hashlib.sha256(target.read_bytes()).hexdigest() != sha:
         _hold("target_changed_during_preflight")
     event_dir = Path(a.data_dir) / "event_logs"
+    if not event_dir.is_dir():
+        _hold("source_events_changed_during_preflight")
     try:
         reread = EventStore(event_dir, enabled=True).read(a.source_session_id)
     except Exception:

@@ -45,3 +45,10 @@ M4-C 在隔离 Web Host 真实执行一次 GLM-5.3 T1 Run：read_file 和 edit_f
 - 以真实 EventStore/TaskBudgetStore API 合成 37 项正负/竞态测试，扩展回归 159 项 PASS；真实 M4-C 残留 dispatched Provider 仍 HOLD，源证据字节不变。
 
 以上为只读操作员预检，不修改运行时授权边界。即使 PRE-FLIGHT PASS，也不能称为物理静默证明或已完成自动续跑；必须另由操作员创建新 Session、新 authorization_id，并通过原 T1 受控入口执行。独立复审与完整 R9 仍为后续门禁。
+
+
+## 第二轮独立审查与补修
+
+第二次独立 GLM-5.3 Reviewer 审冻结 SHA `be66fd47013cbe53865a3f2188ba893b70fa3058`，结果 completed/REVISE/P0=0/P1=1/P2=5。P1 反例为非 provider/tool/run/llm 前缀的 `operator.revoked_source_authorization`、`budget.revoked`、`plugin.execution.failed` 等异常事件可能被忽略。现改为**全事件类型显式允许清单**：除本任务验证过的必要生命周期/模型/工具/预算事件外，任何其他事件均 HOLD。新增 4 类非前缀事件负测，均返回 `unknown_evidence_event_kind`。
+
+同步收紧：操作员停机声明在事实检查后才成为正向准入条件（真实未决债务不因缺声明而被掩盖）；复核 EventStore 前再次确认目录存在，避免缺失目录的潜在创建副作用；要求机器调用 `--json`，缺参也输出机器可读 HOLD；目标读取使用 `O_NOFOLLOW`；Provider receipt digest16 格式验证、预算 reservation kind 显式验证。新增相应竞态与参数负测。更新后新增测试 43 passed、扩展专项 165 passed；真实 M4-C 样本有无停机声明均 HOLD 且原数据不变。第三次独立审查与原版 R9 仍为后续门禁。

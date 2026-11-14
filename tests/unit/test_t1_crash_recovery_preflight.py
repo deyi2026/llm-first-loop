@@ -325,6 +325,10 @@ def test_default_does_not_create_operator_or_new_session(
 @pytest.mark.parametrize(("case_name", "reason"), [
     ("unknown_provider_fact", "unknown_evidence_event_kind"),
     ("unknown_tool_fact", "unknown_evidence_event_kind"),
+    ("operator_revoked", "unknown_evidence_event_kind"),
+    ("budget_revoked", "unknown_evidence_event_kind"),
+    ("plugin_execution_failed", "unknown_evidence_event_kind"),
+    ("workspace_external_write", "unknown_evidence_event_kind"),
     ("tool_receipt_error", "tool_receipt_outcome_mismatch"),
     ("provider_receipt_swap", "provider_budget_event_identity_mismatch"),
     ("tool_receipt_swap", "tool_budget_receipt_identity_mismatch"),
@@ -353,6 +357,14 @@ def test_independent_reviewer_counterexamples_fail_closed(
         ev.append(_SID, "tool.execution.aborted", {
             "execution_id": "edit", "origin_run_generation": _GEN,
         })
+    elif case_name in {"operator_revoked", "budget_revoked", "plugin_execution_failed", "workspace_external_write"}:
+        kind = {
+            "operator_revoked": "operator.revoked_source_authorization",
+            "budget_revoked": "budget.revoked",
+            "plugin_execution_failed": "plugin.execution.failed",
+            "workspace_external_write": "workspace.external_write",
+        }[case_name]
+        ev.append(_SID, kind, {"reason": "injected_adversarial_evidence"})
     elif case_name == "provider_call_without_transport":
         ev.append(_SID, "provider.call.opened", {
             "call_id": "pcall:orphan", "origin_run_generation": _GEN,
@@ -460,4 +472,49 @@ def test_missing_event_directory_does_not_get_recreated(
     rc = preflight.main(case["args"])
     receipt = json.loads(capsys.readouterr().out)
     assert rc == 2 and receipt["reason"] == "source_event_store_missing"
+    assert not event_dir.exists()
+
+
+
+def test_missing_json_or_required_arg_yields_machine_readable_hold(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    case = _fixture(tmp_path)
+    for missing in ("--json", "--data-dir"):
+        args = list(case["args"])
+        index = args.index(missing)
+        if missing == "--data-dir":
+            del args[index:index + 2]
+        else:
+            del args[index]
+        rc = preflight.main(args)
+        receipt = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert receipt["status"] == "HOLD"
+        assert receipt["reason"] == "invalid_cli_arguments"
+
+
+def test_event_directory_disappearing_during_recheck_does_not_get_recreated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _fixture(tmp_path)
+    event_dir = case["data"] / "event_logs"
+    original_read = EventStore.read
+    calls = 0
+
+    def racing_read(self, session_id):
+        nonlocal calls
+        result = original_read(self, session_id)
+        calls += 1
+        if calls == 1:
+            event_dir.rename(case["data"] / "event_logs_moved")
+        return result
+
+    monkeypatch.setattr(EventStore, "read", racing_read)
+    rc = preflight.main(case["args"])
+    receipt = json.loads(capsys.readouterr().out)
+    assert rc == 2
+    assert receipt["reason"] == "source_events_changed_during_preflight"
+    assert calls == 1
     assert not event_dir.exists()

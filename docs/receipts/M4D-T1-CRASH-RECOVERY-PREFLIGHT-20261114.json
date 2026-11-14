@@ -16,8 +16,8 @@
     "docs/receipts/M4D-T1-CRASH-RECOVERY-PREFLIGHT-20261114.json"
   ],
   "tests": {
-    "synthetic_real_store_api_positive_and_negative": "37 passed",
-    "expanded_T1_runner_and_stream_regression": "159 passed",
+    "synthetic_real_store_api_positive_and_negative": "43 passed",
+    "expanded_T1_runner_and_stream_regression": "165 passed",
     "ruff_changed_python": "PASS",
     "real_m4c_sigkill_ledger": {
       "status": "HOLD",
@@ -41,7 +41,7 @@
     "external_publication": false
   },
   "review": {
-    "independent_glm53": "PENDING_REVIEW_OF_REVISED_FROZEN_SHA",
+    "independent_glm53": "PENDING_THIRD_FROZEN_SHA",
     "original_full_r9": "PENDING",
     "remote_ci": "PENDING",
     "production_readiness": "HOLD",
@@ -56,6 +56,15 @@
         "unknown provider/tool/run/llm event kind fail-closed",
         "provider settled event-id identity join and tool canonical receipt/result-state join"
       ]
+    },
+    "second_independent_glm53": {
+      "reviewed_sha": "be66fd47013cbe53865a3f2188ba893b70fa3058",
+      "status": "completed",
+      "verdict": "REVISE",
+      "P0": 0,
+      "P1": 1,
+      "P2": 5,
+      "P1_fix": "all event kinds are allowlisted, including non-provider/tool prefixes; unknown kinds HOLD"
     }
   }
 }
