@@ -1,0 +1,89 @@
+{
+  "schema": "lfl.design.review_manifest.v1",
+  "scope": "local-model-repetition-v0.3-to-v0.4",
+  "v03_independent_review": {
+    "candidate_commit": "3d735072e7f7b51727be0eaa332b8140467a34ca",
+    "document_sha256": "70389a9d2df4f5e368d2694e2b8878b4d8b1a9981e628c07e19ede6bfd8db8fc",
+    "review_receipt_sha256": "ccd396f5319148108aec01d4c3c9b1cac342cebdc356c4d4baa4335a0809a639",
+    "request_sha256": "aa9060f69d87be2fb2883f23354a415483dd1bcf754b1ab809dc8d87ca0f690b",
+    "provider": "glm",
+    "model": "glm-5.3",
+    "attempts": 1,
+    "tool_names": [],
+    "finish_reason": "stop",
+    "truncated": false,
+    "validation_errors": [],
+    "effective_verdict": "HOLD",
+    "p0": 0,
+    "p1": 0,
+    "p2": 4,
+    "findings": [
+      {
+        "id": "F1",
+        "severity": "P2",
+        "location": "doc lines 0498-0505 vs supplied FROZEN_CANDIDATE header",
+        "evidence": "Doc records mirror main=71f95724459f5d0500a0d19405d9a51d7586d741 and incident git_head=103e9730de04…, but the supplied frozen candidate commit is 3d735072e7f7…, a third identity the document never states. Doc's own rule (lines 0472-0473) says any SHA drift resets independent-review qualification.",
+        "counterexample": "A reviewer PASS on commit 3d735072 could be silently reused as qualification for main 71f9572 or for the incident tree 103e9730, three different code states.",
+        "minimal_fix": "Add the frozen document commit and doc SHA to the header identity block and state which tree each claim is verified against."
+      },
+      {
+        "id": "F2",
+        "severity": "P2",
+        "location": "doc lines 0126-0136 (§3 D1-D4 labeled P0) and lines 0145-0213 (§4 R1-R4 with MIN_EXCHANGE_CHARS=6000, MIN_TOOL_RESULT_CHARS=8000, cap=0.45×allowed, level-3 stop at 4th repeat)",
+        "evidence": "§§9-10 and §15 explicitly invalidate these thresholds and mechanisms (lines 0318-0321, 0346-0348, 0352-0356, 0623-0626), but the invalid constants and hard-stop designs remain in the document carrying '(P0)' labels; only line 0008's reading-priority note prevents misuse.",
+        "counterexample": "An implementer working top-down implements R1's fixed 6000/8000 char gates and R3 level-3 auto-stop, reintroducing the false-block behavior §9 Q6/Q9 already falsified.",
+        "minimal_fix": "Mark each superseded item inline (e.g., 'SUPERSEDED by §15 P0-B') rather than relying solely on the reading-priority preamble."
+      },
+      {
+        "id": "F3",
+        "severity": "P2",
+        "location": "doc lines 0396-0410 (V2-2 exact_no_progress_cycle)",
+        "evidence": "V2-2 still specifies 'stop the Run before a new Provider send' on a repeated exact cycle; the v0.3 caveat (line 0407) restricts this to proven projection-induced invisibility, but the mechanical test for 'this round's tool result is invisible due to projection distortion and has no legitimate recovery path' is not yet defined, leaving the boundary between mechanical HOLD and semantic guess under-specified until latest_observation_delivered (P1-C, lines 0588-0590) is implemented.",
+        "counterexample": "Two consecutive identical request_fp with a delivered exact-ref receipt that the model chose to re-read fully could be misclassified as projection invisibility if the delivered-flag is inferred from compaction events rather than from the actual final provider view.",
+        "minimal_fix": "Define exact_no_progress_cycle as strictly implied by latest_observation_delivered=false (measured on the final pre-send message list), never inferred from compaction telemetry."
+      },
+      {
+        "id": "F4",
+        "severity": "P2",
+        "location": "doc lines 0114-0116 vs tool_cycle.py lines 1155-1203",
+        "evidence": "Doc cites tool_cycle.py:258-313 and 1085/1095 for repeat_guard and convergence.observation; the supplied excerpt shows convergence code at 1155-1203 in the current tree, confirming the doc's own warning (lines 0270-0273) that current-source line numbers do not evidence incident-time behavior. No incident-tree source excerpt is supplied, so 'the hint never survived to the next decision' (line 0115) rests on incident EventLog structure inference, not on incident code.",
+        "counterexample": "Incident tree 103e9730 could carry a different hint placement that was archived for a different reason; the amplifier claim would then need requalification.",
+        "minimal_fix": "During P0-A, hydrate the incident git_head tree and re-verify the hint-placement claim before citing it as a root-cause amplifier."
+      }
+    ]
+  },
+  "v04_candidate": {
+    "candidate_commit": "fa78be9c646f36bf52efdecc50ba9a156fd162cd",
+    "document_sha256": "747e074ba93dabbcd03e8d53e978aaae03f51d026a83abdf458cd0063310e483",
+    "review_status": "PENDING_NEW_INDEPENDENT_REVIEW",
+    "code_change": false,
+    "full_r9": "NOT_RUN",
+    "main_merge": false,
+    "push": false,
+    "deploy": false
+  },
+  "incident_snapshot": {
+    "last_seq": 2509,
+    "sha256": "01ca4d749bed93d80640dd53cfbb040bb394fa4e0c77cb3bc1318e286089a556",
+    "incident_git_head": "103e9730de049f3b9715b1429d51d0e17d8fee5c",
+    "hint_event_seq": 85,
+    "archived_exchange_seqs": [
+      87,
+      88
+    ],
+    "next_request_seq": 96
+  },
+  "targeted_tests": {
+    "exit_code": 0,
+    "passed": 105,
+    "failed": 0,
+    "source": "private focused_tests.log"
+  },
+  "unresolved_gates": [
+    "actual incident backend/model identity and effective runtime config",
+    "exact provider-wire request digest and final-view delivery",
+    "authorized exact-ref hydration under incident 3698-char budget",
+    "independent GLM-5.3 PASS for v0.4 exact candidate",
+    "code reviewer PASS and full original R9 after any code change"
+  ]
+}

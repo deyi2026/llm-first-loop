@@ -1,0 +1,133 @@
+{
+  "schema": "lfl.code.glm53_review_receipt.v1",
+  "candidate_head": "ea736919a786b89ae8cc5ed816b43d7cbf061364",
+  "base_commit": "9c3cc78a98ebf6754ba9ae9f2c701ffd0e671c37",
+  "diff_sha256": "050eede892744893c2e6eaafbc42e3c8de6ce4a5fba5184562c78579ff38bb86",
+  "request_sha256": "12d6a50aedc740816b202adb696b03507c4301de485bbacc63392a5b56e9c552",
+  "provider": "glm",
+  "model": "glm-5.3",
+  "attempts": 1,
+  "tool_names": [],
+  "elapsed_s": 54.74,
+  "finish_reason": "stop",
+  "truncated": false,
+  "prompt_tokens": 11820,
+  "completion_tokens": 2580,
+  "raw_sha256": "ec8fde9c45b8a361dbec15750f1ad22fac13f993437a21f759a80ab70f172687",
+  "validation_errors": [],
+  "error": "",
+  "effective_verdict": "REVISE",
+  "reviewer_result": {
+    "schema": "lfl.code.independent_glm53.v1",
+    "candidate_head": "ea736919a786b89ae8cc5ed816b43d7cbf061364",
+    "base_commit": "9c3cc78a98ebf6754ba9ae9f2c701ffd0e671c37",
+    "verdict": "REVISE",
+    "p0": 0,
+    "p1": 2,
+    "p2": 3,
+    "findings": [
+      {
+        "id": "F1",
+        "severity": "P1",
+        "location": "STAGE1_TEST_RECEIPT vs candidate identity",
+        "issue": "Receipt cites base_commit 9367596c9ff7b625e2fc13eed3581f11815b2c83, not claimed BASE 9c3cc78a nor CANDIDATE ea736919. The 212-test and Pyright PASS receipts are not SHA-bound to the reviewed candidate tree; CODE_DIFF_SHA256 also unverified.",
+        "minimal_fix": "Re-run focused tests and full-tree Pyright on ea736919 and issue a receipt citing that exact candidate head plus per-file SHA256 matching the candidate blobs."
+      },
+      {
+        "id": "F2",
+        "severity": "P1",
+        "location": "observation_visibility.py ensure_latest_observation_visible",
+        "issue": "Design §10 (L0425-0428) permits mechanical context_capacity_unavailable HOLD only when raw group absent AND validated exact-ref cannot legally project. Code never attempts or checks exact-ref recovery; docstring defers it, so runs with legally projectable exact-refs are hard-held, diverging from the sole permitted HOLD criterion.",
+        "minimal_fix": "Either implement bounded owner-scoped exact-ref projection check before HOLD, or gate deployment in config and document the HOLD as an explicitly temporary conservative batch with the divergence recorded in design."
+      },
+      {
+        "id": "F3",
+        "severity": "P2",
+        "location": "observation_visibility.py latest_completed_tool_group / ensure path",
+        "issue": "Invalid (incomplete/multi-call partial) latest group always returns not-visible and the rebuild path only runs for valid groups, so a repairable pairing anomaly becomes a hard observation_guard_fault/context_capacity_unavailable HOLD without trying _repair_tool_call_pairing.",
+        "minimal_fix": "On invalid group, attempt existing pairing repair or emit distinct reason (e.g. protocol_pairing_fault) so diagnostics distinguish capacity vs pairing anomalies."
+      },
+      {
+        "id": "F4",
+        "severity": "P2",
+        "location": "engine.py HOLD branch",
+        "issue": "provider_sent=false is only asserted inside human-readable final_answer text plus an event payload action string; no structured boolean field on the run result is shown in the diff.",
+        "minimal_fix": "Add structured provider_sent=false and run_incomplete fields to the result object and assert them in tests, not just substring checks."
+      },
+      {
+        "id": "F5",
+        "severity": "P2",
+        "location": "ensure_latest_observation_visible rebuild return path",
+        "issue": "When raw_fits succeeds, the helper silently swaps the engine's projected messages for rebuilt.messages; cache-prefix/prompt-budget effects of the swap are only asserted via request_preflight hard_overflow, not cache-epoch stability.",
+        "minimal_fix": "Emit cache/epoch metadata in the request.observation_visibility event and add a regression that the rebuild preserves cache prefix boundaries."
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "AC1",
+        "result": "PASS",
+        "evidence": "_call_signature compares id+name+canonical args; group_visible_in_provider_view requires exact content match; tests cover changed args, truncated and altered content."
+      },
+      {
+        "id": "AC2",
+        "result": "PASS",
+        "evidence": "latest_completed_tool_group scans after active_turn_ref only; latest group kept; invalid group returned not None; old-run test at after_ref=3 yields None."
+      },
+      {
+        "id": "AC3",
+        "result": "PASS",
+        "evidence": "engine.py inserts gate before R1 breakdown/pre-send; no tool replay, no retry; fault test asserts exactly one provider call."
+      },
+      {
+        "id": "AC4",
+        "result": "UNKNOWN",
+        "evidence": "Reuses _build_conservative_active_run_messages and request_preflight, but ingress/tool-protocol preservation on the swapped rebuilt path is only receipt-claimed, no shown test."
+      },
+      {
+        "id": "AC5",
+        "result": "PASS",
+        "evidence": "physical_limit keyed to limited_by model_window/input_token_budget; soft cap alone does not force HOLD; preflight hard_overflow gates rebuild send."
+      },
+      {
+        "id": "AC6",
+        "result": "FAIL",
+        "evidence": "evidence:// text correctly rejected as visibility (test_unauthorized_or_missing_ref_text_is_not_visibility), but no exact-ref recovery path exists despite design requiring it before HOLD."
+      },
+      {
+        "id": "AC7",
+        "result": "PASS",
+        "evidence": "test_legitimate_same_argument_polling_with_new_versions_still_proceeds: 2 executions, 3 sends, run_incomplete false; no argument/keyword/turn-count blocking."
+      },
+      {
+        "id": "AC8",
+        "result": "PASS",
+        "evidence": "Diff touches only engine hook plus new helper and tests; no ledger, config, or main merge; no_main_push_deploy_restart true in receipt."
+      },
+      {
+        "id": "AC9",
+        "result": "PASS",
+        "evidence": "HOLD sets _run_end_reason, structured event provider_send_blocked with reason, action record; test asserts run_incomplete is True; provider_sent=false still text-only (F4)."
+      },
+      {
+        "id": "AC10",
+        "result": "FAIL",
+        "evidence": "212 tests and Pyright PASS not SHA-bound to candidate ea736919 (receipt base 9367596c); release/code gate separation otherwise respected per receipt."
+      }
+    ],
+    "unverified_claims": [
+      "212 focused tests and full-tree Pyright ratchet actually executed against candidate ea736919 tree bytes",
+      "_build_conservative_active_run_messages preserves ingress, tool protocol pairing and cache prefix on the raw rebuild path",
+      "Historical model identity behind 8901 GGUF process at incident time (remains UNKNOWN)",
+      "request_preflight hard_overflow semantics match physical window, incl. tool schema reserve tokens",
+      "provider_sent=false surfaced as a structured field, not only final_answer text"
+    ],
+    "minimal_revision_order": [
+      "Re-bind test and Pyright receipts to exact candidate head ea736919 with per-file SHA256",
+      "Resolve exact-ref recovery: implement bounded projection check or formally scope and document the temporary conservative HOLD per design §10",
+      "Add structured provider_sent/run_incomplete result fields and tests",
+      "Distinguish pairing-fault HOLD from capacity HOLD and attempt existing repair for invalid groups",
+      "Add cache/epoch preservation regression for the rebuilt raw send path"
+    ]
+  },
+  "timestamp_utc": "2026-11-14T13:58:34.381386+00:00"
+}

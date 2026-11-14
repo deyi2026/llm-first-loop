@@ -1,0 +1,20 @@
+{
+  "schema": "lfl.local_model_repetition.exact_ref_red.v1",
+  "base_commit": "c215a7e6c0d44d05d7bb8174337273cb8ddc15c9",
+  "test_file": "tests/unit/test_observation_exact_ref_red.py",
+  "test_sha256": "422a224e63349be264eb3c7010a9a49b317437aab5aa278dba5e441c9340e336",
+  "pytest_log_sha256": "4efeacf6e5b0a1b057d7f60f6ce0ca4b7038bb8f8afa1d84d75efb1b481271b0",
+  "expected_exit": 1,
+  "observed_exit": 1,
+  "summary": "1 failed, 2 passed",
+  "red": "authorized EvidenceRef with real owner-scoped BlobStore/Ledger/EvidenceReadTool and callable read_evidence schema still HOLDs at 3698-char physical budget",
+  "negative_pass": [
+    "cross-owner ref cannot leak",
+    "missing provider-callable read_evidence schema cannot leak"
+  ],
+  "provider_calls": 0,
+  "tool_source_replays": 0,
+  "ruff": "PASS",
+  "goal_id": "96b13a77-8f83-4022-b2ad-b1c41ff2f876",
+  "no_main_push_deploy_restart": true
+}

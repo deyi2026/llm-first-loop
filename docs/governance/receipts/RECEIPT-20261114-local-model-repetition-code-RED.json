@@ -1,0 +1,38 @@
+{
+  "schema": "lfl.local_model_repetition.code_red.v1",
+  "timestamp_utc": "2026-11-14T13:35:32.402575+00:00",
+  "goal_id": "96b13a77-8f83-4022-b2ad-b1c41ff2f876",
+  "isolated_base_commit": "d2e928fba1c0ec66bc7b58c044135b0cf818140b",
+  "frozen_design_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+  "test_file": "tests/unit/test_local_model_repetition_presend_red.py",
+  "test_file_sha256": "2da880d0fababbb2996bfee505126636a39d8041b47386d4aa57dae4040e99a8",
+  "command": "PYTHONPATH=src ../../.venv/bin/python -m pytest -q -o addopts='' tests/unit/test_local_model_repetition_presend_red.py",
+  "expected_exit_code": 1,
+  "observed_exit_code": 1,
+  "test_summary": "1 passed, 1 failed",
+  "positive_assertions": [
+    "real routing reservation 32768-28659=4109 tokens -> floor(4109*0.9)=3698 chars",
+    "101 effective callable tool schemas",
+    "two real build calls with 3698 chars",
+    "first read_file completed exactly once and tool observation persisted",
+    "second FakeLLM provider-facing call had no owner-scoped evidence:// ref"
+  ],
+  "red_failure": "second simulated provider call still made despite latest complete assistant->tool group absent from final messages and no qualified exact-ref",
+  "pytest_log_sha256": "157453dd76f3d06f963aebca66a6aa12c8130e77e0adc61efd1b2b8461b88900",
+  "ruff_targeted": "PASS",
+  "provider_network_calls": 0,
+  "simulated_provider_calls": 2,
+  "real_tool_calls": "1 local read_file only; no write/external effects",
+  "historical_http_wire_proven": false,
+  "source_code_changes": 0,
+  "gates": {
+    "red_reproduced": true,
+    "green": false,
+    "independent_code_review": "NOT_RUN",
+    "full_R9": "NOT_RUN",
+    "main_merge": false,
+    "push": false,
+    "deploy": false,
+    "restart": false
+  }
+}

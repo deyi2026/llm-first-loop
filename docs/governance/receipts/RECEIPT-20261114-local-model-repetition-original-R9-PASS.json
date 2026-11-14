@@ -1,0 +1,51 @@
+{
+  "schema": "lfl.local_model_repetition.original_r9_pass.v1",
+  "observed_at_utc": "2026-11-14T14:33:02.635016+00:00",
+  "candidate_head": "5acc085ea59c7b66fb7bd2dddb96bf505d752fea",
+  "reviewed_code_head": "a291a05da0e6f0229040294ed193d5b556df7be9",
+  "src_tree_oid": "437a4aa8c2ef2994ef2571e6141afe151f152ba5",
+  "tests_tree_oid": "5ac934909842b6d99437e5f241c0c285c05cb91c",
+  "reviewer_verdict": "PASS",
+  "reviewer_p0": 0,
+  "reviewer_p1": 0,
+  "reviewer_p2": 1,
+  "reviewer_receipt_sha256": "adfb52fd1db962a0f7123885b68cbede1a0b4f4c68ad213cb5f105c93e35e004",
+  "command": "bash scripts/ci_gate.sh",
+  "script_sha256": "78de7f011f5998564bd40813e2fa09386d19f11321196abf9341542b1f026784",
+  "exit_code": 0,
+  "log_sha256": "f1f5b398393181011597035376687c4cd629d9ef5c4ddacd3f76c5c072c5424e",
+  "ruff_ratchet": "PASS",
+  "env_pin": "PASS",
+  "pyright_ratchet": "PASS",
+  "vitest": {
+    "files_passed": 57,
+    "tests_passed": 600
+  },
+  "tier0": {
+    "passed": 341,
+    "skipped": 2
+  },
+  "tier1": {
+    "passed": 7,
+    "skipped": 2
+  },
+  "tier2": {
+    "passed": 3,
+    "skipped": 2
+  },
+  "full_pytest": {
+    "passed": 15023,
+    "skipped": 158,
+    "xfailed": 3
+  },
+  "serial_signal": {
+    "passed": 1
+  },
+  "no_concurrent_r9": true,
+  "no_main_push_deploy_restart": true,
+  "limitations": [
+    "Historical local model actual identity not proven from incident wire",
+    "At exact incident 28659 schema tokens conservative 3698-char budget, even qualified ref capsule may require safe HOLD",
+    "No live production canary, remote CI, main merge, push or service restart yet"
+  ]
+}

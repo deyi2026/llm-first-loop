@@ -1,0 +1,106 @@
+{
+  "schema": "lfl.local_model_repetition.stage1_green.v1",
+  "observed_at_utc": "2026-11-14T13:49:31.306659+00:00",
+  "goal_id": "96b13a77-8f83-4022-b2ad-b1c41ff2f876",
+  "isolated_base_commit": "9c3cc78a98ebf6754ba9ae9f2c701ffd0e671c37",
+  "design_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+  "source_files_and_tests": [
+    {
+      "path": "src/llm_loop/core/loop/engine.py",
+      "sha256": "4a5463db342b867a4e1a5c0d6f9dca8b43d694e72fe05031e9601bef50de8356",
+      "bytes": 178805
+    },
+    {
+      "path": "src/llm_loop/core/loop/engine_services/observation_visibility.py",
+      "sha256": "d3040db0128cc07d3a4c244718a554cc3cd2ba6cbf196aee22b74cc148fd7875",
+      "bytes": 4983
+    },
+    {
+      "path": "tests/unit/test_local_model_repetition_presend_red.py",
+      "sha256": "630962fafaa788baa48affdc257a5b1d3d46f4d3bc7dde8673ae614cc5c053e8",
+      "bytes": 6458
+    },
+    {
+      "path": "tests/unit/test_observation_visibility_helper.py",
+      "sha256": "3f17b95217ce2f95ae0aa39c14e836641f45afae6f1775a8c1ee8216f8825c7f",
+      "bytes": 4163
+    },
+    {
+      "path": "tests/unit/test_observation_visibility_engine.py",
+      "sha256": "f6cc77d5afd1a117567b3eb4fce9efc29163175ced8664f1d448e4b6d4a26a6a",
+      "bytes": 1758
+    }
+  ],
+  "dev_model": {
+    "provider": "glm",
+    "model": "glm-5.3",
+    "successful_first_patch": {
+      "attempts": 1,
+      "tools": 0,
+      "finish_reason": "stop",
+      "raw_sha256": "f7f303e1983fa98aec963a54fa1f0715b2ed98dc2a1ce6f4ad6bee2af5e69994"
+    },
+    "revision_attempt": {
+      "attempts": 1,
+      "tools": 0,
+      "finish_reason": "length",
+      "truncated": true,
+      "raw_chars": 0
+    }
+  },
+  "developer_patch_note": "The successful GLM-5.3 patch was normalized with git apply --recount; QA corrected exact raw comparison, stale-run scope and soft-budget false HOLD. See frozen diff and code review.",
+  "functional_results": {
+    "incident_budget": "3698 chars, 101 callable schemas, 32768 output reserve, 28659 authoritative schema tokens; second send HOLD when no raw or validated exact-ref",
+    "raw_rebuild": "reuse existing side-effect-free conservative current-run projection when legal; no tool replay",
+    "soft_budget_regression": "search_archive recovery test passes after exact raw rebuild",
+    "legitimate_polling": "same args, changing versions: 2 real in-memory probe executions and 3 FakeLLM calls, no HOLD",
+    "negative_cases": [
+      "same-id altered tool content",
+      "same-id altered tool arguments",
+      "missing/duplicate/incomplete tool ids",
+      "stale previous Run group",
+      "unverified evidence:// text"
+    ],
+    "structured_incomplete": "_run_end_reason=context_capacity_unavailable -> LoopResult.run_incomplete=true, provider_sent=false for blocked second attempt"
+  },
+  "focused_tests": {
+    "count": 211,
+    "passed": 211,
+    "exit_code": 0,
+    "log_sha256": "12f158529b76fc18621452daeb2baadf5265f54ede88ce1a7a314ef68883d967",
+    "command": "PYTHONPATH=src ../../.venv/bin/python -m pytest -q -o addopts='' [17 listed focused files]"
+  },
+  "ruff": {
+    "exit_code": 0,
+    "files": [
+      "src/llm_loop/core/loop/engine.py",
+      "src/llm_loop/core/loop/engine_services/observation_visibility.py",
+      "tests/unit/test_local_model_repetition_presend_red.py",
+      "tests/unit/test_observation_visibility_helper.py",
+      "tests/unit/test_observation_visibility_engine.py"
+    ]
+  },
+  "pyright": {
+    "exit_code": 0,
+    "log_sha256": "f552d237ad0bd249c05f97eb62dbc65d2d0e4a5fe2346608e10fb7838dba9ed1",
+    "scope": "src/llm_loop/core/loop/engine_services/observation_visibility.py"
+  },
+  "scope_limits": [
+    "No qualified owner-scoped exact-ref projection yet: large observation without raw fit is HOLD",
+    "No live backend model identity qualification; historical Ornith-MLX alias vs Qwen GGUF remains unresolved",
+    "No direct historical wire-byte replay",
+    "No full R9 or independent code review yet",
+    "No remote push/main/deploy/restart"
+  ],
+  "gates": {
+    "design_review": "PASS",
+    "code_red": "PASS_REPRODUCED",
+    "stage1_green": "FOCUSED_PASS",
+    "independent_code_review": "PENDING",
+    "full_R9": "NOT_RUN",
+    "main_merge": false,
+    "push": false,
+    "deploy": false,
+    "restart": false
+  }
+}

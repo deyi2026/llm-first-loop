@@ -1,0 +1,123 @@
+{
+  "schema": "lfl.design.independent_glm53.receipt.v1",
+  "candidate_commit": "d4735b91a937fc09d5c44bd8ecb5d2720f8ab9d2",
+  "candidate_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+  "evidence_head": "f8caec64fc530f842dae37de72045093dd8c77f5",
+  "evidence_sha256": "3d804fcbba0b5945c535ee16154ddd88060cfc5a7fcd94fe630d49b054fb749f",
+  "request_sha256": "b288e280b271b514af3077fe031df9e4c1ffea2792eede34a968f15fa79c0735",
+  "model_provider": "glm",
+  "model_id": "glm-5.3",
+  "tool_names": [],
+  "attempts": 1,
+  "elapsed_s": 27.18,
+  "finish_reason": "stop",
+  "truncated": false,
+  "prompt_tokens": 37357,
+  "completion_tokens": 1668,
+  "raw_response_sha256": "2b0ae050b6556ce3acd8e0e595def7e71011cf907187b7125ae5eaee0d696830",
+  "validation_errors": [],
+  "error": "",
+  "effective_verdict": "PASS",
+  "reviewer_result": {
+    "schema": "lfl.design.independent_glm53.v1",
+    "candidate_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+    "candidate_commit": "d4735b91a937fc09d5c44bd8ecb5d2720f8ab9d2",
+    "verdict": "PASS",
+    "p0": 0,
+    "p1": 0,
+    "p2": 1,
+    "findings": [
+      {
+        "id": "F1",
+        "severity": "P2",
+        "location": "doc lines 0827-0828 vs P0-A evidence binding",
+        "evidence": "Doc claims 105 continuity and 72 Evidence tests passed, but the externally SHA-bound receipt only covers identity, blobs, compaction distribution and EvidenceLedger hydration; test-run artifacts lack their own SHA binding.",
+        "counterexample": "A later test-suite regression could still be cited against this doc's unbound pass counts.",
+        "minimal_fix": "Bind test-run receipts (command, exit code, tree SHA) in the external evidence list before code RED."
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "AC1",
+        "result": "PASS",
+        "evidence": "Doc 0012-0015, 0580-0658: reuse StateBraid/CK1/Fold/antidrift/E1-E5; only wiring gap P0-B fixed."
+      },
+      {
+        "id": "AC2",
+        "result": "PASS",
+        "evidence": "Doc 0422-0433, 0618-0621: no fingerprint-count auto-stop; A07/A09 protect polling/changed reads; A03 bans fixed thresholds."
+      },
+      {
+        "id": "AC3",
+        "result": "PASS",
+        "evidence": "Doc 0810-0812: latest_observation_delivered=true only on pre-send proof of raw exchange or model-visible exact-ref."
+      },
+      {
+        "id": "AC4",
+        "result": "PASS",
+        "evidence": "Doc 0549-0562, 0675-0681: three distinct layers and three separate metric groups; no merged drift score."
+      },
+      {
+        "id": "AC5",
+        "result": "PASS",
+        "evidence": "Doc 0404-0406, 0605-0608: HOLD only on real tokenizer/protocol/authorization failure with provider_sent=false."
+      },
+      {
+        "id": "AC6",
+        "result": "PASS",
+        "evidence": "Doc 0349-0352, 0439-0444, 0803-0808: ref readability, version, permission, paging actually verified; recovery≠delivery stated."
+      },
+      {
+        "id": "AC7",
+        "result": "PASS",
+        "evidence": "Doc 0796-0802: explicitly event-level RED, not code-level or wire-byte; 0841-0843 sets code-level RED as hard pre-implementation gate."
+      },
+      {
+        "id": "AC8",
+        "result": "PASS",
+        "evidence": "Doc 0787-0792: llama-server/Qwen GGUF since Oct-22 is strong indirect contradiction, not proof; 0590-0591, 0643-0646 gate identity pre-implementation and bar MLX qualification transfer."
+      },
+      {
+        "id": "AC9",
+        "result": "PASS",
+        "evidence": "Doc 0596-0598, 0441-0442: tool_call_id pairing and current human ingress preserved; A15/B02 regression required."
+      },
+      {
+        "id": "AC10",
+        "result": "PASS",
+        "evidence": "Doc 0655-0658, 0302-0304: explicit non-goals list; no second budget/ledger/breaker; existing routing.reserve is single budget source (0401)."
+      },
+      {
+        "id": "AC11",
+        "result": "PASS",
+        "evidence": "Doc 0684-0686, 0766-0768, 0844-0846: design PASS does not authorize code, merge, push, deploy; gates confirm."
+      },
+      {
+        "id": "AC12",
+        "result": "PASS",
+        "evidence": "Doc 0511, 0696-0698, 0840-0843: counterexamples (visible ref, protocol cause) and UNKNOWNs (wire bytes, tool catalog, config, weights) explicitly scoped."
+      }
+    ],
+    "unverified_claims": [
+      "Incident-time wire-level model identity and request bytes",
+      "Whether read_evidence existed among the incident 101 tool schemas",
+      "Incident full effective config beyond providers file SHA match",
+      "Pre-send raw/exact-ref actual delivery at incident time",
+      "Historical model weight hash and backend qualification",
+      "Incident-time silent truncation behavior and reasoning channel source",
+      "Whether S1 selected-raw producer ran during incident",
+      "Claimed 105+72 test passes lack their own SHA-bound receipts"
+    ],
+    "minimal_revision_order": [
+      "Externally SHA-bind the test-run receipts referenced at doc line 0827",
+      "Proceed to code-level offline RED under incident budget with pre-send identity/ref checks per §19.4 before any business code change"
+    ],
+    "scope_limits": [
+      "This PASS qualifies the frozen v0.5 DESIGN only, not code, release, or production config",
+      "No tests were executed by this reviewer; all evidence is read-only from supplied bound artifacts",
+      "Qwen incident-time identity remains a strong but non-wire-proven inference from a process running since 2026-10-22",
+      "Historical unknowns are scoped per §19.4 and do not block design feasibility"
+    ]
+  },
+  "timestamp_utc": "2026-11-14T13:14:35.449596+00:00"
+}

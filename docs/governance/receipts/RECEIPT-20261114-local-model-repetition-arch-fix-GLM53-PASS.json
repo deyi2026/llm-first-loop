@@ -1,0 +1,102 @@
+{
+  "schema": "lfl.code.glm53_review_receipt.v1",
+  "candidate_head": "a291a05da0e6f0229040294ed193d5b556df7be9",
+  "base_commit": "97ac7665bc06870811fd91a935c6a295708313ae",
+  "diff_sha256": "227dce615fe683d600d34929db5ade29e62217711928fa77f8bce2fd47215685",
+  "request_sha256": "c04f65c9c5f148d1eddea7d6554c9a06646fc86ba7e912e694e9f5794719f65a",
+  "provider": "glm",
+  "model": "glm-5.3",
+  "attempts": 1,
+  "tool_names": [],
+  "elapsed_s": 20.83,
+  "finish_reason": "stop",
+  "truncated": false,
+  "prompt_tokens": 8686,
+  "completion_tokens": 1176,
+  "raw_sha256": "facbe3d1faf2e0859d64cdf660025fd5c9934903b9c8f3a303b1d068d2dcd016",
+  "validation_errors": [],
+  "error": "",
+  "effective_verdict": "PASS",
+  "reviewer_result": {
+    "schema": "lfl.code.independent_glm53.v1",
+    "candidate_head": "a291a05da0e6f0229040294ed193d5b556df7be9",
+    "base_commit": "97ac7665bc06870811fd91a935c6a295708313ae",
+    "verdict": "PASS",
+    "p0": 0,
+    "p1": 0,
+    "p2": 1,
+    "findings": [
+      {
+        "id": "P2-1",
+        "severity": "P2",
+        "location": "tests/guards/function_size_baseline.json::_run_stream_inner",
+        "issue": "Baseline raises engine._run_stream_inner 2192→2215. Policy marks measured-higher re-registration as an approved EVO-20261025-e0bff8ee red-line relaxation, visible in diff, not silent; but the underlying growth driver is unshrunk and should be split next.",
+        "minimal_fix": "Follow-up decomposition of _run_stream_inner to bring registered size back under prior ratchet value."
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "AC1",
+        "result": "PASS",
+        "evidence": "engine.py diff moves ensure_latest_observation_visible import to module scope (line ~48-51), deletes local import at line ~1637; no other local imports added."
+      },
+      {
+        "id": "AC2",
+        "result": "PASS",
+        "evidence": "Import-only relocation; no cycles (engine_services/observation_visibility already engine-dependent), no tool/provider side effects in diff."
+      },
+      {
+        "id": "AC3",
+        "result": "PASS",
+        "evidence": "Pre-send ensure_latest_observation_visible call and _observation_hold handling retained unchanged in engine.py ~1640."
+      },
+      {
+        "id": "AC4",
+        "result": "PASS",
+        "evidence": "Diff registers _run_stream_inner=2215, _qualified_exact_ref_projection=174, ensure_latest_observation_visible=144; receipt records official regen command and regen_check PASS."
+      },
+      {
+        "id": "AC5",
+        "result": "PASS",
+        "evidence": "Diff only relocates one import and regenerates baseline via official script; no guard tests deleted or weakened, no fabricated results in diff."
+      },
+      {
+        "id": "AC6",
+        "result": "PASS",
+        "evidence": "Receipt: previous_three_arch_failures=3 passed; focused_tests 228 passed exit_code 0. External evidence, not independently executed."
+      },
+      {
+        "id": "AC7",
+        "result": "PASS",
+        "evidence": "Receipt: pyright full-tree PASS, new_diagnostics=0, changed_file_diagnostics=0; ruff PASS."
+      },
+      {
+        "id": "AC8",
+        "result": "PASS",
+        "evidence": "Six keys all decreased: _run_gate_step 232→192, coordination_snapshot 121→119, poll 73→67, start 77→73, build_app 150→144, run_stream 312→311."
+      },
+      {
+        "id": "AC9",
+        "result": "PASS",
+        "evidence": "Diff touches no owner/version/paging logic, no model/provider config; only import statement and baseline JSON."
+      },
+      {
+        "id": "AC10",
+        "result": "PASS",
+        "evidence": "Receipt: full_R9 NOT_RERUN_AFTER_FIX, no_main_push_deploy_restart=true; rerun correctly sequenced after this independent review per protocol."
+      }
+    ],
+    "unverified_claims": [
+      "228 focused tests exit 0 and 3 arch failures passing (external receipt log_sha256 only, not independently executed)",
+      "Pyright full-tree PASS with 0 new diagnostics and Ruff PASS (receipt-only)",
+      "Baseline values 2215/174/144 correspond to actual AST measurement of base worktree (regen_check PASS is receipt-only)",
+      "engine.py and baseline sha256 in receipt match frozen diff bytes"
+    ],
+    "minimal_revision_order": [
+      "Rerun original full R9 on this candidate head and record exit code/log SHA",
+      "Follow-up: decompose _run_stream_inner to reverse the 2192→2215 ratchet increase",
+      "No main merge/push/deploy until R9 exit 0 recorded"
+    ]
+  },
+  "timestamp_utc": "2026-11-14T14:21:41.571228+00:00"
+}

@@ -1,0 +1,46 @@
+{
+  "schema": "lfl.local_model_repetition.arch_ratchet_fix.v1",
+  "base_commit": "97ac7665bc06870811fd91a935c6a295708313ae",
+  "failed_r9": {
+    "candidate_head": "97ac7665bc06870811fd91a935c6a295708313ae",
+    "exit_code": 1,
+    "log_sha256": "a9b0a287ed287bdc51cf1afd5e3666866f94a3ef7674781b9152e4764107ff3d",
+    "tier0": "338 passed, 2 skipped, 3 failed"
+  },
+  "root_causes": [
+    "engine._run_stream_inner AST 2192 registered vs 2219 measured",
+    "new helper functions 174/144 lines not registered",
+    "engine local imports 13 registered vs 14 measured"
+  ],
+  "changes": [
+    {
+      "path": "src/llm_loop/core/loop/engine.py",
+      "sha256": "e5b42b05340c9242e77c2021f37f64737c4c6b4b162fc056795ddbfe844721a2",
+      "change": "move observation visibility import to module scope; no behavior change"
+    },
+    {
+      "path": "tests/guards/function_size_baseline.json",
+      "sha256": "83f59592945621e147d443f9fcb79b8c608ac6d6810834f85a7a0c798e6c895f",
+      "change": "official regen; engine 2215 measured; 2 helper functions registered; 6 old keys tightened"
+    }
+  ],
+  "regen_command": "../../.venv/bin/python scripts/regen_function_size_baseline.py",
+  "regen_check": "PASS",
+  "previous_three_arch_failures": "3 passed",
+  "focused_tests": {
+    "passed": 228,
+    "exit_code": 0,
+    "log_sha256": "8acfe05633ca5ce74a2921eadbcbd62c29475ed336bf56257e3da13ef4efb56e"
+  },
+  "pyright_full_tree": {
+    "status": "PASS",
+    "exit_code": 0,
+    "new_diagnostics": 0,
+    "changed_file_diagnostics": 0,
+    "log_sha256": "8e7c94f1574872bf4ac6a988a21e27e4348e782fe846adc68cde8b6ad407702a"
+  },
+  "ruff": "PASS",
+  "independent_code_review": "PENDING_NEW_CANDIDATE",
+  "full_R9": "NOT_RERUN_AFTER_FIX",
+  "no_main_push_deploy_restart": true
+}

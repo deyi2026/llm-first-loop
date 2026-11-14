@@ -1,0 +1,190 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-local-model-repetition-presend",
+  "summary": "PR #20 exact changed-path A.5 declaration: reuse existing LoopEngine pre-send projection, EvidenceLedger/BlobStore/EvidenceReadTool and architecture ratchet to prevent silently losing completed tool observations. Independent GLM-5.3 PASS and original full R9 exit 0 apply to the exact source/test tree; no production release qualification.",
+  "components": [
+    {
+      "component_id": "provider-observation-pre-send",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/engine_services/observation_visibility.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing LoopEngine final pre-send projection and EvidenceReadTool/EvidenceLedger authority",
+      "disposition": "At final provider-send boundary, reuse the existing conservative Session projection to deliver exact paired raw tool observations when physically admissible; otherwise project owner/version/freshness-checked, SHA-verified, bounded-paging EvidenceRef through the existing read_evidence tool. If neither can legally fit, fail closed with run_incomplete and no second Provider send. No semantic repetition breaker, new ledger, source-tool replay, provider configuration change or autonomous restart.",
+      "evidence": [
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-code-RED.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-GREEN.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-fix-GLM53-PASS.json"
+      ],
+      "verification_level": "Independent GLM-5.3 PASS P0=0/P1=0/P2=1 for reviewed source/test tree; 228 focused tests; original full R9 exit 0 with 15,023 pytest passed and 600 Vitest passed.",
+      "model_evidence_veto_recovery_exit": "The model receives the latest complete assistant/tool exchange as raw bytes or a qualified exact ref with a callable read_evidence paging path. Owner mismatch, stale/missing version, corrupt blob, missing tool schema, or physical over-budget must veto send. Historical backend identity and the incident's 3698-char physical budget remain UNKNOWN/HOLD where qualification fails.",
+      "rollback_route": "Revert the isolated code change before any deployment; the previous silent observation loss returns, so do not roll back this gate in production without a separate controlled qualification.",
+      "declaration_id": "existing-provider-evidence-authority"
+    },
+    {
+      "component_id": "architecture-size-ratchet",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing tests/guards/function_size_baseline.json and official regen_function_size_baseline.py",
+      "disposition": "Use the repository's official AST-measurement regeneration to register the new 174/144-line helpers and the visible 2192 to 2215 engine growth; six other legacy registrations tighten. No test assertion or architecture gate is disabled, and local-import growth was removed.",
+      "evidence": [
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-R9-first-fail.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-ratchet-fix.json"
+      ],
+      "verification_level": "Three original architecture guard failures reproduced, then 3 passed after official regen; full R9 exit 0. Independent GLM-5.3 reviewer PASS P0/P1=0 on this change.",
+      "model_evidence_veto_recovery_exit": "The ratchet continues to reject unregistered or silently growing functions; the registered engine increase is explicitly disclosed and can be further reduced by future decomposition. No override is granted to bypass future gate failures.",
+      "rollback_route": "Revert only the baseline registration together with the source changes that caused the measured increase; otherwise the unchanged source would correctly fail the architecture guard.",
+      "declaration_id": "existing-architecture-ratchet"
+    },
+    {
+      "component_id": "offline-observation-regressions",
+      "paths": [
+        "tests/unit/test_local_model_repetition_presend_red.py",
+        "tests/unit/test_observation_exact_ref_red.py",
+        "tests/unit/test_observation_visibility_engine.py",
+        "tests/unit/test_observation_visibility_helper.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing pytest unit/integration harness and FakeLLM/EvidenceReadTool fixtures",
+      "disposition": "Deterministic RED to GREEN coverage for 101 tool schemas, 32,768 output reserve, 28,659 schema-token incident budget, latest raw group pairing, bounded owner-scoped EvidenceRef hydration, invalid owner/version/blob/schema, multi-call atomicity, changed-source polling, and safe HOLD.",
+      "evidence": [
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-RED.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-GREEN.json"
+      ],
+      "verification_level": "225 focused tests before the architecture fix, then 228 focused tests and original full R9 exit 0; no real incident tool replay or production Provider calls.",
+      "model_evidence_veto_recovery_exit": "The test harness is not production authority. Failing assertions block release; synthetic Provider success is not evidence of a live model's historical identity.",
+      "rollback_route": "Revert only these focused tests with the corresponding implementation; do not weaken or skip them to obtain a green CI."
+    },
+    {
+      "component_id": "architecture-review-design-documents",
+      "paths": [
+        "docs/ANALYSIS-20261114-local-model-repetition-root-cause.md",
+        "docs/REVIEW-20261114-local-model-repetition-stage1.md",
+        "docs/REVIEW-20261114-local-model-repetition-v04.md",
+        "docs/REVIEW-20261114-local-model-repetition-v05.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/ analysis and review governance",
+      "disposition": "Record frozen v0.4/v0.5 root-cause evidence, GLM-5.3 reviewer findings, staged implementation, model alias mismatch and remaining conservative-budget HOLD. Documentation only.",
+      "evidence": [
+        "docs/REVIEW-20261114-local-model-repetition-v05.md",
+        "docs/REVIEW-20261114-local-model-repetition-stage1.md"
+      ],
+      "verification_level": "Design PASS P0/P1=0; code review PASS P0/P1=0; final source/test tree bound to original full R9 exit 0.",
+      "model_evidence_veto_recovery_exit": "Docs never grant model, deployment or merge authority. The model/operator must see unresolved incident-time model identity and exact 3698-character budget limitations before live canary decisions.",
+      "rollback_route": "Revert these documents independently if obsolete; code and safety gates remain governed by their own reviewed commits."
+    },
+    {
+      "component_id": "review-and-test-receipts",
+      "paths": [
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-P0A-offline.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-R9-first-fail.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-fix-GLM53-PASS.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-ratchet-fix.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-code-RED.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-ea736-exact-tests.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-GREEN.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-RED.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-original-R9-PASS.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-GLM53-review.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-GREEN.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-refactor-GLM53-REVISE.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-refactor-GREEN.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-v04-design-review.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-v05-P0A.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-v05-glm53-review.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-v05-tests.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance/receipts immutable review and test evidence",
+      "disposition": "Commit historical RED, successive reviewer PASS/REVISE, focused tests, Pyright architecture fix and final original R9 evidence with exact candidate/source/test SHA binding. Receipts are factual records, not new runtime authority.",
+      "evidence": [
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-original-R9-PASS.json",
+        "docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-fix-GLM53-PASS.json"
+      ],
+      "verification_level": "Original unmodified ci_gate.sh exit 0; Ruff/Pyright PASS, Vitest 600 passed, full pytest 15023 passed/158 skipped/3 xfailed. Remote CI is a separate pending gate.",
+      "model_evidence_veto_recovery_exit": "A receipt without matching candidate SHA or real exit code cannot be used to authorize merge or release. The model must preserve both earlier REVISE/HOLD and the final PASS scope.",
+      "rollback_route": "Retain these records for audit; if a submission is withdrawn, mark it superseded rather than rewriting historical results."
+    },
+    {
+      "component_id": "a5-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261114-local-model-repetition-presend.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance/submissions architecture submission gate",
+      "disposition": "This single manifest partitions the exact 29 changed paths of PR #20 and supplies G1-G4 declarations for the two existing control authorities. No runtime behavior, test threshold or GitHub workflow is modified.",
+      "evidence": [
+        "GitHub A.5 job 132482299791 on PR #20 failed solely because zero changed manifests were found",
+        "scripts/check_architecture_submission.py requires exactly one changed manifest and exact changed-path coverage"
+      ],
+      "verification_level": "Local A.5 --base origin/main --head HEAD must exit 0 on this manifest commit; remote A.5 workflow must re-run and pass on its exact pushed SHA.",
+      "model_evidence_veto_recovery_exit": "The manifest is a declaration, not a substitute for independent model review or original R9. A missing or mismatched path must fail the mechanical gate.",
+      "rollback_route": "Revert this manifest commit restores the original A.5 failure; no runtime source or tests change."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-provider-evidence-authority",
+      "g1": {
+        "necessity": "The incident showed completed tool observations archived before the next Provider view, leaving the model to repeat exploration. A final pre-send mechanical check is necessary to prove an exact paired raw observation or a recoverable owner/version-qualified EvidenceRef, or fail closed without a second send."
+      },
+      "g2": {
+        "authority_owner": "existing LoopEngine pre-send projection, Session truth and registered EvidenceReadTool/EvidenceLedger",
+        "relationship": "reuse",
+        "non_duplication": "Reuses existing Session, conservative projection, EvidenceLedger/BlobStore, EvidenceReadTool and preflight. Adds no second evidence store, semantic loop breaker, autonomous retry or new model policy authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "exact assistant tool-call ID/name/arguments and matching tool-role contents from the current Run",
+          "registered read_evidence schema actually callable by the Provider",
+          "owner/session authorization, source version/freshness and blob SHA integrity",
+          "bounded EvidenceRef paging parameters and explicit incomplete-inline capsule",
+          "physical budget and hard-overflow preflight results"
+        ],
+        "recovery_or_reason": "When a qualified ref fits, the model can call read_evidence to retrieve the exact prior observation without re-executing its source. If the ref cannot be qualified or the final view cannot physically fit, the gate sets context_capacity_unavailable/run_incomplete and blocks the next Provider send. The model remains free to choose legitimate polling when evidence is visible."
+      },
+      "g4": {
+        "rollback": "Revert the isolated code change and its tests in a controlled environment; do not silently disable a deployed observation gate. Existing evidence and Session records remain durable.",
+        "verification": [
+          "GLM-5.3 independent code review PASS P0=0/P1=0/P2=1",
+          "225 then 228 focused tests passed",
+          "Original full R9 exit 0 on matching src/tests tree; 15023 pytest passed and 600 Vitest passed",
+          "Remote GitHub CI and controlled live canary are separate release gates"
+        ]
+      }
+    },
+    {
+      "declaration_id": "existing-architecture-ratchet",
+      "g1": {
+        "necessity": "Original R9 found three architecture guard failures caused by an added local import and unregistered new helper/function growth. Existing strict AST/function-size and local-import ratchets must remain enforceable while accurately registering the changed code."
+      },
+      "g2": {
+        "authority_owner": "existing tests/guards/function_size_baseline.json and scripts/regen_function_size_baseline.py",
+        "relationship": "reuse",
+        "non_duplication": "No new architectural gate or bypass. The official regen uses the guard's own AST measurement and records visible changes, including tightening six unrelated legacy values."
+      },
+      "g3": {
+        "model_evidence": [
+          "original R9 tier0 failed three architecture guards",
+          "module-scope import removes 13 to 14 local-import regression",
+          "official AST baseline re-registers engine 2215 and new helpers 174/144",
+          "three failing guard tests passed after the change"
+        ],
+        "recovery_or_reason": "If future source changes exceed registered values, the existing guard fails. The model/developer must decompose code or explicitly re-register measured growth under review; no automatic acceptance."
+      },
+      "g4": {
+        "rollback": "Revert baseline and corresponding source change together; do not remove the guard or lower its threshold.",
+        "verification": [
+          "Official regen --check idempotence PASS",
+          "Three original architecture guard failures fixed",
+          "Independent GLM-5.3 review PASS P0/P1=0",
+          "Original full R9 exit 0"
+        ]
+      }
+    }
+  ]
+}

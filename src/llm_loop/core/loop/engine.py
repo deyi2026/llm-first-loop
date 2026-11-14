@@ -48,6 +48,9 @@ from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCa
 from llm_loop.core.loop.engine_services.nonconvergence_guard import (
     NonconvergenceFuseError,
 )
+from llm_loop.core.loop.engine_services.observation_visibility import (
+    ensure_latest_observation_visible,
+)
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -1631,6 +1634,30 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                 "hard_overflow": False,
                             },
                         )
+
+            # P0-B: final pre-send raw observation authority, delegated to one
+            # existing engine-service helper to keep the core loop bounded.
+            messages, _observation_hold = ensure_latest_observation_visible(
+                self, sess, messages,
+                session_id=session_id,
+                active_turn_ref=_active_turn_ref,
+                active_ingress_ref=_active_run_ingress_ref,
+                effective_budget=effective_budget,
+                budget_info=_budget_info,
+                request_preflight=_request_preflight,
+                tools_param=tools_param,
+                chat_model_arg=chat_model_arg,
+                model=model,
+                planned_label=planned_label,
+                rounds=rounds,
+            )
+            if _observation_hold:
+                _run_end_reason = _observation_hold
+                final_answer = (
+                    f"[{_observation_hold}] 最新工具观察在最终 Provider 视图中"
+                    "无法安全交付；已阻止发送（provider_sent=false，run_incomplete）。"
+                )
+                break
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。
