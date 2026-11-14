@@ -1,0 +1,191 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-m1-t1-m2-web-canary",
+  "summary": "T1-only supervised document generation/editing with real Provider/Tool budget gates, Web controlled canary, durable F18 revocation and CAS/create-only writes. Reuses existing stores, dispatch and authorization; no second planner or production expansion. Exact PR base..head path partition and independently verified release gate evidence.",
+  "components": [
+    {
+      "component_id": "provider-tool-budget-controls",
+      "paths": [
+        "scripts/m1_fx05_budgeted_run.py",
+        "src/llm_loop/core/loop/lifecycle.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/resources/task_budget_dispatch.py",
+        "src/llm_loop/resources/task_budget_store.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing TaskBudgetStore / LLMClient / Engine / dispatch journal",
+      "disposition": "Reuse the existing TaskBudgetStore CAS ledger and dispatch hooks for send-before-reserve, real Provider usage settlement, Tool call accounting and fail-closed UNKNOWN/stop. The M1 script is a bounded qualification harness, not a second planner or state store.",
+      "evidence": [
+        "tests/unit/test_m1_fx05_budgeted_run.py",
+        "docs/receipts/M1-FX05-v3r2-20261113.json"
+      ],
+      "verification_level": "M1 36 focused passed; M2+M1 96 focused passed; original full R9 --release exit 0 with 14849 passed, 158 skipped, 3 xfailed; independent GLM-5.3 completed/PASS P0/P1=0.",
+      "model_evidence_veto_recovery_exit": "The model may generate or revise only authorized T1 text and can decline or stop. Physical Provider/Tool budget and stop gates are deterministic; missing usage, conflict, unknown settlement and revoked authorization fail closed; operator may revoke before action.",
+      "rollback_route": "Revert this isolated candidate and leave existing TaskBudgetStore and ordinary Web defaults intact; no production deployment or data migration has occurred.",
+      "declaration_id": "t1-budget-dispatch-reuse"
+    },
+    {
+      "component_id": "web-controlled-write-fence",
+      "paths": [
+        "src/llm_loop/resources/task_budget_t1_web_profile.py",
+        "src/llm_loop/tools/registry.py",
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/task_budget_canary.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing Web canary admission / operator config / FileService CAS",
+      "disposition": "Reuse signed operator configuration, TaskBudgetStore, EventStore and existing read_file/edit_file. Web default remains OFF; one restricted session is admitted only with pinned 0600 config and F18 action-time revalidation. No new general authorization server or parallel writer authority.",
+      "evidence": [
+        "tests/unit/test_task_budget_t1_web_profile.py",
+        "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+      ],
+      "verification_level": "T1 60 focused passed including real FastAPI/Runner/LLMClient synthetic SSE, F18 revocation, cross-kind single-flight and CAS negatives; full R9 --release exit 0; M2 manifest 13/13 SHA+bytes verified.",
+      "model_evidence_veto_recovery_exit": "Model output is evidence for supervised document writing, never an authorization. Operator can revoke config or cancel Run; file identity changes, missing usage, missing read snapshot and CAS conflict reject physical actions. Unknown results remain durable until verified.",
+      "rollback_route": "Disable the restricted Web canary and revert the isolated commit; no live Mac/Deepin service has been restarted or changed.",
+      "declaration_id": "t1-web-fence-reuse"
+    },
+    {
+      "component_id": "shared-text-normalization",
+      "paths": [
+        "src/llm_loop/resources/text_normalization.py",
+        "src/llm_loop/workspace/file_service.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing FileService text-normalization helper",
+      "disposition": "Move pure newline normalization to the resource plane and re-export it from FileService to remove an illegal resources-to-workspace import edge; no authority or decision state is added.",
+      "evidence": [
+        "tests/unit/test_task_budget_t1_web_profile.py"
+      ],
+      "verification_level": "Original architecture guard suite 52 passed; independent Reviewer verified 4 targeted guards; full R9 exit 0.",
+      "model_evidence_veto_recovery_exit": "No model decision or veto is introduced; callers retain their existing CAS and operator authorization boundaries.",
+      "rollback_route": "Revert the pure helper extraction with its import callers; preserve the original FileService behavior."
+    },
+    {
+      "component_id": "negative-and-integration-tests",
+      "paths": [
+        "tests/unit/test_m1_fx05_budgeted_run.py",
+        "tests/unit/test_task_budget_t1_web_profile.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing pytest test suites",
+      "disposition": "Add budget, revocation, single-flight, full-stack synthetic transport and text-helper identity tests. Tests do not modify runtime authorization or CI guard thresholds.",
+      "evidence": [
+        "tests/unit/test_m1_fx05_budgeted_run.py",
+        "tests/unit/test_task_budget_t1_web_profile.py"
+      ],
+      "verification_level": "96 combined focused passed; related sweep 750 passed and 10546 deselected; original full R9 exit 0.",
+      "model_evidence_veto_recovery_exit": "Negative tests demonstrate mechanical rejection, not model self-certification; failed assertions block release.",
+      "rollback_route": "Revert tests with the candidate if feature is withdrawn."
+    },
+    {
+      "component_id": "design-and-execution-receipts",
+      "paths": [
+        "docs/design/M1-FX05-TASK-20261113.md",
+        "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md",
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md",
+        "docs/receipts/M1-FX05-20261113.json",
+        "docs/receipts/M1-FX05-v3r2-20261113.json",
+        "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "design and immutable audit receipts",
+      "disposition": "Preserve both incomplete historical FX05 and later qualified run separately, document failed pre-repair R9 and passing repaired R9, and pin source/receipt hashes. These documents do not change runtime policy.",
+      "evidence": [
+        "docs/receipts/M1-FX05-v3r2-20261113.json",
+        "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+      ],
+      "verification_level": "M1 output SHA verified; M2 top manifest 13/13; independent GLM-5.3 final completed/PASS P0=0/P1=0/P2=0; original full R9 exit 0.",
+      "model_evidence_veto_recovery_exit": "The model may explain evidence but cannot turn incomplete runs into success. Operator/reviewer can reject contradictory receipts; hashes and Git commit remain mechanical facts.",
+      "rollback_route": "Revert only the candidate docs; retain historical receipts in audit records where required."
+    },
+    {
+      "component_id": "isolated-t1-fixtures",
+      "paths": [
+        "t1-sandbox/inputs/fx05-v3r2-prompt-20261113.md",
+        "t1-sandbox/outputs/fx05-draft.md",
+        "t1-sandbox/outputs/fx05-v3r2-fixture-20261113.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "isolated T1 fixture directory",
+      "disposition": "Keep synthetic input and verified output artifacts for FX05 without any real publication or production writes.",
+      "evidence": [
+        "docs/receipts/M1-FX05-20261113.json",
+        "docs/receipts/M1-FX05-v3r2-20261113.json"
+      ],
+      "verification_level": "Output bytes and before/after SHA independently checked; old incomplete run not conflated with qualified v3r2.",
+      "model_evidence_veto_recovery_exit": "Fixtures are test evidence, not authorization to publish or change production state.",
+      "rollback_route": "Remove only isolated synthetic fixtures through a reviewed revert."
+    },
+    {
+      "component_id": "architecture-submission-evidence",
+      "paths": [
+        "docs/governance/submissions/20261114-m1-t1-m2-web-canary.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "existing A.5 governance submission process",
+      "disposition": "Declare exact changed-path ownership and G1-G4 reuse decisions; this is documentation only, not a new architecture or gate.",
+      "evidence": [
+        "scripts/check_architecture_submission.py"
+      ],
+      "verification_level": "Validate with original A.5 checker against exact PR base and candidate HEAD; human/GLM semantic review remains separate.",
+      "model_evidence_veto_recovery_exit": "Mechanical coverage checks do not grant model or operator execution authority; incorrect declarations must be revised.",
+      "rollback_route": "Revert the manifest with the candidate; no live state changes."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "t1-budget-dispatch-reuse",
+      "g1": {
+        "necessity": "Unmetered Provider/Tool dispatch, missing real usage and repeated writes can cause unbounded physical effects. The model cannot enforce hard budgets or idempotency; existing deterministic CAS and dispatch hooks must reject before sending."
+      },
+      "g2": {
+        "authority_owner": "Existing TaskBudgetStore, LLMClient, Engine and ToolExecutionJournal",
+        "relationship": "reuse",
+        "non_duplication": "No second task planner, state store, budget ledger or publish system. Reservations and settlement stay on the existing atomic store and physical dispatch boundaries."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_m1_fx05_budgeted_run.py",
+          "docs/receipts/M1-FX05-v3r2-20261113.json"
+        ],
+        "recovery_or_reason": "On missing Provider usage, UNKNOWN settlement, stop, budget exhaustion or CAS conflict, fail closed and retain durable evidence. Model can propose revised text only after operator reauthorization, never override the budget gate."
+      },
+      "g4": {
+        "rollback": "Revert the isolated T1 budget integration, preserving previous durable stop records and ordinary runtime behavior; no production deployment has happened.",
+        "verification": [
+          "36 M1 focused tests passed",
+          "Real Provider/Tool usage and no-usage fail-closed negatives covered",
+          "Independent GLM-5.3 completed/PASS P0/P1=0",
+          "Original full R9 --release exit 0; 14849 passed, 158 skipped, 3 xfailed"
+        ]
+      }
+    },
+    {
+      "declaration_id": "t1-web-fence-reuse",
+      "g1": {
+        "necessity": "A controlled Web write must bind operator authority, exact read snapshot, idempotent edit and revocation across restart; natural-language instruction alone cannot safely authorize a physical filesystem change."
+      },
+      "g2": {
+        "authority_owner": "Existing signed Web canary, TaskBudgetStore, EventStore, FileService read/edit CAS",
+        "relationship": "reuse",
+        "non_duplication": "Single restricted session, no new permission service or generalized autonomous writer; default Web remains OFF. F18 uses the pinned operator file and existing durable stop."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_task_budget_t1_web_profile.py",
+          "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+        ],
+        "recovery_or_reason": "Model-generated text is candidate content only; operator can revoke at any action boundary. Config deletion, symlink, mode change, stale snapshot, duplicate dispatch and unknown result all deny further physical writes."
+      },
+      "g4": {
+        "rollback": "Disable the T1 restricted canary and revert the isolated candidate; Mac four-service release and Deepin are unchanged.",
+        "verification": [
+          "60 T1 focused tests passed including HTTP-to-Runner synthetic SSE",
+          "F18 config and restart fail-closed plus cross-kind single-flight negatives passed",
+          "M2 manifest 13/13 SHA+bytes match",
+          "Original full R9 --release exit 0; independent Reviewer completed/PASS P0/P1=0"
+        ]
+      }
+    }
+  ]
+}
