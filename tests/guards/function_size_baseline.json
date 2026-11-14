@@ -1200,7 +1200,8 @@
     "src/llm_loop/web/routes.py::queue_interject": 124,
     "src/llm_loop/workspace/archive_stale.py::run_archive_stale": 121,
     "src/llm_loop/workspace/file_service.py::_edit_locked": 253,
-    "src/llm_loop/workspace/human_file_ops.py::edit": 137
+    "src/llm_loop/workspace/human_file_ops.py::edit": 137,
+    "src/llm_loop/introspection/tools_lane.py::run_lane_reap": 132
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
