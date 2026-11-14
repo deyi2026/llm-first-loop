@@ -17,3 +17,23 @@
 3. **门禁**：独立 GLM-5.3 代码 Reviewer PASS/P0=P1=0 → 原版完整 R9 exit 0 → CI → 经授权 main/push/受管发布；旧 M4-C 未决债务继续 HOLD。
 
 **未发生**：真实事故工具重放、生产 Provider 推理、模型配置变更、main 合并、push、发布或重启。
+
+
+## 独立代码审查（同一冻结源码，2026-11-14）
+
+真实 `glm/glm-5.3` 独立 Reviewer：单次 Provider 尝试、零工具、
+`finish_reason=stop`、`truncated=false`、合法 JSON 且精确候选 HEAD
+`92176804187da90e0d495961921f102c0f463951` 和代码 diff SHA
+`358e7563aa038acd8ac169e3d967a0a36483c70399c0ec9a5af83bc0fe085d54`
+校验通过；**正式 PASS，P0=0/P1=0/P2=3，AC1–AC10 全部 PASS**。
+
+三项 P2（不改写为零）：① active ingress identity 缺失时 guard
+可能跳过，建议专门覆盖；② ingress marker 丢失与普通 observation
+缺失应分别诊断；③ guard 自身异常与物理容量不足应分别给出原因，
+并测试异常分支的结构化 `run_incomplete`。这些是后续补强建议，
+不等于本次生产资格。
+
+正式回执：`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-GLM53-review.json`。
+**原版完整 R9 仍未运行**；当前检测到其他 M5E 工作树正在运行
+`bash scripts/ci_gate.sh`，本批不得并发干扰。等待其退出后，再对本
+隔离候选运行原版完整 R9，必须以真实 exit 0 作为下一门禁。
