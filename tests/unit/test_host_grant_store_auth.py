@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import secrets
 import shutil
 import subprocess
@@ -346,9 +347,10 @@ def test_home_symlink_redirect_into_workspace_rejected(monkeypatch, tmp_path, is
 
 
 def test_default_home_outside_writable_roots(monkeypatch, isolated_data_dir):
-    # CI sets HOME under the writable worktree: that is correctly unsafe.
-    # For this positive case, use a read-only derived fake home outside it.
-    monkeypatch.setenv("HOME", "/opt/lfl-host-grant-test-user")
+    # R9 HOME is inside the writable checkout. Use the OS account's
+    # real home (read-only lookup, no directory creation) for this positive
+    # test: /opt is not guaranteed to be non-writable on Linux CI runners.
+    monkeypatch.setenv("HOME", pwd.getpwuid(os.getuid()).pw_dir)
     monkeypatch.delenv("LFL_HOST_GRANT_HOME", raising=False)
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     home = host_grant_store_home()
@@ -399,8 +401,8 @@ def test_execute_command_workdir_grant_home_guard(
 
 
 def test_grant_home_guard_candidates_env_and_default(monkeypatch, isolated_data_dir):
-    # Use a synthetic safe HOME, not the CI worktree-local writable HOME.
-    monkeypatch.setenv("HOME", "/opt/lfl-host-grant-test-user")
+    # Use the OS account home, not the CI worktree HOME or a hard-coded /opt.
+    monkeypatch.setenv("HOME", pwd.getpwuid(os.getuid()).pw_dir)
     good = Path.home() / ".local" / "state-guard-unit-probe"
     monkeypatch.setenv("LFL_HOST_GRANT_HOME", str(good))
     cands = esc.grant_home_guard_candidates()
