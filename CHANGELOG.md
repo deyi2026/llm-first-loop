@@ -1,5 +1,10 @@
 # Changelog（公开变更记录）
 
+## v0.6.52 — Deepin wheel 与最新 main 源码对齐（2026-11-14）
+
+- 从已审查并通过完整 R9 的 main `f212731bd` 构建新的不可变 Linux wheel，避免覆盖 Deepin 已安装的同名 0.6.51 发行目录。
+- 本次只更新发行版本声明与构建身份；HostCapabilityGrant 沙盒外路径授权尚未接入，不将设计方案冒充已交付功能。
+
 ## v0.6.51 — 按需只读 task_get 任务明细查询（2026-11-13）
 
 - 新增按需只读 `task_get` 工具：按 task_id（goal_id 可选，默认当前会话活动 goal）返回单个 durable Task 的完整明文明细，含 acceptance、done_when、blocked_reason、evidence refs 与核验状态、依赖与期限等元数据，不截断。
