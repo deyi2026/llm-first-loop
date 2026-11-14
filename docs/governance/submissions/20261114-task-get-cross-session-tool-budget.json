@@ -1,0 +1,99 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-task-get-cross-session-tool-budget",
+  "summary": "Small cross-session task_get read-only recovery guidance correction and pre-dispatch tool-cap negative test. Reuses existing GoalStore, TaskStore, ToolRegistry, TaskBudgetExecution and TaskBudgetStore; no new authority, Planner, runtime budget mechanism, cross-session write path, service restart or old-Run replay.",
+  "components": [
+    {
+      "component_id": "task-get-cross-session-read-guidance",
+      "paths": [
+        "src/llm_loop/introspection/tools_task.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "reuse-read-only-task-authority",
+      "owning_subsystem": "Existing task_get tool schema and GoalStore/TaskStore read projection",
+      "disposition": "Clarify that omitted/current goal_id is strictly current-session only; for an already-known cross-session Task require explicit original goal_id+task_id. Keep existing optional parameter and SUCCESS empty-view contract, no enumeration or write grant.",
+      "evidence": [
+        "M2 B/Bprime fresh-session task_get explicit goal_id each recovered in one read; C1 omitted goal_id and exceeded prompt-only 3-call cap.",
+        "tests/unit/test_task_get_tool.py cross-session no-goal guidance, no other-goal leak, explicit recovery and byte invariance."
+      ],
+      "verification_level": "Independent GLM-5.3 review of final frozen candidate PASS P0/P1=0 and original full R9 CLEAN exit 0 required before push; targeted regressions already passed on prior same-code diff.",
+      "model_evidence_veto_recovery_exit": "Absent current-session goal cannot be treated as task nonexistence or approval to create/modify another Goal. Explicit read does not authorize cross-session write, old Run replay, or budget reset.",
+      "rollback_route": "Revert this text/schema-only change; no task ledger migration, provider state or deployment identity to roll back."
+    },
+    {
+      "component_id": "cross-session-task-negative-tests",
+      "paths": [
+        "tests/unit/test_task_get_tool.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing task_get unit regression suite",
+      "disposition": "Test omitted goal_id cold-session guidance and privacy boundary, explicit read success, unchanged task bytes, unchanged optional goal_id schema.",
+      "evidence": [
+        "Earlier isolated candidate targeted pytest 171 passed, including new negative case.",
+        "No test accesses real network or production Task ledger."
+      ],
+      "verification_level": "Final frozen candidate targeted pytest and original full R9 required.",
+      "model_evidence_veto_recovery_exit": "Do not infer read authority from missing current Goal; tests do not grant write permissions.",
+      "rollback_route": "Revert test with corresponding guidance if rejected."
+    },
+    {
+      "component_id": "tool-cap-before-effect-negative-test",
+      "paths": [
+        "tests/unit/test_task_budget_physical_dispatch.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing ToolRegistry and TaskBudgetExecution physical-dispatch unit suite",
+      "disposition": "Prove a controlled grant of three tool invocations permits exactly three side effects, blocks fourth before execute, and charges exactly three reservations. Does not change general unbudgeted Web chat behavior.",
+      "evidence": [
+        "Existing checked_tool_dispatch -> TaskBudgetExecution.reserve -> TaskBudgetStore CAS hard gate, unchanged.",
+        "New test checks four ToolResult statuses, side-effect list and durable used/reservation count."
+      ],
+      "verification_level": "Final frozen candidate targeted pytest and original full R9 required.",
+      "model_evidence_veto_recovery_exit": "Prompt-only call caps are soft. A hard cap exists only when a valid budget is bound; unbudgeted Web chat cannot claim the same enforcement.",
+      "rollback_route": "Revert the test without modifying the existing runtime budget mechanism."
+    },
+    {
+      "component_id": "a5-submission-exact-paths",
+      "paths": [
+        "docs/governance/submissions/20261114-task-get-cross-session-tool-budget.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture submission gate",
+      "disposition": "Declare exact changed paths and G1-G4 of the one existing read-only tool control surface; metadata only.",
+      "evidence": [
+        "scripts/check_architecture_submission.py exact path coverage required by remote CI."
+      ],
+      "verification_level": "Check A.5 locally on final frozen commit and on GitHub PR.",
+      "model_evidence_veto_recovery_exit": "Any path mismatch or missing review blocks PR merge; manifest grants no runtime authority.",
+      "rollback_route": "Revert manifest together with this PR."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-read-only-task-authority",
+      "g1": {
+        "necessity": "A real GLM-5.3 cross-session continuation omitted goal_id and misread the current-session-only empty view, causing extra read calls and an unsupported task-recovery diagnosis."
+      },
+      "g2": {
+        "authority_owner": "Existing GoalStore strict-session lookup, TaskStore explicit goal_id read, TaskBudgetExecution/TaskBudgetStore hard gate when bound",
+        "relationship": "reuse",
+        "non_duplication": "No new task ledger, Planner, write permission, tool-budget authority, fallback global goal search or recovery daemon."
+      },
+      "g3": {
+        "model_evidence": [
+          "M2 B/Bprime explicit task_get one-call success and C1 omission/4-call counterexample.",
+          "Frozen patch negative tests and independent GLM-5.3 reviewer PASS P0/P1=0 required."
+        ],
+        "recovery_or_reason": "No active Goal in the current session remains a safe empty view, with explicit guidance to supply original goal_id; it never implies task deletion or permission to create/write Goal."
+      },
+      "g4": {
+        "rollback": "Revert only the schema/empty-view wording and accompanying tests/manifest; old Run and deployed services remain untouched.",
+        "verification": [
+          "171 focused tests passed on earlier same-code diff; final frozen candidate must rerun.",
+          "Ruff and Pyright no new errors; original full R9 CLEAN exit 0 on final SHA.",
+          "Remote A.5, privacy scan and CI must pass before merge."
+        ]
+      }
+    }
+  ]
+}
