@@ -124,6 +124,7 @@ from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.service_control import (
     ManagedServiceDeploymentStore,
     ManagedServiceMutationGuard,
+    scan_publish_closeout_pending,
     scan_unacknowledged_failed_actions,
 )
 from llm_loop.runtime.tool_octet import register_octet_sink
@@ -320,8 +321,6 @@ _GATE_SCAN_TTL_SECONDS = 24 * 3600  # P2-1：陈旧门状态时间窗（对齐 f
 def _scan_publish_closeout_pending(data_dir: str | Path) -> list[dict[str, Any]]:
     """EVO-20261112-fd945e83: 薄委托单源扫描（runtime/service_control 为权威实现）."""
     try:
-        from llm_loop.runtime.service_control import scan_publish_closeout_pending
-
         return scan_publish_closeout_pending(data_dir)
     except Exception:  # noqa: BLE001 — 投影 fail-open
         return []

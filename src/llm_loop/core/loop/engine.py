@@ -1045,9 +1045,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # DSH 借鉴(2026-08-17): run 结束原因（统一出口 run.end 事件用；各结束分支标记，
         # 默认 completed——未标记即正常完成。fail-open 不阻断）
         _run_end_reason = "completed"
-        _cancel_reason = (
-            ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
-        )
+        _cancel_reason = ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
         _run_started_at = time.monotonic()
         # R2（antidrift_impl 批1）: 收敛回执事实面 run 级重置（OQ3 复活即重置；
         # stagnation_state「run 开始重置」同款纪律）
@@ -1059,9 +1057,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         _vitals_bucket.vitals_started_monotonic = _run_started_at
         self._termination._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
         self._recovery._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
-        self._last_interrupted = (
-            None  # B1/B2(EVO-20260902-41898b20): 本 run 中断半截产物缓存（新 run 重置防陈旧串台）
-        )
+        self._last_interrupted = None  # B1/B2(EVO-20260902-41898b20): 本 run 中断半截产物缓存（新 run 重置防陈旧串台）
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         _model_route_source = "unknown"
         _model_route_authority = "none"

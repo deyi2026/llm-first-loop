@@ -730,6 +730,239 @@ def _emit_stats_event(engine: Any, session_id: str) -> None:
     )
 
 
+def _open_gate_with_manifest(
+    engine: Any,
+    session_id: str,
+    data_dir: str,
+    messages: list,
+    slots: dict,
+    manifest: dict,
+) -> None:
+    """C2 开门（manifest 成功）：snapshot/superseded 审计→state 落盘→opened 事件."""
+    engine._event_append(  # noqa: SLF001 — 引擎服务惯例
+        session_id,
+        "compaction.snapshot",
+        {
+            "manifest_id": manifest["manifest_id"],
+            "sha256": manifest["sha256"],
+            "path": manifest["rel_path"],
+            "assistant_count": manifest["assistant_count"],
+            "assistant_chars": manifest["assistant_chars"],
+            "total_archived": manifest["total_archived"],
+            "source_message_range": manifest.get("source_message_range"),
+        },
+    )
+    engine._record_action(  # noqa: SLF001
+        "run", "run.compact.snapshot",
+        f"manifest={manifest['manifest_id']} sha={manifest['sha256'][:12]}",
+    )
+    # P1-1（二轮复审）：新压缩事件不得静默覆盖既有未闭合门。
+    # pending 门先置 superseded 终态（事件+落盘留审计），未确认
+    # 事件数累积进新门（stale_events），共享新门回执一并覆盖。
+    prev = slots.get(session_id)
+    stale_events = 0
+    if prev is not None and prev.get("pending"):
+        stale_events = _supersede_pending_gate(
+            engine,
+            data_dir,
+            session_id,
+            prev,
+            by_event=manifest["manifest_id"],
+        )
+    # rev6②：继承会话升级账本；预算耗尽后新门转 observe_only——
+    # 照常落 manifest+事件（零丢失不变），不再注入确认通知、
+    # 不再重注入（「压缩上下文并继续」+ 转人工标记走事件）。
+    escal_total = _prior_escalations_total(slots, session_id, data_dir)
+    observe_only = escal_total >= ESCALATION_BUDGET
+    state = {
+        "compaction_event_id": manifest["manifest_id"],
+        "manifest_sha256": manifest["sha256"],
+        "manifest_rel_path": manifest["rel_path"],
+        "manifest_path": manifest["path"],
+        # P1-1：计数字段随状态持久化——重注入渲染不再伪造 0 条/0 字符
+        "assistant_count": manifest["assistant_count"],
+        "assistant_chars": manifest["assistant_chars"],
+        "total_archived": manifest["total_archived"],
+        "source_message_range": manifest.get("source_message_range"),
+        "archived_chars": manifest.get("archived_chars"),
+        "stale_events": stale_events,
+        "attempt": 1,
+        "rounds_open": 1,
+        "visible_from": len(messages),
+        # EVO-20261105-7eb1e99f(a)：开门时冻结投递模式——shadow 门
+        # 终其生命周期不落盘（见 _write_gate_state_gated）。
+        "delivery_mode": _delivery_mode(engine),
+        "escalations_total": escal_total,
+        "observe_only": observe_only,
+        "notice_text": None
+        if observe_only
+        else render_gate_notice_text(
+            manifest, attempt=1, stale_events=stale_events
+        ),
+        "pending": True,
+        "created_at": system_local_now_iso(),
+    }
+    slots[session_id] = state
+    _write_gate_state_gated(data_dir, session_id, state)
+    if observe_only:
+        _run_stats(engine)["observe_only_gates"] += 1
+    engine._event_append(  # noqa: SLF001
+        session_id,
+        "compaction.gate.opened",
+        {
+            "compaction_event_id": manifest["manifest_id"],
+            "manifest_ref": manifest["sha256"],
+            "visible_from": state["visible_from"],
+            "stale_events": stale_events,
+            "delivery_mode": state["delivery_mode"],
+            "mode": "observe_only" if observe_only else "enforce",
+            "escalations_total": escal_total,
+        },
+    )
+
+
+def _degrade_after_manifest_failure(
+    engine: Any,
+    session_id: str,
+    data_dir: str,
+    slots: dict,
+    batch: list,
+) -> None:
+    """B1/P1-2：manifest 写失败降级——审计旧门后落 degraded 观测态（不开门）."""
+    # B1/P1-2：压缩已执行但 manifest 写失败——如实降级为观测事件+提示，
+    # 不开无 ref 可锚定机械确认的门（ref=None 会退化为 unavailable）。
+    engine._event_append(  # noqa: SLF001
+        session_id,
+        "compaction.gate.degraded",
+        {"reason": "manifest_write_failed", "batch_size": len(batch)},
+    )
+    engine._record_action(  # noqa: SLF001
+        "run", "compaction.gate.degraded",
+        f"session={session_id} batch_size={len(batch)}",
+    )
+    # P2-2（四轮复审）：pending 门存续期间发生降级——不得静默覆盖：
+    # 先按 superseded 审计旧门（与开门路径同一承诺），再落 degraded。
+    prev = slots.get(session_id)
+    if prev is not None and prev.get("pending"):
+        _supersede_pending_gate(engine, data_dir, session_id, prev, by_reason="degraded")
+    # P2-2：degraded 状态落盘（与内存 hint 同信息），重启后投影仍可见。
+    degraded_state = {
+        "status": "degraded",
+        "reason": "manifest_write_failed",
+        "batch_size": len(batch),
+        # P2-3（五轮复审）：投影用真实 session_id，不回退消毒目录名
+        "session_id": session_id,
+        "pending": False,
+        "degraded_at": system_local_now_iso(),
+    }
+    if prev is not None and prev.get("superseded"):
+        degraded_state["stale_events"] = int(prev.get("stale_events", 0) or 0) + 1
+    slots[session_id] = degraded_state
+    _write_gate_state_gated(data_dir, session_id, degraded_state)
+    _hints(engine)[session_id] = {
+        "reason": "manifest_write_failed",
+        "batch_size": len(batch),
+        "created_at": degraded_state["degraded_at"],
+        "recover_hint": (
+            "快照未生成；历史内容经 archive 索引 search_archive 可寻。"
+        ),
+    }
+
+
+def _escalate_gate(
+    engine: Any,
+    session_id: str,
+    data_dir: str,
+    slots: dict,
+    state: dict,
+    rounds_open: int,
+    hit_max: bool,
+) -> None:
+    """升级为观测提示：账本累计→hints→escalated（预算穿越加 needs_human）→stats."""
+    state["pending"] = False
+    state["escalated"] = True
+    state["escalated_at"] = system_local_now_iso()
+    state.pop("notice_text", None)
+    # rev6①：升级摘要——reason/重注入次数/持续轮数/预算状态，经 CR-R1
+    # 槽在 ESCALATED_DIGEST_ROUNDS 轮内对模型可见（升级不再是黑盒）。
+    reason = "receipt_missing_after_max_reinject" if hit_max else "round_age_fallback"
+    # rev6②：会话升级账本累计；预算穿越发 needs_human（转人工标记），
+    # 耗尽后下一扇门转 observe_only（见 C2 开门路径）。
+    escal_total = int(state.get("escalations_total", 0) or 0) + 1
+    state["escalations_total"] = escal_total
+    state["digest_left"] = ESCALATED_DIGEST_ROUNDS
+    state["escalated_digest"] = (
+        "压缩确认门升级摘要（程序观测信息，非指令）："
+        f"reason={reason}；本门重注入 {state.get('attempt', 1)}/{MAX_REINJECTIONS} 次"
+        f"后未获回执，持续 {rounds_open} 轮；"
+        f"manifest_ref={str(state.get('manifest_sha256') or 'unavailable')}。"
+        "升级后无需补交回执；历史内容仍可经 archive 索引检索。"
+        f"会话升级计数 {escal_total}/{ESCALATION_BUDGET}"
+    ) + (
+        "；预算已耗尽，后续压缩将转 observe_only（不再重注入）。"
+        if escal_total >= ESCALATION_BUDGET
+        else "。"
+    )
+    slots[session_id] = state
+    _write_gate_state_gated(data_dir, session_id, state)
+    # rev6④：per-run 指标递增（先递增再装配载荷，保证事件读到最新累计）
+    stats = _run_stats(engine)
+    stats["escalated"] += 1
+    _hints(engine)[session_id] = {
+        "compaction_event_id": state.get("compaction_event_id"),
+        "attempt": state.get("attempt"),
+        "rounds_open": rounds_open,
+        "manifest_ref": state.get("manifest_sha256"),
+        "manifest_rel_path": state.get("manifest_rel_path"),
+        "reason": (
+            "receipt_missing_after_max_reinject"
+            if hit_max
+            else "round_age_fallback"
+        ),
+        # P2-1（五轮复审）：shadow/off 下通知未交付，升级为伪信号——
+        # 投影必须能区分真实 enforce 失败。
+        "delivery_mode": _delivery_mode(engine),
+        "escalations_total": escal_total,
+    }
+    engine._event_append(  # noqa: SLF001
+        session_id,
+        "compaction.gate.escalated",
+        {
+            "compaction_event_id": state.get("compaction_event_id"),
+            "attempt": state.get("attempt"),
+            "rounds_open": rounds_open,
+            "reason": "receipt_missing_after_max_reinject" if hit_max else "round_age_fallback",
+            # 审查锚（R1/R3/R5 P1 同项）：escalated 事件载荷确带 delivery_mode
+            # ——test_shadow_gate_zero_disk_full_lifecycle 逐字断言本字段
+            # （escalated[-1][2]["delivery_mode"] == "shadow"），四轮全量绿。
+            "delivery_mode": _delivery_mode(engine),
+            "escalations_total": escal_total,
+            "run_escalations_total": stats["escalated"],
+            "run_reinject_attempts_total": stats["reinject_attempts"],
+        },
+    )
+    if escal_total >= ESCALATION_BUDGET:
+        # rev6②：预算穿越——转人工标记（会话内升级预算已耗尽，
+        # 后续压缩转 observe_only：零丢失保留，确认门不再重注入）。
+        engine._event_append(  # noqa: SLF001
+            session_id,
+            "compaction.gate.needs_human",
+            {
+                "escalations_total": escal_total,
+                "budget": ESCALATION_BUDGET,
+                "compaction_event_id": state.get("compaction_event_id"),
+                "manifest_ref": state.get("manifest_sha256"),
+                "next_gates_policy": "observe_only",
+            },
+        )
+        engine._record_action(  # noqa: SLF001
+            "run", "compaction.gate.needs_human",
+            f"session={session_id} escalations_total={escal_total}",
+        )
+    # rev6④：升级/预算穿越均输出 run 级累计指标事件
+    _emit_stats_event(engine, session_id)
+
+
 def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
     session_id = getattr(sess, "session_id", "") or ""
     messages = getattr(sess, "messages", None) or []
@@ -742,125 +975,13 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         if batch:
             manifest = write_compaction_manifest(data_dir, session_id, batch)
             if manifest:
-                engine._event_append(  # noqa: SLF001 — 引擎服务惯例
-                    session_id,
-                    "compaction.snapshot",
-                    {
-                        "manifest_id": manifest["manifest_id"],
-                        "sha256": manifest["sha256"],
-                        "path": manifest["rel_path"],
-                        "assistant_count": manifest["assistant_count"],
-                        "assistant_chars": manifest["assistant_chars"],
-                        "total_archived": manifest["total_archived"],
-                        "source_message_range": manifest.get("source_message_range"),
-                    },
-                )
-                engine._record_action(  # noqa: SLF001
-                    "run", "run.compact.snapshot",
-                    f"manifest={manifest['manifest_id']} sha={manifest['sha256'][:12]}",
-                )
-                # P1-1（二轮复审）：新压缩事件不得静默覆盖既有未闭合门。
-                # pending 门先置 superseded 终态（事件+落盘留审计），未确认
-                # 事件数累积进新门（stale_events），共享新门回执一并覆盖。
-                prev = slots.get(session_id)
-                stale_events = 0
-                if prev is not None and prev.get("pending"):
-                    stale_events = _supersede_pending_gate(
-                        engine,
-                        data_dir,
-                        session_id,
-                        prev,
-                        by_event=manifest["manifest_id"],
-                    )
-                # rev6②：继承会话升级账本；预算耗尽后新门转 observe_only——
-                # 照常落 manifest+事件（零丢失不变），不再注入确认通知、
-                # 不再重注入（「压缩上下文并继续」+ 转人工标记走事件）。
-                escal_total = _prior_escalations_total(slots, session_id, data_dir)
-                observe_only = escal_total >= ESCALATION_BUDGET
-                state = {
-                    "compaction_event_id": manifest["manifest_id"],
-                    "manifest_sha256": manifest["sha256"],
-                    "manifest_rel_path": manifest["rel_path"],
-                    "manifest_path": manifest["path"],
-                    # P1-1：计数字段随状态持久化——重注入渲染不再伪造 0 条/0 字符
-                    "assistant_count": manifest["assistant_count"],
-                    "assistant_chars": manifest["assistant_chars"],
-                    "total_archived": manifest["total_archived"],
-                    "source_message_range": manifest.get("source_message_range"),
-                    "archived_chars": manifest.get("archived_chars"),
-                    "stale_events": stale_events,
-                    "attempt": 1,
-                    "rounds_open": 1,
-                    "visible_from": len(messages),
-                    # EVO-20261105-7eb1e99f(a)：开门时冻结投递模式——shadow 门
-                    # 终其生命周期不落盘（见 _write_gate_state_gated）。
-                    "delivery_mode": _delivery_mode(engine),
-                    "escalations_total": escal_total,
-                    "observe_only": observe_only,
-                    "notice_text": None
-                    if observe_only
-                    else render_gate_notice_text(
-                        manifest, attempt=1, stale_events=stale_events
-                    ),
-                    "pending": True,
-                    "created_at": system_local_now_iso(),
-                }
-                slots[session_id] = state
-                _write_gate_state_gated(data_dir, session_id, state)
-                if observe_only:
-                    _run_stats(engine)["observe_only_gates"] += 1
-                engine._event_append(  # noqa: SLF001
-                    session_id,
-                    "compaction.gate.opened",
-                    {
-                        "compaction_event_id": manifest["manifest_id"],
-                        "manifest_ref": manifest["sha256"],
-                        "visible_from": state["visible_from"],
-                        "stale_events": stale_events,
-                        "delivery_mode": state["delivery_mode"],
-                        "mode": "observe_only" if observe_only else "enforce",
-                        "escalations_total": escal_total,
-                    },
+                _open_gate_with_manifest(
+                    engine, session_id, data_dir, messages, slots, manifest
                 )
                 return
-            # B1/P1-2：压缩已执行但 manifest 写失败——如实降级为观测事件+提示，
-            # 不开无 ref 可锚定机械确认的门（ref=None 会退化为 unavailable）。
-            engine._event_append(  # noqa: SLF001
-                session_id,
-                "compaction.gate.degraded",
-                {"reason": "manifest_write_failed", "batch_size": len(batch)},
+            _degrade_after_manifest_failure(
+                engine, session_id, data_dir, slots, batch
             )
-            engine._record_action(  # noqa: SLF001
-                "run", "compaction.gate.degraded",
-                f"session={session_id} batch_size={len(batch)}",
-            )
-            # P2-2（四轮复审）：pending 门存续期间发生降级——不得静默覆盖：
-            # 先按 superseded 审计旧门（与开门路径同一承诺），再落 degraded。
-            prev = slots.get(session_id)
-            if prev is not None and prev.get("pending"):
-                _supersede_pending_gate(engine, data_dir, session_id, prev, by_reason="degraded")
-            # P2-2：degraded 状态落盘（与内存 hint 同信息），重启后投影仍可见。
-            degraded_state = {
-                "status": "degraded",
-                "reason": "manifest_write_failed",
-                "batch_size": len(batch),
-                # P2-3（五轮复审）：投影用真实 session_id，不回退消毒目录名
-                "session_id": session_id,
-                "pending": False,
-                "degraded_at": system_local_now_iso(),
-            }
-            if prev is not None and prev.get("superseded"):
-                degraded_state["stale_events"] = int(prev.get("stale_events", 0) or 0) + 1
-            slots[session_id] = degraded_state
-            _write_gate_state_gated(data_dir, session_id, degraded_state)
-            _hints(engine)[session_id] = {
-                "reason": "manifest_write_failed",
-                "batch_size": len(batch),
-                "created_at": degraded_state["degraded_at"],
-                "recover_hint": (
-                    "快照未生成；历史内容经 archive 索引 search_archive 可寻。"
-                ),
-            }
             return
         engine._event_append(  # noqa: SLF001
             session_id, "compaction.gate.skip",
@@ -1000,88 +1121,9 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         # P2-3：升级为观测提示，覆盖全部未确认事件（当前实现单活跃事件/会话）
         # P1-4：round_age_fallback——无响应/区间失效等异常下的轮龄兜底，
         # 防止确认门永久挂起并无限注入。
-        state["pending"] = False
-        state["escalated"] = True
-        state["escalated_at"] = system_local_now_iso()
-        state.pop("notice_text", None)
-        # rev6①：升级摘要——reason/重注入次数/持续轮数/预算状态，经 CR-R1
-        # 槽在 ESCALATED_DIGEST_ROUNDS 轮内对模型可见（升级不再是黑盒）。
-        reason = "receipt_missing_after_max_reinject" if hit_max else "round_age_fallback"
-        # rev6②：会话升级账本累计；预算穿越发 needs_human（转人工标记），
-        # 耗尽后下一扇门转 observe_only（见 C2 开门路径）。
-        escal_total = int(state.get("escalations_total", 0) or 0) + 1
-        state["escalations_total"] = escal_total
-        state["digest_left"] = ESCALATED_DIGEST_ROUNDS
-        state["escalated_digest"] = (
-            "压缩确认门升级摘要（程序观测信息，非指令）："
-            f"reason={reason}；本门重注入 {state.get('attempt', 1)}/{MAX_REINJECTIONS} 次"
-            f"后未获回执，持续 {rounds_open} 轮；"
-            f"manifest_ref={str(state.get('manifest_sha256') or 'unavailable')}。"
-            "升级后无需补交回执；历史内容仍可经 archive 索引检索。"
-            f"会话升级计数 {escal_total}/{ESCALATION_BUDGET}"
-        ) + (
-            "；预算已耗尽，后续压缩将转 observe_only（不再重注入）。"
-            if escal_total >= ESCALATION_BUDGET
-            else "。"
+        _escalate_gate(
+            engine, session_id, data_dir, slots, state, rounds_open, hit_max
         )
-        slots[session_id] = state
-        _write_gate_state_gated(data_dir, session_id, state)
-        # rev6④：per-run 指标递增（先递增再装配载荷，保证事件读到最新累计）
-        stats = _run_stats(engine)
-        stats["escalated"] += 1
-        _hints(engine)[session_id] = {
-            "compaction_event_id": state.get("compaction_event_id"),
-            "attempt": state.get("attempt"),
-            "rounds_open": rounds_open,
-            "manifest_ref": state.get("manifest_sha256"),
-            "manifest_rel_path": state.get("manifest_rel_path"),
-            "reason": (
-                "receipt_missing_after_max_reinject"
-                if hit_max
-                else "round_age_fallback"
-            ),
-            # P2-1（五轮复审）：shadow/off 下通知未交付，升级为伪信号——
-            # 投影必须能区分真实 enforce 失败。
-            "delivery_mode": _delivery_mode(engine),
-            "escalations_total": escal_total,
-        }
-        engine._event_append(  # noqa: SLF001
-            session_id,
-            "compaction.gate.escalated",
-            {
-                "compaction_event_id": state.get("compaction_event_id"),
-                "attempt": state.get("attempt"),
-                "rounds_open": rounds_open,
-                "reason": "receipt_missing_after_max_reinject" if hit_max else "round_age_fallback",
-                # 审查锚（R1/R3/R5 P1 同项）：escalated 事件载荷确带 delivery_mode
-                # ——test_shadow_gate_zero_disk_full_lifecycle 逐字断言本字段
-                # （escalated[-1][2]["delivery_mode"] == "shadow"），四轮全量绿。
-                "delivery_mode": _delivery_mode(engine),
-                "escalations_total": escal_total,
-                "run_escalations_total": stats["escalated"],
-                "run_reinject_attempts_total": stats["reinject_attempts"],
-            },
-        )
-        if escal_total >= ESCALATION_BUDGET:
-            # rev6②：预算穿越——转人工标记（会话内升级预算已耗尽，
-            # 后续压缩转 observe_only：零丢失保留，确认门不再重注入）。
-            engine._event_append(  # noqa: SLF001
-                session_id,
-                "compaction.gate.needs_human",
-                {
-                    "escalations_total": escal_total,
-                    "budget": ESCALATION_BUDGET,
-                    "compaction_event_id": state.get("compaction_event_id"),
-                    "manifest_ref": state.get("manifest_sha256"),
-                    "next_gates_policy": "observe_only",
-                },
-            )
-            engine._record_action(  # noqa: SLF001
-                "run", "compaction.gate.needs_human",
-                f"session={session_id} escalations_total={escal_total}",
-            )
-        # rev6④：升级/预算穿越均输出 run 级累计指标事件
-        _emit_stats_event(engine, session_id)
         return
     state["attempt"] = int(state.get("attempt", 1)) + 1
     state["visible_from"] = len(messages)
