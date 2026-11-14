@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
@@ -328,6 +329,30 @@ class T1WebBudgetExecution(TaskBudgetExecution):
         # fsynced and independently read back. Never reconstructed from memory.
         self._t1_durable_run_fenced: bool = False
         self._t1_durable_admission_revision: int | None = None
+
+    def seal_at_run_end(self, *, reason: str = "run_ended") -> None:
+        """Reuse the existing lifecycle seal, then strictly record local Run-end."""
+        super().seal_at_run_end(reason=reason)
+        if not self._t1_durable_run_fenced or self._t1_event_store is None:
+            return
+        try:
+            from llm_loop.core.durable_run_recovery import (
+                append_durable_terminal_from_run_end,
+            )
+
+            append_durable_terminal_from_run_end(
+                event_store=self._t1_event_store,
+                budget_store=self.store,
+                session_id=self.member.session_id,
+                run_generation=self.member.run_generation,
+                authorization_id=self.budget_id.removeprefix("webt1-"),
+                admission_revision=self._t1_durable_admission_revision,
+            )
+        except Exception:  # noqa: BLE001 - uncertain terminal remains HOLD
+            logging.getLogger(__name__).exception(
+                "M5 strict terminal unconfirmed: session=%s generation=%s; HOLD",
+                self.member.session_id, self.member.run_generation,
+            )
 
     def _t1_assert_operator_authorized(self) -> None:
         """Fail-closed F18 gate: one check before every budget action.

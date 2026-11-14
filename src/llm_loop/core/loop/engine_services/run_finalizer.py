@@ -506,8 +506,7 @@ class RunFinalizer:
                 session_id,
                 "run.end",
                 {
-                    "session_id": session_id,
-                    "run_generation": current_run_generation.get(),
+                    "session_id": session_id, "run_generation": current_run_generation.get(),
                     "reason": _run_end_reason,
                     "cancel_reason": _cancel_reason,
                     "rounds": rounds,

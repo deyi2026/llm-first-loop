@@ -3206,6 +3206,40 @@ def test_m5b_real_engine_hook_failure_never_reaches_provider(
 
 
 
+def test_m5f_t1_budget_seal_emits_strict_zero_effect_terminal(
+    tmp_path: Path,
+) -> None:
+    from llm_loop.core.durable_run_recovery import (
+        COMPLETED,
+        FENCED,
+        OPENED,
+        TERMINAL,
+        assess_durable_run,
+    )
+
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    generation = "a" * 32
+    execution = _open(plan, event, tmp_path, generation=generation)
+    end = events.append(plan.session_id, "run.end", {
+        "reason": "completed", "run_generation": generation,
+    })
+    assert end is not None
+    execution.seal_at_run_end(reason="run_ended")
+    facts = [e for e in events.read(plan.session_id) if e.type.startswith("run.durable.")]
+    assert [e.type for e in facts] == [OPENED, FENCED, TERMINAL]
+    assert facts[-1].payload["run_end_event_id"] == end.event_id
+    verdict = assess_durable_run(
+        event_store=events, budget_store=plan.budget_store,
+        session_id=plan.session_id, run_generation=generation,
+        authorization_id=plan.authorization_id,
+    )
+    assert verdict.decision == COMPLETED
+    assert not verdict.auto_resume_allowed
+    execution.seal_at_run_end(reason="run_ended")
+    assert sum(e.type == TERMINAL for e in events.read(plan.session_id)) == 1
+
+
 def test_m5f_real_t1_lifecycle_does_not_forge_terminal_on_adapter_denial(
     build_test_engine, tmp_path: Path,
 ) -> None:

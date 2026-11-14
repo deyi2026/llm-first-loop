@@ -16,9 +16,10 @@ The change touches only three runtime files:
 
 1. `run_finalizer.py`: add the actual ContextVar `run_generation` to
    the existing `run.end` payload (no new EventStore or budget source).
-2. `lifecycle.py`: after the **existing** TaskBudgetStore seal, while the
-   SessionStore run lease is still held, call the strict terminal producer
-   **only for a T1 execution whose admission was durably fenced**.
+2. `task_budget_t1_web_profile.py`: override only the existing T1
+   `seal_at_run_end` hook. The unchanged production lifecycle calls it
+   under the SessionStore run lease; after the parent budget seal it invokes
+   the strict terminal producer only for a durably fenced T1 execution.
 3. `durable_run_recovery.py`: verify the original strict admission revision,
    sealed budget identity, one real persisted `run.end` matching the exact
    Run generation and `reason=completed`, then append
