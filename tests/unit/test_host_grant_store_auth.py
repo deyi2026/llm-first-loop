@@ -302,16 +302,22 @@ def test_unsafe_home_env_rejected(monkeypatch, tmp_path, isolated_data_dir):
     cases.append(("workspace 本身", str(_WORKSPACE_ROOT)))
     cases.append(("/tmp", "/tmp/lfl-grant-trap"))
     cases.append(("缓存目录", str(Path.home() / ".cache" / "lfl-trap")))
-    cases.append(("EXEC_SANDBOX_MACOS_WRITABLE 追加项", str(tmp_path / "extra-writable")))
     for _label, value in cases:
         monkeypatch.setenv("LFL_HOST_GRANT_HOME", value)
         with pytest.raises(HostGrantError, match="grant_store_insecure"):
             host_grant_store_home()
-    # 最后一条：EXEC_SANDBOX_MACOS_WRITABLE 指向 tmp 附加可写根（防误判）
+    # EXEC_SANDBOX_MACOS_WRITABLE 追加根：显式设置 env 后断言（父侧验收
+    # 2026-11-14 修正：原 case 未设该 env，仅当 pytest basetemp 恰落默认
+    # 危险根（如 /private/tmp）内才被拒——环境依赖侥幸；显式设置后追加根
+    # 及其子路径在任何 basetemp 位置都必须 fail-closed，生产守卫不变）
     monkeypatch.setenv("EXEC_SANDBOX_MACOS_WRITABLE", str(tmp_path / "extra-writable"))
-    monkeypatch.setenv("LFL_HOST_GRANT_HOME", str(tmp_path / "extra-writable" / "inside"))
-    with pytest.raises(HostGrantError, match="grant_store_insecure"):
-        host_grant_store_home()
+    for value in (
+        str(tmp_path / "extra-writable"),
+        str(tmp_path / "extra-writable" / "inside"),
+    ):
+        monkeypatch.setenv("LFL_HOST_GRANT_HOME", value)
+        with pytest.raises(HostGrantError, match="grant_store_insecure"):
+            host_grant_store_home()
     monkeypatch.delenv("EXEC_SANDBOX_MACOS_WRITABLE")
 
 

@@ -110,7 +110,7 @@
 | **P0-1** 不可信记录拒绝改写（防洗白） | `…::test_revoke_refuses_untrusted_record` |
 | **P0-1** 同进程跨 store 对象签发-消费 + 单次重放拒 | `…::test_same_process_cross_store_object_consume` |
 | **P0-1** unsafe home（workspace/LFL_DATA_DIR//tmp/缓存/EXEC_SANDBOX_MACOS_WRITABLE/XDG/symlink）fail-closed | `…::test_unsafe_home_env_rejected`、`…_via_lfl_data_dir_rejected`、`…_xdg_state_home_into_workspace_rejected`、`…_symlink_redirect_into_workspace_rejected`；默认分离 `…::test_default_home_outside_writable_roots` |
-| **P0-1** execute_command 拒伪造 grant / workdir 账本禁区 | `…::test_execute_command_rejects_forged_grant`、`…::test_execute_command_workdir_grant_home_guard` |
+| **P0-1** execute_command 拒伪造 grant / workdir 账本禁区 | `…::test_execute_command_rejects_forged_grant`、`…::test_execute_command_workdir_grant_home_guard`；e2e `test_workdir_overlapping_grant_home_rejected`（父侧验收 2026-11-14 修正后新增：真实链路签发→workdir 圈账本→拒且不消耗；e2e ctx 改为账本兄弟目录，使正例不再依赖 basetemp 位置） |
 | **P0-1** 真实 bwrap：workdir bind 内不可写账本 | `…::test_bwrap_cannot_write_grant_home`（skipif 无 bwrap；Deepin/Linux 跑） |
 
 回归：tests/unit/test_escalation.py、test_sandbox*.py、test_execute_*.py、tests/test_escalation_*、test_write_scope_*、test_command_scope_guard.py、test_web_auth_csrf.py 全绿（839 passed / 2 skipped，含专项）。

@@ -34,9 +34,17 @@ from llm_loop.tools.sandbox import sandbox_argv
 
 @pytest.fixture
 def ctx(tmp_path):
+    # workdir 不得圈住授权账本（execute_command workdir 禁区，P0-1 防线 B；
+    # 父侧验收 2026-11-14 修正）：isolated_data_dir 把账本钉在
+    # tmp_path/host-grants，ctx 必须取兄弟目录 tmp_path/workspace——否则
+    # 在 basetemp 不落默认危险根（如 /private/var/folders）的环境下会被
+    # 生产守卫正确 fail-closed；同根必须拒绝的负例由
+    # test_workdir_overlapping_grant_home_rejected 明确覆盖。
+    ws = tmp_path / "workspace"
+    ws.mkdir()
     tok = current_session_id.set("e2e-sess")
-    wtok = current_workspace_root.set(str(tmp_path))
-    yield tmp_path
+    wtok = current_workspace_root.set(str(ws))
+    yield ws
     current_session_id.reset(tok)
     current_workspace_root.reset(wtok)
 
@@ -57,6 +65,8 @@ def _sandbox_usable(mode: str) -> bool:
     try:
         argv, _n = sandbox_argv("true", "/tmp", mode=mode)
     except (RuntimeError, ValueError):
+        return False
+    if argv is None:  # mode 解析为 none（无沙箱可套用）→ 不可用
         return False
     try:
         proc = subprocess.run(argv, capture_output=True, timeout=10)
@@ -153,10 +163,12 @@ def test_bwrap_argv_bind_shape_for_write(store, gstore, ctx, monkeypatch):
         cmd, str(ctx), mode="bwrap",
         extra_file_binds=[(str(target), str(target), "rw")],
     )
+    assert argv is not None
     assert "--bind" in argv and str(target) in argv
     # 未授权（无 grant）：argv 无目标文件 bind（路径仅作为命令文本出现，
     # 不出现在 --bind/--ro-bind 参数位）
     argv_plain, _ = sandbox_argv(cmd, str(ctx), mode="bwrap")
+    assert argv_plain is not None
     bind_positions = [i for i, a in enumerate(argv_plain) if a in ("--bind", "--ro-bind")]
     for i in bind_positions:
         assert argv_plain[i + 1] != str(target)  # bind 源不是目标
@@ -183,6 +195,7 @@ def test_real_bwrap_default_deny_and_grant_write(ctx):
         with open(outside_file, "w", encoding="utf-8") as fh:
             fh.write("locked")
         argv, _n = sandbox_argv(f"cat {outside_file}", "/tmp", mode="bwrap")
+        assert argv is not None
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
         # 未授权：文件未 bind → cat 失败（No such file）
         assert proc.returncode != 0
@@ -204,3 +217,35 @@ def test_grant_mutually_exclusive_with_catastrophic_token(store, gstore, ctx):
     )
     assert r.status.name == "FAILURE"
     assert "互斥" in r.content
+
+
+# ── 5. workdir 圈住账本：生产守卫负例（父侧验收 2026-11-14 保留） ──
+
+def test_workdir_overlapping_grant_home_rejected(
+    store, gstore, ctx, isolated_data_dir, monkeypatch
+):
+    """workdir=账本祖先（--bind workdir 圈住账本）必须 ERROR 且不消耗 grant.
+
+    候选推导钉到生效账本：真实推导在 pytest basetemp 落入默认危险根
+    （如 /private/tmp）的环境下会整体拒绝该 env、退化为仅默认 home 候选
+    （该推导分支由 unit 层 test_unsafe_home_env_rejected /
+    test_grant_home_guard_candidates_env_and_default 独立覆盖）；钉候选
+    使本集成负例在任何 basetemp 位置都环境不变式成立。
+    """
+    from llm_loop.tools import escalation as esc
+
+    ledger_home = Path(os.environ["LFL_HOST_GRANT_HOME"]).resolve()
+    monkeypatch.setattr(esc, "grant_home_guard_candidates", lambda: [str(ledger_home)])
+    target = (ctx / "guard-target.txt").resolve()
+    target.write_text("x", encoding="utf-8")
+    gid = _full_pipeline(store, gstore, ctx, target, operation="read", command=f"cat {target}")
+    tool = ExecuteCommandTool(timeout_s=10, sandbox_mode="sandbox-exec")
+    # workdir=账本祖先（tmp_path，圈住 tmp_path/host-grants）→ 拒；
+    # guard 先于 grant 解析与消费 → 授权不被消耗
+    r = tool.execute(
+        command=f"cat {target}", host_grant_id=gid,
+        workdir=str(ledger_home.parent),
+    )
+    assert r.status.name == "ERROR", r.content[:200]
+    assert r.error_type == "workdir_overlaps_grant_home"
+    assert gstore.peek(gid)["uses"] == 0
