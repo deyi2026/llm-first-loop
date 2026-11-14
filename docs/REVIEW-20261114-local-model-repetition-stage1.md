@@ -137,3 +137,23 @@ engine 新登记 `2215`，两个 helper `174/144` 精确登记，
 
 **候选源码已变化，须重新独立 Reviewer PASS 后再原版完整 R9**；
 不可继承上一候选 PASS。
+
+
+## 架构补修独立审查：正式 PASS
+
+冻结候选 `a291a05da0e6f0229040294ed193d5b556df7be9`
+由新建独立 GLM-5.3 Reviewer 完成单次真实审查、零工具，
+`finish_reason=stop`、`truncated=false`，合法 JSON，
+精确 HEAD/diff SHA 校验通过。**PASS，P0=0/P1=0/P2=1，
+AC1–AC10 全部 PASS**。
+
+唯一 P2 是后续应进一步拆分 `_run_stream_inner`
+巨型函数，减少架构债；本批已用官方重登记显式披露
+`2192→2215` 的新增行数，不隐匿放宽，不修改守卫断言。
+
+正式回执：
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-arch-fix-GLM53-PASS.json`。
+
+当前其他 M5F Goal 正独占运行原版 R9；本 Goal 待其退出后
+再运行原版完整 `bash scripts/ci_gate.sh`。设计/代码 Reviewer PASS
+**不能代替 R9 exit 0 或生产验收**。
