@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from llm_loop.introspection.task_claim import overlapping_paths
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -455,6 +456,81 @@ class LaneStore:
             for row in self.list(include_terminal=True)
             if str(row.get("branch") or "") == branch
         ]
+
+    # ---------------- 只读预检（DESIGN-20261114 §4.5 / R4） ----------------
+
+    def precheck(
+        self,
+        *,
+        branch: str,
+        worktree: str,
+        goal_id: str,
+        paths: list[str] | None = None,
+    ) -> dict:
+        """开门前纯读预检：零写账本、零建目录、不抛约束错。
+
+        只回答两个「说了也不拦」的问题，与 create() 的硬拦（branch/worktree/goal
+        1:1，见 _assert_unique）**互不替代**：
+        - overlap_warning: 声明的 paths 与在途 lane 交叉（终态 lane 不参与）；
+        - goal_unknown: goal_id 未在 goals.jsonl 出现（账本可能被轮转/裁剪，
+          缺席 ≠ 从未存在，故默认只告警；lane_require_goal=true 时由调用方硬拒）。
+
+        branch/worktree 只做回显，不参与判定：占用冲突由 create() 硬拦，这里提前
+        算一遍等于把硬拦降级成告警，会松动既有裁决。
+        """
+        mine = _normalize_paths(paths)
+        checked: list[str] = []
+        overlaps: list[dict] = []
+        for row in self.list():  # 默认隐藏终态：只与在途 lane 比
+            lane_id = str(row.get("lane_id") or "")
+            checked.append(lane_id)
+            hits = overlapping_paths(mine, [str(p) for p in row.get("paths") or []])
+            if not hits:
+                continue
+            shared = sorted({a for a, _ in hits} | {b for _, b in hits})
+            overlaps.append(
+                {
+                    "lane_id": lane_id,
+                    "branch": str(row.get("branch") or ""),
+                    "status": str(row.get("status") or ""),
+                    "shared_paths": shared,
+                }
+            )
+        goal_text = str(goal_id or "").strip()
+        return {
+            "branch": str(branch or "").strip(),
+            "worktree": str(worktree or "").strip(),
+            "goal_id": goal_text,
+            "declared_paths": mine,
+            "overlap_warning": overlaps,
+            "goal_unknown": bool(goal_text) and not self._goal_known(goal_text),
+            "checked_against": checked,
+        }
+
+    def _goal_known(self, goal_id: str) -> bool:
+        """goal_id 是否在 goals.jsonl 出现过（只读；单行坏跳过，账本不可读按已知处理）。
+
+        读不到账本返回 True 是刻意的：这条判定只用于提示，误报会让「默认只告警」
+        退化成噪声，而漏报只是少一条提示，不影响任何写路径。
+        """
+        path = self._dir / "goals.jsonl"
+        if not path.exists():
+            return False
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return True
+        for line in lines:
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if str(row.get("id") or "") == goal_id:
+                return True
+        return False
 
     # ---------------- 内部 ----------------
 

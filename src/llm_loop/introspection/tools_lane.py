@@ -155,6 +155,38 @@ def _fail(message: str, tool: str, reason_code: str) -> ToolResult:
     )
 
 
+def _require_goal_enabled(host: Any) -> bool:
+    """lane_require_goal 开关（默认 false）：由宿主显式注入，不直接读环境。
+
+    与 merge_queue.auto_merge_enabled 同口径：新增直接环境访问会撞
+    runtime_env_access_gate 的单向棘轮，也会制造「工具认为开了、宿主认为关」
+    两处口径。默认 false 是硬要求——§1 E19 有 6 条已合并的真实 lane 用
+    不在账本的 goal_id，硬拒会切断这类合法用法。
+    """
+    return bool(getattr(host, "lane_require_goal", False))
+
+
+def _render_precheck_notes(precheck: dict) -> str:
+    """把 precheck 结果渲染成回执附加段；无告警时返回空串（零噪声）。"""
+    lines: list[str] = []
+    overlaps = precheck.get("overlap_warning") or []
+    if overlaps:
+        detail = "; ".join(
+            f"{o.get('lane_id')}({o.get('status')}) 共享 {','.join(o.get('shared_paths') or [])}"
+            for o in overlaps[:5]
+        )
+        lines.append(f"路径重叠告警: {detail}（已登记；开工前确认是否重复开发）")
+    if precheck.get("goal_unknown"):
+        lines.append(
+            f"goal 告警: {precheck.get('goal_id')} 不在 goals.jsonl"
+            "（可能是探针或账本已轮转；lane_require_goal=true 时会硬拒）"
+        )
+    err = precheck.get("error")
+    if err:
+        lines.append(f"预检不可用: {err}（已按无告警继续登记）")
+    return ("\n" + "\n".join(lines)) if lines else ""
+
+
 def _probe_head(worktree: str) -> str:
     """从工作树探测 HEAD；失败返回空（不阻断登记，但回执提示）。"""
     try:
@@ -208,6 +240,24 @@ def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
     except Exception:  # noqa: BLE001 — 会话绑定仅用于显示
         owner_sid = ""
 
+    # P4 开门预检（R4）：纯读、只加提示，绝不让它阻断合法登记。
+    precheck: dict = {}
+    try:
+        precheck = store.precheck(
+            branch=branch,
+            worktree=worktree,
+            goal_id=goal_id,
+            paths=args.get("paths") or [],
+        )
+    except Exception as exc:  # noqa: BLE001 — 预检是附加信息，失败降级为提示
+        precheck = {"error": f"{type(exc).__name__}: {exc}"}
+    if precheck.get("goal_unknown") and _require_goal_enabled(host):
+        return _fail(
+            f"goal_id 不在 goals.jsonl 且 lane_require_goal=true: {goal_id}",
+            "lane_open",
+            "goal_not_found",
+        )
+
     try:
         lane = store.create(
             branch=branch,
@@ -233,6 +283,7 @@ def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
         f"[lane 已登记] lane_id={lane.lane_id} version={lane.version} status={lane.status}\n"
         f"branch={lane.branch} role={lane.lane_role} goal={lane.goal_id}\n"
         f"base_main_sha={lane.base_main_sha or '-'} paths={','.join(lane.paths) or '-'}{base_note}"
+        f"{_render_precheck_notes(precheck)}"
         f"{_inflight_note(store, exclude=lane.lane_id)}",
         "",
         "lane_open",
