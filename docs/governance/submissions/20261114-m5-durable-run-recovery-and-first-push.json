@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261114-m5-durable-run-recovery-and-first-push",
-  "summary": "M5-A..F minimal durable Run facts, real T1 admission fencing, read-only effect evidence and crash tests. Exact M5 patch preserved over PR19 remote main; no auto Provider/Tool replay. Old M4-C remains quarantined unresolved HOLD.",
+  "summary": "M5-A..F minimal durable Run facts, real T1 admission fencing, read-only effect evidence and crash tests. Exact M5 patch preserved over PR19 remote main; no auto Provider/Tool replay. Old M4-C remains quarantined unresolved HOLD. Fix first-push HEAD symbolic local-ref mismatch only with exact named-branch/SHA and remote-main ancestor proof; full-history fail-closed fallback unchanged.",
   "components": [
     {
       "component_id": "durable-run-facts-and-real-t1-fence",
@@ -46,6 +46,24 @@
       "declaration_id": "m5-effect-evidence-reuse"
     },
     {
+      "component_id": "git-first-push-symbolic-head-guard",
+      "paths": [
+        ".githooks/pre-push"
+      ],
+      "control_machinery": true,
+      "declaration_id": "git-head-first-push-trust",
+      "owning_subsystem": "Existing Git pre-push privacy scan and remote main ancestry gate",
+      "disposition": "Accept local_ref=HEAD for first branch push only if HEAD is a named local branch resolving to the exact pushed SHA, the actual origin push URL matches, and remote main is a local commit ancestor. Otherwise retain existing full-history scan. No --no-verify, no allowlist, no scanner bypass.",
+      "evidence": [
+        "Actual git push origin HEAD:refs/heads/... previously fell back to full-history despite remote main ancestry; process was cancelled without remote branch creation",
+        "51 privacy gate tests pass including actual Git hook invocation and HEAD negative cases",
+        "Real hook dry-run on refs/heads path already passed"
+      ],
+      "verification_level": "Hook fix requires independent GLM-5.3 review, original full R9 and exact final SHA GitHub CI.",
+      "model_evidence_veto_recovery_exit": "Detached HEAD, mismatched SHA, untrusted remote URL, missing remote main, diverged history, intermediate sensitive commit, incomplete receipt or knowledge asset cannot gain incremental scan or bypass; old full-history fallback or rejection applies.",
+      "rollback_route": "Revert HEAD symbolic local-ref acceptance only; retains original refs/heads first-push logic and full-history fallback for HEAD (slower but safe)."
+    },
+    {
       "component_id": "m5-design-and-acceptance-docs",
       "paths": [
         "docs/M5-DURABLE-RUN-RECOVERY-MINIMAL-20261114.md",
@@ -70,6 +88,7 @@
       "component_id": "m5-negative-and-fault-tests",
       "paths": [
         "tests/fixtures/m5e_fault_worker.py",
+        "tests/test_privacy_gate.py",
         "tests/unit/test_durable_effect_evidence.py",
         "tests/unit/test_durable_run_recovery.py",
         "tests/unit/test_engine_cancel_reason.py",
@@ -83,7 +102,8 @@
       "evidence": [
         "204 merged focused tests passed",
         "Original M5-F b25992d full R9: 15093 Python passed and 600 WebUI passed",
-        "Integrated code adfc84f full R9: 15095 Python passed, 158 skipped, 3 xfailed and 600 WebUI passed"
+        "Integrated code adfc84f full R9: 15095 Python passed, 158 skipped, 3 xfailed and 600 WebUI passed",
+        "51 privacy gate tests passed including real bare-repository git push origin HEAD:refs/heads/feature and HEAD spoof/detached/intermediate-leak negatives"
       ],
       "verification_level": "Final exact SHA original full R9 required; GitHub CI required.",
       "model_evidence_veto_recovery_exit": "A failed negative or fault test blocks integration; no test fixture is a settlement receipt.",
@@ -158,6 +178,34 @@
           "M5-C/D/E focused tests",
           "M5-E real SIGKILL and dual-worker tests",
           "GitHub A.5 and CI on final SHA required"
+        ]
+      }
+    },
+    {
+      "declaration_id": "git-head-first-push-trust",
+      "g1": {
+        "necessity": "Git passes local_ref=HEAD for git push origin HEAD:refs/heads/name. Old pre-push hook wrongly treated this as an untrusted ref and scanned the entire historical repository, timing out on valid first pushes."
+      },
+      "g2": {
+        "authority_owner": "Existing Git symbolic-ref HEAD, exact commit SHA, origin push URL, remote main commit and ancestry, git_security_scan.sh",
+        "relationship": "reuse",
+        "non_duplication": "No new scanner, trust store, allowlist or skip switch; only recognizes Git standard symbolic HEAD syntax under stricter identity proof."
+      },
+      "g3": {
+        "model_evidence": [
+          "51 privacy gate tests with actual bare-repo Git push HEAD path",
+          "Adversarial HEAD mismatched SHA, detached HEAD and intermediate sensitive commit tests",
+          "Prior first-push origin remote main verified-range test"
+        ],
+        "recovery_or_reason": "HEAD is accepted only if it is a named local branch resolving to the pushed SHA and trusted remote main is its ancestor; otherwise full-history scan remains mandatory. Every incremental commit is still scanned for transient leaks."
+      },
+      "g4": {
+        "rollback": "Revert symbolic HEAD guard to the prior conservative full-history behavior; no persisted state changes.",
+        "verification": [
+          "bash -n .githooks/pre-push",
+          "51 tests/test_privacy_gate.py passed",
+          "Original full R9 and independent GLM-5.3 review required",
+          "GitHub CI and A.5 final SHA required"
         ]
       }
     }
