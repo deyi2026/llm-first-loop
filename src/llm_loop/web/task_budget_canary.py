@@ -256,6 +256,7 @@ def _t1_plan_from_config(
             operator_config_sha256=hashlib.sha256(
                 validated_bytes[0]
             ).hexdigest(),
+            durable_run_admission_required=True,
         )
     except (TypeError, ValueError):
         _deny()

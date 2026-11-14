@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +22,7 @@ from llm_loop.core.loop.runner import BackgroundRunner
 from llm_loop.core.trace_leak.ingress_token import issue_ingress
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.event_log.store import EventStore
+from llm_loop.resources.task_budget_contracts import BudgetDimension
 from llm_loop.resources.task_budget_dispatch import (
     bind_task_budget,
     checked_provider_attempt,
@@ -1401,8 +1405,10 @@ def _tool_round(call_id: str, name: str, arguments: str) -> list[str]:
     ]
 
 
+@pytest.mark.parametrize("strict_durable_admission", [False, True])
 def test_t1_engine_scope_e2e_synthetic_provider_stream(
-    build_test_engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    build_test_engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    strict_durable_admission: bool,
 ) -> None:
     """P1-4: engine-scope e2e — production bind_web_canary(T1) arm ->
     engine.run_stream -> REAL LLMClient -> EventStore -> budget CAS ->
@@ -1427,6 +1433,7 @@ def test_t1_engine_scope_e2e_synthetic_provider_stream(
     )
     engine, _fake = build_test_engine([])
     plan, target = _t1_engine_plan(tmp_path, engine, session_id="web-t1-e2e")
+    plan = replace(plan, durable_run_admission_required=strict_durable_admission)
     # The bare test registry's read_file has no artifact store (snapshot
     # refs unavailable); re-register the production wiring (factory-style
     # shared WorkspaceArtifactStore + FileService) so snapshot=True works.
@@ -1580,10 +1587,29 @@ def test_t1_engine_scope_e2e_synthetic_provider_stream(
     kinds = [event.type for event in events]
     assert kinds.count("provider.transport.opened") == 3
     assert kinds.count("provider.transport.settled") == 3
+    assert kinds.count("run.durable.opened") == int(strict_durable_admission)
+    assert kinds.count("run.durable.admission_fenced") == int(strict_durable_admission)
+    if strict_durable_admission:
+        assert kinds.index("run.durable.opened") < kinds.index("run.durable.admission_fenced")
+        assert kinds.index("run.durable.admission_fenced") < kinds.index(
+            "provider.transport.opened"
+        )
     # 3) The budget ledger settled everything with real joins.
     ledger_files = list((tmp_path / "t1-ledger").glob("*.json"))
     assert len(ledger_files) == 1
     row = json.loads(ledger_files[0].read_text())
+    if strict_durable_admission:
+        from llm_loop.core.durable_run_recovery import HOLD, assess_durable_run
+
+        verdict = assess_durable_run(
+            event_store=engine._event_store,
+            budget_store=plan.budget_store,
+            session_id=plan.session_id,
+            run_generation=row["members"][plan.budget_id]["run_generation"],
+            authorization_id=plan.authorization_id,
+        )
+        assert verdict.decision == HOLD
+        assert verdict.auto_resume_allowed is False
     kinds_by_res = {}
     for rid, res in row["reservations"].items():
         kinds_by_res.setdefault(res["kind"], []).append(res)
@@ -2491,7 +2517,13 @@ def _loader_plan(tmp_path: Path, monkeypatch, *, sid: str = "web-t1"):
     assert isinstance(canary.plan, T1WebEventPlan)
     plan = canary.plan
     assert plan.operator_config_path == str(config_path)
-    return events, event, target, plan, config_path
+    assert plan.durable_run_admission_required is True
+    # These pre-M5 F18 revocation fixtures use literal "run-1" rather than
+    # the production Runner's 32-hex generation. Isolate their old contract;
+    # M5-B strict real-loader + real-engine paths are tested separately.
+    return events, event, target, replace(
+        plan, durable_run_admission_required=False
+    ), config_path
 
 
 def _request_for(canary, *, sid: str = "web-t1"):
@@ -2979,6 +3011,7 @@ def test_t1_build_app_autowires_real_operator_config_loader_to_fence(
         config_path.read_bytes()
     ).hexdigest()
     assert not plan.operator_revoked()
+    assert plan.durable_run_admission_required is True
     # The HTTP fence admits the pinned session on this app instance.
     monkeypatch.setattr(auth, "request_authenticated", lambda _req: True)
     captured: list[object] = []
@@ -3033,3 +3066,324 @@ def test_t1_and_file_service_share_one_text_normalization_implementation() -> No
 
     source = Path(profile.__file__).read_text(encoding="utf-8")
     assert "llm_loop.workspace.file_service" not in source
+
+
+
+def test_m5b_strict_t1_admission_writes_both_facts_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    from llm_loop.core.durable_run_recovery import FENCED, OPENED, SCHEMA
+
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    execution = _open(plan, event, tmp_path, generation="a" * 32)
+    facts = [e for e in events.read(plan.session_id) if e.type.startswith("run.durable.")]
+    assert [e.type for e in facts] == [OPENED, FENCED]
+    assert all(e.payload == {
+        "schema": SCHEMA,
+        "run_generation": "a" * 32,
+        "authorization_id": plan.authorization_id,
+        "budget_id": plan.budget_id,
+        "budget_revision": 2,
+    } for e in facts)
+    assert execution._t1_durable_run_fenced is True
+    assert plan.budget_store.read(plan.budget_id)["phase"] == "active"
+
+
+def test_m5b_strict_t1_admission_rejects_unfenced_tool_reserve(
+    tmp_path: Path,
+) -> None:
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    execution = _open(plan, event, tmp_path, generation="a" * 32)
+    execution._t1_durable_run_fenced = False
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_admission_not_fenced"):
+        execution.reserve(BudgetDimension.TOOL_INVOCATIONS, tool_id="read_file")
+    assert plan.budget_store.read(plan.budget_id)["reservations"] == {}
+
+
+def test_m5b_strict_t1_admission_rejects_unfenced_provider_reserve(
+    tmp_path: Path,
+) -> None:
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    execution = _open(plan, event, tmp_path, generation="a" * 32)
+    execution._t1_durable_run_fenced = False
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_admission_not_fenced"):
+        execution.reserve(BudgetDimension.PHYSICAL_ATTEMPTS)
+    assert plan.budget_store.read(plan.budget_id)["reservations"] == {}
+
+
+def test_m5b_strict_t1_second_fact_uncertain_stops_and_denies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_loop.core.durable_run_recovery import FENCED, OPENED
+    from llm_loop.event_log.store import EventCommitUncertainError
+
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    real_append = events.append_durable_run_fact
+
+    def fail_fence(sid, kind, payload):
+        if kind == FENCED:
+            raise EventCommitUncertainError(None, kind="run")
+        return real_append(sid, kind, payload)
+
+    monkeypatch.setattr(events, "append_durable_run_fact", fail_fence)
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_admission_unverified"):
+        _open(plan, event, tmp_path, generation="a" * 32)
+    assert [e.type for e in events.read(plan.session_id) if e.type.startswith("run.durable.")] == [OPENED]
+    row = plan.budget_store.read(plan.budget_id)
+    assert row["phase"] == "stop_requested"
+    assert row["reservations"] == {}
+
+
+def test_m5b_strict_t1_first_fact_failure_stops_and_denies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_loop.event_log.store import EventDurabilityError
+
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+
+    def fail_first(*_args, **_kwargs):
+        raise EventDurabilityError("simulated_disk_failure")
+
+    monkeypatch.setattr(events, "append_durable_run_fact", fail_first)
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_admission_unverified"):
+        _open(plan, event, tmp_path, generation="a" * 32)
+    row = plan.budget_store.read(plan.budget_id)
+    assert row["phase"] == "stop_requested"
+    assert row["reservations"] == {}
+    assert not [e for e in events.read(plan.session_id) if e.type.startswith("run.durable.")]
+
+
+def test_m5b_strict_t1_invalid_generation_never_dispatches(
+    tmp_path: Path,
+) -> None:
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_admission_unverified"):
+        _open(plan, event, tmp_path, generation="not-a-hex-generation")
+    row = plan.budget_store.read(plan.budget_id)
+    assert row["phase"] == "stop_requested"
+    assert row["reservations"] == {}
+
+
+def test_m5b_real_engine_hook_failure_never_reaches_provider(
+    build_test_engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_loop.event_log.store import EventCommitUncertainError
+    from llm_loop.resources.task_budget_t1_web_profile import bind_t1_web_plan
+
+    engine, fake = build_test_engine([])
+    plan, target = _t1_engine_plan(tmp_path, engine, session_id="m5b-fail-before-provider")
+    plan = replace(plan, durable_run_admission_required=True)
+    attempted_provider: list[str] = []
+
+    def provider_forbidden(*_args, **_kwargs):
+        attempted_provider.append("unexpected")
+        pytest.fail("Provider was reached after durable admission failed")
+
+    fake.chat_stream = provider_forbidden
+
+    def fail_strict_fence(_sid, _event_type, _payload):
+        raise EventCommitUncertainError(None, kind="run")
+
+    monkeypatch.setattr(engine._event_store, "append_durable_run_fact", fail_strict_fence)
+    before = target.read_bytes()
+    with bind_t1_web_plan(plan), pytest.raises(
+        TaskBudgetDeniedError, match="t1_durable_run_admission_unverified"
+    ):
+        list(engine.run_stream(
+            plan.session_id, "approved one-run T1 request", ingress=issue_ingress("web")
+        ))
+    assert attempted_provider == []
+    assert target.read_bytes() == before
+    row = plan.budget_store.read(plan.budget_id)
+    assert row["phase"] == "stop_requested"
+    assert row["reservations"] == {}
+
+
+
+def test_m5f_t1_budget_seal_emits_strict_zero_effect_terminal(
+    tmp_path: Path,
+) -> None:
+    from llm_loop.core.durable_run_recovery import (
+        COMPLETED,
+        FENCED,
+        OPENED,
+        TERMINAL,
+        assess_durable_run,
+    )
+
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    generation = "a" * 32
+    execution = _open(plan, event, tmp_path, generation=generation)
+    end = events.append(plan.session_id, "run.end", {
+        "reason": "completed", "run_generation": generation,
+    })
+    assert end is not None
+    execution.seal_at_run_end(reason="run_ended")
+    facts = [e for e in events.read(plan.session_id) if e.type.startswith("run.durable.")]
+    assert [e.type for e in facts] == [OPENED, FENCED, TERMINAL]
+    assert facts[-1].payload["run_end_event_id"] == end.event_id
+    verdict = assess_durable_run(
+        event_store=events, budget_store=plan.budget_store,
+        session_id=plan.session_id, run_generation=generation,
+        authorization_id=plan.authorization_id,
+    )
+    assert verdict.decision == COMPLETED
+    assert not verdict.auto_resume_allowed
+    execution.seal_at_run_end(reason="run_ended")
+    assert sum(e.type == TERMINAL for e in events.read(plan.session_id)) == 1
+
+
+def test_m5f_real_t1_lifecycle_does_not_forge_terminal_on_adapter_denial(
+    build_test_engine, tmp_path: Path,
+) -> None:
+    from llm_loop.core.durable_run_recovery import (
+        FENCED,
+        HOLD,
+        OPENED,
+        TERMINAL,
+        assess_durable_run,
+    )
+    from llm_loop.resources.task_budget_t1_web_profile import bind_t1_web_plan
+
+    engine, fake = build_test_engine([])
+    plan, target = _t1_engine_plan(tmp_path, engine, session_id="m5f-adapter-denied")
+    plan = replace(plan, durable_run_admission_required=True)
+    before = target.read_bytes()
+    with bind_t1_web_plan(plan), pytest.raises(
+        TaskBudgetDeniedError, match="provider_adapter_unqualified"
+    ):
+        list(engine.run_stream(
+            plan.session_id, "offline T1 lifecycle test", ingress=issue_ingress("web")
+        ))
+    assert fake.calls == []
+    assert target.read_bytes() == before
+    facts = [
+        e.type for e in plan.event_store.read(plan.session_id)
+        if e.type.startswith("run.durable.")
+    ]
+    assert facts == [OPENED, FENCED]
+    assert TERMINAL not in facts
+    assert plan.budget_store.read(plan.budget_id)["phase"] == "stop_requested"
+    verdict = assess_durable_run(
+        event_store=plan.event_store,
+        budget_store=plan.budget_store,
+        session_id=plan.session_id,
+        run_generation=plan.budget_store.read(plan.budget_id)["members"][
+            plan.budget_id
+        ]["run_generation"],
+        authorization_id=plan.authorization_id,
+    )
+    assert verdict.decision == HOLD
+    assert not verdict.auto_resume_allowed
+
+
+@pytest.mark.parametrize(
+    "crash_stage,expected_facts,exit_code",
+    [("before_fence", 1, 37), ("after_fence", 2, 38)],
+)
+def test_m5b_real_subprocess_crash_before_provider_is_not_replayable(
+    tmp_path: Path, crash_stage: str, expected_facts: int, exit_code: int,
+) -> None:
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    script = f"""
+import os
+from llm_loop.core.durable_run_recovery import FENCED
+from llm_loop.core.trace_leak.ingress_token import issue_ingress
+from llm_loop.event_log.store import EventStore
+from llm_loop.resources.task_budget_dispatch import exact_workspace_scope
+from llm_loop.resources.task_budget_store import TaskBudgetStore
+from llm_loop.resources.task_budget_t1_web_profile import T1WebEventPlan, prepare_t1_web_event_budget
+
+root={str(tmp_path)!r}
+sid={plan.session_id!r}
+events=EventStore(root + '/events')
+budget=TaskBudgetStore(root + '/ledger')
+plan=T1WebEventPlan(
+    session_id=sid,workspace_scope=exact_workspace_scope(root),
+    authorization_id={plan.authorization_id!r},
+    target_path={plan.target_path!r},
+    prepared_target_sha256={plan.prepared_target_sha256!r},
+    valid_from_epoch_s={plan.valid_from_epoch_s!r},
+    valid_until_epoch_s={plan.valid_until_epoch_s!r},
+    event_store=events,budget_store=budget,durable_run_admission_required=True,
+)
+event=next(e for e in events.read(sid) if e.type == 'message.appended')
+real=events.append_durable_run_fact
+def crash(sid, kind, payload):
+    if kind == FENCED:
+        if {crash_stage!r} == 'before_fence':
+            os._exit(37)
+        real(sid, kind, payload)
+        os._exit(38)
+    return real(sid, kind, payload)
+events.append_durable_run_fact=crash
+prepare_t1_web_event_budget(
+    plan=plan,event=event,session_id=sid,workspace_root=root,
+    run_generation='a'*32,user_text='do the T1 edit',
+    ingress=issue_ingress('web'),
+)
+raise RuntimeError('unexpected return after crash window')
+"""
+    source_root = Path(__file__).resolve().parents[2] / "src"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "PYTHONPATH": str(source_root)},
+        timeout=15, check=False, capture_output=True,
+    )
+    assert result.returncode == exit_code, result.stderr[-800:]
+    facts = [
+        e for e in EventStore(tmp_path / "events").read(plan.session_id)
+        if e.type.startswith("run.durable.")
+    ]
+    assert len(facts) == expected_facts
+    assert facts[0].type == "run.durable.opened"
+    assert plan.budget_store.read(plan.budget_id)["reservations"] == {}
+    # A fresh process cannot mint a second budget root for the same auth,
+    # even if SIGKILL happened after the fenced event was fsynced.
+    with pytest.raises(TaskBudgetDeniedError):
+        _open(plan, event, tmp_path, generation="c" * 32)
+
+
+def test_m5b_corrupted_durable_fence_denies_later_tool_reservation(
+    tmp_path: Path,
+) -> None:
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    execution = _open(plan, event, tmp_path, generation="a" * 32)
+    with open(events._path(plan.session_id), "ab") as stream:
+        stream.write(b"corrupted-jsonl-row\n")
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_evidence_unverifiable"):
+        execution.reserve(BudgetDimension.TOOL_INVOCATIONS, tool_id="read_file")
+    row = plan.budget_store.read(plan.budget_id)
+    assert row["reservations"] == {}
+    assert row["phase"] == "stop_requested"
+
+
+def test_m5b_duplicate_durable_protocol_fact_denies_provider_reservation(
+    tmp_path: Path,
+) -> None:
+    from llm_loop.core.durable_run_recovery import OPENED, SCHEMA
+
+    events, event, _target, plan = _setup(tmp_path)
+    plan = replace(plan, durable_run_admission_required=True)
+    execution = _open(plan, event, tmp_path, generation="a" * 32)
+    events.append_durable_run_fact(plan.session_id, OPENED, {
+        "schema": SCHEMA,
+        "run_generation": "a" * 32,
+        "authorization_id": plan.authorization_id,
+        "budget_id": plan.budget_id,
+        "budget_revision": 2,
+    })
+    with pytest.raises(TaskBudgetDeniedError, match="t1_durable_run_evidence_unverifiable"):
+        execution.reserve(BudgetDimension.PHYSICAL_ATTEMPTS)
+    row = plan.budget_store.read(plan.budget_id)
+    assert row["reservations"] == {}
+    assert row["phase"] == "stop_requested"

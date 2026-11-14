@@ -247,10 +247,12 @@ def test_tree_commit_missing_sha_has_mode_specific_diagnostic():
     assert "--tree-commit 需要 SHA" in result.stderr
 
 
-def _run_new_branch_pre_push(repo, remote, head=None, *, remote_name="origin"):
+def _run_new_branch_pre_push(
+    repo, remote, head=None, *, remote_name="origin", local_ref="refs/heads/feature",
+):
     """Invoke the real hook with Git's zero remote SHA for a new branch."""
     head = head or rev(repo)
-    line = f"refs/heads/feature {head} refs/heads/feature {'0' * 40}\n"
+    line = f"{local_ref} {head} refs/heads/feature {'0' * 40}\n"
     return subprocess.run(
         ["bash", str(repo / ".githooks" / "pre-push"), remote_name, str(remote)],
         cwd=repo, input=line, capture_output=True, text=True, timeout=120,
@@ -278,6 +280,81 @@ def test_new_branch_first_push_trusted_main_uses_commit_range(repo, tmp_path):
     assert "远端 main 祖先已核验" in result.stderr
     assert f"--range {base} {rev(repo)}" in result.stdout
     assert "--commit" not in result.stdout
+
+
+def test_new_branch_first_push_symbolic_head_uses_trusted_range(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    commit_file(repo, "feature.txt", "clean feature", "feature")
+    result = _run_new_branch_pre_push(repo, remote, local_ref="HEAD")
+
+    assert result.returncode == 0, result.stderr
+    assert "远端 main 祖先已核验" in result.stderr
+    assert "--range" in result.stdout
+    assert "--commit" not in result.stdout
+
+
+def test_new_branch_first_push_symbolic_head_intermediate_leak_blocks(
+    repo, tmp_path,
+):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    commit_file(repo, "feature.txt", "/Users/" + "fixtureuser/" + "leak.txt", "leak")
+    commit_file(repo, "feature.txt", "sanitized", "remove leak")
+    result = _run_new_branch_pre_push(repo, remote, local_ref="HEAD")
+
+    assert result.returncode == 1
+    assert "--range" in result.stdout
+    assert "本地绝对路径匹配" in result.stdout
+
+
+def test_new_branch_first_push_symbolic_head_mismatched_sha_fails_closed(
+    repo, tmp_path,
+):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    old_head = rev(repo)
+    commit_file(repo, "feature.txt", "clean feature", "feature")
+    result = _run_new_branch_pre_push(
+        repo, remote, head=old_head, local_ref="HEAD",
+    )
+
+    assert result.returncode == 1
+    assert "无可信远端 main 祖先" in result.stderr
+    assert "--commit" in result.stdout
+
+
+def test_new_branch_first_push_detached_head_fails_closed(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    remote = _bare_origin(tmp_path, repo)
+    commit_file(repo, "feature.txt", "clean feature", "feature")
+    _git(repo, "checkout", "--detach", "HEAD")
+    result = _run_new_branch_pre_push(repo, remote, local_ref="HEAD")
+
+    assert result.returncode == 1
+    assert "无可信远端 main 祖先" in result.stderr
+    assert "--commit" in result.stdout
+
+
+def test_new_branch_first_push_actual_git_head_push(repo, tmp_path):
+    _historical_private_path_then_sanitize(repo)
+    _install_pre_push_harness(repo)
+    _bare_origin(tmp_path, repo)
+    commit_file(repo, "feature.txt", "clean feature", "feature")
+    _git(repo, "config", "core.hooksPath", ".githooks")
+    result = subprocess.run(
+        ["git", "-C", str(repo), "push", "origin", "HEAD:refs/heads/feature"],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "远端 main 祖先已核验" in result.stderr
+    assert "新分支首推" in result.stderr
+    assert _git(repo, "ls-remote", "origin", "refs/heads/feature").stdout.split()[0] == rev(repo)
 
 
 def test_new_branch_first_push_scans_intermediate_leak(repo, tmp_path):

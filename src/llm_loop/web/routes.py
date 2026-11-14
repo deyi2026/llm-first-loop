@@ -4529,6 +4529,20 @@ def session_continuity_status(session_id: str, request: Request) -> Response:
     )
 
 
+@router.get("/api/v1/sessions/{session_id}/durable-recovery")
+def session_durable_recovery_status(session_id: str, request: Request) -> Response:
+    """M5-D opt-in strict recovery audit; no runner, queue or Provider action."""
+    from .durable_recovery_view import durable_recovery_view
+
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found"},
+        )
+    return UTF8JSONResponse(content=durable_recovery_view(engine, session_id))
+
+
 @router.get(
     "/api/v1/sessions/{session_id}/messages",
     response_model=SessionMessagesResponse,

@@ -31,6 +31,7 @@ def test_sync_run_cancel_reason_flows_to_result_and_run_end(build_test_engine, t
     assert run_ends, "run.end 事件应落盘"
     assert run_ends[-1].payload["reason"] == "cancelled"
     assert run_ends[-1].payload["cancel_reason"] == "user_stop"
+    assert len(run_ends[-1].payload["run_generation"]) == 32
 
 
 def test_completed_run_has_empty_cancel_reason(build_test_engine, tmp_path):
@@ -46,3 +47,4 @@ def test_completed_run_has_empty_cancel_reason(build_test_engine, tmp_path):
     run_ends = [e for e in events if e.type == "run.end"]
     assert run_ends[-1].payload["reason"] == "completed"
     assert run_ends[-1].payload["cancel_reason"] == ""
+    assert len(run_ends[-1].payload["run_generation"]) == 32

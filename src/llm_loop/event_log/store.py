@@ -35,9 +35,9 @@ class EventDurabilityError(RuntimeError):
 class EventCommitUncertainError(RuntimeError):
     """Event write attempted; power-loss durability is not established."""
 
-    def __init__(self, event_id: str | None) -> None:
+    def __init__(self, event_id: str | None, *, kind: str = "human") -> None:
         self.event_id = event_id
-        super().__init__("human_event_commit_outcome_uncertain")
+        super().__init__(f"{kind}_event_commit_outcome_uncertain")
 
 
 def _now_iso() -> str:
@@ -441,6 +441,137 @@ class EventStore:
                 raise EventDurabilityError("human_event_not_appended") from exc
         if event is None:
             raise EventCommitUncertainError(None)
+        self._extend_read_cache(event)
+        return event
+
+    @staticmethod
+    def _validate_durable_run_fact(event_type: str, payload: dict) -> None:
+        """Pure M5 protocol/identity check before any file operation."""
+        from llm_loop.core.durable_run_recovery import (
+            FENCED,
+            OPENED,
+            SCHEMA,
+            TERMINAL,
+        )
+
+        common = {
+            "schema", "run_generation", "authorization_id", "budget_id",
+            "budget_revision",
+        }
+        allowed = {OPENED, FENCED, TERMINAL}
+        expected = common | (
+            {"outcome", "run_end_event_id"} if event_type == TERMINAL else set()
+        )
+        if event_type not in allowed or not isinstance(payload, dict) or set(payload) != expected:
+            raise EventDurabilityError("invalid_durable_run_fact")
+        gen = payload["run_generation"]
+        auth = payload["authorization_id"]
+        if (
+            payload["schema"] != SCHEMA
+            or not isinstance(gen, str) or len(gen) != 32
+            or any(c not in "0123456789abcdef" for c in gen)
+            or not isinstance(auth, str) or len(auth) != 32
+            or any(c not in "0123456789abcdef" for c in auth)
+            or payload["budget_id"] != "webt1-" + auth
+            or type(payload["budget_revision"]) is not int
+            or payload["budget_revision"] < 1
+        ):
+            raise EventDurabilityError("invalid_durable_run_identity")
+        if event_type == TERMINAL:
+            outcome = payload["outcome"]
+            end_id = payload["run_end_event_id"]
+            if (
+                outcome not in {"completed", "aborted_before_dispatch"}
+                or not isinstance(end_id, str)
+                or (outcome == "completed" and not end_id)
+                or (outcome == "aborted_before_dispatch" and end_id)
+            ):
+                raise EventDurabilityError("invalid_durable_run_terminal")
+
+    def append_durable_run_fact(
+        self, session_id: str, event_type: str, payload: dict
+    ) -> Event:
+        """Strict, opt-in M5 Run evidence fence (NOT a dispatch authorization).
+
+        Unlike append(), this never fails open. A post-append I/O/readback
+        failure is UNCERTAIN and must not trigger another physical action.
+        Legacy callers and ordinary run.end retain their existing behavior.
+        """
+        self._validate_durable_run_fact(event_type, payload)
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError as exc:
+            raise EventDurabilityError("invalid_durable_run_session") from exc
+        if not self._enabled or not self._ensure_dir():
+            raise EventDurabilityError("durable_run_event_store_unavailable")
+        event_dir = os.lstat(self._dir_fs)
+        if (
+            not stat.S_ISDIR(event_dir.st_mode)
+            or event_dir.st_uid != os.geteuid()
+            or event_dir.st_mode & 0o022
+        ):
+            raise EventDurabilityError("durable_run_event_directory_not_trusted")
+        event: Event | None = None
+        attempted = False
+        with self._session_flock(session_id, strict=True):
+            self._rotate_check_throttled(session_id)
+            path = (
+                self._active_segment_path(session_id)
+                if self._is_multi_segment(session_id)
+                else self._path(session_id)
+            )
+            try:
+                flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(path, flags, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as stream:
+                    details = os.fstat(stream.fileno())
+                    if (
+                        not stat.S_ISREG(details.st_mode)
+                        or details.st_uid != os.geteuid()
+                        or details.st_nlink != 1
+                        or details.st_mode & 0o022
+                    ):
+                        raise EventDurabilityError("durable_run_event_file_not_trusted")
+                    attempted = True
+                    event = self._append_locked(stream, session_id, event_type, payload)
+                    if (
+                        event is None
+                        or event.type != event_type
+                        or event.payload != payload
+                    ):
+                        raise EventCommitUncertainError(
+                            event.event_id if event else None, kind="run"
+                        )
+                    os.fsync(stream.fileno())
+                event_root = os.path.abspath(self._dir_fs)
+                for directory in dict.fromkeys((
+                    os.path.dirname(os.path.abspath(path)),
+                    event_root, os.path.dirname(event_root),
+                )):
+                    dir_fd = os.open(
+                        directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    )
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                reader = EventStore(self._dir, enabled=True)
+                matches = [
+                    row for row in reader.read(session_id)
+                    if row.event_id == event.event_id
+                ]
+                if reader.last_read_skipped or len(matches) != 1 or matches[0] != event:
+                    raise EventCommitUncertainError(event.event_id, kind="run")
+            except EventCommitUncertainError:
+                raise
+            except OSError as exc:
+                if attempted:
+                    raise EventCommitUncertainError(
+                        event.event_id if event else None, kind="run"
+                    ) from exc
+                raise EventDurabilityError("durable_run_event_not_appended") from exc
+        if event is None:
+            raise EventCommitUncertainError(None, kind="run")
         self._extend_read_cache(event)
         return event
 

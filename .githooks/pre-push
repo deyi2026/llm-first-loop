@@ -160,7 +160,21 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       REMOTE_MAIN_LINE="$(git ls-remote --heads "$REMOTE_URL" refs/heads/main 2>/dev/null)" || REMOTE_MAIN_LINE=""
     fi
     REMOTE_MAIN_SHA="${REMOTE_MAIN_LINE%%$'\t'*}"
-    if [[ "$local_ref" == refs/heads/* && "$remote_ref" == refs/heads/* \
+    # Git push origin HEAD:refs/heads/name supplies local_ref=HEAD, not
+    # refs/heads/name. Trust it only when HEAD is a named local branch and
+    # resolves to the exact SHA Git is pushing; detached/mismatched HEAD
+    # retains the full-history fail-closed scan.
+    TRUSTED_LOCAL_BRANCH_REF=0
+    if [[ "$local_ref" == refs/heads/* ]]; then
+      TRUSTED_LOCAL_BRANCH_REF=1
+    elif [[ "$local_ref" == "HEAD" ]]; then
+      HEAD_BRANCH="$(git symbolic-ref -q HEAD 2>/dev/null || true)"
+      HEAD_COMMIT="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+      if [[ "$HEAD_BRANCH" == refs/heads/* && "$HEAD_COMMIT" == "$local_sha" ]]; then
+        TRUSTED_LOCAL_BRANCH_REF=1
+      fi
+    fi
+    if [[ "$TRUSTED_LOCAL_BRANCH_REF" == 1 && "$remote_ref" == refs/heads/* \
       && "$REMOTE_MAIN_LINE" == "$REMOTE_MAIN_SHA"$'\t'"refs/heads/main" \
       && "$REMOTE_MAIN_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] \
       && git cat-file -e "${REMOTE_MAIN_SHA}^{commit}" 2>/dev/null \
