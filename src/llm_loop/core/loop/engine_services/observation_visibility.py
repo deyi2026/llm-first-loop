@@ -156,49 +156,101 @@ def ensure_latest_observation_visible(
     """
     try:
         group = latest_completed_tool_group(sess.messages, active_turn_ref)
-        if group_visible_in_provider_view(
+        physical_limit = (budget_info or {}).get("limited_by") in (
+            "model_window", "input_token_budget"
+        )
+        raw_visible = group_visible_in_provider_view(
             group, messages, active_ingress_ref=active_ingress_ref
-        ):
+        )
+        if group is None:
             return messages, ""
+        if raw_visible:
+            from llm_loop.core.message import dict_wire_chars
+
+            raw_overflow = (
+                physical_limit
+                and sum(dict_wire_chars(row) for row in messages) > effective_budget
+            )
+            if not raw_overflow and callable(request_preflight):
+                preflight = request_preflight(messages, tools_param, model=chat_model_arg)
+                raw_overflow = (
+                    not isinstance(preflight, Mapping)
+                    or bool(preflight.get("hard_overflow", False))
+                )
+            if not raw_overflow:
+                return messages, ""
         if group and group.get("valid"):
-            rebuilt = engine._build_conservative_active_run_messages(
-                sess,
-                max_chars=effective_budget,
-                model=model,
-                planned_label=planned_label,
-                logical_round=rounds,
-            )
-            physical_limit = (budget_info or {}).get("limited_by") in (
-                "model_window", "input_token_budget"
-            )
-            raw_fits = (
-                rebuilt.state == "rebuilt"
-                and (not physical_limit or rebuilt.projected_chars <= effective_budget)
-            )
-            raw_messages = list(rebuilt.messages) if raw_fits else []
-            if raw_messages and callable(request_preflight):
-                preflight = request_preflight(
-                    raw_messages, tools_param, model=chat_model_arg
+            if raw_visible:
+                ref_source = messages
+            else:
+                rebuilt = engine._build_conservative_active_run_messages(
+                    sess,
+                    max_chars=effective_budget,
+                    model=model,
+                    planned_label=planned_label,
+                    logical_round=rounds,
                 )
                 raw_fits = (
-                    isinstance(preflight, Mapping)
-                    and not bool(preflight.get("hard_overflow", False))
+                    rebuilt.state == "rebuilt"
+                    and (not physical_limit or rebuilt.projected_chars <= effective_budget)
                 )
-            if raw_fits and group_visible_in_provider_view(
-                group, raw_messages, active_ingress_ref=active_ingress_ref
-            ):
-                engine._event_append(
-                    session_id,
-                    "request.observation_visibility",
-                    {
-                        "round": rounds,
-                        "action": "raw_group_rebuilt_from_current_session",
-                        "group_index": group["index"],
-                        "projected_chars": rebuilt.projected_chars,
-                        "budget_chars": effective_budget,
-                    },
+                raw_messages = list(rebuilt.messages) if raw_fits else []
+                if raw_messages and callable(request_preflight):
+                    preflight = request_preflight(
+                        raw_messages, tools_param, model=chat_model_arg
+                    )
+                    raw_fits = (
+                        isinstance(preflight, Mapping)
+                        and not bool(preflight.get("hard_overflow", False))
+                    )
+                if raw_fits and group_visible_in_provider_view(
+                    group, raw_messages, active_ingress_ref=active_ingress_ref
+                ):
+                    engine._event_append(
+                        session_id,
+                        "request.observation_visibility",
+                        {
+                            "round": rounds,
+                            "action": "raw_group_rebuilt_from_current_session",
+                            "group_index": group["index"],
+                            "projected_chars": rebuilt.projected_chars,
+                            "budget_chars": effective_budget,
+                        },
+                    )
+                    return raw_messages, ""
+                ref_source = list(rebuilt.messages) if rebuilt.state == "rebuilt" else []
+            # The raw group cannot fit; a durable ref is not sufficient until
+            # the registered hydration tool, owner/version and final capsule
+            # are all qualified for this exact provider tool surface.
+            if ref_source:
+                exact_ref = _qualified_exact_ref_projection(
+                    engine,
+                    sess,
+                    group,
+                    ref_source,
+                    session_id=session_id,
+                    active_ingress_ref=active_ingress_ref,
+                    tools_param=tools_param,
+                    effective_budget=effective_budget,
+                    physical_limit=physical_limit,
+                    request_preflight=request_preflight,
+                    chat_model_arg=chat_model_arg,
                 )
-                return raw_messages, ""
+                if exact_ref is not None:
+                    ref_messages, projected_chars = exact_ref
+                    engine._event_append(
+                        session_id,
+                        "request.observation_visibility",
+                        {
+                            "round": rounds,
+                            "action": "exact_ref_projected",
+                            "group_index": group["index"],
+                            "ref_count": len(group["call_ids"]),
+                            "projected_chars": projected_chars,
+                            "budget_chars": effective_budget,
+                        },
+                    )
+                    return ref_messages, ""
         engine._event_append(
             session_id,
             "request.observation_visibility",
@@ -223,3 +275,179 @@ def ensure_latest_observation_visible(
 
         logging.getLogger(__name__).exception("observation visibility guard failed")
         return messages, "observation_guard_fault"
+
+
+def _qualified_exact_ref_projection(
+    engine: Any,
+    sess: Any,
+    group: dict,
+    raw_messages: list[dict],
+    *,
+    session_id: str,
+    active_ingress_ref: str,
+    tools_param: list[dict],
+    effective_budget: int,
+    physical_limit: bool,
+    request_preflight: Any,
+    chat_model_arg: str | None,
+) -> tuple[list[dict], int] | None:
+    """Owner-authorized, bounded, protocol-paired historical EvidenceRef capsule.
+
+    This does not execute the source tool. Only a registered EvidenceReadTool
+    and a provider-callable read_evidence schema can qualify an existing ref.
+    """
+    from llm_loop.core.message import dict_wire_chars
+    from llm_loop.memory.evidence import (
+        AvailabilityState,
+        EvidenceError,
+        EvidenceRef,
+        FreshnessState,
+        OwnerScope,
+        RangeType,
+        SourceKind,
+        SourceVersionPolicy,
+    )
+    from llm_loop.tools.evidence_tools import EvidenceReadTool
+
+    if not any(
+        isinstance(row, dict)
+        and isinstance(row.get("function"), dict)
+        and row["function"].get("name") == "read_evidence"
+        for row in tools_param
+    ):
+        return None
+    try:
+        tool = engine.registry.get("read_evidence")
+        if not isinstance(tool, EvidenceReadTool):
+            return None
+        owner = tool.owner_resolver()
+        if not isinstance(owner, OwnerScope) or owner.session_id != session_id:
+            return None
+        ids = group["call_ids"]
+        index = group["index"]
+        source_tools = sess.messages[index + 1 : index + 1 + len(ids)]
+        if len(source_tools) != len(ids):
+            return None
+        capsules: dict[str, str] = {}
+        for message in source_tools:
+            tool_id = str(_field(message, "tool_call_id") or "")
+            metadata = _field(message, "metadata") or {}
+            if (
+                tool_id not in ids
+                or tool_id in capsules
+                or not isinstance(metadata, dict)
+                or metadata.get("recoverability_status") != "recorded"
+            ):
+                return None
+            ref = EvidenceRef(str(metadata.get("evidence_ref") or ""))
+            record = tool.ledger.require_authorized(owner, ref)
+            if record.tool_call_id != tool_id:
+                return None
+            source_tool_name = str(_field(message, "tool_name") or "")
+            if source_tool_name and record.tool_name != source_tool_name:
+                return None
+            source = record.source
+            if source.version_policy in (
+                SourceVersionPolicy.PROBEABLE,
+                SourceVersionPolicy.VERSIONED,
+            ) and not source.version_token:
+                return None
+            state = tool.freshness.refresh(owner=owner, evidence_ref=ref)
+            if state.availability is not AvailabilityState.AVAILABLE:
+                return None
+            if (
+                source.kind is SourceKind.FILE
+                and source.version_policy is SourceVersionPolicy.PROBEABLE
+                and state.freshness is not FreshnessState.VERIFIED_CURRENT
+            ):
+                return None
+            probe = tool.hydration.read(
+                owner=owner,
+                evidence_ref=ref,
+                range_type=RangeType.TEXT_CHAR,
+                start=0,
+                limit=1,
+            )
+            if probe.blob_sha256 != record.blob_ref.sha256:
+                return None
+            capsules[tool_id] = json.dumps(
+                {
+                    "schema": "lfl_exact_tool_observation_ref_v1",
+                    "tool_call_id": tool_id,
+                    "evidence_ref": ref.ref,
+                    "read_tool": "read_evidence",
+                    "range_type": "text_char",
+                    "start": 0,
+                    "limit_max": tool.hydration.max_limit,
+                    "original_chars": record.blob_ref.size_chars,
+                    "blob_sha256": record.blob_ref.sha256,
+                    "source_kind": source.kind.value,
+                    "version_policy": source.version_policy.value,
+                    "version_token": source.version_token,
+                    "freshness": state.freshness.value,
+                    "inline_complete": False,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        if set(capsules) != set(ids):
+            return None
+        # Rebuild from the exact durable Session tool-call group, not from a
+        # model-written summary or a ref-looking string in old provider history.
+        if not group_visible_in_provider_view(
+            group, raw_messages, active_ingress_ref=active_ingress_ref
+        ):
+            return None
+        candidate = [dict(row) for row in raw_messages]
+        ingress_index = next(
+            (
+                i for i, row in enumerate(candidate)
+                if str(row.get("_active_run_ingress_ref") or "") == active_ingress_ref
+            ),
+            -1,
+        )
+        if ingress_index < 0:
+            return None
+        replaced = False
+        for i in range(ingress_index + 1, len(candidate)):
+            if _role(candidate[i]) != "assistant" or _calls(candidate[i]) != group["calls"]:
+                continue
+            segment = candidate[i + 1 : i + 1 + len(ids)]
+            if (
+                len(segment) != len(ids)
+                or any(_role(row) != "tool" for row in segment)
+                or {str(row.get("tool_call_id") or "") for row in segment} != set(ids)
+            ):
+                continue
+            if any(
+                str(row.get("content") or "") != group["receipts"][str(row.get("tool_call_id"))]
+                for row in segment
+            ):
+                continue
+            for row in segment:
+                row["content"] = capsules[str(row["tool_call_id"])]
+            replaced = True
+            break
+        if not replaced:
+            return None
+        projected_chars = sum(dict_wire_chars(row) for row in candidate)
+        if physical_limit and projected_chars > effective_budget:
+            return None
+        if callable(request_preflight):
+            preflight = request_preflight(candidate, tools_param, model=chat_model_arg)
+            if not isinstance(preflight, Mapping) or bool(preflight.get("hard_overflow", False)):
+                return None
+        # The provider view must contain exactly the qualified refs in paired
+        # tool messages after the active ingress; storage alone never suffices.
+        for tool_id, capsule in capsules.items():
+            if not any(
+                row.get("role") == "tool"
+                and row.get("tool_call_id") == tool_id
+                and row.get("content") == capsule
+                for row in candidate[ingress_index + 1 :]
+            ):
+                return None
+        return candidate, projected_chars
+    except (EvidenceError, ValueError, KeyError, TypeError, OSError):
+        return None

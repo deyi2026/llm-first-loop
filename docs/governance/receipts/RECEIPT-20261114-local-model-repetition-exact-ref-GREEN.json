@@ -1,0 +1,71 @@
+{
+  "schema": "lfl.local_model_repetition.exact_ref_green.v1",
+  "goal_id": "96b13a77-8f83-4022-b2ad-b1c41ff2f876",
+  "base_commit": "1e647a1cb365cbb4de604b329920c25aa0e1a9d1",
+  "design_sha256": "96220978276263e6511bdc1e4ea0d00278f0398f7554d0ee3e955dd02c88dab1",
+  "changed_files": [
+    {
+      "path": "src/llm_loop/core/loop/engine_services/observation_visibility.py",
+      "sha256": "36c32487efa8b392f89b0435ec7030004fccceb74e5c7fd0bdecc91e7638a324"
+    },
+    {
+      "path": "tests/unit/test_observation_exact_ref_red.py",
+      "sha256": "b0e58aea12ae371715a46e58b95e82f7d9767b6100dbfcd16282ef60d5e4c293"
+    }
+  ],
+  "test_suite": {
+    "passed": 225,
+    "exit_code": 0,
+    "log_sha256": "7f8e513a89f28f53fef62fa6c0f86450ac0cd067b9f494741803209c0b877145"
+  },
+  "pyright_full_tree_ratchet": {
+    "status": "PASS",
+    "exit_code": 0,
+    "new_diagnostics": 0,
+    "changed_file_diagnostics": 0,
+    "log_sha256": "9b68cbadc2e552401b052c1fd297e757e5deb4efe715261be95ae23279013b15"
+  },
+  "ruff_targeted": "PASS",
+  "real_provider_calls": 0,
+  "source_tool_replays": 0,
+  "model_developer": {
+    "model": "glm/glm-5.3",
+    "exact_ref_patch_attempts": 1,
+    "finish_reason": "length",
+    "truncated": true,
+    "usable_patch": false
+  },
+  "qa_implementation_note": "After GLM-5.3 truncated, verifier authored the minimum exact-ref helper; independent GLM-5.3 code review required before any R9 or integration.",
+  "positive": [
+    "real owner-scoped EvidenceRef captured and model-visible in second FakeLLM provider view",
+    "bounded 4000-char hydration pages reconstruct original observation",
+    "101 schemas with 26000 schema tokens and 32768 output reserve, sufficient physical space"
+  ],
+  "negative": [
+    "cross-session owner",
+    "cross-workspace same session",
+    "wrong tool_call_id",
+    "missing callable read_evidence schema",
+    "stale probeable FILE",
+    "versioned source without token",
+    "lost/corrupt blob",
+    "hard preflight overflow",
+    "insufficient physical budget",
+    "multi-call atomic partial failure",
+    "101 schemas at incident 28659 tokens: safe HOLD without second provider send"
+  ],
+  "limitations": [
+    "Historical 8901 backend identity not proven at incident time",
+    "At exact incident 28659 schema-token reserve, full system+ingress+ref capsule still exceeds conservative 3698-char physical budget, so this test correctly HOLDs; further tool-surface budget optimization is separate",
+    "No live local-model inference in this stage",
+    "No full R9, main, push, deploy or restart"
+  ],
+  "gates": {
+    "independent_code_review": "PENDING",
+    "full_R9": "NOT_RUN",
+    "main_merge": false,
+    "push": false,
+    "deploy": false,
+    "restart": false
+  }
+}

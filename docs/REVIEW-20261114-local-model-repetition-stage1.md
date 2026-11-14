@@ -86,3 +86,32 @@ Pyright 复杂度补修后的候选 `ea736919a786b89ae8cc5ed816b43d7cbf061364`
 
 **门禁**：独立代码审查非 PASS，故不运行下一次原版完整 R9，
 不合并 main、不 push、不发布、不重启。旧 M4-C 债务仍 HOLD。
+
+
+## exact-ref 最小恢复接线（隔离候选，待独立审查）
+
+在现有 `observation_visibility.py` 内完成最小
+`read_evidence` 精确恢复投影：验证 Provider 当前可调用工具 schema、
+注册的真实 EvidenceReadTool、OwnerScope、EvidenceRecord 工具调用绑定、
+版本 token、FILE freshness、BlobStore 有界分页及 SHA 完整性，
+再将当前同 Run 原子工具组投影为 JSON 事实 capsule。
+不重执行源工具，不暴露 workspace/session 身份，跨 owner、
+缺工具、过期来源、缺版本、坏 blob、超物理预算均 fail-closed。
+
+原始 exact-ref RED `1 failed/2 passed` 现为 GREEN；
+新增正负向后 **225 passed**，Ruff PASS，
+全树 Pyright ratchet `new=0/PASS`。
+真实 LoopEngine + FakeLLM + EvidenceEnforcer + EvidenceReadTool
+在 101 个 schema、可用物理预算下完成第二轮，
+Provider 可见 `evidence://`，并可按 4000 字符分页恢复原文。
+
+**严格边界**：当事故 `28,659` schema tokens + `32,768` 输出预留
+只余 `3,698` 字符时，现有完整 system+ingress+ref capsule
+仍可能无法放入保守物理预算；此时必须 HOLD，不得伪装已交付。
+后续若要提高此情形完成率，需独立验证工具 schema
+按需缩减/index-only 或实际 tokenizer 预算，不能随意改模型配置。
+
+GLM-5.3 开发代理此次 exact-ref 补丁输出截断，未被应用；
+由验收方最小实现，**必须交新的独立 GLM-5.3 Reviewer**。
+测试/代码身份回执：
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-exact-ref-GREEN.json`。
