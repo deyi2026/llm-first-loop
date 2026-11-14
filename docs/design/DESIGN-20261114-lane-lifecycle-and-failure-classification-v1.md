@@ -453,3 +453,4 @@ worktree 规模（`git worktree list --porcelain` 解析）：100 条 = main 1 +
 | 2026-11-14 | v1 草案 | 初稿；含 §2 对上一轮口头判断的 6 处自我修正 |
 | 2026-11-14 | v2 | 填入 U3/U4 实测结论（U3 无权威 liveness 源、U4 0 项值得补签）；新增 §10.1：P2 降级为「谓词注入 + 本轮不实现收口」，登记 4 处实现期修正；P1 已实现并通过 19 项验收测试 |
 | 2026-11-14 | v3 | 真实账本实测推翻「base 新鲜度瓶颈」：34 项 failed 中 33 项 lane 已终态（新增 E23/E24）；R5 增 `terminal` 标记与历史项文案，修掉「对已 merged lane 给可执行命令」的缺陷（+3 回归测试）；P3 优先级下调 |
+| 2026-11-14 | v4 | **P4 开门预检已实现**（`9b88107a4`）：`LaneStore.precheck()` 纯读、`run_lane_open` 合并回执、`lane_require_goal` 默认 false。R4-a/b/c 三条验收由 9 条用例覆盖（含纯读 sha256 不变、终态 lane 豁免、预检异常降级不阻断、1:1 硬拦未被降级）；lane 相关 82 passed。`create()` 签名与 `lanes.jsonl` schema 零变更 |
