@@ -1,11 +1,11 @@
-# 本地大模型「反复重复」根因分析 + 修复优化方案（v0.4 独立审查反馈修订）
+# 本地大模型「反复重复」根因分析 + 修复优化方案（v0.5 模型身份与证据绑定修订）
 
 - 日期：2026-11-14
-- 分析对象：会话 `bc3e7780-af3b-4ea4-97e2-85cec88dbb96`（19:49:46 → 20:17:17，模型 `cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX`）
+- 分析对象：会话 `bc3e7780-af3b-4ea4-97e2-85cec88dbb96`（19:49:46 → 20:17:17；**请求声明模型别名** `cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX`，不代表真实后端身份）
 - 证据源：`data/event_logs/bc3e7780-….jsonl`（原始事件）、`data/providers.local.json`、`src/llm_loop/**`（当前代码）
-- 状态：**事件、LFL 现有机制与 `$RESEARCH_ROOT` 研究已交叉复核；独立 GLM-5.3 首审有效 HOLD（P0=0/P1=0/P2=4），v0.4 待复审；代码修复未实施**。
+- 状态：**v0.3 独立 GLM-5.3 首审有效 HOLD（P0=0/P1=0/P2=4）；v0.4 第二次审查输出 JSON 语法错误，形式无效/HOLD（其 P2=3 仅供参考）；v0.5 已补只读证据、待新独立审查；业务代码修复未实施**。
 - 2026-11-14 复核：调用 LFL 内置 `grill_me`（`depth=3`，五领域，`design_anchored` 8 锚点）；该工具只自动生成首层问题，第 2/3 层由本次证据驱动的人工反例拷问补齐，**不是三轮独立模型审查**。
-- **阅读优先级：第 0–7 节为初稿及其证据，含被否决的实现提议；第 8–12 节为 v0.2 拷问记录；第 13–17 节为 v0.3 研究对照；第 18 节为独立 Reviewer 后的 v0.4 纠正。冲突时以最新章节为准。初稿 R1–R7、D1–D4 的原始 P0 和 v0.2 V2-2 自动停机均已废止，严禁直接据此实施。**
+- **阅读优先级：第 0–7 节为初稿及其证据，含被否决的实现提议；第 8–12 节为 v0.2 拷问记录；第 13–17 节为 v0.3 研究对照；第 18 节为独立 Reviewer 后的 v0.4 纠正；第 19 节为 v0.5 事实补充和现行门禁。冲突时以最新章节为准。初稿 R1–R7、D1–D4 的原始 P0 和 v0.2 V2-2 自动停机均已废止，严禁直接据此实施。**
 
 ---
 
@@ -65,6 +65,17 @@
 
 ## 2. 根因链（每步都有运行时回执）
 
+> **v0.5 模型身份前置门禁（不能跳过）**：事故 `request.meta` 声明
+> `cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX`，且有效 Provider 配置文件
+> SHA 与事故 `providers_effective_hash` 完全一致；配置将 `cognilocal` 路由到
+> 本机 `8901`。当前 `8901` 是 2026-10-22 启动的 `llama-server`，
+> 加载 `Qwen3.8-Flash-Next` GGUF、alias 为 `qwen3.8-flash-next`，
+> 只读 `GET /v1/models` 亦只列出该 Qwen 模型。
+> **因此 Ornith/MLX 名称不能充当实际权重/后端证明，MLX/StateBraid 资格不得迁移。**
+> 这仍是**当前长寿命进程的强间接证据**，没有事故时的线包/权重 SHA，
+> 不应把「实际后端是 Qwen」写成逐字节历史证明。模型错配与预算压缩
+> 是两个可并存问题；尚不能断言前者单独导致重复。详细绑定见第 19 节。
+
 ### ① 输入额度被 `max_tokens` 腰斩
 `request.meta.input_budget`（round 1，19:49:46 实测）：
 
@@ -92,6 +103,11 @@
 cpt 取自 provider 配置 `chars_per_token=0.9`（`configured_fallback`，样本数 0）→ `floor(4109×0.9)=3698`。
 
 真实中文/JSON 密度约 2.4 字符/token，所以同一额度后来被自适应抬到 ~10,043（84 条 `message.cache_compacted` 中 `effective_budget` 取值：3698×14、10043×41、10054×13、10041×9、10029×7）。**两个数量级都用错了对象**：字符预算比一条 `architecture_status` 回执（约 3 万字符）小一个数量级。
+本段 84 条 `message.cache_compacted` 的分布已在同一冻结 EventLog
+`SHA256=01ca4d749bed93d80640dd53cfbb040bb394fa4e0c77cb3bc1318e286089a556`
+下复核：事件 `seq=28…1459`、时间 `19:52:12.432794…20:15:32.795125 +08:00`，
+精确分布 `3698×14,10043×41,10054×13,10041×9,10029×7`。
+**这只验证观测分布，不验证不同预算都必然导致重复。**
 
 ### ④ 压缩每轮删掉「模型刚刚拿到的那条结果」
 `history.compaction`（epoch 1，19:52:12 实测）：
@@ -624,6 +640,11 @@ schema + 字符投影 + 最新回执被归档」链条已获强证据支持；�
 
 ### P2-E｜分模型合同与用户体验
 
+> **P0-A 未通过前禁止 MLX 资格套用**：`8901` 当前服务是 Qwen GGUF
+> `llama-server`，与事故 Ornith-MLX 请求别名不一致；事故时真实模型身份仍需
+> 独立证据/受控探针。不得以别名自动启用 StateBraid MLX、
+> 迁移 Ornith reasoning replay 资格或改动生产配置。
+
 - 对 Ornith MLX / 当前 Qwen3.8 或实际 GGUF 分别核对 `reasoning_replay`、
   `temperature/top_p/top_k/min_p` 的实际下发与后端默认值；
   **当前已有字段不重复开发**，未知后端身份先不做跨模型等价结论。
@@ -749,3 +770,77 @@ v0.3 当次操作只修改这份**原有未跟踪 Markdown**；研究仓、State
 **本阶段未授权事项**：不得因为 v0.3 的 P0/P1=0 就将 HOLD 解释为 PASS；
 不得自动重发事故 Provider/Tool、清理未知副作用、修改模型生产配置、
 开启 S1 producer、复活 `convergence_decide` 或跨越现有 M5 Goal。
+
+
+---
+
+## 19. v0.5：P0-A 证据资格、身份错配与正式门禁
+
+### 19.1 后端身份与配置证据
+
+- 事故 `request.meta` 的 `generation_contract` 声明
+  `cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX`、
+  `max_tokens=32768`、`temperature=0`、`wire_protocol=openai`；
+  事故 `providers_effective_hash` 与本地 Provider 文件 SHA256
+  `790e9429f1d0c8d24e89466b6106c72a02cb2d19468cf21c59b23defdf649a6f`
+  完全一致，配置指向本机 `8901`。
+- 当前 `8901` 由 2026-10-22 启动的 `llama-server` 监听，
+  `-m` 指向 `Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf`，
+  `--alias=qwen3.8-flash-next`、`-c=65536`；只读 `GET /v1/models`
+  仅返回 `qwen3.8-flash-next`。这是与请求 Ornith-MLX 别名的
+  **强间接矛盾**，并非事故时 HTTP 线包/权重 SHA 的直接证明。
+  模型错配与压缩丢失观察可以并存；尚不能断言前者单独导致重复。
+
+### 19.2 事件级 RED 与 EvidenceRef 资格
+
+- 同一冻结 EventLog 的首 Run 8 轮 `request.meta` 均为
+  `messages_count=2`、`tools_count=101`、
+  `provider_structure_fp=de0a18705a0240c813b0044e`。
+  前 7 次工具结果均先 `message.appended`，再 `context.compressed`
+  归档相同 `tool_call_id`，下一轮的 `messages+tools` 指纹仍等于
+  第一次工具调用前的指纹。**这是事件级 RED，不是代码级 RED，
+  也不是实际 HTTP 请求体逐字节比较。**
+- 7 个 `evidence://` 原始观察在原 owner 下均可由
+  `EvidenceLedger/BlobStore` 分页水合、blob SHA256 校验通过；
+  跨会话 owner 被拒；`ArchiveStore` 能按 `tool_call_id` 取回完整
+  tool-role 消息。原始 blob（本例 3902 字符）只是完整消息的
+  子串，完整消息另含包装与 `repeat_guard` 提示；**不能将
+  「证据可恢复」误写成「恢复指针已进入最终 Provider 视图」**。
+- 仍未知事故时 101 个工具 schema 是否实际包含 `read_evidence`，
+  也没有最后 pre-send 完整请求体。只有实际证明 raw exchange
+  或模型可见、同 owner/version、可分页的 exact-ref **在发送前交付**，
+  才能记 `latest_observation_delivered=true`。
+
+### 19.3 事故源码与压缩分布的外部绑定
+
+- 事故树 `103e9730de049f3b9715b1429d51d0e17d8fee5c` 与本地
+  `main=71f95724459f5d0500a0d19405d9a51d7586d741`
+  的 `tool_cycle.py`、`history.py`、`history_projection.py`、
+  `compaction_gate.py`、`routing.py` 五个 Git blob OID 逐一相同；
+  精确 OID 记录在外部只读回执。
+- `message.cache_compacted` 共 84 条、`seq=28…1459`、
+  `ts=2026-11-14 19:52:12.432794…20:15:32.795125 +08:00`，
+  `effective_budget` 精确分布
+  `3698×14、10043×41、10054×13、10041×9、10029×7`，
+  全部绑定 EventLog
+  `SHA256=01ca4d749bed93d80640dd53cfbb040bb394fa4e0c77cb3bc1318e286089a556`。
+- 已有 105 项连续性专项和新增 72 项 Evidence 专项通过；
+  **未运行事故预算下的代码级 RED→GREEN、独立代码审查或原版完整 R9**。
+
+### 19.4 复审状态与准入顺序
+
+- v0.3 独立首审有效 `HOLD/P0=0/P1=0/P2=4`。
+- v0.4 GLM-5.3 复审实际执行一次、零工具、无自动重试，
+  `finish_reason=stop`、`truncated=false`，但原始 JSON
+  少一个闭合括号，**审查契约校验失败，形式上 HOLD**。
+  单字符确定性修补仅用于读取意见（`HOLD/P0=0/P1=0/P2=3`），
+  不可将无效输出伪装成有效 Reviewer PASS。
+- 参考意见已由 `2`/`15` 的身份提示和本节外部绑定解决。
+  **v0.5 需重新冻结精确文档 SHA、外部证据 SHA，再独立复审**。
+- 历史 HTTP 线包、事故工具目录、完整 effective config、
+  历史权重 SHA 仍为 `unknown`。若无法无副作用恢复历史证据，
+  以**当前代码级离线 RED + 最终 pre-send digest + 模型身份/工具授权核验**
+  作为进入业务代码修复的硬前置条件；不能无限追求无法取得的历史线包。
+- **本阶段禁止**：自动重发事故工具、跨越旧 M4-C/M5 Goal、
+  修改模型配置、开启未资格化的 S1 producer、合并 main、push、
+  生产发布或重启服务。
