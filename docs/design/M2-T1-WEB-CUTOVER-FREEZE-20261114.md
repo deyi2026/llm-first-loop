@@ -130,3 +130,9 @@ run_generation、固定 `glm/glm-5.3`、固定工具集 `read_file/edit_file`、
 ## 2026-11-14 预冻结安全卫生与父侧验收
 
 提交前原版 git_security_scan.sh --staged 阻断了两份执行回执中 7 处本机用户绝对路径。只对回执中的解释器和事件日志目录做相对路径脱敏，保留真实预算、事件、产物 SHA、执行统计与负测事实，不修改运行源码或测试逻辑；未增加扫描豁免。另将两处不触网的测试夹具假 API key 从 14 字符缩短为单字符 k，以满足原版敏感内容扫描，测试逻辑不变。父侧独立实测 M1+M2 专项 95 passed、F18/跨 kind 定向 10 passed、相关回归 749 passed / 10546 deselected / 7 warnings（无 cacheprovider 插件），Ruff All checks passed、Pyright 0 errors/0 warnings。协作代理先前在其沙盒通道记录的 745 passed / 4 skipped 属不同执行环境，两者选中总数均为 749，分别保留，不合并冒充同一次测试。冻结 tree SHA、Reviewer、R9 与后续集成/发布资格由 Goal checkpoint 和 Git 回执单独核验。
+
+## 2026-11-14 09:30 R9 Tier-0 架构守卫最小补修与父侧复核
+
+首轮原版完整 R9 真实 exit 1，停止在 Tier-0：函数行数棘轮、全局 300 行红线和resources→workspace 新导入边共三项失败；不是环境误报，不得扩大基线或跳过测试。唯一 GLM-5.3 writer 在隔离树提交源码补修 0dcc82ecd：将纯文本换行工具提到 resources/text_normalization.py 并由 FileService 与 T1 共用；将预算/授权分支提取成小函数，保留 CAS、撤销、UNKNOWN 和原有错误码。原版架构基线、守卫、ci_gate 均未修改。
+
+父侧在该源码提交上独立无管道运行三个失败守卫：3 passed、exit 0；T1 专项 60 passed、M1 专项 36 passed，合计 **96 passed**、exit 0。原开发回执中“37 M1 / 合计97”系统计笔误，已按独立实测更正。作者另报告 arch guards 52 passed、Tier-0 341 passed、Web 615 passed、Ruff/Pyright 增量门禁通过；这些作者结果不代替后续原版完整 R9。本节只记录补修与复核，新的独立 Reviewer PASS、完整 R9 exit0、GitHub/main/Mac 发布均尚待完成。

@@ -1,6 +1,6 @@
 {
   "schema": "m2-t1-web-cutover-receipt",
-  "generated_at_local": "2026-11-14T08:41:34+08:00",
+  "generated_at_local": "2026-11-14T09:30:48+08:00",
   "m1_baseline": {
     "head": "db6a2546a9d61a35c8497420413445aee6bc90e6",
     "m1_staged_index_tree": "59d73bfb2b4ef60c6c07c93dd772df226704e42f",
@@ -8,24 +8,24 @@
   },
   "m2_files": {
     "src/llm_loop/resources/task_budget_t1_web_profile.py": {
-      "sha256": "d5c69509eb9805efd79e383ee1fec46597d4161df0e02426fea3fee35d09da8d",
-      "bytes": 50617
+      "sha256": "9d117a33687b4740922a0963aa589cac1ca5f62abaf69a552eb144912a47fc69",
+      "bytes": 51992
     },
     "tests/unit/test_task_budget_t1_web_profile.py": {
-      "sha256": "1f96e88e0ff62eea36c80bfe622a8d8f1d05708a1a78ceac7f43ab1b0f1c6761",
-      "bytes": 128568
+      "sha256": "c0505e04393d331a6ad76861eb80ff217b85746eb7b9baea01440fc322403bb7",
+      "bytes": 129545
     },
     "src/llm_loop/web/task_budget_canary.py": {
-      "sha256": "f1ee96763cade6fcb329856c93030c5137a4d81f66f54c163693375553aa5453",
-      "bytes": 17198
+      "sha256": "e3bec090a86193eea7d96070475d726a447e7c721a3734ecfc61364dafe16243",
+      "bytes": 18363
     },
     "src/llm_loop/web/__init__.py": {
-      "sha256": "ff21a5f9d075f93c68ea4624f4df5a24a1042813f934e2c547524148898a1d38",
-      "bytes": 36821
+      "sha256": "050dff03a6ea5b79b66da6884f6523a80e68a19af54132d7fbdce81a50f79811",
+      "bytes": 36038
     },
     "src/llm_loop/core/loop/lifecycle.py": {
-      "sha256": "cd4f07e124b83da6fe88a32817d5761d3ef3a7b8f8489916e65c060e800c4f54",
-      "bytes": 28913
+      "sha256": "05dcc6c14ce97c1b82c19e136fc2a8f6c69c4bce6cc6b9b46fcfadb7f2222c75",
+      "bytes": 29879
     },
     "src/llm_loop/llm/client.py": {
       "sha256": "db8a89593f3ff564e1954abc55b14274f743cacc3eb71eed4afda943cb520fec",
@@ -40,16 +40,24 @@
       "bytes": 133212
     },
     "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md": {
-      "sha256": "29280ef8cd7ccb6a1f5a0c41b5c998e529be7de4c2d4e5d0f57c143634eb5886",
-      "bytes": 19062
+      "sha256": "ee7726a5e1ba24af707009030da7c9d44bb9a00f7e8e72c885c926af396afcd0",
+      "bytes": 20189
     },
     "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md": {
       "sha256": "0bd30c62437f33675dd328d68d1c66956293fec4335e3463b5a49ecc128093c7",
       "bytes": 40311
     },
     "src/llm_loop/resources/task_budget_store.py": {
-      "sha256": "a0014384fdf1738b36b3d394157fe420ea11d83e5268cfccb8ae3240d2e63d5e",
-      "bytes": 37527
+      "sha256": "e629facb49d64d966534b12790a7f06fc999d2d4eb9819f51b4643adb6dced8b",
+      "bytes": 37311
+    },
+    "src/llm_loop/resources/text_normalization.py": {
+      "sha256": "a3f03e8d22d553b251d1154b98016f3196c6da72ed13965f0b80601bcd47802a",
+      "bytes": 1083
+    },
+    "src/llm_loop/workspace/file_service.py": {
+      "sha256": "5e472fe313a768aca880833fb0583526420f9b7160f6c1c341cbbc6b45a5dc52",
+      "bytes": 32241
     }
   },
   "m2_files_note": "top manifest refreshed to final tree state 2026-11-14 08:37 by the 07:41-dispatched closure agent (session 76ea82c8); per-batch historical manifests remain authoritative inside batches[]",
@@ -336,7 +344,7 @@
         "three_targeted_tier0": "4 passed (ratchet_within_baseline, global_redline_300, kernel_import_edges x2)",
         "arch_guards_full": "52 passed",
         "tier0_marker_full": "341 passed, 10955 deselected",
-        "t1_plus_m1": "97 passed (60 T1 incl. identity test + 37 M1)",
+        "t1_plus_m1": "96 passed (60 T1 incl. identity test + 36 M1), parent independently verified, exit 0",
         "canary_or_t1_or_budget": "747 passed, 4 skipped",
         "webui": "615 passed",
         "static_diagnostics_ruff_ledger": "PASS historical=67 current=27 new=0 resolved=40 touched-files-clean",
@@ -345,6 +353,20 @@
         "interpreter": ".venv/bin/python (3.13, repo virtualenv)"
       },
       "note": "semantic invariants preserved: all extractions are pure moves; stop reasons, gate denial codes, dispatch/receipt_ref formats and CAS boundaries unchanged; old reviewer PASS invalidated by code change per contract - a fresh independent reviewer PASS is required before the parent re-runs the original release gate"
+    },
+    {
+      "batch": "R9-guard-parent-reconciliation",
+      "date_local": "2026-11-14T09:30:48+08:00",
+      "scope": "receipt/design alignment only; no runtime source or tests changed",
+      "parent_independent": {
+        "arch_three_blockers": "3 passed, exit 0",
+        "t1_focused": "60 passed, exit 0",
+        "m1_focused": "36 passed, exit 0",
+        "combined_focused": "96 passed, exit 0",
+        "previous_author_97": "corrected arithmetic; 60+36=96",
+        "new_reviewer": "NOT_RUN",
+        "original_full_r9": "NOT_RUN on repair commit"
+      }
     }
   ],
   "final_state": {
