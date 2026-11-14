@@ -1,0 +1,59 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-m4d-t1-crash-recovery-preflight",
+  "summary": "M4-D read-only operator advisory preflight for crash-safe fresh T1 authorization; existing EventStore, TaskBudgetStore and Web operator config remain the only authorities. No old Run replay, no runtime changes, no production deployment.",
+  "components": [
+    {
+      "component_id": "t1-crash-recovery-advisory-preflight",
+      "paths": [
+        "docs/design/M4D-T1-CRASH-RECOVERY-NEW-AUTH-20261114.md",
+        "docs/receipts/M4D-T1-CRASH-RECOVERY-PREFLIGHT-20261114.json",
+        "docs/governance/submissions/20261114-m4d-t1-crash-recovery-preflight.json",
+        "scripts/t1_crash_recovery_preflight.py",
+        "tests/unit/test_t1_crash_recovery_preflight.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing TaskBudgetStore, EventStore and Web T1 operator authorization; new script is read-only operator advisory",
+      "disposition": "Reuse original durable budget ledger, append-only execution facts, exact target SHA and operator-controlled new Session/authorization. Reject any UNKNOWN Provider/Tool liability, unrecognized event, mismatched receipt, drifted file or absent stop attestation. The script never dispatches work, issues a grant, changes runtime authorization, or creates a second ledger.",
+      "evidence": [
+        "tests/unit/test_t1_crash_recovery_preflight.py",
+        "docs/receipts/M4D-T1-CRASH-RECOVERY-PREFLIGHT-20261114.json",
+        "docs/design/M4D-T1-CRASH-RECOVERY-NEW-AUTH-20261114.md"
+      ],
+      "verification_level": "Prior four-file frozen code candidate a565ab70d7d0e1afb62c0e373cc478f4b2fcab7f: independent GLM-5.3 completed/PASS P0=0/P1=0/P2=5; 43 new tests and 165 combined tests passed; original full R9 exit 0, Python 14949 passed/158 skipped/3 xfailed and Web 600 passed. This governance-manifest addition awaits exact new-SHA review and R9.",
+      "model_evidence_veto_recovery_exit": "A model's claim of completion or physical quiescence never grants authorization. Unknown Provider settlement, incomplete tool receipt, stale SHA, wrong source identity, unrecognized event, or absent operator stop attestation returns HOLD. Operator can withhold a fresh authorization; the old run_generation is not replayed.",
+      "rollback_route": "Revert the isolated five-file M4-D candidate; existing Web/Feishu/Learning/Mac/Deepin production identities, old budget ledger and main remain unchanged.",
+      "declaration_id": "t1-crash-recovery-reuse"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "t1-crash-recovery-reuse",
+      "g1": {
+        "necessity": "A process can die after a durable file edit but before run.end, leaving an unknown Provider attempt. Automatic replay risks duplicate effects and unbounded budget use. A deterministic read-only reconciliation is required before a human considers a new authorization."
+      },
+      "g2": {
+        "authority_owner": "Existing TaskBudgetStore CAS, EventStore execution journal, signed Web T1 operator config and read_file/edit_file snapshot CAS",
+        "relationship": "reuse",
+        "non_duplication": "No new authority, second budget ledger, background recovery daemon, new Web route or automatic resume. The CLI only reads existing facts and emits a HOLD or advisory operator-action-required receipt."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_t1_crash_recovery_preflight.py",
+          "docs/receipts/M4D-T1-CRASH-RECOVERY-PREFLIGHT-20261114.json"
+        ],
+        "recovery_or_reason": "The real M4-C SIGKILL source with one dispatched Provider remains HOLD; a synthetic fully settled source may only pass advisory preflight. Any missing, mismatched, unknown or changed durable evidence vetoes new authorization. A fresh operator grant and Session are separate manual actions."
+      },
+      "g4": {
+        "rollback": "Revert the isolated branch's script/tests/design/receipt/governance additions; no deployed state, source session or budget liability is rewritten or cleared.",
+        "verification": [
+          "43 synthetic positive/negative and race tests passed",
+          "165 expanded T1/Runner/Web SSE tests passed",
+          "Independent GLM-5.3 reviewed the prior four-file code candidate with completed/PASS P0=0/P1=0",
+          "Original full R9 on the prior four-file code candidate exit 0; 14949 Python and 600 Web passed",
+          "New five-file candidate requires its own independent review and original full R9 before integration"
+        ]
+      }
+    }
+  ]
+}
