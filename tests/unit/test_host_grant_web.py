@@ -192,8 +192,9 @@ def test_stale_review_revokes_orphan_grant(
     assert store.get(rid)["status"] == "pending"
     grants = gstore.list_all() if hasattr(gstore, "list_all") else []
     if not grants:
-        # store 无 list_all：扫描目录
-        d = host_grant_store_home()
+        # store 无 list_all：扫描目录（P0 补修: home 为基准 data 目录，
+        # grant 文件在 home/grants/ 单层）
+        d = host_grant_store_home() / "grants"
         grants = [gstore.peek(p.stem) for p in d.glob("*.json")] if d.exists() else []
     for g in grants:
         if g and g.get("status") == "approved" and g.get("request_binding", {}).get("request_id") == rid:

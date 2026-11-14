@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import os
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,9 @@ def store(isolated_data_dir):
 
 @pytest.fixture
 def gstore(isolated_data_dir):
-    assert host_grant_store_home() == isolated_data_dir / "grants"
+    # P0 补修(2026-11-14): home 推导返回**基准 data 目录**（grants 由 store
+    # __init__ 统一追加一次，类契约 <home>/grants）——单层，不再双层 grants
+    assert host_grant_store_home() == isolated_data_dir
     return HostCapabilityGrantStore(host_grant_store_home())
 
 
@@ -232,6 +235,24 @@ def test_peek_missing_grant_fails_closed(gstore):
         gstore.peek("HG-NOT-EXIST")
 
 
+def test_grant_store_layout_single_layer(isolated_data_dir, gstore, session_ctx, target_file):
+    """P0 补修(2026-11-14) 回归: 审计/授权文件必须落在 data/grants/（单层）.
+
+    host_grant_store_home() 曾额外拼 /grants，与 store __init__ 内追加叠成
+    data/grants/grants 双层，audit.jsonl 落错层（e2e 审计断言失败的根因）。
+    """
+    gstore.issue(
+        tool_name="execute_command", canonical_path=str(target_file),
+        operation="write", requester_session_id="host-grant-unit",
+        ttl_s=600, approver_identity="web:session:unit",
+        request_binding={"command_sha256": "a" * 64, "cwd": "/ws", "file_sha256": "b" * 64},
+    )
+    # audit 恰在 data/grants/audit.jsonl（单层），且不存在双层 grants/grants
+    assert (isolated_data_dir / "grants" / "audit.jsonl").exists()
+    assert not (isolated_data_dir / "grants" / "grants").exists()
+    assert not (isolated_data_dir / "grants" / "grants" / "audit.jsonl").exists()
+
+
 # ── 5. escalation_wait: host-grant 分支 ───────────────────
 
 def test_wait_returns_grant_id(store, session_ctx, target_file, gstore):
@@ -328,6 +349,61 @@ def test_resolve_bwrap_missing_fail_closed(store, gstore, session_ctx, target_fi
     monkeypatch.setattr("shutil.which", lambda name: None if name == "bwrap" else "/usr/bin/x")
     _, err = t._resolve_host_grant(gid, _cmd(target_file), None)
     assert err is not None and "bwrap 不可用" in err.content
+
+
+# ── 6b. P0 补修(2026-11-14): 生命周期诊断优先级 + 绑定完整性 ──
+
+def test_resolve_consumed_reports_used_before_content_drift(
+    store, gstore, session_ctx, target_file, tool_exec_sbx
+):
+    """已消费 grant 重放：根因诊断必须是"授权已用"，不被"内容已变化"掩盖."""
+    gid = _gid_for(store, gstore, target_file)
+    assert gstore.consume(
+        gid, tool_name="execute_command", canonical_path=str(target_file),
+        operation="write", requester_session_id="host-grant-unit",
+    ) is not None
+    # 模拟首次执行已改写目标文件（e2e 真实场景中的字节漂移）
+    target_file.write_text("drifted", encoding="utf-8")
+    _, err = tool_exec_sbx._resolve_host_grant(gid, _cmd(target_file), None)
+    assert err is not None
+    assert "已用" in err.content
+    assert "内容已变化" not in err.content
+    target_file.write_text("v1-content", encoding="utf-8")
+
+
+def test_resolve_reports_revoked_and_expired(
+    store, gstore, session_ctx, target_file, tool_exec_sbx
+):
+    gid = _gid_for(store, gstore, target_file)
+    gstore.revoke(gid, revoked_by="web:session:unit")
+    _, err = tool_exec_sbx._resolve_host_grant(gid, _cmd(target_file), None)
+    assert err is not None and "已撤销" in err.content
+    rid = (
+        _request(store, target_file).content
+        .split("request_id=")[1].splitlines()[0].strip()
+    )
+    gid2 = _approve(store, gstore, rid, target_file, ttl_s=1)
+    time.sleep(1.2)
+    _, err = tool_exec_sbx._resolve_host_grant(gid2, _cmd(target_file), None)
+    assert err is not None and "已过期" in err.content
+
+
+def test_resolve_rejects_incomplete_binding(gstore, session_ctx, target_file, tool_exec_sbx):
+    """fail-closed: request_binding 缺任一必备字段（或整段缺失）即拒绝，不静默跳过核验."""
+    full = {"command_sha256": "a" * 64, "cwd": "/ws", "file_sha256": "b" * 64}
+    for drop in ("command_sha256", "cwd", "file_sha256", None):
+        binding = dict(full) if drop else None
+        if drop:
+            binding.pop(drop)
+        gid = gstore.issue(
+            tool_name="execute_command", canonical_path=str(target_file),
+            operation="write", requester_session_id="host-grant-unit",
+            ttl_s=600, approver_identity="web:session:unit",
+            request_binding=binding,
+        )["grant_id"]
+        _, err = tool_exec_sbx._resolve_host_grant(gid, _cmd(target_file), None)
+        assert err is not None, f"缺 {drop} 未拒绝"
+        assert "绑定不完整" in err.content, f"缺 {drop}: {err.content}"
 
 
 # ── 7. write-scope gate 叠加 ──────────────────────────────
@@ -437,7 +513,9 @@ def test_expired_and_revoked_grant_rejected(store, gstore, session_ctx, target_f
     import time
     time.sleep(1.2)
     _, err = tool_exec_sbx._resolve_host_grant(gid, _cmd(target_file), None)
-    assert err is None  # peek 不做 expiry（消费侧全维度校验）
+    # P0 补修(2026-11-14): 预检现也拒绝生命周期已失效 grant（诊断优先级修复的
+    # 必要部分——已消费/过期/撤销不得漏到维度比对层产生"内容已变化"类次生诊断）
+    assert err is not None and "已过期" in err.content
     assert gstore.consume(gid, tool_name="execute_command", canonical_path=str(target_file),
                           operation="write", requester_session_id="host-grant-unit") is None
 

@@ -1096,13 +1096,17 @@ class HostCapabilityGrantStore:
 def host_grant_store_home() -> Path:
     """host-grant 持久目录唯一推导（DESIGN-20261114：web 审批端点与工具消费侧同源）.
 
-    与 web/routes.py escalation 端点的 base 推导保持一致（LFL_DATA_DIR env >
-    代码根/data），避免 settings.DATA_DIR 与 LFL_DATA_DIR 的既有命名分歧
-    造成「签发在 A、消费在 B」的路径漂移。
+    返回**基准 data 目录**（LFL_DATA_DIR env > 代码根/data）；grants 子目录由
+    HostCapabilityGrantStore.__init__ 统一追加一次（类契约 ``<home>/grants``）。
+    P0 补修(2026-11-14): 此处曾额外拼接 /grants，与 store 内追加叠成
+    data/grants/grants 双层——audit.jsonl 落错层、e2e 审计断言失败。
+    基准目录保持与 web/routes.py escalation 端点的 base 推导一致，避免
+    settings.DATA_DIR 与 LFL_DATA_DIR 的既有命名分歧造成「签发在 A、消费在 B」
+    的路径漂移。
     """
     import os
 
     env = os.environ.get("LFL_DATA_DIR", "").strip()
     if env:
-        return Path(env) / "grants"
-    return Path(__file__).resolve().parents[3] / "data" / "grants"
+        return Path(env)
+    return Path(__file__).resolve().parents[3] / "data"

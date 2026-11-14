@@ -125,10 +125,14 @@ def test_grant_consumed_once_with_audit(store, gstore, ctx, isolated_data_dir):
 
     grant = gstore.peek(gid)
     assert grant["uses"] >= 1
-    # 重放拒绝（单次授权）
+    # 重放拒绝（单次授权）——P0 补修(2026-11-14): 诊断必须指向生命周期
+    # （授权已用），不得被"目标文件内容已变化"等次生诊断掩盖
+    after_r1 = target.read_bytes()
     r2 = tool.execute(command=cmd, host_grant_id=gid, workdir=str(ctx))
     assert r2.status.name == "ERROR"
     assert "已用" in r2.content or "消费失败" in r2.content
+    # 拒绝路径不得改写目标文件（文件字节不被重写）
+    assert target.read_bytes() == after_r1
     # 审计链
     audit = (isolated_data_dir / "grants" / "audit.jsonl")
     assert audit.exists() and gid in audit.read_text(encoding="utf-8")

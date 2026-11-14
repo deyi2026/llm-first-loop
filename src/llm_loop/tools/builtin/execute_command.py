@@ -894,6 +894,49 @@ class ExecuteCommandTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # ── P0 补修(2026-11-14): 生命周期诊断优先级——已撤销/已消费/已过期的
+        # grant 先于维度比对短路拒绝，避免次生诊断（如"目标文件内容已变化"）
+        # 掩盖"授权已用"这一根因。fail-closed 语义不变：仍拒绝、不消费、不执行。
+        from llm_loop.timekeeping import system_local_now
+        from llm_loop.tools.escalation import _parse_ts as _esc_parse_ts
+
+        _gid_tail = host_grant_id[-12:]
+        if grant.get("status") == "revoked":
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[host-grant 拒绝] 授权已撤销（grant …{_gid_tail}；"
+                    "如仍必要请重新发起 host_access_request）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if grant.get("status") == "consumed" or int(grant.get("uses") or 0) >= int(
+            grant.get("max_uses") or 1
+        ):
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[host-grant 拒绝] 授权已用（单次消费已执行，grant …{_gid_tail}；"
+                    "重放不产生新授权，如仍必要请重新发起 host_access_request）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        _expires = _esc_parse_ts(str(grant.get("expires_at") or ""))
+        if _expires is None or _expires <= system_local_now():
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[host-grant 拒绝] 授权已过期（grant …{_gid_tail}；"
+                    "如仍必要请重新发起 host_access_request）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
         errs: list[str] = []
         sid = current_session_id.get() or ""
         if grant.get("tool_name") != "execute_command":
@@ -912,6 +955,24 @@ class ExecuteCommandTool:
             if not os.path.isfile(canonical):
                 errs.append("授权路径已不是常规文件（删除/权限/类型变化拒绝）")
         binding = grant.get("request_binding") or {}
+        # ── P0 补修(2026-11-14): 绑定完整性 fail-closed——request_binding
+        # 缺任一必备字段（或整段缺失/非 dict）即拒绝，不因缺字段静默跳过
+        # 对应核验（三重绑定 command_sha256/cwd/file_sha256 必须齐备才可核验）。
+        _bind_missing = (
+            [
+                _k
+                for _k in ("command_sha256", "cwd", "file_sha256")
+                if not str(binding.get(_k, "") or "")
+            ]
+            if isinstance(binding, dict)
+            else ["request_binding"]
+        )
+        if _bind_missing:
+            errs.append(
+                "授权绑定不完整（缺 "
+                + "/".join(_bind_missing)
+                + "，无法核验即拒绝 fail-closed；如仍必要请重新发起 host_access_request）"
+            )
         if isinstance(binding, dict) and canonical and os.path.isfile(canonical) and not os.path.islink(canonical):
             want_cmd = str(binding.get("command_sha256", "") or "")
             if want_cmd and want_cmd != hashlib.sha256(command.encode("utf-8")).hexdigest():
@@ -1516,6 +1577,15 @@ class ExecuteCommandTool:
                 f"[host-grant] {grant_ctx['operation']} {grant_ctx['canonical_path']} "
                 f"grant={host_grant_id} 已消费（单次）\n"
             )
+            if grant_ctx["operation"] == "write":
+                # P0 补修(2026-11-14): 沙盒诚实性——bwrap 下未 bind 路径的写
+                # 可能落入沙盒私有层（如 --tmpfs /tmp）exit0 但宿主无变化；
+                # 回执必须区分"授权 bind 文件的宿主写"与"无宿主效果的成功码"。
+                host_grant_note += (
+                    "[host-grant] 宿主写效果仅保证授权 bind 的目标文件；"
+                    "命令中写其他未授权路径可能 exit0 而宿主无变化"
+                    "（沙盒私有层，如 bwrap tmpfs），勿视为外部写成功\n"
+                )
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()
