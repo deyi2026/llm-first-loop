@@ -317,6 +317,16 @@ def _scan_degraded_wake_notify(data_dir: str | Path) -> list[dict[str, Any]]:
 _GATE_SCAN_TTL_SECONDS = 24 * 3600  # P2-1：陈旧门状态时间窗（对齐 failed_service_actions 口径）
 
 
+def _scan_publish_closeout_pending(data_dir: str | Path) -> list[dict[str, Any]]:
+    """EVO-20261112-fd945e83: 薄委托单源扫描（runtime/service_control 为权威实现）."""
+    try:
+        from llm_loop.runtime.service_control import scan_publish_closeout_pending
+
+        return scan_publish_closeout_pending(data_dir)
+    except Exception:  # noqa: BLE001 — 投影 fail-open
+        return []
+
+
 def _scan_pending_compaction_gates(data_dir: str | Path) -> list[dict[str, Any]]:
     """EVO-20261017-53c394bd C1: 扫未闭合的压缩恢复确认门.
 
@@ -349,14 +359,24 @@ def _scan_pending_compaction_gates(data_dir: str | Path) -> list[dict[str, Any]]
             pending = bool(payload.get("pending"))
             escalated = bool(payload.get("escalated"))
             degraded = bool(payload.get("status") == "degraded")  # P2-2：含降级态
+            # 复审修复（R2 P2-1）：abandoned 是 resolved-by-design 终态，
+            # 不进 pending 投影（防永久滞留噪音）；审计走事件流+
+            # gate_state.json（TTL 到期由既有 terminal 清收路径回收）。
             if not (pending or escalated or degraded):
                 continue
+            # rev6（EVO-20261112-4f95db8e）：投影增补 mode/escalations_total
+            # ——预算耗尽后的门不再重注入，运维需可区分。
+            _observe_only = bool(payload.get("observe_only"))
             results.append(
                 {
                     "session_id": payload.get("session_id") or state_file.parent.name,
                     "state": (
                         "escalated" if escalated else ("degraded" if degraded else "pending")
                     ),
+                    "mode": "observe_only" if _observe_only else "enforce",
+                    # 审查修复（P2-1）：legacy gate_state 无该键时归一为 0，
+                    # 避免运维投影出现 None 三态。
+                    "escalations_total": int(payload.get("escalations_total") or 0),
                     "attempt": payload.get("attempt"),
                     "manifest_ref": payload.get("manifest_sha256"),
                     "manifest_rel_path": payload.get("manifest_rel_path"),
@@ -3400,6 +3420,11 @@ def _build_pending_actions_fn(settings) -> Any:
         pending_compaction_gates = (
             _scan_pending_compaction_gates(scan_data_dir) if scan_data_dir else []
         )
+        # EVO-20261112-fd945e83（D8）：已验证发布完成、待收口的 update 动作进入
+        # pending 投影（与 engine 侧通知共用单源扫描；fail-open）。
+        publish_closeout_pending = (
+            _scan_publish_closeout_pending(scan_data_dir) if scan_data_dir else []
+        )
         # EVO-20261105-7eb1e99f(b)：TTL 到期的确认门在 pending_actions 状态
         # 装配时收终态并清理状态文件（复用 superseded 语义；manifest 保留；
         # 幂等，无过期文件时零写入）。投影扫描本就过滤 TTL 外文件，收割置后
@@ -3436,6 +3461,12 @@ def _build_pending_actions_fn(settings) -> Any:
                 f"压缩恢复门：{'，'.join(parts)}"
                 "（详情见 pending_compaction_gates；degraded=快照降级未开确认门）"
             )
+        if publish_closeout_pending:
+            hint_parts.append(
+                f"{len(publish_closeout_pending)} 个已验证发布完成待收口"
+                "（详情见 publish_closeout_pending；按 PLAN D1 第 2–5 步收口"
+                "或执行 scripts/promo_closeout.py，成功即闭合）"
+            )
         return {
             "executing_evolutions": executing,
             "pending_reviews": pending_review,
@@ -3446,6 +3477,7 @@ def _build_pending_actions_fn(settings) -> Any:
             "degraded_wake_notify": degraded_wake_notify,
             "failed_service_actions": failed_service_actions,
             "pending_compaction_gates": pending_compaction_gates,
+            "publish_closeout_pending": publish_closeout_pending,
             "note": None,
         }
 

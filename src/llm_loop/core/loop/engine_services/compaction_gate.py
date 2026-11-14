@@ -76,6 +76,24 @@ C1 — compaction recovery gate（通道重做）
       （manifest 保留）。存量 67 文件的一次性收敛走
       scripts/migrate_compaction_gate_states.py
       （默认 dry-run 只读，真实删除需人工批准 --execute）。
+    rev6（EVO-20261112-4f95db8e：升级路径治理，人工 exec_override 批准）：
+    - ①升级可见性：升级后 state 留 escalated_digest（reason/重注入次数/
+      持续轮数/manifest ref），经 take_gate_notice_text 在
+      ESCALATED_DIGEST_ROUNDS 轮内渲染进 CR-R1 槽——模型能读到「本次
+      因何升级、已重注入几轮」，不再被动升级后无信息（d80 源会话实测
+      6 次 receipt_missing_after_max_reinject 升级均不可见）。
+    - ②升级预算：会话级 escalations_total（跨门继承、跨 run 落盘），
+      达 ESCALATION_BUDGET 后新门转 observe_only——照常写 manifest+
+      事件（零丢失不变），不再注入确认通知、不再重注入（压缩上下文
+      并继续），预算穿越发 compaction.gate.needs_human（转人工标记）。
+    - ③未结算回执清单：rounds_open ≥ RECEIPTS_LIST_ROUNDS 时通知内嵌
+      清单+显式放弃指令；evaluate_confirmation 行锚识别 ABANDON_MARKER
+      （机械校验 manifest ref 前缀），关门记 compaction.gate.abandoned。
+      语义不弱于现状：升级路径本就无确认关门，显式放弃只是把关门
+      变成有记录的知情决策。
+    - ④观察指标：engine 侧 per-run 计数（escalated / reinject_attempts /
+      observe_only_gates），随 escalated 事件载荷与 compaction.gate.stats
+      事件输出，用于评估是否需要停止条件。
 """
 
 from __future__ import annotations
@@ -104,6 +122,29 @@ _WIRE_RECENT_ASSISTANT_CHARS = 1200
 # 消息列表被修剪/重建、visible_from 永久落空等生命周期异常下，
 # 防止确认门永远挂起并无限注入。
 ROUND_AGE_ESCALATE = 12
+# ---------------------------------------------------------------------------
+# rev6（EVO-20261112-4f95db8e）：升级路径治理常量
+# ---------------------------------------------------------------------------
+# ②会话升级预算：累计升级达该次数后，新门转 observe_only（不再重注入）。
+# d80 实测 8 次升级/901 次压缩：预算 3 意味着第 4 扇门起零重注入成本。
+ESCALATION_BUDGET = 3
+# ①升级摘要保留轮数：升级后 digest 经 CR-R1 槽对模型可见的轮数上限。
+ESCALATED_DIGEST_ROUNDS = 2
+# ③未结算回执清单阈值：rounds_open 达到后通知内嵌清单+显式放弃指令。
+# 审查修复（P1-1）：必须 ≤ MAX_REINJECTIONS-1——否则 hit_max 抢先升级，
+# 主导失败流（receipt_missing_after_max_reinject）永远渲染不出清单；
+# 且无响应等待流在等待分支同样刷新（见 _run_gate_step），round_age
+# 兜底路径也可达。
+RECEIPTS_LIST_ROUNDS = 2
+# ③显式放弃回执的行锚标记（机械校验：行锚定 + manifest ref 前缀匹配）。
+ABANDON_MARKER = "压缩恢复回执：放弃确认"
+_ABANDON_LINE_RE = re.compile(
+    r"^\s*" + re.escape(ABANDON_MARKER) + r"\s+manifest_ref\s*[:=]\s*([0-9a-f]{12,64})\s*$",
+    re.M,
+)
+# ④per-run 观察指标（engine 属性）：{"run_id", "escalated",
+#   "reinject_attempts", "observe_only_gates"}，run 切换自动归零。
+_RUN_STATS_ATTR = "_compaction_gate_run_stats"
 SNAPSHOT_DIRNAME = "compaction_snapshots"
 GATE_STATE_FILENAME = "gate_state.json"
 RECOVERY_TOOL_NAMES = {"read_file", "read_evidence", "search_archive"}
@@ -452,11 +493,19 @@ def _supersede_pending_gate(
     return stale_events
 
 
-def render_gate_notice_text(manifest: dict | None, *, attempt: int, stale_events: int = 0) -> str:
+def render_gate_notice_text(
+    manifest: dict | None,
+    *,
+    attempt: int,
+    stale_events: int = 0,
+    rounds_open: int = 0,
+) -> str:
     """Render the recovery notice body (CR-R1 packet slot content).
 
     Uses rel_path for readability (P2-2); a None manifest renders explicit
     "unavailable" markers (its refs never satisfy tool evidence — P1-1).
+    rev6③：rounds_open ≥ RECEIPTS_LIST_ROUNDS 时附加未结算回执清单与
+    显式放弃指令（模型知情决策，机械行锚校验后关门）。
     """
     mref = (manifest or {}).get("sha256") or "unavailable"
     mpath = (manifest or {}).get("rel_path") or (manifest or {}).get("path") or "unavailable"
@@ -501,6 +550,24 @@ def render_gate_notice_text(manifest: dict | None, *, attempt: int, stale_events
         lines.append(f"注意：另有 {stale_events} 个历史压缩事件尚未确认（共享本回执）。")
     if attempt > 1:
         lines.append(f"（第 {attempt} 次通知；确认门上限 {MAX_REINJECTIONS} 次，超限转观测提示。）")
+    # rev6③：轮龄超过阈值时呈未结算回执清单 + 显式放弃指令（EVO 第 3 条，
+    # 人工批准）。放弃是知情显式决策：行锚+manifest ref 前缀机械校验，
+    # 关门记录 compaction.gate.abandoned 事件——语义不弱于升级路径
+    # （本就无确认关门），只是把关门从被动升级变为有记录的主动决策。
+    if rounds_open >= RECEIPTS_LIST_ROUNDS:
+        lines.append("")
+        lines.append(
+            f"未结算回执清单：manifest_ref={mref}（第 {attempt}/{MAX_REINJECTIONS} 次，"
+            f"已持续 {rounds_open} 轮）"
+            + (f"；另有 {stale_events} 个历史压缩事件" if stale_events else "")
+            + "。"
+        )
+        lines.append(
+            "若你判断继续等待本回执已无收益（如任务已收口、内容已恢复或确认成本过高），"
+            f"可在回复中单独一行给出：{ABANDON_MARKER} manifest_ref=<前 12 位以上>。"
+            "程序将机械校验该行并关闭本确认门（记录 abandoned 事件）；"
+            "这是显式决策，不影响历史事件的可检索性。"
+        )
     return "\n".join(lines)
 
 
@@ -514,12 +581,17 @@ def evaluate_confirmation(
     tool_evidence = visible_from 之后存在 RECOVERY_TOOL_NAMES 工具消息，
                     内容触达 mref 前缀 / mpath / compaction_snapshots 目录
                     （None/unavailable ref 不参与子串匹配）。
+    abandoned（rev6③，EVO-20261112-4f95db8e）= visible_from 之后的
+                    assistant 内容存在行锚放弃标记（ABANDON_MARKER）且其
+                    manifest_ref 与本事件 ref 前缀互匹。放弃是显式决策，
+                    与 receipt_valid 独立判定、互不干扰。
     """
     result = {
         "confirmed": False,
         "receipt_valid": False,
         "tool_evidence": False,
         "assistant_after": False,
+        "abandoned": False,
         "receipt_idx": None,
         "tool_idx": None,
     }
@@ -549,6 +621,11 @@ def evaluate_confirmation(
                 if len(fields) == 5 and ref_line_ok and has_goal_ref:
                     result["receipt_valid"] = True
                     result["receipt_idx"] = j
+            # rev6③：显式放弃（与回执判定独立；一次只认第一个匹配行）。
+            if not result["abandoned"]:
+                ab = _ABANDON_LINE_RE.search(content)
+                if ab is not None and ref_ok and str(mref).startswith(ab.group(1)):
+                    result["abandoned"] = True
         elif role == "tool":
             md = getattr(m, "metadata", None) or {}
             tool_name = str(getattr(m, "tool_name", None) or md.get("tool_name") or "")
@@ -575,8 +652,18 @@ def take_gate_notice_text(engine: Any, session_id: str) -> str | None:
     """CR-R1 槽取数（build.py enforce 装配时调用）。
 
     不消费——确认门经机械校验关闭后由 gate step 清空（重注入语义）。
+    rev6①：门升级后 notice_text 已清空，但 state 携带 escalated_digest
+    （reason/重注入次数/持续轮数），在 digest_left 轮内继续经本槽
+    对模型可见——升级原因不再是黑盒。digest_left 由 gate step 递减，
+    归零后本槽恢复 None。
     """
-    return _slots(engine).get(session_id, {}).get("notice_text")
+    state = _slots(engine).get(session_id, {})
+    notice = state.get("notice_text")
+    if notice:
+        return notice
+    if int(state.get("digest_left", 0) or 0) > 0:
+        return state.get("escalated_digest")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +677,57 @@ def run_compaction_gate_step(engine: Any, sess: Any, *, new_compaction: bool) ->
         _run_gate_step(engine, sess, new_compaction=new_compaction)
     except Exception:  # noqa: BLE001 — 门禁永不阻塞 run
         logger.warning("compaction gate step failed (fail-open)", exc_info=True)
+
+
+def _prior_escalations_total(slots: dict, session_id: str, data_dir: str) -> int:
+    """rev6②：会话升级账本继承——上一门（槽内优先，其次盘上终态）的累计值。
+
+    槽内 state（superseded/escalated/abandoned 终态）优先；跨 run 时槽已
+    空，读盘上最后落盘的 state（enforce 门升级时已落盘；shadow 门不落盘，
+    账本归零——与 shadow 不落盘语义一致）。旧格式无该键按 0 处理。
+    """
+    prev = slots.get(session_id)
+    if prev is not None and "escalations_total" in prev:
+        return int(prev["escalations_total"] or 0)
+    disk = read_gate_state(data_dir, session_id) or {}
+    return int(disk.get("escalations_total", 0) or 0)
+
+
+def _run_stats(engine: Any) -> dict:
+    """rev6④：per-run 观察指标（escalated / reinject_attempts / observe_only_gates）。
+
+    run 切换自动归零；_run_state 缺失（测试 FakeEngine 等）时 run_id 记
+    空串、计数照常累积——fail-open，不因观测指标中断主流程。
+    """
+    rid = ""
+    try:
+        rid = str(getattr(engine._run_state(), "run_id", "") or "")  # noqa: SLF001
+    except Exception:  # pragma: no cover - 防御性：观测指标不阻断主流程
+        rid = ""
+    stats = getattr(engine, _RUN_STATS_ATTR, None)
+    if not isinstance(stats, dict) or stats.get("run_id") != rid:
+        stats = {
+            "run_id": rid,
+            "escalated": 0,
+            "reinject_attempts": 0,
+            "observe_only_gates": 0,
+        }
+        setattr(engine, _RUN_STATS_ATTR, stats)
+    return stats
+
+
+def _emit_stats_event(engine: Any, session_id: str) -> None:
+    stats = _run_stats(engine)
+    engine._event_append(  # noqa: SLF001
+        session_id,
+        "compaction.gate.stats",
+        {
+            "run_id": stats.get("run_id", ""),
+            "escalated_total": stats.get("escalated", 0),
+            "reinject_attempts_total": stats.get("reinject_attempts", 0),
+            "observe_only_gates": stats.get("observe_only_gates", 0),
+        },
+    )
 
 
 def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
@@ -634,6 +772,11 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                         prev,
                         by_event=manifest["manifest_id"],
                     )
+                # rev6②：继承会话升级账本；预算耗尽后新门转 observe_only——
+                # 照常落 manifest+事件（零丢失不变），不再注入确认通知、
+                # 不再重注入（「压缩上下文并继续」+ 转人工标记走事件）。
+                escal_total = _prior_escalations_total(slots, session_id, data_dir)
+                observe_only = escal_total >= ESCALATION_BUDGET
                 state = {
                     "compaction_event_id": manifest["manifest_id"],
                     "manifest_sha256": manifest["sha256"],
@@ -652,7 +795,11 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                     # EVO-20261105-7eb1e99f(a)：开门时冻结投递模式——shadow 门
                     # 终其生命周期不落盘（见 _write_gate_state_gated）。
                     "delivery_mode": _delivery_mode(engine),
-                    "notice_text": render_gate_notice_text(
+                    "escalations_total": escal_total,
+                    "observe_only": observe_only,
+                    "notice_text": None
+                    if observe_only
+                    else render_gate_notice_text(
                         manifest, attempt=1, stale_events=stale_events
                     ),
                     "pending": True,
@@ -660,6 +807,8 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                 }
                 slots[session_id] = state
                 _write_gate_state_gated(data_dir, session_id, state)
+                if observe_only:
+                    _run_stats(engine)["observe_only_gates"] += 1
                 engine._event_append(  # noqa: SLF001
                     session_id,
                     "compaction.gate.opened",
@@ -669,6 +818,8 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                         "visible_from": state["visible_from"],
                         "stale_events": stale_events,
                         "delivery_mode": state["delivery_mode"],
+                        "mode": "observe_only" if observe_only else "enforce",
+                        "escalations_total": escal_total,
                     },
                 )
                 return
@@ -723,6 +874,11 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
     if state is None:
         return
     if not state.get("pending"):
+        # rev6①：升级摘要按轮递减（每轮 build 已消费一次渲染），归零后
+        # CR-R1 槽恢复 None——可见性有界，不产生常驻噪声。
+        if int(state.get("digest_left", 0) or 0) > 0:
+            state["digest_left"] = int(state["digest_left"]) - 1
+            _write_gate_state_gated(data_dir, session_id, state)
         return
     # P1-4：消息列表收缩（再次压缩/修剪/重建）→ 重置评估区间，防永久空扫描
     visible_from = int(state.get("visible_from", 0) or 0)
@@ -760,9 +916,85 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         )
         return
     rounds_open = int(state.get("rounds_open", 0) or 0)
+    # rev6③：显式放弃（对任意 pending 门生效，含 observe-only）——机械
+    # 校验行锚+manifest ref 前缀后关门；与升级路径相比，把被动关门变成
+    # 有记录的知情决策（事件 + stale 覆盖审计）。
+    if ev["abandoned"]:
+        state["pending"] = False
+        state["abandoned"] = True
+        state["abandoned_at"] = system_local_now_iso()
+        state.pop("notice_text", None)
+        state.pop("escalated_digest", None)
+        state["digest_left"] = 0
+        slots[session_id] = state
+        _write_gate_state_gated(data_dir, session_id, state)
+        _hints(engine).pop(session_id, None)
+        engine._event_append(  # noqa: SLF001
+            session_id,
+            "compaction.gate.abandoned",
+            {
+                "compaction_event_id": state.get("compaction_event_id"),
+                "manifest_ref": state.get("manifest_sha256"),
+                "rounds_open": rounds_open,
+                "attempt": state.get("attempt"),
+                "by": "model_explicit",
+                "stale_covered": state.get("stale_events", 0),
+            },
+        )
+        engine._record_action(  # noqa: SLF001
+            "run", "compaction.gate.abandoned",
+            f"event={state.get('compaction_event_id')} rounds_open={rounds_open}",
+        )
+        # 审查修复（P2-2）：放弃关门同样输出 run 级指标——对齐 escalated/
+        # observe-only 轮龄关门的观测一致性，放弃率可被指标消费方度量。
+        _emit_stats_event(engine, session_id)
+        return
     if not ev["assistant_after"] and rounds_open < ROUND_AGE_ESCALATE:
+        # rev6③（审查修复 P1-1）：无响应等待流同样推进清单可见性——轮龄
+        # 达阈值即刷新通知（不计数、不重注入），放弃指令在
+        # receipt_missing 与 round_age 两条失败路径均可达。
+        # 复审修复（R2 P1-1）：observe-only 门零通知是 rev6② 硬契约
+        # （预算耗尽后不再注入确认通知）——刷新必须排除，否则无响应流
+        # 会绕过预算重新开始每轮投递完整回执包。
+        if rounds_open >= RECEIPTS_LIST_ROUNDS and not state.get("observe_only"):
+            state["notice_text"] = render_gate_notice_text(
+                {
+                    "sha256": state.get("manifest_sha256"),
+                    "rel_path": state.get("manifest_rel_path"),
+                    "assistant_count": state.get("assistant_count", 0),
+                    "assistant_chars": state.get("assistant_chars", 0),
+                    "total_archived": state.get("total_archived", 0),
+                },
+                attempt=int(state.get("attempt", 1) or 0),
+                stale_events=int(state.get("stale_events", 0) or 0),
+                rounds_open=rounds_open,
+            )
         _write_gate_state_gated(data_dir, session_id, state)
         return  # 通知尚未被任何 assistant 响应消化，不计数不重注入（P1-4）
+    if state.get("observe_only"):
+        # rev6②：observe-only 门无通知、无重注入路径——评估照跑（模型
+        # 自愿给出回执则正常 confirmed 关门），轮龄达上限以审计事件关门，
+        # 防止 observe-only 门永久挂起（对齐 P1-4 轮龄兜底精神）。
+        if rounds_open >= ROUND_AGE_ESCALATE:
+            state["pending"] = False
+            state["closed_by"] = "observe_only_round_age"
+            state["closed_at"] = system_local_now_iso()
+            slots[session_id] = state
+            _write_gate_state_gated(data_dir, session_id, state)
+            _emit_stats_event(engine, session_id)
+            engine._event_append(  # noqa: SLF001
+                session_id,
+                "compaction.gate.closed",
+                {
+                    "compaction_event_id": state.get("compaction_event_id"),
+                    "closed_by": "observe_only_round_age",
+                    "rounds_open": rounds_open,
+                    "escalations_total": int(state.get("escalations_total", 0) or 0),
+                },
+            )
+        else:
+            _write_gate_state_gated(data_dir, session_id, state)
+        return
     hit_max = int(state.get("attempt", 1)) >= MAX_REINJECTIONS
     if hit_max or rounds_open >= ROUND_AGE_ESCALATE:
         # P2-3：升级为观测提示，覆盖全部未确认事件（当前实现单活跃事件/会话）
@@ -772,8 +1004,31 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         state["escalated"] = True
         state["escalated_at"] = system_local_now_iso()
         state.pop("notice_text", None)
+        # rev6①：升级摘要——reason/重注入次数/持续轮数/预算状态，经 CR-R1
+        # 槽在 ESCALATED_DIGEST_ROUNDS 轮内对模型可见（升级不再是黑盒）。
+        reason = "receipt_missing_after_max_reinject" if hit_max else "round_age_fallback"
+        # rev6②：会话升级账本累计；预算穿越发 needs_human（转人工标记），
+        # 耗尽后下一扇门转 observe_only（见 C2 开门路径）。
+        escal_total = int(state.get("escalations_total", 0) or 0) + 1
+        state["escalations_total"] = escal_total
+        state["digest_left"] = ESCALATED_DIGEST_ROUNDS
+        state["escalated_digest"] = (
+            "压缩确认门升级摘要（程序观测信息，非指令）："
+            f"reason={reason}；本门重注入 {state.get('attempt', 1)}/{MAX_REINJECTIONS} 次"
+            f"后未获回执，持续 {rounds_open} 轮；"
+            f"manifest_ref={str(state.get('manifest_sha256') or 'unavailable')}。"
+            "升级后无需补交回执；历史内容仍可经 archive 索引检索。"
+            f"会话升级计数 {escal_total}/{ESCALATION_BUDGET}"
+        ) + (
+            "；预算已耗尽，后续压缩将转 observe_only（不再重注入）。"
+            if escal_total >= ESCALATION_BUDGET
+            else "。"
+        )
         slots[session_id] = state
         _write_gate_state_gated(data_dir, session_id, state)
+        # rev6④：per-run 指标递增（先递增再装配载荷，保证事件读到最新累计）
+        stats = _run_stats(engine)
+        stats["escalated"] += 1
         _hints(engine)[session_id] = {
             "compaction_event_id": state.get("compaction_event_id"),
             "attempt": state.get("attempt"),
@@ -788,6 +1043,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
             # P2-1（五轮复审）：shadow/off 下通知未交付，升级为伪信号——
             # 投影必须能区分真实 enforce 失败。
             "delivery_mode": _delivery_mode(engine),
+            "escalations_total": escal_total,
         }
         engine._event_append(  # noqa: SLF001
             session_id,
@@ -801,12 +1057,38 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                 # ——test_shadow_gate_zero_disk_full_lifecycle 逐字断言本字段
                 # （escalated[-1][2]["delivery_mode"] == "shadow"），四轮全量绿。
                 "delivery_mode": _delivery_mode(engine),
+                "escalations_total": escal_total,
+                "run_escalations_total": stats["escalated"],
+                "run_reinject_attempts_total": stats["reinject_attempts"],
             },
         )
+        if escal_total >= ESCALATION_BUDGET:
+            # rev6②：预算穿越——转人工标记（会话内升级预算已耗尽，
+            # 后续压缩转 observe_only：零丢失保留，确认门不再重注入）。
+            engine._event_append(  # noqa: SLF001
+                session_id,
+                "compaction.gate.needs_human",
+                {
+                    "escalations_total": escal_total,
+                    "budget": ESCALATION_BUDGET,
+                    "compaction_event_id": state.get("compaction_event_id"),
+                    "manifest_ref": state.get("manifest_sha256"),
+                    "next_gates_policy": "observe_only",
+                },
+            )
+            engine._record_action(  # noqa: SLF001
+                "run", "compaction.gate.needs_human",
+                f"session={session_id} escalations_total={escal_total}",
+            )
+        # rev6④：升级/预算穿越均输出 run 级累计指标事件
+        _emit_stats_event(engine, session_id)
         return
     state["attempt"] = int(state.get("attempt", 1)) + 1
     state["visible_from"] = len(messages)
-    # P1-1：重注入渲染携带持久化计数，保持与开门通知一致的事实口径
+    # rev6④：重注入计入 per-run 指标（run 切换自动归零）
+    _run_stats(engine)["reinject_attempts"] += 1
+    # P1-1：重注入渲染携带持久化计数，保持与开门通知一致的事实口径；
+    # rev6③：rounds_open/stale_events 供未结算回执清单渲染（阈值门控）。
     state["notice_text"] = render_gate_notice_text(
         {
             "sha256": state.get("manifest_sha256"),
@@ -816,13 +1098,20 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
             "total_archived": state.get("total_archived", 0),
         },
         attempt=state["attempt"],
+        stale_events=int(state.get("stale_events", 0) or 0),
+        rounds_open=rounds_open,
     )
     slots[session_id] = state
     _write_gate_state_gated(data_dir, session_id, state)
     engine._event_append(  # noqa: SLF001
         session_id,
         "compaction.gate.reinjected",
-        {"compaction_event_id": state.get("compaction_event_id"), "attempt": state["attempt"]},
+        {
+            "compaction_event_id": state.get("compaction_event_id"),
+            "attempt": state["attempt"],
+            "rounds_open": rounds_open,
+            "run_reinject_attempts_total": _run_stats(engine)["reinject_attempts"],
+        },
     )
 
 

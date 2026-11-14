@@ -729,6 +729,42 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # EVO-20261104-305716fa E5：参数级重复计数每 run 归零（与 longrun_read_cache 同款纪律）
         bucket.repeat_guard = {}
 
+    def _inject_publish_closeout_reminder(self, sess: Any) -> None:
+        """EVO-20261112-fd945e83（D8）：发布完成事件钩子（独立方法，降宿主复杂度）。
+
+        已验证 update 发布（publish+restart+verify=confirmed_ok）待收口：
+        开场卡一次 + 轮卡增量（幂等，共用 metadata.service_action_ids）；
+        闭合即停（promo_closeout 写豁免标记 / 24h TTL）；STATUS 层非指令；
+        fail-open。收口从模型自觉（PLAN D1 文档约束）变为程序侧必然可见。
+        """
+        try:
+            from llm_loop.core.loop.engine_services.publish_closeout_notice import (
+                build_publish_closeout_notice_message,
+                build_publish_closeout_turn_notice,
+                injected_publish_action_ids,
+            )
+
+            # 开场卡仅会话开场（尚无 genuine human turn）注入一次——与
+            # 8266b693 B 同一判定；之后一律走轮卡增量，防开场卡抢占轮卡去重。
+            if not any(
+                (m.metadata or {}).get("origin_layer") == "user_instruction"
+                for m in sess.messages
+                if m.role == "user"
+            ):
+                _pub_notice = build_publish_closeout_notice_message(self.settings.data_dir)
+                if _pub_notice is not None:
+                    sess.messages.append(_pub_notice)
+                    self._append_message_event(sess, _pub_notice)
+            _pub_turn_notice = build_publish_closeout_turn_notice(
+                self.settings.data_dir,
+                injected_publish_action_ids(sess.messages),
+            )
+            if _pub_turn_notice is not None:
+                sess.messages.append(_pub_turn_notice)
+                self._append_message_event(sess, _pub_turn_notice)
+        except Exception:  # noqa: BLE001 — 发布收口提醒 fail-open
+            logger.warning("publish_closeout_notice 注入失败（fail-open 跳过）", exc_info=True)
+
     def _run_stream_inner(
         self,
         session_id: str,
@@ -934,6 +970,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 self._append_message_event(sess, _turn_notice)
         except Exception:  # noqa: BLE001 — 轮级提醒 fail-open
             logger.warning("service_action_turn_notice 注入失败（fail-open 跳过）", exc_info=True)
+        # EVO-20261112-fd945e83（D8）：发布完成事件钩子（抽为独立方法，
+        # 保持宿主 _run_stream_inner 在 pyright 复杂度预算内）
+        self._inject_publish_closeout_reminder(sess)
         sess.messages.append(user_msg)
         # Persist the already-eligible recent answer's exact identity before dispatch.
         # A crash with no output must not turn this ingress into an accidental barrier

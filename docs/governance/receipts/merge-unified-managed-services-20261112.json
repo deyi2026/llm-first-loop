@@ -1,0 +1,48 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_6d5855e74284",
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "goal_id": null,
+  "branch": "integrate/unified-managed-services-20261112",
+  "based_on_main": true,
+  "base_main_sha": "594a3bcecd5893068acaa823a50666e7f85280a6",
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "shared_working_copy_preservation": {
+    "head": "4cfc0b48f399310ff11bdb9c807c8a498ed58445",
+    "previous_main": "594a3bcecd5893068acaa823a50666e7f85280a6",
+    "merge_mode": "ff",
+    "reviewer_child_id": "subagent_6d5855e74284",
+    "stash_backup": "9e8e346e97036c1f321450cf4536dc8dbdd978f7",
+    "backup_ref": "backup/main-before-unified-managed-services-20261112",
+    "tracked_changes_preserved": 9,
+    "untracked_hashes_verified": 17,
+    "status": "completed",
+    "finished_at": "2026-11-12T23:35:15.910394+00:00"
+  },
+  "main_sha_after": "4cfc0b48f399310ff11bdb9c807c8a498ed58445",
+  "branch_disposition": "kept: managed controller and forensic evidence",
+  "lane": "N/A external Codex worktree",
+  "full_r9": {
+    "head": "5a58dd70fa0ead6dcbd9d1fa80ec06ef3c57086b",
+    "command": "bash scripts/ci_gate.sh --release",
+    "started_at": "2026-11-12T23:22:34.312133+00:00",
+    "reviewer_child_id": "subagent_bcab71ad4e29",
+    "log": "<LOCAL_REPO_ROOT>/.scratch/unified-managed-services-20261112/review-r9-03/r9.log",
+    "status": "passed",
+    "pid": 28828,
+    "exit_code": 0,
+    "finished_at": "2026-11-12T23:29:48.464930+00:00",
+    "log_sha256": "547f9c33e0428b9a3baa82357b1188a19167b790f441cad87095c9f538aa5648"
+  },
+  "post_merge_smoke": {
+    "main_sha": "4cfc0b48f399310ff11bdb9c807c8a498ed58445",
+    "validated_code_sha": "5a58dd70fa0ead6dcbd9d1fa80ec06ef3c57086b",
+    "code_blobs_unchanged": true,
+    "candidate_clean": true,
+    "webui_source_binding": "passed"
+  },
+  "qualification_note": "full_test PASS does not mint git_push qualification; separate native git_push review remains mandatory."
+}

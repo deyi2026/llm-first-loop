@@ -12,6 +12,11 @@
 - P2-3: 超限升级覆盖活跃事件并留观测提示。
 - P2-4: 五问 5/5 严格判定。
 - P2-6: provider 可见性（enforce 包渲染）经 build 集成点验证。
+- rev6（EVO-20261112-4f95db8e，人工 exec_override 批准）：升级路径治理——
+  ①升级摘要有界可见（escalated_digest / digest_left）；②会话升级预算
+  （escalations_total / observe_only / needs_human）；③未结算回执清单+
+  显式放弃（ABANDON_MARKER 行锚机械校验）；④per-run 观察指标
+  （run_escalations_total / run_reinject_attempts_total / stats 事件）。
 """
 
 from __future__ import annotations
@@ -476,3 +481,241 @@ def test_degraded_supersedes_pending_gate_with_audit(tmp_path, monkeypatch):
         (tmp_path / "compaction_snapshots" / "sess-test" / "gate_state.json").read_text(encoding="utf-8")
     )
     assert payload["status"] == "degraded" and payload.get("stale_events") == 1
+
+
+# ---------------------------------------------------------------------------
+# rev6（EVO-20261112-4f95db8e）：升级路径治理
+# ---------------------------------------------------------------------------
+
+
+def _escalate_first_gate(eng, sess):
+    """恰好推到升级（3 步：重注入→重注入→升级），不多走消化摘要的步。"""
+    for _ in range(gate.MAX_REINJECTIONS):
+        sess.messages.append(
+            Message(role="assistant", content="普通回复无回执", source=MessageSource.SYSTEM)
+        )
+        gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    assert gate._slots(eng)["sess-test"]["escalated"] is True
+
+
+def test_escalated_digest_bounded_visibility(tmp_path):
+    """rev6①：升级摘要经 CR-R1 槽可见，ESCALATED_DIGEST_ROUNDS 轮后归零。"""
+    eng, sess = _open_gate(tmp_path)
+    _escalate_first_gate(eng, sess)
+    state = gate._slots(eng)["sess-test"]
+    digest = gate.take_gate_notice_text(eng, "sess-test")
+    assert digest is not None and "receipt_missing_after_max_reinject" in digest
+    assert f"{gate.MAX_REINJECTIONS}/{gate.MAX_REINJECTIONS}" in digest
+    assert state["escalated_digest"] == digest and state["digest_left"] == 2
+    gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    assert state["digest_left"] == 1 and gate.take_gate_notice_text(eng, "sess-test") is not None
+    gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    assert state["digest_left"] == 0 and gate.take_gate_notice_text(eng, "sess-test") is None
+
+
+def test_escalation_budget_needs_human_and_observe_only(tmp_path):
+    """rev6②：预算穿越发 needs_human；后续新门转 observe_only 且零重注入。"""
+    eng, sess = _open_gate(tmp_path)
+    gate._slots(eng)["sess-test"]["escalations_total"] = gate.ESCALATION_BUDGET - 1
+    _escalate_first_gate(eng, sess)
+    kinds = [e[1] for e in eng.events]
+    assert kinds.count("compaction.gate.escalated") == 1
+    assert "compaction.gate.needs_human" in kinds
+    nh = [e[2] for e in eng.events if e[1] == "compaction.gate.needs_human"][0]
+    assert nh["next_gates_policy"] == "observe_only"
+    assert nh["escalations_total"] == gate.ESCALATION_BUDGET
+    stats = [e[2] for e in eng.events if e[1] == "compaction.gate.stats"]
+    assert stats and stats[-1]["escalated_total"] == 1
+    # 预算已耗尽 → 新压缩开门即 observe_only：事件带 mode，通知为空
+    gate.note_archive_batch_entry(
+        eng, "sess-test", Message(role="assistant", content="再压缩", source=MessageSource.SYSTEM),
+        SimpleNamespace(id="e9", chars=3), 9,
+    )
+    gate.run_compaction_gate_step(eng, sess, new_compaction=True)
+    st2 = gate._slots(eng)["sess-test"]
+    assert st2["observe_only"] is True and st2["notice_text"] is None
+    opened = [e[2] for e in eng.events if e[1] == "compaction.gate.opened"][-1]
+    assert opened["mode"] == "observe_only"
+    assert opened["escalations_total"] == gate.ESCALATION_BUDGET
+    for _ in range(4):
+        sess.messages.append(Message(role="assistant", content="继续任务", source=MessageSource.SYSTEM))
+        gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    kinds = [e[1] for e in eng.events]
+    assert kinds.count("compaction.gate.reinjected") == gate.MAX_REINJECTIONS - 1  # 全部来自第一门
+
+
+def test_observe_only_round_age_close(tmp_path):
+    """rev6②：observe-only 门轮龄兜底关门（审计事件），投影可见 mode。"""
+    from llm_loop.factory import _scan_pending_compaction_gates
+
+    eng, sess = _open_gate(tmp_path)
+    gate._slots(eng)["sess-test"]["escalations_total"] = gate.ESCALATION_BUDGET
+    gate.note_archive_batch_entry(
+        eng, "sess-test", Message(role="assistant", content="新批次", source=MessageSource.SYSTEM),
+        SimpleNamespace(id="e5", chars=3), 5,
+    )
+    gate.run_compaction_gate_step(eng, sess, new_compaction=True)
+    st = gate._slots(eng)["sess-test"]
+    assert st["observe_only"] is True
+    found = _scan_pending_compaction_gates(str(tmp_path))
+    assert found and all(f["mode"] == "observe_only" for f in found)
+    for _ in range(gate.ROUND_AGE_ESCALATE + 1):
+        sess.messages.append(Message(role="assistant", content="x", source=MessageSource.SYSTEM))
+        gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    closed = [e[2] for e in eng.events if e[1] == "compaction.gate.closed"]
+    assert closed and closed[0]["closed_by"] == "observe_only_round_age"
+    assert gate._slots(eng)["sess-test"]["pending"] is False
+    assert [e[1] for e in eng.events].count("compaction.gate.reinjected") == 0
+
+
+def test_abandon_marker_closes_gate(tmp_path):
+    """rev6③：行锚放弃（ref 前缀匹配）机械关门；错误 ref 不识别。"""
+    eng, sess = _open_gate(tmp_path)
+    state = gate._slots(eng)["sess-test"]
+    mref = state["manifest_sha256"]
+    wrong = ("a" if mref[0] != "a" else "b") + mref[1:24]
+    sess.messages.append(
+        Message(role="assistant", content=f"压缩恢复回执：放弃确认 manifest_ref={wrong}",
+                source=MessageSource.SYSTEM)
+    )
+    ev = gate.evaluate_confirmation(sess.messages, state["visible_from"], mref, state["manifest_rel_path"])
+    assert ev["abandoned"] is False  # ref 不匹配 → 视为普通文本
+    sess.messages.append(
+        Message(role="assistant", content=f"压缩恢复回执：放弃确认 manifest_ref={mref[:12]}",
+                source=MessageSource.SYSTEM)
+    )
+    ev = gate.evaluate_confirmation(sess.messages, state["visible_from"], mref, state["manifest_rel_path"])
+    assert ev["abandoned"] is True and ev["confirmed"] is False
+    gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    state = gate._slots(eng)["sess-test"]
+    assert state["abandoned"] is True and state["pending"] is False
+    assert gate.take_gate_notice_text(eng, "sess-test") is None
+    kinds = [e[1] for e in eng.events]
+    assert "compaction.gate.abandoned" in kinds and "compaction.gate.escalated" not in kinds
+    ab = [e[2] for e in eng.events if e[1] == "compaction.gate.abandoned"][0]
+    assert ab["by"] == "model_explicit" and ab["manifest_ref"] == mref
+
+
+def test_receipts_list_threshold_in_notice():
+    """rev6③：rounds_open 达阈值才渲染未结算回执清单+放弃指令（阈值 ≤ MAX-1，审查 P1-1）。"""
+    manifest = {
+        "sha256": "a" * 64,
+        "rel_path": "compaction_snapshots/s/1.json",
+        "assistant_count": 1,
+        "assistant_chars": 5,
+        "total_archived": 2,
+    }
+    assert gate.RECEIPTS_LIST_ROUNDS <= gate.MAX_REINJECTIONS - 1  # 审查 P1-1 不变量
+    below = gate.render_gate_notice_text(manifest, attempt=1, rounds_open=gate.RECEIPTS_LIST_ROUNDS - 1)
+    assert "未结算回执清单" not in below and gate.ABANDON_MARKER not in below
+    at = gate.render_gate_notice_text(
+        manifest, attempt=2, rounds_open=gate.RECEIPTS_LIST_ROUNDS, stale_events=2
+    )
+    assert "未结算回执清单" in at and gate.ABANDON_MARKER in at
+    assert "2 个历史压缩事件" in at and f"2/{gate.MAX_REINJECTIONS}" in at
+
+
+def test_receipts_list_reachable_in_dominant_flow(tmp_path):
+    """审查 P1-1 实测（主导失败流）：响应但不确认——第一次重注入即渲染清单。"""
+    eng, sess = _open_gate(tmp_path)
+    sess.messages.append(Message(role="assistant", content="普通回复无回执", source=MessageSource.SYSTEM))
+    gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    notice = gate.take_gate_notice_text(eng, "sess-test")
+    assert "未结算回执清单" in notice and gate.ABANDON_MARKER in notice
+
+
+def test_receipts_list_reachable_in_no_response_flow(tmp_path):
+    """审查 P1-1 实测（无响应流）：等待分支达阈值刷新清单——round_age 路径也可达。"""
+    eng, sess = _open_gate(tmp_path)
+    first = gate.take_gate_notice_text(eng, "sess-test")
+    assert "未结算回执清单" not in first
+    for _ in range(gate.RECEIPTS_LIST_ROUNDS):
+        gate.run_compaction_gate_step(eng, sess, new_compaction=False)  # 无 assistant 响应
+    notice = gate.take_gate_notice_text(eng, "sess-test")
+    assert "未结算回执清单" in notice and gate.ABANDON_MARKER in notice
+    state = gate._slots(eng)["sess-test"]
+    assert state["attempt"] == 1  # 等待分支不计数不重注入（P1-4 语义保持）
+
+
+def test_cross_run_ledger_inheritance_from_disk(tmp_path):
+    """审查 P2-4：跨 run 账本继承走盘上分支——重启后预算仍生效。"""
+    eng, sess = _open_gate(tmp_path)
+    # 连续三扇门全部升级，耗尽预算（槽内继承路径）
+    for i in range(gate.ESCALATION_BUDGET):
+        _escalate_first_gate(eng, sess)
+        gate.note_archive_batch_entry(
+            eng, "sess-test",
+            Message(role="assistant", content=f"批次{i}", source=MessageSource.SYSTEM),
+            SimpleNamespace(id=f"e{i}", chars=2), i + 10,
+        )
+        gate.run_compaction_gate_step(eng, sess, new_compaction=True)
+    assert gate._slots(eng)["sess-test"]["escalations_total"] == gate.ESCALATION_BUDGET
+    # 新引擎（模拟重启）：slots 为空 → 账本必须从盘上 gate_state.json 继承
+    eng2 = FakeEngine(tmp_path)
+    gate.note_archive_batch_entry(
+        eng2, "sess-test",
+        Message(role="assistant", content="重启后压缩", source=MessageSource.SYSTEM),
+        SimpleNamespace(id="e99", chars=6), 99,
+    )
+    gate.run_compaction_gate_step(eng2, FakeSess(), new_compaction=True)
+    st = gate._slots(eng2)["sess-test"]
+    assert st["observe_only"] is True  # 盘上 escalations_total=3 ≥ 预算
+    assert st["notice_text"] is None
+    opened = [e[2] for e in eng2.events if e[1] == "compaction.gate.opened"][-1]
+    assert opened["mode"] == "observe_only"
+
+
+def test_abandon_on_observe_only_gate(tmp_path):
+    """审查 P2-4：observe-only 门同样接受显式放弃（注释声明「任意 pending 门」）。"""
+    eng, sess = _open_gate(tmp_path)
+    gate._slots(eng)["sess-test"]["escalations_total"] = gate.ESCALATION_BUDGET
+    gate.note_archive_batch_entry(
+        eng, "sess-test", Message(role="assistant", content="新批次", source=MessageSource.SYSTEM),
+        SimpleNamespace(id="e5", chars=3), 5,
+    )
+    gate.run_compaction_gate_step(eng, sess, new_compaction=True)
+    assert gate._slots(eng)["sess-test"]["observe_only"] is True
+    mref = gate._slots(eng)["sess-test"]["manifest_sha256"]
+    sess.messages.append(
+        Message(role="assistant", content=f"压缩恢复回执：放弃确认 manifest_ref={mref[:12]}",
+                source=MessageSource.SYSTEM)
+    )
+    gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    state = gate._slots(eng)["sess-test"]
+    assert state["abandoned"] is True and state["pending"] is False
+    kinds = [e[1] for e in eng.events]
+    assert "compaction.gate.abandoned" in kinds
+    stats = [e[2] for e in eng.events if e[1] == "compaction.gate.stats"]
+    assert stats  # 审查 P2-2：放弃关门也输出 stats 事件
+
+
+def test_observe_only_no_response_stays_silent(tmp_path):
+    """复审 R2 P1-1：observe-only 门 + 无响应流——通知恒为空（零注入硬契约）。
+
+    等待分支的清单刷新（R1 修复引入）不得绕过预算：预算耗尽的会话在
+    任何流（含轮龄兜底路径）都不得重新收到确认通知。
+    """
+    eng, sess = _open_gate(tmp_path)
+    gate._slots(eng)["sess-test"]["escalations_total"] = gate.ESCALATION_BUDGET
+    gate.note_archive_batch_entry(
+        eng, "sess-test", Message(role="assistant", content="新批次", source=MessageSource.SYSTEM),
+        SimpleNamespace(id="e6", chars=3), 6,
+    )
+    gate.run_compaction_gate_step(eng, sess, new_compaction=True)
+    assert gate._slots(eng)["sess-test"]["observe_only"] is True
+    assert gate.take_gate_notice_text(eng, "sess-test") is None
+    for _ in range(gate.RECEIPTS_LIST_ROUNDS + 3):  # 无 assistant 响应等待流
+        gate.run_compaction_gate_step(eng, sess, new_compaction=False)
+    assert gate.take_gate_notice_text(eng, "sess-test") is None  # 零通知契约保持
+    assert [e[1] for e in eng.events].count("compaction.gate.reinjected") == 0
+
+
+def test_run_metrics_in_event_payloads(tmp_path):
+    """rev6④：escalated/reinjected 事件带 run 级累计计数。"""
+    eng, sess = _open_gate(tmp_path)
+    _escalate_first_gate(eng, sess)
+    esc = [e[2] for e in eng.events if e[1] == "compaction.gate.escalated"][-1]
+    assert esc["run_escalations_total"] == 1 and esc["escalations_total"] == 1
+    reinj = [e[2] for e in eng.events if e[1] == "compaction.gate.reinjected"]
+    assert [r["run_reinject_attempts_total"] for r in reinj] == [1, 2]
+    assert reinj[-1]["rounds_open"] >= 1

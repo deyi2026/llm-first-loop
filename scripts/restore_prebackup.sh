@@ -287,7 +287,10 @@ fi
 
 # ---- T1: untracked 只读比对（--check 到此结束） ----
 if [[ "$MODE" == "T1" && -f "$TGZ" ]]; then
-  TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/lfl-prebackup.XXXXXXXX")"
+  # BSD mktemp 无模板时走 confstr(DARWIN_USER_TEMP_DIR)（/var/folders），
+  # 不吃 TMPDIR——显式模板使其尊重环境重定向（沙箱会话 TMPDIR=/private/tmp；
+  # 常规环境各平台行为等价）。
+  TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/lfl-restore.XXXXXX")"
   untracked_pass check "$TGZ" "$REPO_ROOT" "$BACKUP_DIR/restored" >"$TMP_OUT" || {
     cat "$TMP_OUT"; REASON="internal_error"; emit_summary; exit 1
   }
@@ -334,7 +337,8 @@ fi
 # ---- T3: 解包 untracked ----
 if [[ "$MODE" == "T3" || "$MODE" == "T2+T3" ]]; then
   if [[ -f "$TGZ" ]]; then
-    TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/lfl-prebackup.XXXXXXXX")"
+    # 同 T1：显式模板尊重 TMPDIR（BSD mktemp 无模板不吃环境变量）
+    TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/lfl-restore.XXXXXX")"
     untracked_pass apply "$TGZ" "$REPO_ROOT" "$BACKUP_DIR/restored" >"$TMP_OUT" || {
       cat "$TMP_OUT"; REASON="internal_error"; emit_summary; exit 1
     }

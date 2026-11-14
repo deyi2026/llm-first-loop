@@ -1,0 +1,116 @@
+{
+  "gate": "unified_managed_release",
+  "status": "completed",
+  "head": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+  "generation": 407,
+  "merge": {
+    "head": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "previous_main": "4cfc0b48f399310ff11bdb9c807c8a498ed58445",
+    "merge_mode": "ff",
+    "reviewer_child_id": "subagent_c4230ba05bb5",
+    "stash_backup": "99e016b39974cbc3d93707d2a98b2d7f64d24884",
+    "backup_ref": "backup/main-before-unified-managed-services-20261112-02",
+    "tracked_changes_preserved": 7,
+    "untracked_hashes_verified": 20,
+    "status": "completed",
+    "finished_at": "2026-11-13T00:05:48.622298+00:00"
+  },
+  "push": {
+    "local_sha": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "remote_sha": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "command": "git push origin HEAD:refs/heads/main",
+    "reviewer_child_id": "subagent_fa6e76f1ef73",
+    "candidate_sha256": "a86ba2601c8561c1c78d00ef3a4ca68159674074602f0a586c4c4dea3dfcc8cd",
+    "merge_reviewer": "subagent_c4230ba05bb5",
+    "status": "completed"
+  },
+  "full_r9": {
+    "head": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "command": "bash scripts/ci_gate.sh --release",
+    "started_at": "2026-11-12T23:51:30.869757+00:00",
+    "reviewer_child_id": "subagent_ccbcaed1f51d",
+    "log": "<LOCAL_REPO_ROOT>/.scratch/unified-managed-services-20261112/review-r9-04/r9.log",
+    "status": "passed",
+    "pid": 63262,
+    "exit_code": 0,
+    "finished_at": "2026-11-12T23:58:50.377626+00:00",
+    "log_sha256": "34398af646e8d3c5f76ba18d762244ebb01a550ee7de009a7b3dcfe1c335711b"
+  },
+  "deployment": {
+    "schema": "managed-service-deployment/v1",
+    "deployment_id": "deploy-28b156a914fb441ca35beefbfe2ff109",
+    "generation": 407,
+    "git_head": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "code_root": "<LOCAL_REPO_ROOT>/.releases/55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "runtime_root": "<LOCAL_REPO_ROOT>",
+    "webui_artifact_sha256": "dafb8f83f782b470a0e3fd1e3eae6b74920a7514ed9defd64d378714d45b8f5d"
+  },
+  "restart": {
+    "status": "completed",
+    "head": "55e9e810c82448e7e93b48efe366fef3f10b0678",
+    "generation": 407,
+    "actions": {
+      "all": "svc-3fc16d0a74af4f0195aeb8a78f42b592",
+      "wecom": "svc-c84eb45b49a34c91806df2f8fe6e5aac"
+    },
+    "prior_nonphysical_timeout": "svc-f82ba2bab58049f39ee850c7dbf4f716",
+    "published_once": true,
+    "services": {
+      "web": {
+        "pid": 58869,
+        "git_head": "55e9e810c824",
+        "alive": true,
+        "matches_desired_generation": true,
+        "restart_required": false,
+        "verify": {
+          "generation": 407,
+          "outcome": "ok",
+          "provenance": "action_verify_evidence"
+        }
+      },
+      "feishu": {
+        "pid": 58970,
+        "git_head": "55e9e810c824",
+        "alive": true,
+        "matches_desired_generation": true,
+        "restart_required": false,
+        "verify": {
+          "generation": 407,
+          "outcome": "ok",
+          "provenance": "action_verify_evidence"
+        }
+      },
+      "learning": {
+        "pid": 59296,
+        "git_head": "55e9e810c824",
+        "alive": true,
+        "matches_desired_generation": true,
+        "restart_required": false,
+        "verify": {
+          "generation": 407,
+          "outcome": "ok",
+          "provenance": "action_verify_evidence"
+        }
+      },
+      "wecom": {
+        "pid": 59452,
+        "git_head": "55e9e810c824",
+        "alive": true,
+        "matches_desired_generation": true,
+        "restart_required": false,
+        "verify": {
+          "generation": 407,
+          "outcome": "ok",
+          "provenance": "action_verify_evidence"
+        }
+      }
+    },
+    "finished_at": "2026-11-13T00:57:25.256696+00:00"
+  },
+  "verification": {
+    "barriers": [],
+    "in_flight": [],
+    "latest_remote_sha": "55e9e810c82448e7e93b48efe366fef3f10b0678"
+  },
+  "note": "Post-deployment receipt saved independently; the validated deployment HEAD is unchanged."
+}

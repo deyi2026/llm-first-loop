@@ -2384,6 +2384,11 @@ def _receipt_stable_view(
     verify_evidence / created_at 一并带出，使回执自证"物理重启完成且已按该代
     核验过"；核验证据截断到 240 字符，完整源经 action 文件可回读。
     """
+    # 审查修复（R2 P2-2，标注式——对齐 _stage_facts_view 的 skipped_by_design
+    # 模式）：all 的物理执行面 = _RESTART_ALL_BATCH（web/feishu/learning）；
+    # 批外服务（wecom）不得把 all 回执当作本服务物理重启事实，但过滤式排除
+    # 会破坏视图契约（identity_view 既有测试断言四服务均携带 stable 回执）。
+    # 故保留回执可见性 + 显式 applies=False 标注。
     candidates = [
         action
         for target, action in succeeded.items()
@@ -2392,6 +2397,9 @@ def _receipt_stable_view(
     receipt = max(candidates, key=lambda a: a.updated_at) if candidates else None
     if receipt is None:
         return None
+    receipt_all_not_applicable = (
+        receipt.target == "all" and service not in _RESTART_ALL_BATCH
+    )
     matches = deployment is not None and receipt.deployment_generation == deployment.generation
     stable: dict[str, Any] = {
         "action_id": receipt.action_id,
@@ -2405,6 +2413,9 @@ def _receipt_stable_view(
         # criterion_absent。空串 = 旧回执未采集，不冒充"核验通过"。
         "verify_verdict": receipt.verify_verdict,
         "verify_evidence": receipt.verify_evidence[:240],
+        # 审查修复（R2 P2-2）：all 未物理重启本服务（批外）时显式标注，
+        # 消费方不得据此认定该服务已按本代重启。
+        "applies": not receipt_all_not_applicable,
     }
     if matches and deployment and _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
         stable.update({"artifact_kind": _ARTIFACT_KIND_WHEEL, "version": deployment.version,
@@ -6255,6 +6266,145 @@ def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, A
     except Exception:  # noqa: BLE001 — 扫描 fail-open
         return []
     return results
+
+
+def scan_publish_closeout_pending(data_dir: str | Path) -> list[dict[str, Any]]:
+    """EVO-20261112-fd945e83（D8）：扫已验证发布完成、待收口的 update 动作（≤5 条）.
+
+    「发布完成」判定（全机械）：origin=update（publish+restart 单语义链）的
+    restart 记录 status=succeeded 且 verify_verdict=confirmed_ok，target 含
+    web（web/all）。仅当前 desired 代（旧代发布已被接管，收口义务随代收
+    权威转移）；updated_at 24h TTL；显式 dismissed 标记（data/state/
+    publish_closeout/<action_id>.json 含 dismissed_at）优先豁免——
+    promo_closeout.py 收口成功后写标记，提醒闭合即停。
+    供 factory pending_actions 投影与发布完成提醒通知共用；fail-open。
+    """
+    results: list[dict[str, Any]] = []
+    try:
+        from datetime import datetime
+        from pathlib import Path as _Path
+
+        store = ManagedServiceDeploymentStore(data_dir)
+        desired_generation: int | None = None
+        try:
+            deployment = store.read()
+            desired_generation = deployment.generation if deployment else None
+        except Exception:  # noqa: BLE001 — desired 缺失时按不过滤旧代处理
+            desired_generation = None
+        cutoff = system_local_now().timestamp() - 24 * 3600
+        dismissed_dir = _Path(data_dir) / "state" / "publish_closeout"
+        # 审查修复（R1 P2-5）：按 mtime 倒序（动作文件名不含时间戳，字典序
+        # ≠新近度——防 cap 外静默漏项）；action_id 形状校验防意外内容进
+        # 提示面（与 dismissal 写侧同一约束）。
+        def _mtime(p: Any) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        for path in sorted(
+            (p for p in store.actions_dir.glob("*.json") if p.is_file()),
+            key=_mtime,
+            reverse=True,
+        )[:400]:  # 审查修复（R2 P2-5a）：先过滤后截断——上限从 40 提到 400，
+            #   且循环内有 len(results)>=5 早停；24h 内 400 个更新动作仍
+            #   覆盖不到合格项才会漏（残余已记录，事件流审计不受影响）。
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            action_id = str(raw.get("action_id") or "")
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", action_id):
+                continue
+            if raw.get("action") != "restart" or raw.get("status") != "succeeded":
+                continue
+            if str(raw.get("origin") or "") != "update":
+                continue  # 纯 restart 无新发布产物，不产生收口义务
+            if str(raw.get("target") or "") not in ("web", "all"):
+                continue
+            if str(raw.get("verify_verdict") or "") != "confirmed_ok":
+                continue  # 发布成功且健康通过（EVO 判据链）
+            raw_generation = raw.get("deployment_generation")
+            # 审查修复（R2 P2-5b）：非 int 代数不再绕过旧代过滤——
+            # 代不可读（缺字段保持原语义=当作当前代；存在但不可解析）
+            # 按旧代处理（fail-closed：宁可漏一次提醒，不把陈旧义务
+            # 永久顶在提示面）。记录留在事件流，审计不受影响。
+            if desired_generation is not None and not isinstance(raw_generation, int):
+                _raw_gen_str = str(raw_generation)
+                if _raw_gen_str.strip() and _raw_gen_str != "None":
+                    try:
+                        raw_generation = int(_raw_gen_str)
+                    except ValueError:
+                        continue  # 代存在但不可解析 → 按旧代跳过
+                else:
+                    raw_generation = None
+            if (
+                desired_generation is not None
+                and isinstance(raw_generation, int)
+                and raw_generation < desired_generation
+            ):
+                continue  # 旧代已被接管：收口义务随新代转移，不再提醒
+            try:
+                updated_ts = datetime.fromisoformat(str(raw.get("updated_at"))).timestamp()
+            except ValueError:
+                updated_ts = 0.0
+            if updated_ts < cutoff:
+                continue
+            action_id = str(raw.get("action_id") or "")
+            if action_id and (dismissed_dir / f"{action_id}.json").is_file():
+                continue  # 已收口（promo_closeout 写标记）→ 闭合即停
+            results.append(
+                {
+                    "action_id": action_id,
+                    "target": raw.get("target"),
+                    "generation": raw_generation,
+                    "updated_at": raw.get("updated_at"),
+                    "detail": str(raw.get("detail") or "")[:160],
+                    "verify_evidence": str(raw.get("verify_evidence") or "")[:200],
+                    "deployment_id": raw.get("deployment_id"),
+                }
+            )
+            if len(results) >= 5:
+                break
+    except Exception:  # noqa: BLE001 — 扫描 fail-open
+        return []
+    return results
+
+
+def write_publish_closeout_dismissal(
+    data_dir: str | Path, action_id: str, *, by: str, receipt: str = ""
+) -> bool:
+    """EVO-20261112-fd945e83：写收口豁免标记（promo_closeout/运维调用；幂等）."""
+    try:
+        from pathlib import Path as _Path
+
+        action_id = str(action_id or "").strip()
+        # 审查修复（R2 P2-3）：与 scan 侧同一严格形状——非 [A-Za-z0-9._-]
+        # 一律拒绝（原「只拦 / 与 ..」比读取侧松，注释还声称同约束）。
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", action_id):
+            return False
+        d = _Path(data_dir) / "state" / "publish_closeout"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{action_id}.json"
+        if p.is_file():
+            return True  # 幂等
+        p.write_text(
+            json.dumps(
+                {
+                    "schema": "publish-closeout-dismissal/v1",
+                    "action_id": action_id,
+                    "by": by,
+                    "receipt": receipt,
+                    "dismissed_at": system_local_now().isoformat(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 if __name__ == "__main__":
