@@ -343,7 +343,7 @@ def test_new_branch_first_push_detached_head_fails_closed(repo, tmp_path):
 def test_new_branch_first_push_actual_git_head_push(repo, tmp_path):
     _historical_private_path_then_sanitize(repo)
     _install_pre_push_harness(repo)
-    remote = _bare_origin(tmp_path, repo)
+    _bare_origin(tmp_path, repo)
     commit_file(repo, "feature.txt", "clean feature", "feature")
     _git(repo, "config", "core.hooksPath", ".githooks")
     result = subprocess.run(
