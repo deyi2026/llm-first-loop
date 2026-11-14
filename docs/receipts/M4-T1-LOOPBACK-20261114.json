@@ -1,0 +1,69 @@
+{
+  "schema": "lfl.m4_t1_loopback_trial.v1",
+  "stage": "M4-A",
+  "status": "PASS_OFFLINE_LOOPBACK_ONLY",
+  "timestamp": "2026-11-14T11:14:09.586031+08:00",
+  "base_commit": "7f8c320d31fcd57874cebc99010ddb4a9df15f6a",
+  "base_tree": "035f78d6721d10c78b94fb2941032369084e938a",
+  "mac_deployment_generation": 408,
+  "mac_deployment_source_sha": "7f8c320d31fcd57874cebc99010ddb4a9df15f6a",
+  "mac_services": {
+    "web": "ok",
+    "feishu": "ok",
+    "learning": "ok",
+    "wecom": "ok"
+  },
+  "mac_admission_barriers": [],
+  "web_t1_operator_configured": false,
+  "environment": "isolated Git worktree + pytest tmp_path; loopback 127.0.0.1 Uvicorn; no real provider",
+  "positive_chain": "real HTTP -> FastAPI -> BackgroundRunner -> LLMClient synthetic SSE -> EventStore -> TaskBudgetStore -> read snapshot -> edit CAS",
+  "tests": [
+    {
+      "command": "python -m pytest -q tests/unit/test_m1_fx05_budgeted_run.py tests/unit/test_task_budget_t1_web_profile.py",
+      "passed": 96,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python -m pytest -q tests/unit/test_m4_t1_loopback_smoke.py",
+      "passed": 7,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "ruff check tests/unit/test_m4_t1_loopback_smoke.py",
+      "result": "All checks passed!",
+      "exit_code": 0
+    },
+    {
+      "command": "pyright tests/unit/test_m4_t1_loopback_smoke.py",
+      "result": "0 errors, 0 warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "python -m pytest -q tests/unit/test_m1_fx05_budgeted_run.py tests/unit/test_task_budget_t1_web_profile.py tests/unit/test_m4_t1_loopback_smoke.py",
+      "passed": 103,
+      "failed": 0,
+      "exit_code": 0
+    }
+  ],
+  "samples": {
+    "A01": "loopback full stack: 3 provider/2 tool settled, exact scratch date edit",
+    "A02": "operator config chmod revocation denied next HTTP request",
+    "A03": "stream admitted; sync 409",
+    "A04_A07": "unauthenticated/wrong model/queue/attachment denied, zero runner and zero budget",
+    "A08": "M1/M2 96 focused regressions pass"
+  },
+  "artifact_sha256": {
+    "tests/unit/test_m4_t1_loopback_smoke.py": "8e257f35fe237b3b9043027e806fccfbc077cf8424656436710d35a1a46a16d9",
+    "docs/design/M4-T1-CONTROLLED-TRIAL-20261114.md": "9ffacaf1ba9ed782cfcb1c86673f7adb52fedd78a6c0f5904e3131d6a1d2726a"
+  },
+  "external_provider_calls": 0,
+  "external_publications": 0,
+  "production_service_restarts": 0,
+  "deepin_changes": 0,
+  "m4_b_real_glm": "NOT_STARTED_OPERATOR_APPROVAL_REQUIRED",
+  "review": "PENDING",
+  "full_r9": "NOT_RUN_FOR_NEW_TEST_CANDIDATE",
+  "github": "NOT_PUSHED"
+}
