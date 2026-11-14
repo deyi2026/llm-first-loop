@@ -1,0 +1,216 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261114-m1-t1-m2-budget-web-cutover",
+  "summary": "M1 budgeted FX05 isolation run and M2 T1 controlled Web canary cutover: pre-send budget rejection, TaskBudgetStore CAS settlement, EventStore provider.transport.opened+settled as the only durable usage authority, create-only T1 edit gate, and operator-authorized single-flight Web entry for glm/glm-5.3.",
+  "components": [
+    {
+      "component_id": "budget-cas-core",
+      "paths": [
+        "src/llm_loop/core/loop/lifecycle.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/resources/task_budget_dispatch.py",
+        "src/llm_loop/resources/task_budget_store.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing TaskBudget CAS store and dispatch gate",
+      "disposition": "Reuse the existing reservation/CAS semantics; add operator-plan mutual-exclusion dispatch, prepared-facts channel into checked_provider_attempt, T1 single-flight and subagent-canary reserve gates. No schema widening, no second ledger.",
+      "evidence": [
+        "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md",
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md"
+      ],
+      "verification_level": "M1 focused suite 36 passed; T1/M2 negative matrix in tests/unit/test_task_budget_t1_web_profile.py; parent-side combined regression 750 passed; independent review and full R9 pending.",
+      "model_evidence_veto_recovery_exit": "The model can stop a run, read the TaskBudgetStore ledger and EventStore events directly, refuse settlement on any join failure (UNKNOWN stays UNKNOWN), and use existing service verify/release exits; no bypass of CAS or identity failures.",
+      "rollback_route": "Disable the T1/canary operator plan; ordinary Web sessions never pass through these gates, so removal returns the prior behavior.",
+      "declaration_id": "budget-cas-core-declaration"
+    },
+    {
+      "component_id": "t1-web-entry",
+      "paths": [
+        "src/llm_loop/resources/task_budget_t1_web_profile.py",
+        "src/llm_loop/tools/registry.py",
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/task_budget_canary.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing Web canary and tool dispatch registry",
+      "disposition": "Operator-authorized single-session T1 budgeted-write Web profile with create-only edit gate armed from real read_file snapshot refs; canary wiring unchanged in authority, scoped to explicit operator authorization only.",
+      "evidence": [
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md",
+        "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+      ],
+      "verification_level": "T1 Web negative matrix (no authorization, revoke, replay, CAS conflict, insufficient reservation, missing usage, wrong session/generation, restart-unknown, snapshot drift) in tests/unit/test_task_budget_t1_web_profile.py; no real provider call in tests.",
+      "model_evidence_veto_recovery_exit": "The model can inspect the operator plan, session, and run_generation bindings, decline any edit whose read-snapshot gate is unarmed, and stop the run; every gate is fail-closed and no model output can widen it.",
+      "rollback_route": "Revoke the operator authorization file / disable the canary plan; the T1 profile activates only under explicit operator grant, so removal is immediate.",
+      "declaration_id": "t1-web-entry-declaration"
+    },
+    {
+      "component_id": "m1-fx05-runner",
+      "paths": [
+        "scripts/m1_fx05_budgeted_run.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "M1 isolated FX05 verification harness (explicitly not a production entrypoint)",
+      "disposition": "Isolated CLI experiment contract implementing the real fail-closed transport guard, pre-send envelope precharge, EventStore opened/settled reconciliation, and FX05-only CAS settlement rewrite. Never wired into Web; no new authority beyond the isolated process.",
+      "evidence": [
+        "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md",
+        "docs/receipts/M1-FX05-v3r2-20261113.json"
+      ],
+      "verification_level": "tests/unit/test_m1_fx05_budgeted_run.py fail-closed matrix (join missing/duplicate/wrong generation/usage tamper/CAS conflict/unknown kind); one-time real GLM run sealed append-only with receipts; never reused roots.",
+      "model_evidence_veto_recovery_exit": "The model can refuse settlement when the EventStore join fails, keep reservations UNKNOWN, and stop the run; receipts and budget roots remain inspectable on disk for independent audit.",
+      "rollback_route": "Do not run the harness; it mutates only its isolated data root and refuses historical targets, so non-execution is the rollback.",
+      "declaration_id": "m1-fx05-runner-declaration"
+    },
+    {
+      "component_id": "shared-text-normalization",
+      "paths": [
+        "src/llm_loop/resources/text_normalization.py",
+        "src/llm_loop/workspace/file_service.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "shared pure helpers",
+      "disposition": "Verbatim extraction of detect_line_ending/normalize_lf into one module and re-export from file_service; byte-identical behavior, no gate or authority change.",
+      "evidence": [
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md"
+      ],
+      "verification_level": "Existing file_service tests unchanged and passing; functions are pure string helpers with no policy.",
+      "model_evidence_veto_recovery_exit": "No control machinery in these paths. The model can inspect the verbatim move in the diff and revert via normal Git.",
+      "rollback_route": "Revert the file; behavior is identical either way."
+    },
+    {
+      "component_id": "t1-design-receipts",
+      "paths": [
+        "docs/design/M1-FX05-TASK-20261113.md",
+        "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md",
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md",
+        "docs/receipts/M1-FX05-20261113.json",
+        "docs/receipts/M1-FX05-v3r2-20261113.json",
+        "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "documentation and immutable receipts",
+      "disposition": "Design freeze documents and append-only machine-verifiable receipts (SHAs, usage totals, EventStore joins, reservation classification). Knowledge artifacts only.",
+      "evidence": [
+        "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md"
+      ],
+      "verification_level": "Receipts cross-check against the sealed budget roots and EventStore logs on disk; no runtime effect.",
+      "model_evidence_veto_recovery_exit": "No control machinery in these paths. The model can recompute every SHA and join from the durable ledgers.",
+      "rollback_route": "Revert the documents; nothing executes."
+    },
+    {
+      "component_id": "t1-fixtures-tests",
+      "paths": [
+        "t1-sandbox/inputs/fx05-v3r2-prompt-20261113.md",
+        "t1-sandbox/outputs/fx05-draft.md",
+        "t1-sandbox/outputs/fx05-v3r2-fixture-20261113.md",
+        "tests/unit/test_m1_fx05_budgeted_run.py",
+        "tests/unit/test_task_budget_t1_web_profile.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "test fixtures and negative matrices",
+      "disposition": "Sealed FX05 fixtures (append-only, one git add -f exact-path exception) and the M1/M2 unit suites; tests never call a real provider and never reopen sealed roots.",
+      "evidence": [
+        "docs/receipts/M1-FX05-v3r2-20261113.json"
+      ],
+      "verification_level": "M1 suite 36 passed; T1 Web profile suite green under .venv 3.13 in the isolated worktree.",
+      "model_evidence_veto_recovery_exit": "No control machinery in these paths. The model can read the suites and reproduce the runs locally.",
+      "rollback_route": "Revert the tests; fixtures stay as historical evidence."
+    },
+    {
+      "component_id": "manifest-self",
+      "paths": [
+        "docs/governance/submissions/20261114-m1-t1-m2-budget-web-cutover.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "architecture submission manifest",
+      "disposition": "This manifest itself; classification metadata only, validated mechanically by scripts/check_architecture_submission.py.",
+      "evidence": [
+        "scripts/check_architecture_submission.py"
+      ],
+      "verification_level": "Gate PASS expected with changed_paths=23 exact coverage; classification truth remains a human/parent-review responsibility.",
+      "model_evidence_veto_recovery_exit": "No control machinery. The manifest is data for review, not an authority.",
+      "rollback_route": "Revert this file."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "budget-cas-core-declaration",
+      "g1": {
+        "necessity": "Pre-send budget rejection, exact CAS revision settlement, operator-plan mutual exclusion, and event-store identity binding are mechanical safety facts; model opinion cannot substitute for exact checks, and every mismatch must fail closed."
+      },
+      "g2": {
+        "authority_owner": "existing TaskBudget CAS store and dispatch gate",
+        "relationship": "reuse",
+        "non_duplication": "No new authority, registry, or verdict engine: the same store, reservation schema whitelist, and CAS _mutate path are reused; T1 gates are additional checks on the existing ledger, not a second ledger."
+      },
+      "g3": {
+        "model_evidence": [
+          "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md",
+          "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md",
+          "docs/receipts/M1-FX05-v3r2-20261113.json"
+        ],
+        "recovery_or_reason": "The model can read the budget row and EventStore events, refuse to settle on any join failure (UNKNOWN stays UNKNOWN, never refunded), stop the run, and request fresh observations; no path lets the model bypass CAS or mark unknown usage settled."
+      },
+      "g4": {
+        "rollback": "Disable the T1/canary operator plan or revert the component; ordinary Web sessions bypass these gates entirely.",
+        "verification": [
+          "M1 focused suite 36 passed (isolated worktree, .venv 3.13)",
+          "T1 Web negative matrix in tests/unit/test_task_budget_t1_web_profile.py",
+          "Parent-side combined regression 750 passed on the frozen candidate",
+          "Independent unified review and full R9 pending"
+        ]
+      }
+    },
+    {
+      "declaration_id": "t1-web-entry-declaration",
+      "g1": {
+        "necessity": "Operator authorization, single-session/single-flight binding, create-only edit gating armed from real read_file snapshot refs, and revoke semantics are mechanical safety facts; a model instruction or Web prompt must never widen them."
+      },
+      "g2": {
+        "authority_owner": "existing Web canary operator plan and tool dispatch registry",
+        "relationship": "reuse",
+        "non_duplication": "The T1 profile activates only under an explicit operator-authorized canary plan reusing the existing TaskBudget execution and registry hooks; no parallel permission system, no new tool or file scope beyond the plan."
+      },
+      "g3": {
+        "model_evidence": [
+          "docs/design/M2-T1-WEB-CUTOVER-FREEZE-20261114.md",
+          "docs/receipts/M2-T1-WEB-CUTOVER-20261114.json"
+        ],
+        "recovery_or_reason": "The model can inspect the active plan, session, run_generation and armed snapshot refs, decline any edit whose gate is unarmed, and stop; all gates fail closed and revoke is immediate."
+      },
+      "g4": {
+        "rollback": "Remove the operator authorization or disable the canary plan; the entry is inert without it.",
+        "verification": [
+          "tests/unit/test_task_budget_t1_web_profile.py negative matrix green",
+          "No real provider call in any test; synthetic fixtures only",
+          "Independent unified review and full R9 pending"
+        ]
+      }
+    },
+    {
+      "declaration_id": "m1-fx05-runner-declaration",
+      "g1": {
+        "necessity": "The FX05 harness enforces pre-send envelope precharge, exact provider endpoint/model qualification, real attempt-id binding, and EventStore opened/settled one-to-one reconciliation; these are mechanical facts required before any settlement may be claimed."
+      },
+      "g2": {
+        "authority_owner": "existing TaskBudget execution used by the isolated harness",
+        "relationship": "reuse",
+        "non_duplication": "The runner reuses the production CAS store and dispatch classes inside one isolated process; it creates no new authority and is explicitly not a production entrypoint."
+      },
+      "g3": {
+        "model_evidence": [
+          "docs/design/M1-T1-LIVE-BUDGET-FREEZE-20261113.md",
+          "docs/receipts/M1-FX05-v3r2-20261113.json"
+        ],
+        "recovery_or_reason": "The model can refuse settlement whenever the EventStore join fails, keep the reservation UNKNOWN, and stop the run; sealed roots and receipts remain independently auditable on disk."
+      },
+      "g4": {
+        "rollback": "Do not execute the harness; it refuses existing targets and reuses no root, so absence of execution is the rollback.",
+        "verification": [
+          "tests/unit/test_m1_fx05_budgeted_run.py fail-closed matrix passed",
+          "One-time real GLM run sealed with receipts; roots never reused",
+          "Independent unified review and full R9 pending"
+        ]
+      }
+    }
+  ]
+}
