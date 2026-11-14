@@ -1,0 +1,16 @@
+{
+  "schema": "lfl.local_model_repetition.r9_first_failure.v1",
+  "candidate_head": "9367596c9ff7b625e2fc13eed3581f11815b2c83",
+  "command": "bash scripts/ci_gate.sh",
+  "exit_code": 1,
+  "ci_gate_script_sha256": "78de7f011f5998564bd40813e2fa09386d19f11321196abf9341542b1f026784",
+  "log_sha256": "93238b43811f9daa6fa35b0be6312bb2a66b76e8351335a450c9027c07143dc9",
+  "ruff": "PASS",
+  "test_env_pins": "PASS",
+  "pyright": "FAIL",
+  "pyright_new_errors": 1,
+  "root_cause": "Large inline observation gate increased LoopEngine method complexity past Pyright analysis limit",
+  "blocked_before_full_pytest": true,
+  "resolution": "Extract pre-send guard into existing engine_services/observation_visibility.py; re-run static ratchet and targeted tests, then new independent reviewer and original R9.",
+  "no_main_push_deploy_restart": true
+}

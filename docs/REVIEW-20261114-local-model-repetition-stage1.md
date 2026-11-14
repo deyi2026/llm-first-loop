@@ -37,3 +37,27 @@
 **原版完整 R9 仍未运行**；当前检测到其他 M5E 工作树正在运行
 `bash scripts/ci_gate.sh`，本批不得并发干扰。等待其退出后，再对本
 隔离候选运行原版完整 R9，必须以真实 exit 0 作为下一门禁。
+
+
+## R9 首次阻断及根因修复（待重新审查）
+
+原版 `bash scripts/ci_gate.sh` 对旧代码候选
+`9367596c9ff7b625e2fc13eed3581f11815b2c83`
+真实 `exit 1`：Ruff 和环境声明通过，Pyright 全树 ratchet
+新增唯一错误 `engine.py: Code is too complex to analyze`，
+未进入全量 pytest。**绝不把此轮当 R9 PASS。**
+
+已将内联 pre-send 守卫机械抽取到现有
+`engine_services/observation_visibility.py`，引擎只保留委托和
+`run_incomplete` 收口；不增加新 ledger、模型配置或工具重放。
+修订后专项 `212 passed`、全树 Pyright ratchet
+`new=0/changed_file_diagnostics=0/PASS`、Ruff PASS。
+补齐 guard 自身异常的 fail-closed 负向测试。
+
+回执：
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-R9-first-fail.json`、
+`docs/governance/receipts/RECEIPT-20261114-local-model-repetition-stage1-refactor-GREEN.json`。
+
+**代码 SHA 已变化：前一轮独立 Reviewer PASS 不继承。**
+须冻结新代码候选、重新独立 GLM-5.3 审查，
+PASS/P0=P1=0 后重新原版完整 R9。
