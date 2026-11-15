@@ -195,3 +195,20 @@ def test_hold_diagnostics_distinguish_provider_preflight_overflow():
     )
     assert receipt["stage_checks"][0]["rejection"] == "preflight_overflow"
     assert "RAW_0:" not in str(receipt)
+
+
+def test_hold_diagnostics_distinguish_invalid_conservative_rebuild():
+    engine, sess, view, events, _rebuild_calls = _scenario(alter_arguments=True)
+    engine._build_conservative_active_run_messages = lambda *_a, **_kw: SimpleNamespace(
+        state="current_atomic_group_invalid", messages=(), projected_chars=0, retired_groups=0
+    )
+    _result, hold = _check(engine, sess, view)
+    assert hold == "context_capacity_unavailable"
+    receipt = next(
+        payload for kind, payload in events
+        if kind == "request.observation_visibility"
+        and payload.get("action") == "provider_send_blocked"
+    )
+    assert receipt["stage_checks"][1]["rejection"] == "rebuild_invalid"
+    assert receipt["stage_checks"][1]["rebuild_state"] == "current_atomic_group_invalid"
+    assert "RAW_0:" not in str(receipt)

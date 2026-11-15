@@ -190,6 +190,71 @@ def _restore_latest_raw_group(
     return candidate
 
 
+def _stage_rebuild_fact(fact: dict[str, Any], rebuilt: Any) -> None:
+    fact["rebuild_state"] = rebuilt.state
+    fact["retired_groups"] = getattr(rebuilt, "retired_groups", None)
+    fact["rebuild_chars"] = getattr(rebuilt, "projected_chars", None)
+
+
+def _stage_missing_fact(fact: dict[str, Any], stage: str, facts: list[dict[str, Any]]) -> None:
+    fact["rejection"] = (
+        "rebuild_invalid"
+        if stage == "rebuilt" and fact.get("rebuild_state") != "rebuilt"
+        else "raw_not_visible"
+    )
+    facts.append(fact)
+
+
+def _stage_candidate_fact(fact: dict[str, Any], chars: int, fits: bool) -> None:
+    fact["projected_chars"] = chars
+    if not fits:
+        fact["rejection"] = "raw_over_budget"
+
+
+def _stage_preflight_fact(fact: dict[str, Any], preflight: Any, fits: bool) -> None:
+    if not fits:
+        fact["rejection"] = (
+            "preflight_overflow"
+            if isinstance(preflight, Mapping) and preflight.get("hard_overflow")
+            else "preflight_invalid"
+        )
+
+
+def _stage_ref_rejected(fact: dict[str, Any], facts: list[dict[str, Any]]) -> None:
+    fact["exact_ref_qualified"] = False
+    fact["ref_rejection"] = "ref_not_qualified"
+    facts.append(fact)
+
+
+def _emit_observation_hold(
+    engine: Any,
+    session_id: str,
+    rounds: int,
+    group: dict,
+    active_ingress_ref: str,
+    budget_info: dict,
+    effective_budget: int,
+    stage_facts: list[dict[str, Any]],
+    raw_visible: bool,
+) -> None:
+    # No tool arguments, content, credentials or ref bodies in the event.
+    engine._event_append(session_id, "request.observation_visibility", {
+        "round": rounds,
+        "group_index": group["index"],
+        "call_ids": group.get("call_ids", []),
+        "visible": False,
+        "action": "provider_send_blocked",
+        "reason": "context_capacity_unavailable",
+        "latest_group_valid": bool(group.get("valid")),
+        "active_ingress_present": bool(active_ingress_ref),
+        "raw_visible_in_current": raw_visible,
+        "physical_limit": (budget_info or {}).get("limited_by") in ("model_window", "input_token_budget"),
+        "limited_by": (budget_info or {}).get("limited_by"),
+        "budget_chars": effective_budget,
+        "stage_checks": stage_facts,
+    })
+
+
 def ensure_latest_observation_visible(
     engine: Any,
     sess: Any,
@@ -222,9 +287,6 @@ def ensure_latest_observation_visible(
         )
         if group is None:
             return messages, ""
-        # No raw arguments/content/refs in diagnostics. At most two candidate
-        # stages are inspected; this makes the next HOLD attributable without
-        # weakening the existing fail-closed visibility invariant.
         stage_facts: list[dict[str, Any]] = []
         if group.get("valid"):
             raw_visible = group_visible_in_provider_view(
@@ -250,9 +312,7 @@ def ensure_latest_observation_visible(
                         planned_label=planned_label,
                         logical_round=rounds,
                     )
-                    stage_fact["rebuild_state"] = rebuilt.state
-                    stage_fact["retired_groups"] = getattr(rebuilt, "retired_groups", None)
-                    stage_fact["rebuild_chars"] = getattr(rebuilt, "projected_chars", None)
+                    _stage_rebuild_fact(stage_fact, rebuilt)
                     candidate = list(rebuilt.messages) if rebuilt.state == "rebuilt" else None
                     if candidate is not None and not group_visible_in_provider_view(
                         group, candidate, active_ingress_ref=active_ingress_ref
@@ -263,25 +323,17 @@ def ensure_latest_observation_visible(
                 if candidate is None or not group_visible_in_provider_view(
                     group, candidate, active_ingress_ref=active_ingress_ref
                 ):
-                    stage_fact["rejection"] = "raw_not_visible"
-                    stage_facts.append(stage_fact)
+                    _stage_missing_fact(stage_fact, stage, stage_facts)
                     continue
                 projected_chars = sum(dict_wire_chars(row) for row in candidate)
-                stage_fact["projected_chars"] = projected_chars
                 raw_fits = not physical_limit or projected_chars <= effective_budget
-                if not raw_fits:
-                    stage_fact["rejection"] = "raw_over_budget"
+                _stage_candidate_fact(stage_fact, projected_chars, raw_fits)
                 if raw_fits and callable(request_preflight):
                     preflight = request_preflight(candidate, tools_param, model=chat_model_arg)
                     raw_fits = isinstance(preflight, Mapping) and not bool(
                         preflight.get("hard_overflow", False)
                     )
-                    if not raw_fits:
-                        stage_fact["rejection"] = (
-                            "preflight_overflow"
-                            if isinstance(preflight, Mapping) and preflight.get("hard_overflow")
-                            else "preflight_invalid"
-                        )
+                    _stage_preflight_fact(stage_fact, preflight, raw_fits)
                 if raw_fits:
                     if stage == "rebuilt" or not raw_visible:
                         engine._event_append(
@@ -329,28 +381,10 @@ def ensure_latest_observation_visible(
                         },
                     )
                     return ref_messages, ""
-                stage_fact["exact_ref_qualified"] = False
-                stage_facts.append(stage_fact)
-        engine._event_append(
-            session_id,
-            "request.observation_visibility",
-            {
-                "round": rounds,
-                "group_index": group["index"] if group else None,
-                "call_ids": (group or {}).get("call_ids", []),
-                "visible": False,
-                "action": "provider_send_blocked",
-                "reason": "context_capacity_unavailable",
-                "latest_group_valid": bool(group.get("valid")),
-                "active_ingress_present": bool(active_ingress_ref),
-                "raw_visible_in_current": (
-                    bool(raw_visible) if group.get("valid") else False
-                ),
-                "physical_limit": physical_limit,
-                "limited_by": (budget_info or {}).get("limited_by"),
-                "budget_chars": effective_budget,
-                "stage_checks": stage_facts,
-            },
+                _stage_ref_rejected(stage_fact, stage_facts)
+        _emit_observation_hold(
+            engine, session_id, rounds, group, active_ingress_ref, budget_info,
+            effective_budget, stage_facts, bool(raw_visible) if group.get("valid") else False,
         )
         engine._record_action(
             "action.llm_decide",

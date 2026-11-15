@@ -61,7 +61,7 @@ from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
 from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
 from llm_loop.core.loop.engine_services.schema_capacity import (
-    select_schema_capacity_projection,
+    admit_request_schema_capacity,
 )
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
@@ -1212,55 +1212,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 session_messages=sess.messages,
                 logical_round=rounds,
             )
-            # Mechanical, whole-surface schema admission: a 32K local model can
-            # otherwise spend ~29K input tokens on 101 tool schemas, leaving no
-            # room for the latest complete tool observation. Never hide a tool or
-            # weaken registry-side authorization/argument validation here.
-            _capacity_budget = dict(self._run_state().last_budget_info or {})
-            _schema_capacity = select_schema_capacity_projection(
-                registry=self.registry,
-                eligible_schemas=tool_schemas,
-                schema_to_param=self._tool_cycle._schema_to_param,
-                allowed_input_tokens=_capacity_budget.get("allowed_input_tokens"),
-                projection_chars_per_token=_capacity_budget.get("projection_chars_per_token"),
-                count_tool_schema_tokens=getattr(llm_client, "count_tool_schema_tokens", None),
+            tool_schemas, tools_param, _schema_capacity = admit_request_schema_capacity(
+                self, llm_client, tool_schemas, tools_param, session_id, rounds
             )
-            if _schema_capacity.mode != "stable":
-                tool_schemas = list(_schema_capacity.schemas)
-                tools_param = list(_schema_capacity.tools)
-                self._run_state().cache_gate_tools_fp = stable_digest(tools_param)
-            if (
-                _schema_capacity.threshold_tokens is not None
-                and _schema_capacity.original_tokens is not None
-                and _schema_capacity.original_tokens > _schema_capacity.threshold_tokens
-            ):
-                self._event_append(
-                    session_id,
-                    "request.schema_capacity",
-                    {
-                        "round": rounds,
-                        "mode": _schema_capacity.mode,
-                        "reason": _schema_capacity.reason,
-                        "original_schema_tokens": _schema_capacity.original_tokens,
-                        "selected_schema_tokens": _schema_capacity.selected_tokens,
-                        "share_target_tokens": _schema_capacity.threshold_tokens,
-                        "token_source": _schema_capacity.token_source,
-                        "callable_count": len(tool_schemas),
-                    },
-                )
             _tool_schema_chars = len(_json_dumps_args({"tools": tools_param}))
-            _tool_schema_tokens: int | None = None
-            _schema_counter = getattr(llm_client, "count_tool_schema_tokens", None)
-            if callable(_schema_counter):
-                try:
-                    _measured_schema_tokens = _schema_counter(tools_param)
-                    if (
-                        isinstance(_measured_schema_tokens, int)
-                        and _measured_schema_tokens >= 0
-                    ):
-                        _tool_schema_tokens = _measured_schema_tokens
-                except Exception:  # noqa: BLE001 — optional tokenizer authority is fail-soft
-                    logger.debug("tool-schema token measurement failed; using fallback", exc_info=True)
+            _tool_schema_tokens = _schema_capacity.authoritative_tokens
             _budget_info = dict(self._run_state().last_budget_info or {})
             _pre_tool_budget = effective_budget
             effective_budget = self._routing.reserve_tool_schema_from_history_budget(
