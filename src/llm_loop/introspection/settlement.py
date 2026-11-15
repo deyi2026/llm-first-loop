@@ -476,6 +476,100 @@ def build_pending_settlement(
     }
 
 
+# ── M0-C11 刷锚待办（freshness_refresh）：只读派生，与使用结算完全分列 ──
+
+_FRESHNESS_REFRESH_STALE_STATES = frozenset({"changed", "missing"})
+# pre-R4 词汇（本基线无 unresolvable_refs 键）：unsupported/unreadable 属"解析不了"类，
+# 按 DESIGN v1.3.1 §4.4④ 归入 unresolvable 触发；R4 合并后自动改用 unresolvable_refs。
+_FRESHNESS_REFRESH_UNRESOLVABLE_VALUES = frozenset({"unsupported", "unreadable"})
+FRESHNESS_REFRESH_MAX_ITEMS = 50
+
+
+def collect_freshness_refresh_items(
+    *,
+    method_store: Any = None,
+    session_id: str = "",
+    work_unit_id: str = "",
+    max_items: int = FRESHNESS_REFRESH_MAX_ITEMS,
+) -> list[dict]:
+    """M0-C11（DESIGN v1.3.1 §4.4④/C11/V9）：只读派生"刷锚"待办。
+
+    派生条件（全部满足）：usage 账本中归属当前 session/work_unit 的
+    ``record_use`` 条目 ``decision=applied``，且该卡 ``freshness()`` 处于
+    changed/missing，或存在 unresolvable 类锚（本基线=快照值
+    unsupported/unreadable；R4 合并后=unresolvable_refs）。产出
+    ``item_kind=freshness_refresh`` 条目，与使用结算完全分列：不进
+    settlement_submit 的 kind 面（method/experience/lesson/rule）、不计入
+    items/settled_count、不写任何账本、不刷 SHA、不降级 Method 生命周期。
+    归属不明（条目既无 session_id 也无 work_unit_id，或当前调用两者皆空）时
+    保守不派生。按 method_ref 去重（取最新 ts 条目），上限 ``max_items`` 条。
+    """
+    if method_store is None:
+        return []
+    session_id = str(session_id or "").strip()
+    work_unit_id = str(work_unit_id or "").strip()
+    if not session_id and not work_unit_id:
+        return []  # 当前作用域不可归属：保守不派生
+    latest: dict[str, dict] = {}
+    try:
+        entries = method_store.usage_entries()
+    except Exception:  # noqa: BLE001 — 只读派生 fail-open，不影响主清单
+        return []
+    for entry in entries:
+        if not isinstance(entry, dict) or str(entry.get("decision") or "") != "applied":
+            continue
+        ref = str(entry.get("method_ref") or "").strip()
+        if not ref:
+            continue
+        entry_session = str(entry.get("session_id") or "").strip()
+        entry_wu = str(entry.get("work_unit_id") or "").strip()
+        if not entry_session and not entry_wu:
+            continue  # 条目归属不明：保守不派生
+        in_scope = bool(
+            (session_id and entry_session == session_id)
+            or (work_unit_id and entry_wu == work_unit_id)
+        )
+        if not in_scope:
+            continue
+        ts = str(entry.get("ts") or "")
+        if ref not in latest or ts > str(latest[ref].get("ts") or ""):
+            latest[ref] = entry
+    items: list[dict] = []
+    for ref in sorted(latest, key=lambda r: str(latest[r].get("ts") or ""), reverse=True):
+        if len(items) >= max(1, max_items):
+            break
+        try:
+            fresh = method_store.freshness(ref)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(fresh, dict):
+            continue
+        state = str(fresh.get("state") or "")
+        current_value = fresh.get("current")
+        current: dict[str, str] = current_value if isinstance(current_value, dict) else {}
+        reason_refs: set[str] = set()
+        for key in ("changed_refs", "missing_refs", "unresolvable_refs"):
+            for one in fresh.get(key) or []:
+                reason_refs.add(str(one))
+        for anchor_ref, value in current.items():
+            if str(value) in _FRESHNESS_REFRESH_UNRESOLVABLE_VALUES:
+                reason_refs.add(str(anchor_ref))
+        unresolvable_hit = any(
+            str(v) in _FRESHNESS_REFRESH_UNRESOLVABLE_VALUES for v in current.values()
+        ) or bool(fresh.get("unresolvable_refs"))
+        if state not in _FRESHNESS_REFRESH_STALE_STATES and not unresolvable_hit:
+            continue  # current/unbaselined/未变更：不派生
+        items.append(
+            {
+                "item_kind": "freshness_refresh",
+                "ref": ref,
+                "state": state,
+                "reason": sorted(reason_refs),
+            }
+        )
+    return items
+
+
 # ── 批量结算 ──
 
 
