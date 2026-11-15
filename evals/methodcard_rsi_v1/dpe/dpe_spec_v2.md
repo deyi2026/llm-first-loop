@@ -49,11 +49,11 @@
 4. 当前占位（**一律不得填数**）：δ_min=⟨TO-PREREGISTER⟩；α=⟨TO-PREREGISTER⟩；目标功效=⟨TO-PREREGISTER⟩；n=⟨TO-PREREGISTER⟩；CI=⟨TO-PREREGISTER⟩；成本上限=⟨TO-PREREGISTER⟩；多重比较=⟨TO-PREREGISTER⟩。既有沿用项（非本轮新造）：κ 门槛 0.60、盲标 raw agreement ≥ 0.85、同回复一致率 ≥ 0.8、S1b 两项预注册诊断（注入测试、跨批一致率 ≥ 0.8）。
 
 ## 4. 本文件自身验收（本 Run 内）
-- 本 lane 的 git 变更**只含本文件**：`git diff --name-only 9e6b438cc814844fde49b519824cd359b5a27cdc..HEAD` 输出仅为 `evals/methodcard_rsi_v1/dpe/dpe_spec_v2.md`（9e6b438c=本 lane 固定基线；**不得用移动 ref origin/main 作对账基线**——审查 P1-3 修正：该 ref 随远端前进会使本断言失真）。
+- 本 lane 的 git 变更**只含本文件**：`git diff --name-only 4f1628ed8110323e88ad5292025f88d337738383..HEAD` 输出仅为 `evals/methodcard_rsi_v1/dpe/dpe_spec_v2.md`（4f1628ed=本 lane 冻结基线；**不得用移动 ref（origin/main 等）或非本分支基线作对账基线**——审查 P1-3 修正沿用；本 lane 由旧 lane（基线 9e6b438c）按文件归属 cherry-pick 至 4f1628ed 重建，历史提交 d4bc48b56/9123a7c3a/1fd94d63e 留档）。
 - Markdown fence 平衡；除本轮实测数字与既有沿用阈值外无任何新数字，其余参数全部为占位符。
 - 历史文件 sha256 与附录一致；未运行任何 Provider 评测、未做盲标、未合并 / 未推送（第二 Run 禁令）。
 
-## 附录 历史文件指纹（2026-11-16 本轮实测；origin/main@9e6b438c 工作树与 root checkout 逐字节一致）
+## 附录 历史文件指纹（2026-11-16 本轮实测；origin/main@9e6b438c 工作树与 root checkout 逐字节一致；重建时复核 9e6b438c..4f1628ed 区间 evals/methodcard_rsi_v1/ 零改动，指纹在新基线同样有效）
 
 - `d_sets.json` sha256=26cb292d336ab953102f20ea856865226ddeaaf313c8718bfc5c38fd6dd6a4b9
 - `dpe_spec.md` sha256=ffc60b5f8b387ca5ffda8e9717cf77f829c7afeb26b715f283d97f609eb128a3
