@@ -38,7 +38,7 @@
       ],
       "verification_level": "After commit, verify scripts/check_architecture_submission.py --base 1616137d0fa560ff06452be838e1f1620bce7174 --head HEAD returns PASS; then fresh independent reviewer and original R9, followed by remote PR CI.",
       "model_evidence_veto_recovery_exit": "No bypass of architecture submission checker; manifest cannot declare unmodified paths or omit changed paths. If exact scope differs, reject merge.",
-      "rollback_route": "Remove this declaration and return to previous six-file candidate 54d70ae556d587753adba982d250b693d60f4f1e; no production state touched."
+      "rollback_route": "If the manifest or release fails, revert the entire version-only PR to reviewed base main 1616137d0fa560ff06452be838e1f1620bce7174. The earlier six-file candidate 54d70ae556d587753adba982d250b693d60f4f1e is historical evidence only and is not a publishable A.5-green rollback target; no production state touched."
     }
   ],
   "declarations": []
