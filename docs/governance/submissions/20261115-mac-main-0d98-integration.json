@@ -1,0 +1,203 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-mac-main-0d98-integration",
+  "summary": "Reconcile exact Mac deployed 9a8b3fb7, current local main 0d98e136 (six commits ahead of origin/main 54478899) and one additional knowledge method; isolate A.5 declaration without modifying main or deployed services.",
+  "components": [
+    {
+      "component_id": "sandbox-host-grant-runtime",
+      "paths": [
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/builtin/host_access.py",
+        "src/llm_loop/tools/sandbox.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing HostCapabilityGrantStore and sandbox runtime",
+      "disposition": "Enable sandbox-exec rw-only approved single-file root while retaining bwrap FD binding and unsupported-backend fail-closed.",
+      "evidence": [
+        "14241223e code and negative tests",
+        "GLM-5.3 initial P1 source-evidence gap withdrawn after exact profile code and tests; P0/P1=0"
+      ],
+      "verification_level": "Focused tests and independent GLM-5.3 PASS P0/P1=0; unchanged full R9 and exact final SHA remote CI/A.5 required.",
+      "model_evidence_veto_recovery_exit": "Review/test evidence does not waive runtime authorization, owner checks, or remote CI; fail closed on unresolved gates.",
+      "rollback_route": "Revert this component together with related code; managed rollback if deployed.",
+      "declaration_id": "existing-host-grant"
+    },
+    {
+      "component_id": "review-host-admission",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing review_host_admission SSH base-resolution gate",
+      "disposition": "Pin neutralized SSH to system executable and reject injected sshCommand while retaining fail-closed base resolution.",
+      "evidence": [
+        "b49b89164 and tests/unit/test_review_host_admission.py",
+        "GLM-5.3 PASS P0/P1=0; portability P2 retained"
+      ],
+      "verification_level": "Focused tests and independent GLM-5.3 PASS P0/P1=0; unchanged full R9 and exact final SHA remote CI/A.5 required.",
+      "model_evidence_veto_recovery_exit": "Review/test evidence does not waive runtime authorization, owner checks, or remote CI; fail closed on unresolved gates.",
+      "rollback_route": "Revert this component together with related code; managed rollback if deployed.",
+      "declaration_id": "existing-review-admission"
+    },
+    {
+      "component_id": "function-size-ratchet",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing R9 function-size static ratchet",
+      "disposition": "Register only reviewed security-function size deltas; no checker disablement.",
+      "evidence": [
+        "20ab23739 exact baseline changes",
+        "GLM reviewer confirmed no bypass"
+      ],
+      "verification_level": "Focused tests and independent GLM-5.3 PASS P0/P1=0; unchanged full R9 and exact final SHA remote CI/A.5 required.",
+      "model_evidence_veto_recovery_exit": "Review/test evidence does not waive runtime authorization, owner checks, or remote CI; fail closed on unresolved gates.",
+      "rollback_route": "Revert this component together with related code; managed rollback if deployed.",
+      "declaration_id": "existing-function-ratchet"
+    },
+    {
+      "component_id": "tests-docs-and-knowledge",
+      "paths": [
+        "data/methods/bare-link-digest-first-gate-self-audit-behind-user-offer-2f9241c984ba/METHOD.md",
+        "data/methods/consumer-shape-audit-on-path-derivation-contract-shift-1beb7418eed2/METHOD.md",
+        "data/methods/cover-from-lowest-unread-offset-on-truncated-receipts-ec9d8df371e2/METHOD.md",
+        "data/methods/cross-env-test-divergence-fix-invariance-not-guard-7be21fbc8dcc/METHOD.md",
+        "data/methods/drain-then-snapshot-supersede-then-freeze-on-peer-gate-block-341d0e153246/METHOD.md",
+        "data/methods/falsify-gap-premise-at-quoted-gate-enable-dormant-pipeline-09ce3049ae92/METHOD.md",
+        "data/methods/forge-poc-encode-acceptance-preconditions-and-attribute-rejections-f7ee889628bd/METHOD.md",
+        "data/methods/gate-frozen-surface-vs-delta-mismatch-pin-real-remote-head-first-66cfdb4d1ef3/METHOD.md",
+        "data/methods/guard-regression-fix-via-sibling-invariant-isomorphism-5df7611402b9/METHOD.md",
+        "data/methods/intentional-sandbox-denial-manifest-handoff-not-bypass-aa0f508bf788/METHOD.md",
+        "data/methods/must-print-empty-output-verify-artifact-bytes-before-semantic-rewrite-ecb1abe973f2/METHOD.md",
+        "data/methods/post-rename-sweep-derived-consumers-join-by-explicit-key-4ccba5746c6a/METHOD.md",
+        "data/methods/readjudicate-disputed-review-findings-at-pinned-frozen-sha-947b3ffe6abd/METHOD.md",
+        "data/methods/repeat-loop-prompt-identity-and-budget-chain-before-guard-code-d304e3a116f5/METHOD.md",
+        "data/methods/single-authoritative-state-receipt-stop-identical-recalls-ba63ca214300/METHOD.md",
+        "data/methods/takeeffect-verify-config-introspection-deterministic-probe-d13867695cb0/METHOD.md",
+        "docs/EXECUTION-ISOLATION.md",
+        "experiences/EXPERIENCE-20261114-作品管理页状态判据必须绑定本篇标题-列表窗口里别人的-已发布-不等于本篇已发布.md",
+        "experiences/EXPERIENCE-20261114-审稿包取-尾注-图注-必须按段落边界切-不能用行前缀匹配.md",
+        "experiences/EXPERIENCE-20261114-配图编号在同一工作区会被并发任务抢占-开工先查占用-改号必须改生成脚本并重跑.md",
+        "experiences/EXPERIENCE-20261115-macos-sandbox-exec-沙箱内-ps-launchctl-静默降级根因与嵌套不可证性.md",
+        "experiences/EXPERIENCE-20261115-status-机检表不得照抄上一班格式-未真跑的项不能写成-pass-发布班次.md",
+        "experiences/EXPERIENCE-20261115-收口脚本-布尔判定键必须在计算-fails-之前赋值-否则恒有一条假失败.md",
+        "experiences/EXPERIENCE-20261115-本机跑推广脚本的解释器选择-系统-python3-是-3-9-6-无-tomllib-需-venv.md",
+        "experiences/EXPERIENCE-20261115-跨集合计数必须先算交集再写总数-17-4-实际去重后只有-20-种.md",
+        "experiences/EXPERIENCE-20261115-重编号-派生脚本要一次改齐四处对应关系-且写死常量不止正文常量-还包括-cdp-target-id.md",
+        "tests/integration/test_host_grant_e2e.py",
+        "tests/test_sandbox_backend.py",
+        "tests/unit/test_host_grant_closure.py",
+        "tests/unit/test_host_grant_sandbox_exec.py",
+        "tests/unit/test_review_host_admission.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest suites, isolation docs and knowledge_flush method/experience library",
+      "disposition": "Retain focused regression tests, execution isolation documentation, and 16 method/9 experience knowledge cards from separate task; no new runtime authority.",
+      "evidence": [
+        "329 focused passed/2 skipped; 44 recovery passed",
+        "Knowledge-card contents not independently line-by-line audited; scope is classification and unchanged code.",
+        "0d98e136f knowledge_flush additional method card, no runtime source modification"
+      ],
+      "verification_level": "Focused tests and independent GLM-5.3 PASS P0/P1=0; unchanged full R9 and exact final SHA remote CI/A.5 required.",
+      "model_evidence_veto_recovery_exit": "Review/test evidence does not waive runtime authorization, owner checks, or remote CI; fail closed on unresolved gates.",
+      "rollback_route": "Revert this component together with related code; managed rollback if deployed."
+    },
+    {
+      "component_id": "architecture-submission",
+      "paths": [
+        "docs/governance/submissions/20261115-mac-main-0d98-integration.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 G1-G4 declaration checker",
+      "disposition": "Declare exact 37-path delta including latest 0d98 method card; no checker changes or bypass.",
+      "evidence": [
+        "Local A.5 preflight failed because the deployed SHA lacks changed manifest",
+        "Manifest is declaration only, not runtime proof."
+      ],
+      "verification_level": "Focused tests and independent GLM-5.3 PASS P0/P1=0; unchanged full R9 and exact final SHA remote CI/A.5 required.",
+      "model_evidence_veto_recovery_exit": "Review/test evidence does not waive runtime authorization, owner checks, or remote CI; fail closed on unresolved gates.",
+      "rollback_route": "Revert this component together with related code; managed rollback if deployed."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-host-grant",
+      "g1": {
+        "necessity": "Single-file approved access must work under macOS sandbox-exec without broadening ro/rw permissions."
+      },
+      "g2": {
+        "authority_owner": "Existing host-grant store, escalation approval and sandbox policy",
+        "relationship": "reuse",
+        "non_duplication": "No new approval issuer or bypass; reuse single-use grant and pre-spawn SHA/path checks."
+      },
+      "g3": {
+        "model_evidence": [
+          "Only rw grant enters sandbox-exec writable_roots; ro excluded",
+          "Negative tests and independent GLM reviewer PASS"
+        ],
+        "recovery_or_reason": "Fail closed on unauthorized access, stale SHA, unsupported backend or unresolved Git base; never replay side effects automatically."
+      },
+      "g4": {
+        "rollback": "Revert sandbox grant change or managed rollback.",
+        "verification": [
+          "329 focused tests passed/2 skipped; 44 recovery passed",
+          "Independent GLM-5.3 review/adjudication PASS P0/P1=0",
+          "Original full R9 exit0 and remote CI/A.5 required on final exact SHA"
+        ]
+      }
+    },
+    {
+      "declaration_id": "existing-review-admission",
+      "g1": {
+        "necessity": "Neutralized SSH base resolution must not inherit unsafe core.sshCommand."
+      },
+      "g2": {
+        "authority_owner": "Existing review_host_admission gate",
+        "relationship": "reuse",
+        "non_duplication": "No Git authorization expansion or new transport; retain fail-closed checks."
+      },
+      "g3": {
+        "model_evidence": [
+          "SSH command injection negative tests",
+          "Independent GLM review P2 portability noted"
+        ],
+        "recovery_or_reason": "Fail closed on unauthorized access, stale SHA, unsupported backend or unresolved Git base; never replay side effects automatically."
+      },
+      "g4": {
+        "rollback": "Revert review admission patch.",
+        "verification": [
+          "329 focused tests passed/2 skipped; 44 recovery passed",
+          "Independent GLM-5.3 review/adjudication PASS P0/P1=0",
+          "Original full R9 exit0 and remote CI/A.5 required on final exact SHA"
+        ]
+      }
+    },
+    {
+      "declaration_id": "existing-function-ratchet",
+      "g1": {
+        "necessity": "Reviewed security functions grew while exact R9 ratchet requires baseline alignment."
+      },
+      "g2": {
+        "authority_owner": "Existing static function-size ratchet",
+        "relationship": "reuse",
+        "non_duplication": "No gate weakening; only exact reviewed baseline entries."
+      },
+      "g3": {
+        "model_evidence": [
+          "Exact three-entry baseline diff",
+          "GLM reviewer no bypass finding"
+        ],
+        "recovery_or_reason": "Fail closed on unauthorized access, stale SHA, unsupported backend or unresolved Git base; never replay side effects automatically."
+      },
+      "g4": {
+        "rollback": "Revert ratchet baseline with corresponding code.",
+        "verification": [
+          "329 focused tests passed/2 skipped; 44 recovery passed",
+          "Independent GLM-5.3 review/adjudication PASS P0/P1=0",
+          "Original full R9 exit0 and remote CI/A.5 required on final exact SHA"
+        ]
+      }
+    }
+  ]
+}
