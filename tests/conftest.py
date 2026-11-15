@@ -87,6 +87,8 @@ SERIAL_SIGNAL_TESTS = (
 # Wall-clock performance assertions run alone so unrelated xdist workers cannot
 # inflate the measured latency. This preserves the original acceptance limits.
 SERIAL_PERF_TESTS = (
+    # Wall-clock Stop bound is meaningful only without unrelated xdist CPU contention.
+    "tests/unit/test_background_cancel.py::test_cancel_stops_running_execute_command",
     "tests/phase5/test_m3_metrics.py::test_m3_g1_g2_metrics",
     "tests/phase6/test_m3_metrics.py::test_m3_t1_t2_metrics",
     "tests/perf/test_build_leak_detection_bench.py::test_clean_history_within_budget",

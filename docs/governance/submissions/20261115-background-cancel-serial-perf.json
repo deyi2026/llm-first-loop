@@ -1,0 +1,69 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-background-cancel-serial-perf",
+  "summary": "Exact two-line test marker routing fix from origin/main 9c0a7732; one required A.5 declaration. No production code or unrelated session changes.",
+  "components": [
+    {
+      "component_id": "background-cancel-serial-perf-route",
+      "paths": [
+        "tests/conftest.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing pytest collection marker and original scripts/ci_gate.sh serial_perf supplement",
+      "disposition": "Mark only test_cancel_stops_running_execute_command as serial_perf to isolate its unchanged wall-clock cancellation assertion from unrelated xdist CPU contention; same-file other two tests remain parallel.",
+      "evidence": [
+        "Old base R9 had one xdist queue.Empty cancellation timing failure and FLAKY-PASS; no claim that CPU contention is a proven root cause.",
+        "The original cancellation test passed five standalone rounds without code changes.",
+        "Frozen code-only candidate 4313323b33f75ce3a1368e50ad0e00633be6ab9c passed original complete R9 CLEAN exit 0 with 15241 parallel tests passed.",
+        "Independent GLM-5.3 reviewer of exact code-only SHA 4313323b returned PASS P0=0 P1=0 P2=3."
+      ],
+      "verification_level": "Code-only SHA 4313323b: independent reviewer PASS, original complete R9 CLEAN exit 0; exact PR-head independent review, A.5 and remote CI are required before merge.",
+      "model_evidence_veto_recovery_exit": "Never infer production cancellation is fixed from serial PASS. Any serial test failure, missing selection, full R9 failure or remote CI failure blocks merge; no automatic Provider/tool replay.",
+      "rollback_route": "Revert the two-line marker registration and its A.5 manifest as one isolated PR; production services are untouched.",
+      "declaration_id": "reuse-existing-serial-perf-for-cancel"
+    },
+    {
+      "component_id": "a5-exact-path-submission",
+      "paths": [
+        "docs/governance/submissions/20261115-background-cancel-serial-perf.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture submission gate",
+      "disposition": "Provide one required machine-readable declaration covering the exact two changed paths; no gate scripts or policy changes.",
+      "evidence": [
+        "The pull_request architecture-review workflow requires exactly one changed submission manifest and exact changed-path coverage."
+      ],
+      "verification_level": "Local scripts/check_architecture_submission.py --base/--head PASS and remote A.5 PR job PASS required.",
+      "model_evidence_veto_recovery_exit": "Manifest coverage is mechanical and does not certify the semantic root cause; any A.5 red blocks merge.",
+      "rollback_route": "Revert this manifest together with the two-line marker registration."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-serial-perf-for-cancel",
+      "g1": {
+        "necessity": "The existing cancellation test asserts a strict elapsed<1.5s bound and waits at most 2.0s for the final result; unrelated xdist CPU contention can distort wall-clock measurements without a demonstrated production code regression. Keep both thresholds unchanged."
+      },
+      "g2": {
+        "authority_owner": "Existing SERIAL_PERF_TESTS list, pytest_collection_modifyitems marker and original ci_gate.sh serial_perf complement.",
+        "relationship": "reuse",
+        "non_duplication": "One existing node-id added to existing serial_perf marker list; no new runner, no test deletion, no production cancellation implementation changes."
+      },
+      "g3": {
+        "model_evidence": [
+          "Prior xdist R9 had a queue.Empty cancellation test failure; independent test rounds passed, supporting but not proving a load-sensitive timing hypothesis.",
+          "Original ci_gate.sh excludes serial_perf from xdist and reruns it serially with exit 5 empty-selection fail-closed and nonzero failures blocking.",
+          "GLM-5.3 PASS P0=0 P1=0 P2=3 on code-only SHA 4313323b with explicit residual parallel-load cancellation coverage caveat."
+        ],
+        "recovery_or_reason": "Keep production cancellation regression risk open; if the serial test or related parallel tests fail, stop and investigate actual cancellation semantics rather than marking additional tests serial by default."
+      },
+      "g4": {
+        "rollback": "Revert this isolated two-line test marker change plus its governance manifest; no production state or services changed.",
+        "verification": [
+          "Code-only SHA 4313323b exact R9 CLEAN exit 0: 15241 passed, 161 skipped, 3 xfailed in xdist; serial_perf 5 passed, 2 skipped.",
+          "Exact final PR head must independently pass GLM-5.3 review, local A.5, original complete R9 CLEAN, and remote PR CI before merge."
+        ]
+      }
+    }
+  ]
+}
