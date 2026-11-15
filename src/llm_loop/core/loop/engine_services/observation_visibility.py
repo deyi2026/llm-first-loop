@@ -215,7 +215,6 @@ def ensure_latest_observation_visible(
     """
     try:
         from llm_loop.core.message import dict_wire_chars
-
         group = latest_completed_tool_group(sess.messages, active_turn_ref)
         physical_limit = (budget_info or {}).get("limited_by") in (
             "model_window",
@@ -234,8 +233,7 @@ def ensure_latest_observation_visible(
                     group, messages, active_ingress_ref=active_ingress_ref
                 )
             )
-            # Try the unchanged view first, then a conservative current-Session
-            # rebuild. Both are read-only; neither replays source tools.
+            # Current view first, then a read-only Session rebuild; never replay tools.
             for stage in ("current", "rebuilt"):
                 if stage == "current":
                     candidate = first
@@ -283,8 +281,7 @@ def ensure_latest_observation_visible(
                             },
                         )
                     return candidate, ""
-                # A durable ref alone is insufficient: the exact-ref helper
-                # validates owner, version, hydration, schema and final preflight.
+                # Exact-ref still requires owner, version, hydration, schema and preflight.
                 exact_ref = _qualified_exact_ref_projection(
                     engine,
                     sess,
@@ -409,14 +406,10 @@ def _qualified_exact_ref_projection(
             if source_tool_name and record.tool_name != source_tool_name:
                 return None
             source = record.source
-            if (
-                source.version_policy
-                in (
-                    SourceVersionPolicy.PROBEABLE,
-                    SourceVersionPolicy.VERSIONED,
-                )
-                and not source.version_token
-            ):
+            if source.version_policy in (
+                SourceVersionPolicy.PROBEABLE,
+                SourceVersionPolicy.VERSIONED,
+            ) and not source.version_token:
                 return None
             state = tool.freshness.refresh(owner=owner, evidence_ref=ref)
             if state.availability is not AvailabilityState.AVAILABLE:
@@ -468,8 +461,7 @@ def _qualified_exact_ref_projection(
         candidate = [dict(row) for row in raw_messages]
         ingress_index = next(
             (
-                i
-                for i, row in enumerate(candidate)
+                i for i, row in enumerate(candidate)
                 if str(row.get("_active_run_ingress_ref") or "") == active_ingress_ref
             ),
             -1,
