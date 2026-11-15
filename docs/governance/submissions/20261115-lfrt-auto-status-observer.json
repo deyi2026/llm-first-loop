@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-lfrt-auto-status-observer",
+  "summary": "Read-only LFRT native auto-slot status compatibility. Preserve 131K context, measured live slots, fail-closed unknowns, and the existing runtime-observation/v1 admission authority. No service restart, new controller, or model behavior change.",
+  "components": [
+    {
+      "component_id": "lfrt-auto-slot-readonly-status",
+      "paths": [
+        "docs/governance/submissions/20261115-lfrt-auto-status-observer.json",
+        "src/llm_loop/resources/lfrt_runtime.py",
+        "tests/unit/test_lfrt_runtime_observer.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "LFL resources.lfrt_runtime architecture status observer (not admission authority)",
+      "disposition": "Admit minimal read-only observation correction: use LFRT measured total_slots in native auto mode, preserve configured sentinel -1, and fail closed on absent/conflicting facts; no control or lifecycle changes.",
+      "evidence": [
+        "Independent GLM-5.3 cross-repo review and final refactor review PASS P0=0/P1=0",
+        "Local original ci_gate.sh exit 0 on identical code candidate 417fd45b7063d6a625e63150a2917cf5bbbcaf22: 15252 passed, 161 skipped, 3 xfailed; WebUI 600 tests PASS",
+        "Real read-only LFRT status/admission both observed PID36199 and 4 auto slots, 131072 context; LFRT companion PR #2 remote CI completed/success"
+      ],
+      "verification_level": "Independent review + local full R9 on exact code; final manifest-only SHA requires remote PR CI before merge",
+      "model_evidence_veto_recovery_exit": "No model decision, veto, recovery, or exit authority introduced. Existing runtime-observation/v1 remains authoritative for admission; architecture status remains read-only and fails closed.",
+      "rollback_route": "Revert the LFL status-observer PR and retain the previously qualified runtime-observation/v1 admission path; no data migration, model reload, or service restart required for source rollback."
+    }
+  ],
+  "declarations": []
+}
