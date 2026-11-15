@@ -237,6 +237,95 @@ def _checked_freshness_refs(refs: list[str]) -> list[str]:
             checked.append(clean)
     return checked
 
+# --- freshness anchor resolution (R4, DESIGN v1.3.1 S4.4/C8) -----------------
+# 三类锚：path=工作区相对；code=版本化仓库/发行物相对（src/evals/tests/scripts/docs
+# 顶层）；evidence=evidence:// 引用。resolution_state ∈ {resolved, missing,
+# unresolvable}：wheel/bundle 布局缺 src 映射、evidence:// 无受信解析器、越界
+# 穿越/symlink 逃逸都判 unresolvable——不能把"解析不了"误报成 missing/current
+# （F10/F11/C8）。内容基线一律真实 SHA256；mtime/size 永不作为安全证明。
+_ANCHOR_RESOLVER_VERSION = "r4-anchor-v1"
+_CODE_ANCHOR_TOPS = frozenset({"src", "evals", "tests", "scripts", "docs"})
+
+
+def _classify_freshness_anchor(raw: str) -> str:
+    if raw.startswith("evidence://"):
+        return "evidence"
+    return "code" if raw.split("/", 1)[0] in _CODE_ANCHOR_TOPS else "path"
+
+
+def _safe_anchor_join(base: Path, rel: str) -> tuple[Path, bool]:
+    """Lexically reject traversal/backslash, resolve, then require the target to
+    stay inside the resolved base (symlink escapes land outside and are rejected)."""
+    candidate = Path(rel)
+    if candidate.is_absolute() or ".." in candidate.parts or "\\" in rel:
+        return candidate, False
+    resolved_base = base.resolve()
+    try:
+        target = (base / candidate).resolve()
+        target.relative_to(resolved_base)
+    except (OSError, ValueError):
+        return candidate, False
+    return target, True
+
+
+def _content_sha256_or_empty(target: Path) -> str:
+    try:
+        return hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _read_git_head_sha(root: Path) -> str:
+    """Pure-read repo HEAD sha ('' when absent); no subprocess, no guessing.
+
+    Covers plain checkouts, linked worktrees (``.git`` pointer file) and
+    packed-refs. A checkout whose identity cannot be read keeps the honest
+    ``repo-checkout`` label — a versionized root is never fabricated.
+    """
+    git_link = root / ".git"
+    git_dir = git_link
+    try:
+        if git_link.is_file():  # linked worktree: "gitdir: <path>"
+            pointer = git_link.read_text(encoding="utf-8").strip()
+            if not pointer.startswith("gitdir:"):
+                return ""
+            git_dir = Path(pointer[len("gitdir:"):].strip())
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    common_dir = git_dir
+    try:
+        common_pointer = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+        if common_pointer:
+            common_dir = (git_dir / common_pointer).resolve()
+    except OSError:
+        pass
+    sha = head
+    if head.startswith("ref: "):
+        ref = head[len("ref: "):].strip()
+        try:
+            return (git_dir / ref).read_text(encoding="utf-8").strip()
+        except OSError:
+            sha = ""
+            try:
+                for line in (common_dir / "packed-refs").read_text(encoding="utf-8").splitlines():
+                    parts = line.split()
+                    if len(parts) == 2 and parts[1] == ref:
+                        sha = parts[0]
+                        break
+            except OSError:
+                return ""
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else ""
+
+
+def _bundle_manifest_version(bundled: Path) -> str:
+    try:
+        value = json.loads((bundled / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    version = value.get("version") if isinstance(value, dict) else None
+    return str(version) if version else ""
+
 
 # --- alias gate -------------------------------------------------------------
 # Aliases are a retrieval hint channel only (store.list scores them below the
@@ -777,12 +866,101 @@ class MethodStore:
             return ""  # (3) a rare term is itself discriminative evidence
         return "common_single_term"
 
+    def _anchor_code_roots(self) -> list[tuple[str, Path, bool]]:
+        """Versioned code roots (root_id, base, repo_like) for code-kind anchors.
+
+        ``repo_like`` marks a pyproject+src checkout where a miss is a genuine
+        deletion; bundle/site-layout roots alone can never prove deletion
+        (F10: wheel layouts simply lack the src/ mapping).
+        """
+        roots: list[tuple[str, Path, bool]] = []
+        wr = self._workspace_root
+        if wr is None:
+            return roots
+        if (wr / "pyproject.toml").is_file() and (wr / "src" / "llm_loop").is_dir():
+            sha = _read_git_head_sha(wr)
+            roots.append((f"git:{sha[:12]}" if sha else "repo-checkout", wr, True))
+        bundled = wr / "_bundled"
+        if bundled.is_dir():
+            version = _bundle_manifest_version(bundled)
+            roots.append((f"bundle:{version}" if version else "bundle:_bundled", bundled, False))
+        if (wr / "llm_loop").is_dir() and not (wr / "src").is_dir():
+            roots.append(("site-layout", wr, False))
+        return roots
+
+    def _resolve_freshness_anchor(self, raw: str) -> dict[str, str]:
+        """R4 anchor trio for one ref: kind / root_id / resolution_state + sha.
+
+        Evidence refs never touch the filesystem in this batch: no trusted
+        evidence resolver is wired into the store, so they stay unresolvable
+        instead of a bogus path stat (C8/F11). Code refs try repo, bundle and
+        site layouts (with the wheel ``src/`` prefix stripped); a miss that is
+        only explainable by release-layout absence is unresolvable, while a
+        miss inside a real repo checkout is a genuine ``missing`` (F10).
+        """
+        info: dict[str, str] = {
+            "anchor_kind": _classify_freshness_anchor(raw),
+            "anchor_root_id": "",
+            "resolution_state": "unresolvable",
+            "content_sha256": "",
+        }
+        if info["anchor_kind"] == "evidence":
+            info["anchor_root_id"] = "evidence-store"
+            return info
+        if self._workspace_root is None:
+            return info
+        wr = self._workspace_root
+        if info["anchor_kind"] == "code":
+            roots = self._anchor_code_roots()
+            if not roots:
+                # No versioned code root exists at all (plain data workspace):
+                # src/docs-style refs are ordinary workspace-relative paths here,
+                # so resolution degrades honestly to the path kind instead of
+                # fabricating an unresolvable "code" verdict (F10 only applies
+                # when a release/bundle root IS present and lacks the mapping).
+                info["anchor_kind"] = "path"
+            else:
+                variants = [raw]
+                if raw.startswith("src/"):
+                    variants.append(raw[len("src/"):])
+                for root_id, base, _repo_like in roots:
+                    for variant in variants:
+                        target, ok = _safe_anchor_join(base, variant)
+                        if ok and target.is_file():
+                            info["anchor_root_id"] = root_id
+                            info["content_sha256"] = _content_sha256_or_empty(target)
+                            info["resolution_state"] = (
+                                "resolved" if info["content_sha256"] else "unresolvable"
+                            )
+                            return info
+                repo_roots = [root_id for root_id, _base, repo_like in roots if repo_like]
+                if repo_roots:
+                    info["anchor_root_id"] = repo_roots[0]
+                    info["resolution_state"] = "missing"
+                return info
+        target, ok = _safe_anchor_join(wr, raw)
+        if not ok:
+            return info
+        info["anchor_root_id"] = "workspace"
+        if not target.is_file():
+            info["resolution_state"] = "missing"
+            return info
+        info["content_sha256"] = _content_sha256_or_empty(target)
+        info["resolution_state"] = "resolved" if info["content_sha256"] else "unresolvable"
+        return info
+
     def _freshness_snapshot(self, record: MethodRecord) -> dict[str, str]:
         if not record.freshness_refs or self._workspace_root is None:
             return {}
         out: dict[str, str] = {}
         root = self._workspace_root
         for raw in record.freshness_refs:
+            if raw.startswith("evidence://"):
+                # R4/F11: evidence:// 永不触文件系统（本批次无受信解析器）。
+                # 保留 legacy 词表值 "missing" 只为旧基线可比性；真相在
+                # anchors 三元组的 resolution_state=unresolvable。
+                out[raw] = "missing"
+                continue
             rel = Path(raw)
             if rel.is_absolute() or ".." in rel.parts:
                 out[raw] = "unsupported"
@@ -802,29 +980,119 @@ class MethodStore:
                 out[raw] = "unreadable"
         return out
 
+    def _latest_anchor_baseline(self, record: MethodRecord) -> dict[str, str] | None:
+        """Latest annotate-time anchor baseline ({ref: sha}) from annotations.jsonl.
+
+        R4 §4.4②: annotate_freshness records real content SHAs for resolvable
+        refs in the existing journal; unresolvable refs never create entries.
+        Only the newest annotate event counts (it supersedes older journals);
+        a missing/unreadable journal reads as "no baseline" — never as current.
+        """
+        path = self._dir / "annotations.jsonl"
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                not isinstance(entry, dict)
+                or entry.get("event") != "annotate_freshness"
+                or entry.get("method_ref") != record.method_id
+            ):
+                continue
+            payload = entry.get("anchor_baseline")
+            if isinstance(payload, dict) and isinstance(payload.get("anchors"), dict):
+                out = {
+                    str(ref): str(info.get("content_sha256"))
+                    for ref, info in payload["anchors"].items()
+                    if isinstance(info, dict) and info.get("content_sha256")
+                }
+                return out or None
+            return None
+        return None
+
     def freshness(self, method_ref: str) -> dict[str, Any]:
+        """Read-side freshness with R4 anchor resolution (v1.3.1 S4.4/C8).
+
+        Legacy keys (state/refs/changed_refs/missing_refs/current/baseline) keep
+        the pre-R4 vocabulary; ``current``/``baseline`` stay in the content-SHA
+        snapshot form (sha256 hex | missing | unsupported | unreadable), so old
+        cards and old qualification baselines keep comparing unchanged. New
+        keys: ``anchors`` ({ref: {anchor_kind, anchor_root_id,
+        resolution_state, content_sha256}}), ``unresolvable_refs``,
+        ``anchor_baseline`` (annotate-time {ref: sha} from annotations.jsonl)
+        and ``anchor_changed_refs``.
+
+        State precedence (P1-A guard): changed > missing > unresolvable >
+        current — a card can never report ``current`` while any anchor is
+        unresolved; evidence refs are never stat-ed and release-layout misses
+        read unresolvable, not missing (F10/F11). Read-only: never invalidates
+        or rewrites the card (锚失效只修锚，不失效卡).
+        """
         record = self.get(method_ref)
         if record is None:
             return {"state": "missing_method", "refs": []}
         if not record.freshness_refs:
             return {"state": "not_tracked", "refs": []}
         current = self._freshness_snapshot(record)
+        anchors = {ref: self._resolve_freshness_anchor(ref) for ref in record.freshness_refs}
+        unresolvable = [
+            ref for ref in record.freshness_refs
+            if anchors[ref]["resolution_state"] == "unresolvable"
+        ]
+        anchor_baseline = self._latest_anchor_baseline(record)
         baseline: dict[str, str] | None = None
         for entry in reversed(self.qualification_entries(method_ref)):
             value = entry.get("freshness_hashes")
             if isinstance(value, dict):
                 baseline = {str(k): str(v) for k, v in value.items()}
                 break
-        if baseline is None:
-            return {"state": "unbaselined", "refs": list(record.freshness_refs), "current": current}
-        changed = [ref for ref in record.freshness_refs if current.get(ref) != baseline.get(ref)]
-        missing = [ref for ref in record.freshness_refs if current.get(ref) == "missing"]
-        state = "current" if not changed else ("missing" if missing else "changed")
+        if baseline is None and anchor_baseline is None:
+            return {
+                "state": "unbaselined",
+                "refs": list(record.freshness_refs),
+                "current": current,
+                "anchors": anchors,
+                "unresolvable_refs": unresolvable,
+                "anchor_baseline": None,
+            }
+        anchor_changed = [
+            ref for ref, sha in (anchor_baseline or {}).items()
+            if anchors[ref]["resolution_state"] == "resolved"
+            and anchors[ref]["content_sha256"] != sha
+        ]
+        changed: list[str] = []
+        if baseline is not None:
+            changed = [ref for ref in record.freshness_refs if current.get(ref) != baseline.get(ref)]
+        for ref in anchor_changed:
+            if ref not in changed:
+                changed.append(ref)
+        missing = [
+            ref for ref in record.freshness_refs
+            if current.get(ref) == "missing"
+            and anchors[ref]["resolution_state"] != "unresolvable"
+        ]
+        if changed:
+            state = "changed"
+        elif missing:
+            state = "missing"
+        elif unresolvable:
+            state = "unresolvable"
+        else:
+            state = "current"
         return {
             "state": state,
             "refs": list(record.freshness_refs),
             "changed_refs": changed,
             "missing_refs": missing,
+            "unresolvable_refs": unresolvable,
+            "anchors": anchors,
+            "anchor_baseline": anchor_baseline,
+            "anchor_changed_refs": anchor_changed,
             "current": current,
             "baseline": baseline,
         }
@@ -2118,23 +2386,37 @@ class MethodStore:
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("annotation did not round-trip")
+        # R4 §4.4② (P1-B): baseline only for anchors that actually resolved and
+        # whose content was readable — unresolvable refs get NO empty baseline;
+        # a failed journal write surfaces as "unbaselined", never as current.
+        resolved_anchors: dict[str, dict[str, str]] = {}
+        for ref in refs:
+            info = self._resolve_freshness_anchor(ref)
+            if info["resolution_state"] == "resolved" and info["content_sha256"]:
+                resolved_anchors[ref] = {
+                    "anchor_kind": info["anchor_kind"],
+                    "anchor_root_id": info["anchor_root_id"],
+                    "content_sha256": info["content_sha256"],
+                }
+        journal_entry: dict[str, Any] = {
+            "ts": now,
+            "event": "annotate_freshness",
+            "method_ref": method_id,
+            "old": old_value,
+            "new": refs,
+        }
+        if resolved_anchors:
+            journal_entry["anchor_baseline"] = {
+                "resolver_version": _ANCHOR_RESOLVER_VERSION,
+                "sampled_at": now,
+                "anchors": resolved_anchors,
+            }
         try:
             with (self._dir / "annotations.jsonl").open("a", encoding="utf-8") as f:
-                f.write(
-                    json.dumps(
-                        {
-                            "ts": now,
-                            "event": "annotate_freshness",
-                            "method_ref": method_id,
-                            "old": old_value,
-                            "new": refs,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
+                f.write(json.dumps(journal_entry, ensure_ascii=False) + "\n")
         except OSError:
-            # annotation itself succeeded; the journal is best-effort provenance
+            # annotation itself succeeded; a lost baseline reads back as
+            # "unbaselined" (fail-safe: never fabricates current)
             pass
         return record
 
