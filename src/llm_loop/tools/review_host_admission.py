@@ -1552,6 +1552,22 @@ _SPLIT_PLAN_PATHS_PER_BATCH = 8
 _PUSH_BATCH_WRAPPER_ALLOWANCE_CHARS = 512
 
 
+def _section_path(label: object) -> str:
+    """段落标签 → 路径；前缀仅 committed/working/untracked（独立审查 P2-2）。
+
+    装箱（_split_plan）与联合消费（_consume_joint_push_batches）此前各自
+    ``split(":", 1)[-1]`` 解析标签，属字符串耦合：任何不带合法前缀的标签
+    会静默变成"不可覆盖路径"导致消费永久拒绝。统一走本助手，两处语义永不
+    漂移；畸形标签显式 raise，调用方 fail-closed（拒绝受理/拒绝消费）而非
+    静默漏审。
+    """
+    text = str(label)
+    prefix, sep, path = text.partition(":")
+    if sep and prefix in {"committed", "working", "untracked"} and path:
+        return path
+    raise ValueError(f"section_label_malformed:{text[:80]}")
+
+
 def _split_plan(
     sections: Sequence[tuple[str, int]],
     ceiling_chars: int = _SPLIT_PLAN_TARGET_CHARS,
@@ -1581,7 +1597,7 @@ def _split_plan(
         current, current_chars = [], 0
 
     for label, size in sections:
-        name = str(label).split(":", 1)[-1]
+        name = _section_path(label)
         if size > ceiling_chars:
             _flush()
             current = [(name, size)]
@@ -2747,13 +2763,22 @@ def _review_deadline_seconds(material_chars: int) -> float:
     return max(sized, estimated * 1.25)
 
 
-def _normalize_scope_paths(paths: Sequence[str] | None) -> tuple[tuple[str, ...], str]:
+def _normalize_scope_paths(
+    paths: Sequence[str] | None, *, limit: int | None = _REVIEW_SCOPE_PATH_LIMIT
+) -> tuple[tuple[str, ...], str]:
     """E1: validate caller-declared review paths; return (paths, error).
 
     Only repo-relative paths are accepted. Anything absolute, escaping the
     workspace (`..`), or absurdly long a list is refused instead of silently
     narrowed -- a scope that cannot be stated exactly must fall back to the
     explicit ``scope="tree"`` request, never to a guess.
+
+    EVO-20261115-34ae7c99(A) 补丁：``limit=None`` 供 git_push 批候选使用。
+    闸自算的 split_plan 单批可含 >40 路径（装箱只按字符预算）；计数上限若
+    先于"精确等于某一整批"校验执行，闸给出的合法批反而不可受理——闸生成
+    的计划超过闸自己的受理上限，协议结构性不可执行（2026-11-15 gitee
+    142-commit 增量实测撞上 too_many:41）。批候选的权威上限是
+    push_batch_not_in_plan 整批匹配，比任何计数上限更强。
     """
     out: list[str] = []
     for raw in paths or ():
@@ -2779,7 +2804,7 @@ def _normalize_scope_paths(paths: Sequence[str] | None) -> tuple[tuple[str, ...]
             return (), item
         if item not in out:
             out.append(item)
-        if len(out) > _REVIEW_SCOPE_PATH_LIMIT:
+        if limit is not None and len(out) > limit:
             return (), f"too_many:{len(out)}"
     return tuple(out), ""
 
@@ -3009,7 +3034,14 @@ def _resolve_scope(
     requested = str(scope or "patch").strip().lower()
     if requested not in _REVIEW_SCOPES:
         return {}, (), f"review_scope_invalid:{requested}"
-    scope_paths, error = _normalize_scope_paths(paths)
+    # git_push 的 paths 只有批候选一种合法形态，权威校验是"精确等于闸自算
+    # 某一整批"（push_batch_not_in_plan）——计数上限在此先行拒绝会把闸自己
+    # 装箱出的 >40 路径合法批变成不可执行计划（2026-11-15 实测）。其余
+    # kind 的 40 条计数上限不变。
+    if kind == "git_push":
+        scope_paths, error = _normalize_scope_paths(paths, limit=None)
+    else:
+        scope_paths, error = _normalize_scope_paths(paths)
     if error:
         return {}, (), f"review_scope_path_invalid:{error}"
     if requested == "tree":
@@ -5287,16 +5319,26 @@ class HostReviewAdmission:
         设计不变量（与 _resolve_scope 历史拒绝理由同一根源）：窄 scope 的单条
         PASS 永不授权整次 push。分批协议不放宽这一点——只有同时满足：
 
-          1. 同 parent、同 target（同一 push 命令绑定）、同一 batch_plan_id；
+          1. 同 parent、同 target（同一 push 命令绑定）；
           2. 每一批按自身 scope+冻结两级计数复算的 SHA 与冻结值**精确一致**
              （push 基点/头/批内内容/切片外未审计数任一漂移即失效）；
           3. 有效批的 paths 并集覆盖**当前全量增量的全部段落**
              （committed/working/untracked 段；新文件必然造成缺口或批 sha 漂移）；
 
-        才放行并**一次性消费全部批**；任一批失效、漂移或覆盖有缺口 ⇒ 整体
-        拒绝且不消费任何批（fail-closed）。返回 None 表示无适用批记录，调用方
-        回落既有拒绝路径。锁纪律：_target 含 git 子进程，只在锁外调用；锁内
-        只做记录读写，末段全有或全无（任一批被并发消费即放弃，回落通用拒绝）。
+        才放行并**一次性消费该 target 全部待决批行**；任一批失效、漂移或覆盖
+        有缺口 ⇒ 整体拒绝且不消费任何批（fail-closed）。返回 None 表示无适用
+        批记录，调用方回落既有拒绝路径。
+
+        EVO-20261115-34ae7c99(B)（独立审查 P1-1 活性修复）：batch_plan_id 不再
+        作为放行前提。授权实质是"当前全量增量每个段落的当前内容都落在某条
+        SHA 复算有效的 PASS 批内"——跨计划版本的批若各自复算有效且并集覆盖，
+        授权实质与单计划执行一致（plan_id 装订整个装箱，降为审计标记）。若
+        坚持 plan_id 一致，漂移后即便全量重审也永远混合新旧版本行，联合消费
+        永久拒绝且补救话术循环——闸生成的资格反而不可执行。放行时同 target
+        其余待决批行（陈旧版本/复算失效）一并原子消费：增量已消费，它们不可
+        能再授权任何后续组合，GC 防永久残留。锁纪律：_target 含 git 子进程，
+        只在锁外调用；锁内只做记录读写，末段全有或全无（任一授权批被并发
+        消费即放弃，回落通用拒绝）。
         """
         if not parent:
             return None
@@ -5318,11 +5360,6 @@ class HostReviewAdmission:
         rows = [row for row in rows if row.target == target_full]
         if not rows:
             return None
-        if len({row.batch_plan_id for row in rows}) != 1:
-            return self._deny(
-                "待消费的分批资格横跨多个装箱计划版本（增量已变化）；"
-                "请按当前 split_plan 逐批复审后重试"
-            )
         valid: list[_Frozen] = []
         for row in rows:
             try:
@@ -5338,16 +5375,23 @@ class HostReviewAdmission:
                 continue
             if row_target == target_full and row_sha == row.sha:
                 valid.append(row)
+        try:
+            need = {_section_path(label) for label, _ in sections_full}
+        except ValueError as exc:
+            return self._deny(
+                f"git_push 联合消费无法解析段落标签（{exc}）；本次不消费任何批资格"
+            )
         union: set[str] = set()
         for row in valid:
             union.update(row.batch_paths)
-        need = {str(label).split(":", 1)[-1] for label, _ in sections_full}
         gap = sorted(need - union)
         if gap or not valid:
             detail = (
-                f"还有 {len(gap)} 个路径未过审（如 {gap[:3]}）"
+                f"还有 {len(gap)} 个路径未过审（如 {gap[:3]}）；"
+                "按当前 split_plan 补审缺失批后重试"
                 if gap
-                else f"全部 {len(rows)} 批资格复算不一致（内容漂移），需复审"
+                else f"全部 {len(rows)} 批资格复算不一致（内容漂移）；"
+                "按当前 split_plan 重审对应批后重试"
             )
             return self._deny(
                 "git_push 分批联合消费未满足：单批 PASS 不授权 push，"
@@ -5361,9 +5405,24 @@ class HostReviewAdmission:
                 if live is None or live.consumed or not live.granted:
                     return None  # 并发变化：全有或全无，回落通用拒绝
                 live_rows.append(live)
+            # 授权覆盖集成立（增量即将消费）后，同 target 其余待决批行——
+            # 陈旧计划版本或复算已失效——不可能再授权任何后续组合，一并
+            # 原子消费（GC），防跨 plan_id 残留永久滞留（独立审查 P1-1）。
+            live_ids = {row.child_id for row in live_rows}
+            superseded: list[_Frozen] = []
+            for row in rows:
+                if row.child_id in live_ids:
+                    continue
+                gone = self._records.get(row.child_id)
+                if gone is not None and not gone.consumed and gone.granted:
+                    superseded.append(gone)
             for live in live_rows:
                 self._records[live.child_id] = replace(
                     live, granted=True, consumed=True
+                )
+            for gone in superseded:
+                self._records[gone.child_id] = replace(
+                    gone, granted=True, consumed=True
                 )
             self._audit(
                 parent, "review_admission_push_batch_joint_consume",
@@ -5372,11 +5431,13 @@ class HostReviewAdmission:
                         {
                             "child_id": row.child_id,
                             "index": row.batch_index,
+                            "plan_id": str(row.batch_plan_id)[:16],
                             "paths": len(row.batch_paths),
                         }
                         for row in live_rows
                     ],
                     "covered_paths": len(need),
+                    "superseded_batches": len(superseded),
                 },
             )
             return _ALLOWED

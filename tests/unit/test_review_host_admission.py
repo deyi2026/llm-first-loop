@@ -3889,6 +3889,178 @@ def test_push_batch_row_never_derives_full_test_qualification(tmp_path: Path) ->
     ]
 
 
+def _wide_push_repo(tmp_path: Path) -> Path:
+    """批路径数超 _REVIEW_SCOPE_PATH_LIMIT(40) 的仓库（真实常量，无 monkeypatch）。
+
+    90 个 committed 文件 × ~5.5k chars ≈ 495k chars（est≈4950s>3600s）→ 整量
+    被 duration 预检拒；320k ceiling 装箱 → 首批 ≈58 路径 > 40，其余进第二批。
+    """
+    repo = _repo(tmp_path)
+    baseline = _git_out(repo, "rev-parse", "HEAD")
+    for i in range(90):
+        (repo / f"w{i:03d}.txt").write_text(f"# w{i:03d}\n" + "x" * 5_500 + "\n")
+    _git_out(repo, "add", "-A")
+    _git_out(repo, "commit", "-qm", "wide delta")
+    _bare_remote(repo, tmp_path, baseline)
+    return repo
+
+
+def test_push_batch_over_path_limit_is_startable(tmp_path: Path) -> None:
+    """[回归] 闸自算批路径数可超 40——计数上限不得先于整批匹配拒绝合法批。
+
+    2026-11-15 gitee 142-commit 增量实测：split_plan 首批 77 路径被
+    review_scope_path_invalid:too_many:41 拒——闸生成的计划超过闸自己的
+    受理上限，协议不可执行。批候选的权威校验是整批精确匹配。
+    """
+    repo = _wide_push_repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _SeqChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin main"
+
+    plan = _gate_split_plan(host, repo, command)
+    sizes = [len(b["paths"]) for b in plan]
+    assert any(n > rha._REVIEW_SCOPE_PATH_LIMIT for n in sizes), sizes
+
+    for batch in plan:
+        issued = host.start(
+            "author-1", "git_push", workdir=str(repo), command=command,
+            paths=list(batch["paths"]),
+        )
+        assert issued["accepted"], issued
+        _batch_pass(host, runner, issued)
+
+    assert host.check_shell("author-1", command, str(repo)).allowed
+
+
+def test_push_batch_crafted_over_limit_paths_still_not_in_plan(tmp_path: Path) -> None:
+    """[应拦实测] 计数上限豁免后，自造批（>40 条非整批路径）必须仍被拒。
+
+    拒绝原因是 push_batch_not_in_plan 且先于 spawn——豁免只服务闸自算批，
+    精确整批匹配才是权威，不得退化为计数放行。
+    """
+    repo = _wide_push_repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _SeqChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin main"
+
+    plan = _gate_split_plan(host, repo, command)
+    wide = next(b for b in plan if len(b["paths"]) > rha._REVIEW_SCOPE_PATH_LIMIT)
+    crafted = host.start(
+        "author-1", "git_push", workdir=str(repo), command=command,
+        paths=list(wide["paths"])[: rha._REVIEW_SCOPE_PATH_LIMIT + 1],
+    )
+    assert crafted["accepted"] is False
+    assert crafted["reason"].startswith("push_batch_not_in_plan"), crafted
+    assert runner.started == 0, "拒绝必须先于 spawn"
+
+
+def test_scope_path_count_cap_unchanged_outside_push_batches() -> None:
+    """[应拦实测] 计数上限豁免仅限 git_push：其它 kind 41 条路径仍 too_many 硬拒。"""
+    many = [f"d{i}/f.txt" for i in range(rha._REVIEW_SCOPE_PATH_LIMIT + 1)]
+    receipt, paths, error = rha._resolve_scope("full_test", "patch", many)
+    assert error == (
+        f"review_scope_path_invalid:too_many:{rha._REVIEW_SCOPE_PATH_LIMIT + 1}"
+    )
+    assert paths == () and receipt == {}
+
+    receipt, paths, error = rha._resolve_scope("git_push", "patch", many)
+    assert error == ""
+    assert receipt["mode"] == "push_batch_candidate"
+    assert len(paths) == rha._REVIEW_SCOPE_PATH_LIMIT + 1
+
+
+def test_push_batch_mixed_plan_versions_recover_after_re_review(tmp_path: Path) -> None:
+    """[P1 活性] 跨 plan_id 批记录不得永久卡死联合消费（独立审查 P1-1）。
+
+    序列：v1 全批 PASS → 漂移（新增 untracked 段，v1 行 tier/SHA 复算失效）
+    → 拒且不消费 → 按当前计划全部重审（v2 行）→ 联合消费放行，且同 target
+    的陈旧 v1 待决行被一并消费（GC），无永久残留。旧实现在混合 plan_id 上
+    无条件拒绝且补救话术循环（重审也无法清退 v1 行）。
+    """
+    repo = _wide_push_repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _SeqChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin main"
+
+    plan_v1 = _gate_split_plan(host, repo, command)
+    for batch in plan_v1:
+        issued = host.start(
+            "author-1", "git_push", workdir=str(repo), command=command,
+            paths=list(batch["paths"]),
+        )
+        assert issued["accepted"], issued
+        _batch_pass(host, runner, issued)
+    assert host._has_pending_push_batches("author-1")
+
+    # 漂移：新增 untracked 文件改变段落集与批外绑定 → v1 行复算失效
+    (repo / "zz_drift.txt").write_text("drift\n" + "y" * 400)
+    denied = host.check_shell("author-1", command, str(repo))
+    assert not denied.allowed
+    assert host._has_pending_push_batches("author-1")  # 拒且不消费
+
+    plan_v2 = _gate_split_plan(host, repo, command)
+    for batch in plan_v2:
+        issued = host.start(
+            "author-1", "git_push", workdir=str(repo), command=command,
+            paths=list(batch["paths"]),
+        )
+        assert issued["accepted"], issued
+        _batch_pass(host, runner, issued)
+    # 混合 v1+v2 待决行并存，放行判据是覆盖实质而非 plan_id 一致
+    assert host.check_shell("author-1", command, str(repo)).allowed
+    assert not host._has_pending_push_batches("author-1")  # 陈旧行 GC，无残留
+
+
+def test_push_batch_all_reviewers_unpassed_denies(tmp_path: Path) -> None:
+    """[应拦加固] 全部批已 start 但 reviewer 未过（granted=False）⇒ 拒绝。"""
+    repo = _wide_push_repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _SeqChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin main"
+
+    plan = _gate_split_plan(host, repo, command)
+    for batch in plan:
+        issued = host.start(
+            "author-1", "git_push", workdir=str(repo), command=command,
+            paths=list(batch["paths"]),
+        )
+        assert issued["accepted"], issued  # 不 _batch_pass：未过审
+    assert not host.check_shell("author-1", command, str(repo)).allowed
+
+
+def test_section_path_strict_prefixes() -> None:
+    """[P2-2] 段落标签解析统一走 _section_path：前缀白名单，畸形显式 raise。"""
+    assert rha._section_path("committed:a/b.txt") == "a/b.txt"
+    assert rha._section_path("working:x.txt") == "x.txt"
+    assert rha._section_path("untracked:u v.txt") == "u v.txt"
+    assert rha._section_path("committed:a:b") == "a:b"  # 路径含冒号不误伤
+    for bad in ("committed:", "noprefix", "committed", ":", "committedX:p"):
+        with pytest.raises(ValueError):
+            rha._section_path(bad)
+
+
+def test_review_task_wrapper_is_kind_fixed_not_scope_dependent() -> None:
+    """[P2-1 钉死] 审查任务 wrapper 是 kind 固定框架（无路径块）。
+
+    路径头在冻结材质内（full_material_chars=len(f_text) 已含全部段落头），
+    批任务与整量任务在 narrow='' 时 wrapper 逐字符相等——分批资格估算
+    est_full=(full_material_chars+wrapper+余量)/cps 无"小批 wrapper 代理
+    整量 wrapper"的低估窗口（独立审查 P2-1 的前提在本实现不成立，本测试
+    钉住该结构性事实，防止未来模板引入 scope 块而静默打开双重拒绝窗口）。
+    """
+    target = "git_push:/w:git push origin main"
+    sha = "a" * 64
+    full_material = "M" * 10_000
+    batch_material = "B" * 1_000
+    full_task = rha._compose_review_task("git_push", target, sha, full_material)
+    batch_task = rha._compose_review_task("git_push", target, sha, batch_material)
+    assert len(full_task) - len(full_material) == len(batch_task) - len(batch_material)
+
+
 def test_target_tuple_shape_is_pinned(tmp_path: Path) -> None:
     """``_target`` 的 6 元组形状必须可断言，免得"元数不匹配"只能靠读代码判。
 
