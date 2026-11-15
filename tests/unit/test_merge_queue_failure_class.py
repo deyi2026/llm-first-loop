@@ -358,3 +358,331 @@ def test_render_surfaces_terminal_count(tmp_path):
     text = render_coordination({**block, "degraded": []})
     assert "历史=1" in text
     assert "历史项" in text
+
+
+# ---- M1 队列降噪双轨（DESIGN-20261116 §2，追加段：只加不改）----
+#
+# 双轨纪律：上方既有断言零修改继续通过=legacy 轨回归；本段只测新增 actionable/来源
+# 完整性轨与 BUG-10（v1.3 勘误）安全降级——不为兼容保留不安全建议。
+
+
+def _write_lanes(tmp_path, rows):
+    p = tmp_path / "lanes.jsonl"
+    p.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8"
+    )
+    return p
+
+
+#: BUG-10 负测口径：next_command 不得出现的写命令特征（requeue/rebase/merge 三族）。
+_WRITE_CMD_TOKENS = ("lane_queue_submit", "lane_merge_request", "rebase", "git -C")
+
+
+def _all_items(mq):
+    return [it for b in mq["buckets"].values() for it in b["items"]]
+
+
+def _mixed_fixture(tmp_path):
+    # 健康源三分夹具：l-live 在途（actionable）/l-done 终态/l-ghost 不在账（unknown）
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l-live",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            },
+            {
+                "queue_id": "q2",
+                "lane_id": "l-done",
+                "status": "failed",
+                "last_preflight": {
+                    "checks": [
+                        _pass("base_main_current"),
+                        _pass("merge_tree_clean"),
+                        _pass("paths_disjoint"),
+                        _chk("verify_covers_base", "verify_required"),
+                    ]
+                },
+            },
+            {
+                "queue_id": "q3",
+                "lane_id": "l-ghost",
+                "status": "failed",
+                "last_preflight": {
+                    "checks": [
+                        _pass("base_main_current"),
+                        _chk("merge_tree_clean", "merge_conflict", {"conflicting_paths": ["a.py"]}),
+                    ]
+                },
+            },
+        ],
+    )
+    _write_lanes(
+        tmp_path,
+        [
+            {"lane_id": "l-live", "status": "active"},
+            {"lane_id": "l-done", "status": "merged"},
+        ],
+    )
+
+
+def test_dual_track_three_way_split_and_actionable_identity(tmp_path):
+    _mixed_fixture(tmp_path)
+    block, notes = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    # legacy 轨原口径逐字段不动
+    assert mq["failed_total"] == 3
+    assert mq["bucket_sum"] == 3
+    assert mq["closure_ok"] is True
+    assert mq["terminal_total"] == 1
+    assert mq["buckets"]["rebase"]["count"] == 1
+    assert mq["buckets"]["verify"]["count"] == 1
+    assert mq["buckets"]["human"]["count"] == 1
+    assert notes == []
+    # 新增轨：三分计数 + 恒等式（只作用 actionable 轨）
+    assert mq["actionable_total"] == 1
+    assert mq["unknown_total"] == 1
+    assert mq["actionable_bucket_sum"] == 1
+    assert mq["actionable_buckets"]["rebase"]["count"] == 1
+    assert mq["actionable_bucket_sum"] == (
+        mq["failed_total"] - mq["terminal_total"] - mq["unknown_total"]
+    )
+    # 已 merged lane 不得进入 actionable 轨（不再收到 merge_request 建议）
+    assert all(
+        it["lane_id"] != "l-done" for b in mq["actionable_buckets"].values() for it in b["items"]
+    )
+    assert mq["source_complete"] is True
+    assert mq["parsed_closure_ok"] is True
+    assert mq["overall_view_ok"] is True
+    assert mq["safe_to_execute"] is True
+    # BUG-10: unknown 项即使整体可信也不发写命令；actionable 项保留可执行建议
+    items = {it["lane_id"]: it for it in _all_items(mq)}
+    assert items["l-live"]["classification"] == "actionable"
+    assert items["l-live"]["next_command"].startswith("git -C")
+    assert items["l-done"]["classification"] == "terminal"
+    assert items["l-ghost"]["classification"] == "unknown"
+    assert not any(tok in items["l-ghost"]["next_command"] for tok in _WRITE_CMD_TOKENS)
+    assert "人工核对" in items["l-ghost"]["next_command"]
+    assert mq["actionable_next_command"] == [items["l-live"]["next_command"]]
+
+
+def test_missing_lanes_ledger_degrades_every_command(tmp_path):
+    # BUG-10 负测：lanes 账本缺失 → 全量 unknown、无任何写命令、safe_to_execute=false
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l1",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            },
+            {
+                "queue_id": "q2",
+                "lane_id": "l2",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("verify_covers_base", "verify_required")]},
+            },
+        ],
+    )
+    block, notes = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["source_complete"] is False
+    assert mq["lane_health"]["read_ok"] is False
+    assert mq["unknown_total"] == 2
+    assert mq["actionable_total"] == 0
+    # parsed closure ≠ source completeness：可解析部分自洽但来源不完整
+    assert mq["parsed_closure_ok"] is True
+    assert mq["overall_view_ok"] is False
+    assert mq["safe_to_execute"] is False
+    assert mq["actionable_next_command"] == []
+    for it in _all_items(mq):
+        assert it["classification"] == "unknown"
+        assert not any(tok in it["next_command"] for tok in _WRITE_CMD_TOKENS)
+        assert "人工核对" in it["next_command"]
+    # legacy notes 行为不变（降级披露由渲染层负责，不靠塞 note）
+    assert notes == []
+
+
+def test_mq_bad_rows_break_source_complete_and_degrade(tmp_path):
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l-live",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            }
+        ],
+    )
+    _write_lanes(tmp_path, [{"lane_id": "l-live", "status": "active"}])
+    p = tmp_path / "merge_queue.jsonl"
+    p.write_text(p.read_text(encoding="utf-8") + "not-json\n", encoding="utf-8")
+    block, notes = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["malformed_lines"] == 1  # legacy 字段照旧
+    assert mq["mq_bad_rows"] == 1
+    assert mq["source_complete"] is False
+    assert mq["overall_view_ok"] is False
+    assert mq["safe_to_execute"] is False
+    assert mq["actionable_next_command"] == []
+    for it in _all_items(mq):
+        assert not any(tok in it["next_command"] for tok in _WRITE_CMD_TOKENS)
+    assert any("不可解析" in n for n in notes)  # legacy note 照旧
+
+
+def test_duplicate_conflicting_lane_status_is_unknown_and_not_safe(tmp_path):
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l-dup",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("verify_covers_base", "verify_required")]},
+            }
+        ],
+    )
+    _write_lanes(
+        tmp_path,
+        [
+            {"lane_id": "l-dup", "status": "active"},
+            {"lane_id": "l-dup", "status": "merged"},
+        ],
+    )
+    block, _ = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["lane_health"]["duplicate_lane_ids"] == 1
+    assert "l-dup" in mq["lane_health"]["conflict_lane_ids"]
+    assert mq["source_complete"] is False
+    # 冲突 lane → 保守 unknown（宁可 unknown 不冒充已知）
+    assert mq["unknown_total"] == 1
+    assert mq["actionable_total"] == 0
+    # legacy last-wins 不动：末行 merged → terminal_total 仍为 1
+    assert mq["terminal_total"] == 1
+    # 该项同时落 legacy-terminal 与 unknown → 恰属三者之一被破坏，parsed_closure_ok=false
+    assert mq["parsed_closure_ok"] is False
+    assert mq["overall_view_ok"] is False
+    assert mq["safe_to_execute"] is False
+    for it in _all_items(mq):
+        assert not any(tok in it["next_command"] for tok in _WRITE_CMD_TOKENS)
+
+
+def test_invalid_lane_status_counts_and_degrades(tmp_path):
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l-zombie",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("verify_covers_base", "verify_required")]},
+            }
+        ],
+    )
+    _write_lanes(tmp_path, [{"lane_id": "l-zombie", "status": "zombie-mode"}])
+    block, _ = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["lane_health"]["invalid_status_rows"] == 1
+    assert mq["source_complete"] is False
+    assert mq["unknown_total"] == 1
+    assert mq["actionable_total"] == 0
+    item = _all_items(mq)[0]
+    assert item["terminal"] is False  # legacy: 无效 status 不算终态
+    assert item["classification"] == "unknown"
+    assert not any(tok in item["next_command"] for tok in _WRITE_CMD_TOKENS)
+
+
+def test_lanes_bad_rows_make_every_item_conservatively_unknown(tmp_path):
+    # 坏行不静默丢：lanes 有坏行时无法排除「某 lane 最新行已损坏」→ 全量保守 unknown
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l-live",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            }
+        ],
+    )
+    (tmp_path / "lanes.jsonl").write_text(
+        "{\"lane_id\":\"l-live\",\"status\":\"active\"}\nnot-json\n", encoding="utf-8"
+    )
+    block, _ = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["lane_health"]["read_ok"] is True
+    assert mq["lane_health"]["bad_rows"] == 1
+    assert mq["source_complete"] is False
+    assert mq["unknown_total"] == 1
+    assert mq["actionable_total"] == 0
+    assert mq["parsed_closure_ok"] is True  # 0 == 1 - 0 - 1
+    assert mq["safe_to_execute"] is False
+    assert mq["actionable_next_command"] == []
+    for it in _all_items(mq):
+        assert it["classification"] == "unknown"
+        assert not any(tok in it["next_command"] for tok in _WRITE_CMD_TOKENS)
+
+
+def test_unreadable_lanes_ledger_same_degradation_as_missing(tmp_path):
+    (tmp_path / "lanes.jsonl").mkdir()  # open() → IsADirectoryError（OSError 族）
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l1",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            }
+        ],
+    )
+    block, _ = _collect_merge_queue(str(tmp_path))
+    mq = block["merge_queue"]
+    assert mq["lane_health"]["read_ok"] is False
+    assert mq["source_complete"] is False
+    assert mq["unknown_total"] == 1
+    assert mq["safe_to_execute"] is False
+    for it in _all_items(mq):
+        assert not any(tok in it["next_command"] for tok in _WRITE_CMD_TOKENS)
+
+
+def test_render_three_way_split_line_precedes_legacy_bucket_line(tmp_path):
+    _mixed_fixture(tmp_path)
+    block, _ = _collect_merge_queue(str(tmp_path))
+    text = render_coordination({**block, "degraded": []})
+    lines = text.split("\n")
+    idx3 = next(i for i, ln in enumerate(lines) if "当前待办=" in ln)
+    idx_legacy = next(i for i, ln in enumerate(lines) if "该 rebase=1" in ln)
+    assert idx3 < idx_legacy  # 三分行置前
+    assert "failed=3" in lines[idx3]
+    assert "当前待办=1" in lines[idx3]
+    assert "历史=1" in lines[idx3]
+    assert "来源未知=1" in lines[idx3]
+    assert "坏行=0" in lines[idx3]
+    assert "best-effort" in lines[idx3]
+    # legacy 四桶行与 closure_ok 行保留在后
+    assert "闭合=ok(3)" in text
+    assert "历史=1" in lines[idx_legacy]
+    assert "该 rebase=1" in text
+
+
+def test_render_annotates_degraded_view_when_source_incomplete(tmp_path):
+    _write_queue(
+        tmp_path,
+        [
+            {
+                "queue_id": "q1",
+                "lane_id": "l1",
+                "status": "failed",
+                "last_preflight": {"checks": [_chk("base_main_current", "base_stale")]},
+            }
+        ],
+    )  # 无 lanes.jsonl
+    block, _ = _collect_merge_queue(str(tmp_path))
+    text = render_coordination({**block, "degraded": []})
+    assert "来源未知=1" in text
+    assert "视图降级" in text

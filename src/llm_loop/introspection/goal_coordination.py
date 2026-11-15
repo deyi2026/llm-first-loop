@@ -221,6 +221,9 @@ def _coordination_goal_entry(
     now,
     window_hours: int,
     only_in_flight: bool,
+    audit_dir: str = "",
+    ctx: Any | None = None,
+    view_truncated: bool = False,
 ) -> tuple[dict | None, list[str]]:
     """单个 goal 的协调条目；返回 (entry|None, degraded_notes)。None=被窗口过滤掉。"""
     gid = str(g.get("id") or "")
@@ -296,6 +299,39 @@ def _coordination_goal_entry(
         owned_by = "other"
     else:
         owned_by = "unclaimed"
+    open_tasks_val = (
+        counts["ready"]
+        + counts["in_progress"]
+        + counts["blocked"]
+        + counts["waiting_cross_goal"]
+    )
+    # M3 停滞候选（DESIGN-20261116 §5.2）: activity_at 落后窗口阈值 → 提示行。
+    # 窗口模式（window_hours>0）下落后窗口的 goal 已被上方窗口过滤排除，该提示
+    # 主要在全量窗口（window_hours=0）可见；时间戳不可读 → 宁缺勿假不标注。
+    stalled = False
+    if status == "active" and activity_dt is not None:
+        stall_hours = int(window_hours) if int(window_hours) > 0 else _STALL_HINT_HOURS
+        try:
+            stalled = (now - activity_dt).total_seconds() > stall_hours * 3600
+        except TypeError:  # naive/aware 混用 → 不标（宁缺勿假）
+            stalled = False
+    # M3 收口投影（§5.2）: 判定机械复用 goal_gates 三道门，零写路径。
+    # 只对 active goal 投影（BUG-11）: complete/blocked 等非 active goal 已有
+    # 终态或非在途，不得再建议「可 complete」或待补证据——实测 299 个 goal 中
+    # 99 个 complete 曾被投影成收口候选（2026-11-16 GPT-6 复审发现）。status
+    # 未知/异常值同样不投影（宁缺勿假，与上方停滞提示共用同一道 status 门；
+    # goal_gates 判据实现不变，只是不再对非 active goal 调用）。
+    if status == "active":
+        closure, closure_notes = _closure_projection(
+            gid,
+            audit_dir=audit_dir,
+            ctx=ctx,
+            open_tasks=open_tasks_val,
+            view_truncated=view_truncated,
+        )
+    else:
+        closure, closure_notes = None, []
+    notes.extend(closure_notes)
     entry = {
         "goal_id": gid,
         "title": str(g.get("objective") or "")[:60],
@@ -312,14 +348,11 @@ def _coordination_goal_entry(
             "ts": str((last_cp or {}).get("ts") or ""),
             "what": str((last_cp or {}).get("what") or "")[:80],
         },
-        "open_tasks": (
-            counts["ready"]
-            + counts["in_progress"]
-            + counts["blocked"]
-            + counts["waiting_cross_goal"]
-        ),
+        "open_tasks": open_tasks_val,
         "task_counts": counts,
         "next": doing_title[:80],
+        "closure": closure,
+        "stalled": stalled,
         "degraded": notes,
     }
     return entry, notes
@@ -352,9 +385,90 @@ def _degraded_goal_entry(g: dict, *, err: str) -> tuple[dict, list[str]]:
             "done": 0,
         },
         "next": "",
+        "closure": None,
+        "stalled": False,
         "degraded": [note],
     }
     return entry, [note]
+
+
+#: M3 停滞提示阈值（小时）: window_hours=0（全量窗口）时 activity_at 落后该阈值 →
+#: 投影「停滞候选」提示行；窗口模式（window_hours>0）与窗口阈值同源（落后窗口的
+#: goal 已被既有窗口过滤排除，该行只在全量/不过滤模式下可见）。只提示 owner
+#: 检查，不判僵尸、不给 TTL 结论（DESIGN-20261116 §5.2）。
+_STALL_HINT_HOURS = 24
+
+
+class _GateViewHost:
+    """goal_gates.complete_gate 的只读宿主投影（audit_dir + ctx.verifier 透传）。"""
+
+    def __init__(self, audit_dir: str, ctx: Any | None) -> None:
+        self.audit_dir = audit_dir
+        self.ctx = ctx
+
+
+def _unverified_gap_ids(content: str) -> list[str]:
+    """从 goal_gates 自身回执提取「缺 verified」task_id 清单（复用判据输出）。"""
+    marker = "未过真实性校验: "
+    fallback = ["缺 verified: 详见 goal_gates 终局证据门回执"]
+    if marker not in content:
+        return fallback
+    tail = content.split(marker, 1)[1]
+    ids_txt = tail.split("\n", 1)[0].strip()
+    ids = [x.strip() for x in ids_txt.split(",") if x.strip()]
+    if not ids:
+        return fallback
+    return ["缺 verified: " + ", ".join(ids)]
+
+
+def _closure_projection(
+    gid: str,
+    *,
+    audit_dir: str,
+    ctx: Any | None,
+    open_tasks: int,
+    view_truncated: bool,
+) -> tuple[dict | None, list[str]]:
+    """M3 收口候选/待补证据投影（DESIGN-20261116 §5.2，只读、零写路径）。
+
+    判定机械复用 goal_gates.complete_gate 同一实现（禁止另写第二套判据）:
+    - gate=None（三道门全过）→ 收口候选（candidate）;
+    - gate=BLOCKED evidence_unverified → 待补证据，缺口=缺 verified 的 task_id
+      （从判据回执提取，不另写判据）;
+    - gate=BLOCKED no_finality_evidence → 待补证据，缺口=缺自报 evidence_refs
+      （空图 fail-closed; 视图自身永不自报 refs，故空图永非候选）;
+    - gate=BLOCKED 其他（probe_unavailable 等）/判据调用异常 → 宁缺勿假，
+      不投影，degraded note 披露;
+    - gate=FAILURE（任务图仍有 open 任务）→ 无收口迹象，不投影。
+    open_tasks>0 是第一道门的等价短路（open_count>0 ⇒ goal_completion_ready
+    =False ⇒ gate 必返 FAILURE），避免对明显未收口的 goal 逐个付判据成本。
+    capacity.truncated=true → 收口候选不投影（视图不完整，宁缺勿假）。
+    调用方只对 status=active 的 goal 调用本投影: complete/blocked/paused 等
+    非 active goal 不再被建议收口/补证据（BUG-11，判据实现本身不变）。
+    """
+    from llm_loop.introspection.goal_gates import complete_gate
+
+    if not audit_dir or open_tasks > 0:
+        return None, []
+    try:
+        res = complete_gate(_GateViewHost(audit_dir, ctx), gid, {})
+    except Exception as exc:  # noqa: BLE001 — 判据层异常如实降级，不伪造候选
+        return None, [f"收口判据调用失败: {exc}"]
+    if res is None:
+        if view_truncated:
+            return None, ["收口候选抑制: 视图不完整（goals 截断），宁缺勿假"]
+        return {"kind": "candidate", "gates_source": "goal_gates", "gaps": []}, []
+    status = str(getattr(res, "status", ""))
+    content = str(getattr(res, "content", ""))
+    if status == "blocked" and "reason_code=evidence_unverified" in content:
+        gaps = _unverified_gap_ids(content)
+        return {"kind": "pending_evidence", "gates_source": "goal_gates", "gaps": gaps}, []
+    if status == "blocked" and "reason_code=no_finality_evidence" in content:
+        gap = "缺自报 evidence_refs（无 done 任务依托，空图 fail-closed）"
+        return {"kind": "pending_evidence", "gates_source": "goal_gates", "gaps": [gap]}, []
+    if status == "blocked":
+        return None, ["收口判据不满足或不可用: " + content.split("\n", 1)[0][:120]]
+    return None, []  # FAILURE: 任务图未收口 → 无收口迹象，不投影
 
 
 def _collect_goal_entries(
@@ -365,6 +479,9 @@ def _collect_goal_entries(
     now: Any,
     window_hours: int,
     only_in_flight: bool,
+    audit_dir: str = "",
+    ctx: Any | None = None,
+    view_truncated: bool = False,
 ) -> tuple[list[dict], dict[str, dict], list[str]]:
     """逐 goal 组装视图条目；返回 (goals_out, sessions, degraded_notes)。
 
@@ -384,6 +501,9 @@ def _collect_goal_entries(
                 now=now,
                 window_hours=window_hours,
                 only_in_flight=only_in_flight,
+                audit_dir=audit_dir,
+                ctx=ctx,
+                view_truncated=view_truncated,
             )
         except Exception as exc:  # noqa: BLE001 — 单条记录不可解析不拖垮整视图（P1-2）
             entry, notes = _degraded_goal_entry(g, err=str(exc))
@@ -758,16 +878,28 @@ _QUEUE_BUCKET_LABELS = {
 _TERMINAL_LANE_STATUSES = frozenset({"merged", "closed", "abandoned"})
 
 
-def _lane_status_map(audit_dir: str) -> dict[str, str]:
-    """只读 lanes.jsonl → {lane_id: status}（同 id 取最后一行，即最新状态）。
+def _lane_status_map(audit_dir: str) -> tuple[dict[str, str], dict]:
+    """只读 lanes.jsonl → ({lane_id: status}, health)（同 id 取最后一行=最新）。
 
-    读失败返回空 dict：分诊退化为「不带 lane 上下文」，仍然逐项给出明细，
-    不因旁证缺失丢掉主结果（R5-a 只要求零写，不要求读全）。
+    legacy map 语义不变（last-wins）；health（M1 §2.2 C 来源诚实）为新增:
+    read_ok / bad_rows / duplicate_lane_ids / invalid_status_rows /
+    conflict_lane_ids。读失败返回 ({}, health=read_ok=False)——分诊退化为「不带
+    lane 上下文」的同时由 health 显式披露，不把「读不到」冒充「来源完整」；
+    坏行不静默丢弃（bad_rows 计数，分类层据此保守归 unknown）。
     """
+    from llm_loop.introspection.lane import LANE_STATUSES
+
     path = Path(audit_dir) / "lanes.jsonl"
     out: dict[str, str] = {}
+    health: dict[str, Any] = {
+        "read_ok": False,
+        "bad_rows": 0,
+        "duplicate_lane_ids": 0,
+        "invalid_status_rows": 0,
+        "conflict_lane_ids": [],
+    }
     if not path.exists():
-        return out
+        return out, health
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -777,12 +909,26 @@ def _lane_status_map(audit_dir: str) -> dict[str, str]:
                 try:
                     row = json.loads(raw)
                 except json.JSONDecodeError:
+                    health["bad_rows"] += 1
                     continue
-                if isinstance(row, dict) and row.get("lane_id"):
-                    out[str(row["lane_id"])] = str(row.get("status") or "")
+                if not isinstance(row, dict):
+                    health["bad_rows"] += 1
+                    continue
+                if not row.get("lane_id"):
+                    continue
+                lid = str(row["lane_id"])
+                status = str(row.get("status") or "")
+                if lid in out:
+                    health["duplicate_lane_ids"] += 1
+                    if out[lid] != status:
+                        health["conflict_lane_ids"].append(lid)
+                out[lid] = status
+                if status not in LANE_STATUSES:
+                    health["invalid_status_rows"] += 1
+        health["read_ok"] = True
     except OSError:
-        return {}
-    return out
+        return {}, health
+    return out, health
 
 
 def _queue_next_command(entry: dict, diag: dict, lane_status: str = "") -> str:
@@ -811,77 +957,239 @@ def _queue_next_command(entry: dict, diag: dict, lane_status: str = "") -> str:
     return f"# 需人工判定：{diag.get('primary_reason') or 'unknown'}（queue={qid}）"
 
 
+def _classify_queue_item(
+    lid: str,
+    lane_state: str,
+    lane_status_map: dict[str, str],
+    lane_health: dict,
+    valid_statuses: frozenset[str],
+) -> str:
+    """M1 新轨三分分类（§2.2 B）: 返回 actionable / terminal / unknown。
+
+    保守原则（宁可 unknown，不冒充已知）: 账本不可读、lanes 有坏行（无法排除某
+    lane 的最新行已损坏）、lane 不在账、重复 lane_id 状态冲突、无效 status →
+    一律 unknown；在账且终态 → terminal；在账且在途（合法非终态 status）→
+    actionable。
+    """
+    if not lane_health.get("read_ok"):
+        return "unknown"
+    if int(lane_health.get("bad_rows") or 0):
+        return "unknown"
+    if lid not in lane_status_map:
+        return "unknown"
+    if lid in set(lane_health.get("conflict_lane_ids") or ()):
+        return "unknown"
+    if lane_state not in valid_statuses:
+        return "unknown"
+    if lane_state in _TERMINAL_LANE_STATUSES:
+        return "terminal"
+    return "actionable"
+
+
+def _degraded_queue_hint(lid: str, qid: str) -> str:
+    """BUG-10（v1.3 勘误）: 视图降级/来源未知时 next_command 的安全形态。
+
+    不携带任何写命令（requeue/rebase/merge 一律不发），只给「人工核对账本/权威
+    重查」提示类文本；safe_to_execute=false 时任何执行方不得据此执行写动作。
+    """
+    who = lid or "-"
+    return (
+        f"# 来源未知/视图降级: lane {who} 人工核对 lanes 账本后权威重查"
+        f"（queue={qid}）；本条不提供写命令"
+    )
+
+
+def _scan_merge_queue_failed(
+    path: Path,
+    lane_status: dict[str, str],
+    lane_health: dict,
+    valid_statuses: frozenset[str],
+) -> tuple[list[dict], int, int, int]:
+    """单遍扫描 merge_queue.jsonl 的 failed 项（解析+legacy 计数+新轨分类）。
+
+    返回 (parsed_records, failed_total, terminal_total, malformed)。分诊本身出错
+    不能拖垮整个协调视图（legacy 行为），分类口径见 _classify_queue_item。
+    """
+    from llm_loop.introspection.merge_queue import classify_failure
+
+    failed_total = 0
+    terminal_total = 0
+    malformed = 0
+    recs: list[dict] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if not isinstance(entry, dict) or str(entry.get("status")) != "failed":
+                continue
+            failed_total += 1
+            try:
+                diag = classify_failure(entry)
+            except Exception:  # 分诊本身出错不能拖垮整个协调视图
+                diag = {"failure_class": "", "primary_reason": "classify_error"}
+            lid = str(entry.get("lane_id") or "")
+            lane_state = lane_status.get(lid, "")
+            is_terminal = lane_state in _TERMINAL_LANE_STATUSES  # legacy 口径不动
+            if is_terminal:
+                terminal_total += 1
+            bucket = _QUEUE_BUCKETS.get(str(diag.get("failure_class") or ""), "human")
+            recs.append(
+                {
+                    "entry": entry,
+                    "diag": diag,
+                    "lid": lid,
+                    "lane_state": lane_state,
+                    "is_terminal": is_terminal,
+                    "bucket": bucket,
+                    "classification": _classify_queue_item(
+                        lid, lane_state, lane_status, lane_health, valid_statuses
+                    ),
+                }
+            )
+    return recs, failed_total, terminal_total, malformed
+
+
 def _collect_merge_queue(
     audit_dir: str, *, limit_per_bucket: int = 3
 ) -> tuple[dict, list[str]]:
     """把 merge_queue.jsonl 的 failed 项压成四类计数 + 每类前 N 条（R5）。
 
     只读：本函数不调用 MergeQueueStore 的任何写方法，不落任何账本。
-    不变量（R5-b）：四类计数之和必须等于 failed 总数；不成立时显式降级，不静默丢项。
-    """
-    from llm_loop.introspection.merge_queue import classify_failure
+    不变量（R5-b）：legacy 四类计数之和必须等于 failed 总数；不成立时显式降级，
+    不静默丢项。
 
+    M1 双轨（DESIGN-20261116 §2）: legacy 字段（failed_total/buckets/bucket_sum/
+    closure_ok==（bucket_sum==failed_total）/terminal_total/items[].terminal/
+    next_command 结构）逐字段原口径保留；新增轨独立字段不动 legacy 值——
+    actionable_total/actionable_buckets（只收当前活待办）/unknown_total/
+    source_complete/parsed_closure_ok/overall_view_ok==(source_complete and
+    parsed_closure_ok)。新恒等式只作用 actionable 轨: actionable_bucket_sum ==
+    failed_total − terminal_total − unknown_total；legacy closure_ok 原值不动。
+
+    BUG-10（v1.3 勘误，安全例外）: legacy next_command 仅结构兼容——
+    overall_view_ok=false 或该项归 unknown/降级时必须降级为「人工核对账本/权威
+    重查」提示类，不携带任何写命令（requeue/rebase/merge）；不为兼容保留不安全
+    建议。新增 actionable_next_command（仅活待办项的可执行建议）与
+    safe_to_execute（false 时任何执行方不得据 next_command 执行写动作）。
+    """
+    from llm_loop.introspection.lane import LANE_STATUSES
+
+    valid_statuses = frozenset(LANE_STATUSES)
     path = Path(audit_dir) / "merge_queue.jsonl"
-    lane_status = _lane_status_map(audit_dir)
+    lane_status, lane_health = _lane_status_map(audit_dir)
     buckets = {
         key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
         for key in _QUEUE_BUCKET_LABELS
     }
+    actionable_buckets = {
+        key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
+        for key in _QUEUE_BUCKET_LABELS
+    }
+    degraded_block = {
+        "merge_queue": {
+            "available": False,
+            "failed_total": 0,
+            "buckets": buckets,
+            "actionable_total": 0,
+            "actionable_buckets": actionable_buckets,
+            "actionable_bucket_sum": 0,
+            "unknown_total": 0,
+            "source_complete": False,
+            "parsed_closure_ok": True,
+            "overall_view_ok": False,
+            "actionable_next_command": [],
+            "safe_to_execute": False,
+            "mq_bad_rows": 0,
+            "lane_health": dict(lane_health),
+        }
+    }
     if not path.exists():
-        return (
-            {"merge_queue": {"available": False, "failed_total": 0, "buckets": buckets}},
-            ["merge_queue: 账本不存在"],
-        )
+        return degraded_block, ["merge_queue: 账本不存在"]
 
-    failed_total = 0
-    terminal_total = 0
-    malformed = 0
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    entry = json.loads(raw)
-                except json.JSONDecodeError:
-                    malformed += 1
-                    continue
-                if not isinstance(entry, dict) or str(entry.get("status")) != "failed":
-                    continue
-                failed_total += 1
-                try:
-                    diag = classify_failure(entry)
-                except Exception:  # 分诊本身出错不能拖垮整个协调视图
-                    diag = {"failure_class": "", "primary_reason": "classify_error"}
-                bucket = _QUEUE_BUCKETS.get(str(diag.get("failure_class") or ""), "human")
-                buckets[bucket]["count"] += 1
-                lane_state = lane_status.get(str(entry.get("lane_id") or ""), "")
-                is_terminal = lane_state in _TERMINAL_LANE_STATUSES
-                if is_terminal:
-                    terminal_total += 1
-                if len(buckets[bucket]["items"]) < limit_per_bucket:
-                    buckets[bucket]["items"].append(
-                        {
-                            "queue_id": entry.get("queue_id"),
-                            "lane_id": entry.get("lane_id"),
-                            "failure_class": str(diag.get("failure_class") or "") or "unknown",
-                            "primary_reason": str(diag.get("primary_reason") or ""),
-                            "evidence_hint": str(diag.get("evidence_hint") or ""),
-                            "lane_status": lane_state,
-                            "terminal": is_terminal,
-                            "next_command": _queue_next_command(entry, diag, lane_state),
-                        }
-                    )
-    except OSError as exc:
-        return (
-            {"merge_queue": {"available": False, "failed_total": 0, "buckets": buckets}},
-            [f"merge_queue 不可读: {exc}"],
+        recs, failed_total, terminal_total, malformed = _scan_merge_queue_failed(
+            path, lane_status, lane_health, valid_statuses
         )
+    except OSError as exc:
+        return degraded_block, [f"merge_queue 不可读: {exc}"]
 
     notes: list[str] = []
     if malformed:
         notes.append(f"merge_queue 有 {malformed} 行不可解析（未计入分诊）")
+
+    lane_h = {
+        "read_ok": bool(lane_health.get("read_ok")),
+        "bad_rows": int(lane_health.get("bad_rows") or 0),
+        "duplicate_lane_ids": int(lane_health.get("duplicate_lane_ids") or 0),
+        "invalid_status_rows": int(lane_health.get("invalid_status_rows") or 0),
+        "conflict_lane_ids": list(lane_health.get("conflict_lane_ids") or ()),
+    }
+    # source_complete=来源完整性（≠解析闭合）: lanes 可读无坏行无重复无无效 status，
+    # 且 merge_queue.jsonl 无坏行；任一不满足即 false，不得伪装「来源完整」。
+    source_complete = (
+        lane_h["read_ok"]
+        and lane_h["bad_rows"] == 0
+        and lane_h["duplicate_lane_ids"] == 0
+        and lane_h["invalid_status_rows"] == 0
+        and malformed == 0
+    )
+    unknown_total = sum(1 for r in recs if r["classification"] == "unknown")
+    actionable_total = 0
+    for r in recs:
+        if r["classification"] == "actionable":
+            actionable_buckets[r["bucket"]]["count"] += 1
+            actionable_total += 1
+    # 新恒等式只作用 actionable 轨（legacy closure_ok 原恒等式原值不动）
+    parsed_closure_ok = actionable_total == failed_total - terminal_total - unknown_total
+    overall_view_ok = source_complete and parsed_closure_ok
+
+    actionable_cmds: list[str] = []
+    for r in recs:
+        entry = r["entry"]
+        diag = r["diag"]
+        lid = r["lid"]
+        qid = str(entry.get("queue_id") or "")
+        bucket = r["bucket"]
+        cls = r["classification"]
+        if not overall_view_ok or cls == "unknown":
+            next_command = _degraded_queue_hint(lid, qid)
+        else:
+            next_command = _queue_next_command(entry, diag, r["lane_state"])
+        if len(buckets[bucket]["items"]) < limit_per_bucket:
+            buckets[bucket]["items"].append(
+                {
+                    "queue_id": entry.get("queue_id"),
+                    "lane_id": entry.get("lane_id"),
+                    "failure_class": str(diag.get("failure_class") or "") or "unknown",
+                    "primary_reason": str(diag.get("primary_reason") or ""),
+                    "evidence_hint": str(diag.get("evidence_hint") or ""),
+                    "lane_status": r["lane_state"],
+                    "terminal": r["is_terminal"],
+                    "next_command": next_command,
+                    "classification": cls,
+                }
+            )
+        if cls == "actionable" and len(actionable_buckets[bucket]["items"]) < limit_per_bucket:
+            actionable_buckets[bucket]["items"].append(
+                {
+                    "queue_id": entry.get("queue_id"),
+                    "lane_id": entry.get("lane_id"),
+                    "failure_class": str(diag.get("failure_class") or "") or "unknown",
+                    "primary_reason": str(diag.get("primary_reason") or ""),
+                    "next_command": next_command,
+                }
+            )
+            if overall_view_ok and not next_command.startswith("#"):
+                actionable_cmds.append(next_command)
+
+    for r in recs:
+        buckets[r["bucket"]]["count"] += 1
     summed = sum(int(b["count"]) for b in buckets.values())
     closure_ok = summed == failed_total
     if not closure_ok:  # R5-b：实现错误必须自证，不允许把项丢掉
@@ -897,6 +1205,18 @@ def _collect_merge_queue(
                 "closure_ok": closure_ok,
                 "malformed_lines": malformed,
                 "terminal_total": terminal_total,
+                # ---- M1 新增轨（独立字段，上方 legacy 值一律不动）----
+                "actionable_total": actionable_total,
+                "actionable_buckets": actionable_buckets,
+                "actionable_bucket_sum": actionable_total,
+                "unknown_total": unknown_total,
+                "source_complete": source_complete,
+                "parsed_closure_ok": parsed_closure_ok,
+                "overall_view_ok": overall_view_ok,
+                "actionable_next_command": actionable_cmds,
+                "safe_to_execute": bool(overall_view_ok),
+                "mq_bad_rows": malformed,
+                "lane_health": lane_h,
             }
         },
         notes,
@@ -994,6 +1314,9 @@ def coordination_snapshot(
         now=now,
         window_hours=window_hours,
         only_in_flight=only_in_flight,
+        audit_dir=str(audit_dir),
+        ctx=ctx,
+        view_truncated=bool(capacity.get("truncated")),
     )
     degraded.extend(goal_notes)
 
@@ -1027,31 +1350,52 @@ def coordination_snapshot(
 def _render_merge_queue(lines: list[str], mq: dict) -> None:
     """渲染 R5 队列分诊段（只读投影；空 dict 不输出任何行）。
 
-    抽成独立函数的直接原因：内联在 ``render_coordination`` 里会让后者越过
-    120 行函数守卫阈值（RULE-AI-24 防退化）。
+    M1（DESIGN-20261116 §2.2 B/D）: 三分行置前（当前待办/历史终态/来源未知/坏行
+    + best-effort 快照标注），legacy 四桶行与 closure_ok 行保留在后（老读者仍见
+    原口径）。抽成独立函数的直接原因：内联在 render_coordination 里会让后者
+    越过 120 行函数守卫阈值（RULE-AI-24 防退化）。
     """
     if not mq:
         return
     if not mq.get("available"):
         lines.append("  队列分诊 merge_queue=<不可用>")
         return
-    bt = mq.get("buckets") or {}
-    parts = [
-        f"{(bt.get(k) or {}).get('label') or k}={(bt.get(k) or {}).get('count', 0)}"
-        for k in ("retry", "rebase", "verify", "human")
-    ]
+    failed_n = mq.get("failed_total")
+    actionable_n = mq.get("actionable_total", 0)
+    terminal_n = mq.get("terminal_total", 0)
+    unknown_n = mq.get("unknown_total", 0)
+    lane_h = mq.get("lane_health") or {}
+    bad_rows = int(mq.get("mq_bad_rows") or 0) + int(lane_h.get("bad_rows") or 0)
+    if bool(mq.get("overall_view_ok")):
+        trust_txt = "视图可信=ok"
+    else:
+        sc_txt = "yes" if bool(mq.get("source_complete")) else "no"
+        pc_txt = "yes" if bool(mq.get("parsed_closure_ok")) else "no"
+        trust_txt = f"视图降级(source_complete={sc_txt} parsed_closure_ok={pc_txt})"
     lines.append(
-        f"  队列分诊 failed={mq.get('failed_total')} "
-        f"闭合={'ok' if mq.get('closure_ok') else 'BROKEN'}({mq.get('bucket_sum')}) "
-        f"历史={mq.get('terminal_total', 0)} "
+        f"  队列分诊三分 failed={failed_n} | 当前待办={actionable_n} 历史={terminal_n}"
+        f" 来源未知={unknown_n} 坏行={bad_rows} | {trust_txt}"
+        " 快照=best-effort（非事务；任何动作前须权威重查）"
+    )
+    bt = mq.get("buckets") or {}
+    parts = []
+    for k in ("retry", "rebase", "verify", "human"):
+        cell = bt.get(k) or {}
+        label = cell.get("label") or k
+        count = cell.get("count", 0)
+        parts.append(f"{label}={count}")
+    closure_txt = "ok" if mq.get("closure_ok") else "BROKEN"
+    bucket_sum = mq.get("bucket_sum")
+    lines.append(
+        f"  队列分诊 failed={failed_n} 闭合={closure_txt}({bucket_sum}) 历史={terminal_n} "
         + " ".join(parts)
     )
     for key in ("retry", "rebase", "verify", "human"):
         for it in (bt.get(key) or {}).get("items") or []:
-            lines.append(
-                f"      [{key}] {it.get('lane_id') or '-'} "
-                f"{it.get('primary_reason') or '-'} → {it.get('next_command') or '-'}"
-            )
+            lane_id = it.get("lane_id") or "-"
+            reason = it.get("primary_reason") or "-"
+            cmd = it.get("next_command") or "-"
+            lines.append(f"      [{key}] {lane_id} {reason} → {cmd}")
 
 
 def render_coordination(snapshot: dict) -> str:
@@ -1087,6 +1431,34 @@ def render_coordination(snapshot: dict) -> str:
             lines.append(f"      last_cp {cp.get('ts','')} {cp.get('what','')}")
         for note in g.get("degraded") or []:
             lines.append(f"      ⚠ {note}")
+        # M3（DESIGN-20261116 §5）: 收口候选/待补证据/停滞候选 只读投影行。
+        gid_txt = g.get("goal_id") or "-"
+        cl = g.get("closure") or {}
+        kind = str(cl.get("kind") or "")
+        owner_txt = g.get("owned_by")
+        mask_txt = g.get("owner_masked") or "-"
+        act_txt = g.get("activity_at") or "-"
+        if kind == "candidate":
+            lines.append(
+                f"      ✅ 收口候选 {gid_txt}: owner={owner_txt}({mask_txt})"
+                f" activity_at={act_txt} | 判据=goal_gates 全过"
+                " | 建议动作=update_goal complete + evidence_refs"
+                "（owner 会话执行；快照非事务，动作前权威重查）"
+            )
+        elif kind == "pending_evidence":
+            gaps_txt = "; ".join(str(x) for x in cl.get("gaps") or []) or "-"
+            lines.append(
+                f"      ⏳ 待补证据 {gid_txt}: {gaps_txt}"
+                "（判据=goal_gates；证据补齐前不得 complete，本行不构成「可 complete」结论）"
+            )
+        if g.get("stalled"):
+            lines.append(
+                f"      💤 停滞候选 {gid_txt}: activity_at={act_txt} 落后窗口阈值，"
+                "请 owner 检查（不判僵尸、无 TTL 结论）"
+            )
+    if cap.get("truncated"):
+        # M3（§5.2）: 截断视图不投影收口候选（宁缺勿假），此行为段级标注。
+        lines.append("  ⚠ 收口候选: 视图不完整（goals 截断），本轮不投影收口候选（宁缺勿假）")
     for s in snapshot.get("sessions") or []:
         lines.append(
             f"  session {mask_session(s.get('session_id') or '') or '<unclaimed>'} "
