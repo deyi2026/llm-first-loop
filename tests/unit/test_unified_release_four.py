@@ -407,3 +407,27 @@ def test_adopted_wecom_receipt_identity_change_fails_closed(rig):
         ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
     assert rig.store.calls == []
     assert len(rig.store.actions) == 2
+
+
+def test_missing_live_service_is_durable_block_not_keyerror(rig, monkeypatch):
+    def missing_identity(store):
+        return {"services": {
+            n: {"live": {"pid_alive": True, "matches_desired_generation": True},
+                "restart_required": False, "admission_barrier": None}
+            for n in ("web", "feishu")}, "admission_barriers": []}
+
+    monkeypatch.setattr(ur.sc, "compose_service_identity_view", missing_identity)
+    with pytest.raises(RuntimeError, match="missing learning"):
+        ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    assert ur._read(rig.journal)["status"] == "blocked"
+    assert [a.target for a in rig.store.actions] == ["all"]
+
+
+def test_opened_journal_inode_rejects_symlink(tmp_path):
+    path = tmp_path / "journal.json"
+    target = tmp_path / "target.json"
+    target.write_text('{"schema": 1}')
+    path.symlink_to(target)
+    with pytest.raises(OSError):
+        ur._read(path)
+    assert target.read_text() == '{"schema": 1}'

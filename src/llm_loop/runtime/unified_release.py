@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -27,6 +28,10 @@ _TERMINAL = frozenset({"succeeded", "failed"})
 _SERVICES = ("web", "feishu", "learning", "wecom")
 
 
+class ReleaseAlreadyRunningError(RuntimeError):
+    """The global managed-release coordinator lock is already held."""
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -39,8 +44,14 @@ def _paths(data_dir: Path, release_id: str) -> tuple[Path, Path, Path]:
 
 
 def _read(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schema") != 1:
+    # Check the opened inode, not a prior is_symlink probe (TOCTOU).
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1_000_000:
+            raise ValueError("unified release journal is not a bounded regular file")
+        data = json.load(stream)
+    if not isinstance(data, dict) or data.get("schema") != 1:
         raise ValueError("unified release journal schema mismatch")
     return data
 
@@ -164,8 +175,13 @@ def _await_action(
 def _verify_live(store: sc.ManagedServiceDeploymentStore, candidate: Any, names: tuple[str, ...]) -> None:
     _assert_desired(store, candidate)
     view = sc.compose_service_identity_view(store)
+    rows = view.get("services")
+    if not isinstance(rows, dict):
+        raise RuntimeError("service identity view missing services")
     for name in names:
-        row = view["services"][name]
+        row = rows.get(name)
+        if not isinstance(row, dict) or not isinstance(row.get("live"), dict):
+            raise RuntimeError(f"service identity view missing {name}")
         live = row["live"]
         if (
             not live.get("pid_alive")
@@ -284,7 +300,7 @@ def run_release(
                 break
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("unified release already running") from exc
+                    raise ReleaseAlreadyRunningError("unified release already running") from exc
                 time.sleep(0.1)
         state = _read(journal)
         return _run_locked(store, journal, state, timeout_s=timeout_s, poll_s=poll_s)
@@ -309,10 +325,10 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
     if wait:
         try:
             result = run_release(store, state["release_id"])
+        except ReleaseAlreadyRunningError:
+            print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
+            return 12
         except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
-            if str(exc) == "unified release already running":
-                print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
-                return 12
             print(json.dumps({"ok": False, "error": str(exc), "journal": str(journal)}))
             return 1
         print(json.dumps({"ok": result["status"] == "succeeded", "status": result["status"], "journal": str(journal)}))
