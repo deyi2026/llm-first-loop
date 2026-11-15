@@ -1,4 +1,4 @@
-# BUG/阻断队列（多 Agent 协作 v1.1）— 2026-11-16
+# BUG/阻断队列（多 Agent 协作 v1.3）— 2026-11-16
 
 - 真值源: 设计正本 docs/design/DESIGN-20261116-multiagent-coordination-closure-v1.md（§证据索引，行号基线 origin/main 9e6b438cc）
 - 字段: ID | 证据 | 严重度 | owner | 依赖 | 状态 | 下一动作
@@ -18,6 +18,8 @@
 | BUG-04 | R5 四桶混计历史终态项：实测 35 failed=34 历史+1 活待办；closure 恒等式 [921-924] 缺 terminal/unknown 项；桶默认 human [893] | P1 | GLM-5.3 实施 lane（M1，批次一） | BUG-03 | open | 双轨（设计 §2.2 A/B，P1-1）: legacy 字段原口径全保留（closure_ok/bucket_sum/failed_total 原值不动，现有测试不改）；新增 actionable_*/unknown_total+新恒等式 actionable_bucket_sum==failed_total−terminal_total−unknown_total **只作用于 actionable 轨**；渲染三分行置前+legacy 行保留；新增双轨断言测试 |
 | BUG-05 | lane.py:607-616→704-712 公开 append_lane_event 写 lane_events.jsonl 不持 lanes 锁、OSError 只 warning（fail-open） | P1 | GLM-5.3 实施 lane（M2-A 批次二附加） | BUG-01 | open | 纳入 strict 覆盖；负测：锁不可用时公开入口拒写（strict）；主账本成功+事件失败 → 显式 event_append_failed 不回滚不谎称成功；锁序无嵌套死锁测试（设计 §3.2-6，P1-6） |
 | BUG-06 | 11-15 P0-1 未修：_override_authorized 把自报 reason+refs 当授权（goal 域；子代理 C 实证）；P0-2 部分修：create_goal 显式 session_id 按原文采信 [tools_goal.py:394-396]，不一致时才拒（本会话 01:08 实测拒 ✓）。上游 11-15 定级 **P0，本队列不降级** | **外部 P0 / HOLD 依赖（不阻 M1/批次一，P2-1）** | 独立授权任务（不在本 Goal） | 用户授权+独立设计 | HOLD-ref | 移交：作为 M2-B/M4-B 解除 HOLD 的前置；本 Goal 只引用不修；不阻塞批次一任何 GO 项 |
+| BUG-09 | 设计 v1.2 §3.2-3/§3.3 将 close 纳入跨 Goal 路径重叠硬拒——close 是终态释放（只减不增占用），误拒将使 lane 永远无法收口（GPT-6 主统筹 2026-11-16 01:34 复审意见(1)） | P1（批次二前置） | GLM-5.3 实施 lane（M2-A，批次二） | BUG-01/02 | in-design（v1.3 已修 §3.2-3/§3.3） | 批次二实施: 跨 Goal 重叠判定仅作用于 create/update（引入/扩大占用）；close 不因现有重叠被拒、仍受 strict 锁串行保护；负测=两 active lane paths 重叠时 close 其一必须成功（RULE-AI-35 实测应拦误拒） |
+| BUG-10 | 设计 v1.2 §2.2 legacy next_command 兼容保留与「unknown/degraded 禁发写命令」间存在安全例外缺口（GPT-6 主统筹 2026-11-16 01:34 复审意见(2)） | P1 | GLM-5.3 实施 lane（M1，批次一 Lane A） | BUG-03/04 | in-design（v1.3 已修 §2.2/§2.3） | M1 实施: legacy next_command 结构兼容但来源不完整/降级时必须安全降级（不得携带写命令）；新增 actionable_next_command/safe_to_execute 显式字段；负测=坏源下 next_command 含 requeue/rebase/merge → fail、safe_to_execute=false 断言 |
 
 ## P2（登记不阻塞）
 | ID | 证据 | 严重度 | owner | 依赖 | 状态 | 下一动作 |

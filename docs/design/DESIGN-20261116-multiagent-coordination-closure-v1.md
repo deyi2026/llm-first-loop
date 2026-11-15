@@ -1,6 +1,6 @@
-# LFL 多 Agent 协作优化：队列降噪、冲突前置、Goal 收口与契约协调——需求与实现设计 v1.2
+# LFL 多 Agent 协作优化：队列降噪、冲突前置、Goal 收口与契约协调——需求与实现设计 v1.3
 
-- 状态: **DRAFT-待复审**（v1.2 已并入 GPT-6 主统筹 2026-11-16 01:24 REVISE 全部意见 P0-1/P0-2/P1-1..P1-6/P2-1/P2-2，逐项落点与验证见 §16；复审 PASS 前不进入 M1+ 实施）
+- 状态: **批次一 GO（实施中）**（v1.2 已并入 GPT-6 主统筹 2026-11-16 01:24 REVISE 全部十项意见 P0-1/P0-2/P1-1..P1-6/P2-1/P2-2，逐项落点与验证见 §16；2026-11-16 01:34 复审裁决: 批次一设计 GO、允许隔离并行开发、批次二 M2-A 暂 HOLD；v1.3 并入该裁决的两项勘误 BUG-09（close 不入跨 Goal 硬拒）/BUG-10（next_command 安全降级），见 §16 末两行）
 - 日期: 2026-11-16（宿主本地时区）
 - 本文件: docs/design/DESIGN-20261116-multiagent-coordination-closure-v1.md（设计正本 v1）
 - Lane: lane-d6ceb9dd / Goal: GOAL-20261116-d83c9c53 / 基线: origin/main 9e6b438cc814844fde49b519824cd359b5a27cdc
@@ -39,13 +39,13 @@
 - `parsed_closure_ok`(bool): 可解析部分自洽（每条可归因 failed 恰属 活待办/历史终态/来源未知 之一）。
 - `overall_view_ok == source_complete && parsed_closure_ok`: 视图整体可信才为 true；false 时一切计数标注降级、next_command 降级为提示类。
 - 新恒等式**只用于 actionable 轨**: `actionable_bucket_sum == failed_total − terminal_total − unknown_total`；legacy `closure_ok` 保持原恒等式原值不变。
-- 分类规则: lane_id 在账且终态 → 历史终态（terminal_total）；在账且在途 → 活待办（actionable）；**不在账 / 账本不可读 / 重复 lane_id 冲突状态 / 无效 status / 坏行关联项 → 一律保守归 unknown**（宁可 unknown，不冒充已知）。未知/降级项 next_command 禁止发放 requeue/rebase/merge 等写操作命令，只允许「人工核对账本/权威重查」类提示。
+- 分类规则: lane_id 在账且终态 → 历史终态（terminal_total）；在账且在途 → 活待办（actionable）；**不在账 / 账本不可读 / 重复 lane_id 冲突状态 / 无效 status / 坏行关联项 → 一律保守归 unknown**（宁可 unknown，不冒充已知）。未知/降级项 next_command 禁止发放 requeue/rebase/merge 等写操作命令，只允许「人工核对账本/权威重查」类提示。**v1.3 勘误（BUG-10，安全例外——不为兼容保留不安全建议）**: legacy `next_command` 仅结构兼容；当 source_complete=false、parsed_closure_ok=false、overall_view_ok=false 或该项归 unknown/降级时，legacy `next_command` 字段**必须安全降级**（不得携带任何写命令，退化为「人工核对账本/权威重查」提示类）；同时**新增显式字段** `actionable_next_command`（仅活待办项的可执行建议）与 `safe_to_execute`(bool)——safe_to_execute=false 时任何执行方不得据 next_command 执行写动作。
 - 默认文本渲染优先三分行: `failed=N | 当前待办=M 历史=K 来源未知=J 坏行=L | 四桶(legacy)…`——三分行在前，legacy 桶行保留在后（老读者仍见原口径）。
 **C. 来源损坏与重复 ID（P1-2）**: lanes.jsonl 读失败、坏 JSON、非 dict 行、重复 lane_id、同 lane_id 状态冲突、无效 status 枚举、merge_queue.jsonl 坏行 → 一律**不得伪装为「来源完整/无待办」**；分别计入 health 计数（read_ok / bad_rows / duplicate_lane_ids / invalid_status_rows / mq_bad_rows）并使 source_complete=false。区分两个事实: **parsed closure**（能解析部分是否自洽）与 **source completeness**（来源是否完整）；parsed_closure_ok=true 不代表 source_complete=true。
 **D. 快照与动作纪律**: lanes.jsonl 与 merge_queue.jsonl 两次裸读非事务（§2.1），R5 整体标注 best-effort 快照；任何基于 R5 的 requeue/abort/merge 决策，动作前必须用对应工具做权威重查（非事务快照不可作为动作依据；文档化，不改代码）。
 
 ### 2.3 最小改动
-仅 goal_coordination.py 三函数: `_lane_status_map` → 返回 (map, health{read_ok, bad_rows, duplicate_lane_ids, invalid_status_rows})（重复 lane_id/无效 status 计入且不静默丢弃）；`_collect_merge_queue` → **新增** actionable_total/actionable_buckets/unknown_total/source_complete/parsed_closure_ok/overall_view_ok 字段（legacy 字段原值一律不动）；`_render_merge_queue` [1063-1090] → 新增三分行（置前）+ best-effort 标注 + 保留 legacy 四桶行与 closure_ok 行。测试: 现有断言不改（回归必过），**新增**双轨断言与三分/未知/降级负测（追加于 test_merge_queue_failure_class.py，覆盖 188-234/291-315 相邻场景）。
+仅 goal_coordination.py 三函数: `_lane_status_map` → 返回 (map, health{read_ok, bad_rows, duplicate_lane_ids, invalid_status_rows})（重复 lane_id/无效 status 计入且不静默丢弃）；`_collect_merge_queue` → **新增** actionable_total/actionable_buckets/unknown_total/source_complete/parsed_closure_ok/overall_view_ok 字段（legacy 字段原值一律不动）**+ actionable_next_command/safe_to_execute（BUG-10 勘误: legacy next_command 不安全时必须降级，规则见 §2.2 B 末条）**；`_render_merge_queue` [1063-1090] → 新增三分行（置前）+ best-effort 标注 + 保留 legacy 四桶行与 closure_ok 行。测试: 现有断言不改（回归必过），**新增**双轨断言与三分/未知/降级负测（追加于 test_merge_queue_failure_class.py，覆盖 188-234/291-315 相邻场景）。
 
 ### 2.4 验收/负测
 - 负测: lanes.jsonl 缺失 / 全坏行 / 权限不可读 / 坏 JSON / 非 dict 行 / **重复 lane_id 且状态冲突** / **无效 status** / merge_queue.jsonl 坏行 → source_complete=false、渲染降级标注、不发放写操作命令；lane_id 不在账 → unknown_total 计数+提示类 next_command；已 merged lane 不再收到 merge_request 建议（actionable 轨）；parsed_closure_ok 失败路径；overall_view_ok=false 时全部计数标注降级。
@@ -83,8 +83,8 @@
      | true | true | 否 | 三入口拒写（**不降级 warn**） |
      | false | true | 任意 | **拒绝启用**（初始化抛错） |
 
-3. 锁内原子检查: 在 create / update / close（同一 `_file_lock` 临界区内）扫描全部在途 lane:
-   - 跨 Goal 重叠（overlap）→ warn 模式: 回执 warning 列重叠路径与对方 lane_id/goal_id；enforce 模式: 硬拒 LanePathConflict。
+3. 锁内原子检查: 在 create / update（同一 `_file_lock` 临界区内）扫描全部在途 lane（**v1.3 勘误 BUG-09: close 是终态释放、只减不增占用，不纳入跨 Goal 重叠判定——close 仍在锁内执行以保串行，但不因现有重叠被拒**）:
+   - 跨 Goal 重叠（overlap，仅判定 create/update 引入/扩大的占用）→ warn 模式: 回执 warning 列重叠路径与对方 lane_id/goal_id；enforce 模式: 硬拒 LanePathConflict；close 一律不因此拒绝（负测: 两 active lane paths 重叠时 close 其一必须成功）。
    - 同 Goal main/sub 或 sub/sub 重叠 → **警告不硬拒**（可能合法，见 11-05）。
    - 对方 lane `paths=[]` 或缺失（如 lane-selftest-guard）→ 冲突面 unknown: warn 模式提示「存在未知冲突面」；enforce 模式**不得据此放行**也不得据此误报冲突——回执显式 unknown 项，要求补 paths 或 owner 裁决（fail-closed: 不假装知道没有冲突）；unknown 项**登记待办直至 paths 补齐或 owner 处置，不得长期静默放行**。
    - **AGENTS.md 准入落实（P0-2）: 本批不引入任何 force/override 直接放行设计。** 模型侧仅提供「申请/复核流程」: (a) 请求 owner 复核该冲突；(b) 缩小自身 paths 后重试；(c) 等待对端 lane 终态后重试——三者均不改变硬门判定本身；模型**不得自报批准**，任何批准必须来自 owner（用户/独立授权链）的显式新输入。若未来需要紧急放行出口，须**另立设计+独立用户授权**，且形态为「人工审批面签发的一次性凭据」，不是模型可传参数。同时文档说明「为何模型+现有工具不能自判」（答: 真实多进程竞态下模型无法原子读改写账本，锁内检查必须由代码承担）。
@@ -101,7 +101,7 @@
 ### 3.3 EARS（摘要）
 - 当 strict 开启且锁不可用（OSError/导入失败/锁文件不可写）→ create/update/close 一致拒写并抛 LaneStoreLockUnavailable；warn（默认）→ 行为与现状完全一致（含 warning）。
 - 当 enforce=true 且 lock_strict=false → 拒绝启用（初始化抛错）；当 enforce=true 且运行时锁不可用 → 拒写，不降级 warn（INV-1）。
-- 当 create/update/close 在锁内检出跨 Goal 路径重叠 → warn: 回执告警；enforce: 拒绝。
+- 当 create/update 在锁内检出跨 Goal 路径重叠 → warn: 回执告警；enforce: 拒绝；close 属终态释放，**不因现有重叠被拒**（BUG-09），仅受锁串行保护。
 - 当重叠对象 paths 为空/缺失 → 回执 unknown 冲突面，永不输出「无冲突」结论；unknown 项登记待办直至补齐或 owner 处置。
 - 当同 Goal 内重叠 → 仅告警。
 - 当模型对冲突结论不认可 → 可调用申请/复核流程（请求 owner 复核/缩小自身 paths/等待对端终态重试）；**不存在模型可传的 force/override 放行参数**（P0-2）。
@@ -221,3 +221,5 @@ M2-B/M4-B: HOLD（外部依赖，不在本 Goal）
 | P1-6 路径规范化/锁序 | §3.2-4 规则（repo-root 绑定/父子/不存在/软链 TOCTOU best-effort/unknown/reject）、§3.2-6 两事实+锁序、BUG-05 | §3.2-4 路径负测清单全跑 + 无重入死锁测试（两实现方案二选一附证） |
 | P2-1 BUG-06/08 定性 | BUG-06（外部 P0/HOLD 依赖，不阻 M1）、BUG-08（集成前置阻断，非业务 bug）、§3.1 措辞、§9 表 | 队列字段审查; §3.1 无「事故」断言 |
 | P2-2 效率实测 | §14 实测数据+分工记录（不宣称零重复/提速）、OPT-06/07（可测最小改进，不本轮开发）、OPT 不纳入纪律行 | M1 实施轮记录对照数据（任务书行号窗口/父侧定点核验 token 对照） |
+| v1.3 勘误(1) close 不入跨 Goal 硬拒（GPT-6 2026-11-16 01:34 复审意见(1)） | §3.2-3（重叠判定仅 create/update + close 放行语义 + 负测）、§3.3 EARS 第 3 条、BUG-09 | 批次二 M2-A 负测: 两 active lane paths 重叠时 close 其一必须成功（RULE-AI-35 实测应拦误拒） |
+| v1.3 勘误(2) next_command 安全降级（GPT-6 2026-11-16 01:34 复审意见(2)） | §2.2 B 末条（actionable_next_command/safe_to_execute + 禁写降级，不为兼容保留不安全建议）、§2.3 字段清单、BUG-10 | M1 负测: 坏源/降级下 next_command 无 requeue/rebase/merge 写命令且 safe_to_execute=false |
