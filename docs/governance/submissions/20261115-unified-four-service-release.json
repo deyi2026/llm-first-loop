@@ -1,0 +1,105 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-unified-four-service-release",
+  "summary": "Explicit Mac source-checkout four-service managed release: one desired-state CAS, verified existing all action (Web/Feishu/Learning), then separate idle-gated WeCom action; durable recovery and exact live identity. Existing all contract is unchanged.",
+  "components": [
+    {
+      "component_id": "unified-managed-release-coordinator",
+      "paths": [
+        "src/llm_loop/runtime/unified_release.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing runtime.service_control ManagedServiceDeploymentStore, action worker, requester-exit/idle gates and verified service identity",
+      "disposition": "Introduce an explicit standalone operator CLI. Persist one immutable release ID and reviewed SHA, publish exactly one generation CAS, verify all three existing all targets, then adopt/await or safely accept one WeCom action. Never replay uncertain physical restarts, never silently include WeCom in legacy all, and require both confirmed_ok receipts and four matching live services before success.",
+      "evidence": [
+        "Independent GLM-5.3 full candidate review e00dd6b3 PASS P0=0/P1=0 with five documented nonblocking P2; no tools or write authority",
+        "143 related service-control, WeCom and architecture tests passed on reviewed code; negative tests cover accept-to-journal crash, external in-flight adoption, ambiguous spawn, generation/SHA/identity mismatch and duplicate dispatch",
+        "The previous original R9 failure on 7769f94f was an architecture guard failure; standalone CLI and T2 registry classification repaired it without relaxing existing guards"
+      ],
+      "verification_level": "Independent GLM-5.3 exact code review PASS P0/P1=0; original full R9 and exact final manifest-bearing SHA remote PR CI/A.5 are mandatory before integration or release",
+      "model_evidence_veto_recovery_exit": "The coordinator does not delegate restart, retry, veto or rollback authority to a model. It uses the existing durable service-control actions, requester-exit and idle gates, one CAS and readback. Failed/unknown action outcomes fail closed; only existing managed operator recovery can resolve ambiguity.",
+      "rollback_route": "Use the existing managed service-control rollback to the previous verified Mac generation after operator preflight. Revert this standalone CLI and T2 registry declaration together if the candidate fails; do not kill services directly or weaken all/WeCom idle gates.",
+      "declaration_id": "reuse-existing-managed-service-control-authority"
+    },
+    {
+      "component_id": "durability-classification",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing R9 architecture guard and T2 service-control durability registry",
+      "disposition": "Classify the coordinator journal under the existing T2 service_control_state durability surface; do not rebaseline function-size ratchets, add cycle exemptions, or change the architecture guard itself.",
+      "evidence": [
+        "Architecture guards 77 passed after moving CLI out of service_control; no new runtime import cycle",
+        "The journal uses the existing atomic_write_bytes_file and fsyncs the initial file and parent directory"
+      ],
+      "verification_level": "Original unchanged architecture guards plus final R9 and remote CI required",
+      "model_evidence_veto_recovery_exit": "Durability classification does not authorize an unverified action or bypass any CAS, worker, or idle gate.",
+      "rollback_route": "Revert this exact registry path addition with the standalone coordinator."
+    },
+    {
+      "component_id": "release-design-and-negative-tests",
+      "paths": [
+        "docs/design/DESIGN-20261115-unified-managed-four-service-release-v1.md",
+        "tests/unit/test_unified_release_four.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing design evidence and pytest service-control verification",
+      "disposition": "Document explicit operator mode, immutable request, ordered receipts, safe interruption, exact SHA and four-service identity, and preserve nonblocking P2 residuals; test positive and negative coordinator states with no real restarts.",
+      "evidence": [
+        "Reviewer P1 phase2 accept-to-journal gap reproduced and fixed with a one-spawn negative test",
+        "External WeCom waiting/failed actions do not trigger a second reconnect",
+        "Test fixture is simulated; physical service verification remains a separate controlled production gate"
+      ],
+      "verification_level": "143 targeted/architecture tests PASS; independent review PASS; original full R9, A.5 and exact remote CI still required",
+      "model_evidence_veto_recovery_exit": "Test doubles and reviewer judgments are evidence, not proof of physical service restart or operator approval.",
+      "rollback_route": "Revert test and design changes with the coordinator if integration is rejected."
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261115-unified-four-service-release.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture-submission G1-G4 mechanical checker",
+      "disposition": "Declare exactly five changed paths and explicit reuse of existing service-control authority; do not alter A.5 rules or treat mechanical coverage as semantic approval.",
+      "evidence": [
+        "A.5 requires exactly one changed submission manifest with complete changed-path coverage",
+        "Existing lfl.architecture_submission.v0.1 schema reused unchanged"
+      ],
+      "verification_level": "Run unchanged A.5 checker on final base/head and require remote A.5 success",
+      "model_evidence_veto_recovery_exit": "Declaration cannot override independent review, R9, CAS, idle gates or production rollout authorization.",
+      "rollback_route": "Revert manifest with the whole candidate if any mandatory gate fails."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-managed-service-control-authority",
+      "g1": {
+        "necessity": "Existing managed all intentionally excludes long-lived WeCom. Operators need one auditable release request that verifies Web/Feishu/Learning and then safely updates WeCom without duplicate reconnect or partial-success claims."
+      },
+      "g2": {
+        "authority_owner": "Existing ManagedServiceDeploymentStore CAS, ServiceControlAction receipts, managed worker, requester-exit and idle gates, and compose_service_identity_view",
+        "relationship": "reuse",
+        "non_duplication": "No new physical restart engine, independent policy judge, bypass of existing all semantics, retry mechanism, or unguarded rollback. Only a durable two-stage coordinator over existing actions."
+      },
+      "g3": {
+        "model_evidence": [
+          "Exact source Git SHA and WebUI artifact identity verified by build_deployment",
+          "Desired deployment generation and ID checked before and after one CAS",
+          "Managed all and WeCom action IDs and succeeded/confirmed_ok receipts",
+          "Current Web, Feishu, Learning and WeCom PID/desired-generation identity plus admission barriers"
+        ],
+        "recovery_or_reason": "If a coordinator dies, reload exact journal and action IDs; if an action is accepted before its ID is recorded, recover by exact origin and generation. Unknown worker-spawn outcome or failed external WeCom receipt requires operator evidence, not automatic physical replay."
+      },
+      "g4": {
+        "rollback": "Use the existing managed release rollback only after operator preflight and exact identity checks; never reset parallel worktrees or force an active WeCom connection to restart.",
+        "verification": [
+          "Independent GLM-5.3 full review of code candidate e00dd6b3 PASS P0=0/P1=0; exact final manifest-only SHA requires delta confirmation",
+          "143 related/architecture tests passed, including phase2 crash and external WeCom no-double-restart negative cases",
+          "Original full R9 exit0 and exact-SHA GitHub PR CI/A.5 are mandatory before merge and managed deployment"
+        ]
+      }
+    }
+  ]
+}

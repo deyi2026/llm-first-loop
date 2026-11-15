@@ -164,3 +164,34 @@ handoff and fake-store test coverage remain explicitly documented residuals;
 no real service was restarted by these tests. The production release still
 requires independent review of the revised SHA, original R9 exit 0 and
 exact-SHA GitHub CI before any operator-controlled switch.
+
+## Final reviewer P2 residuals
+
+The independent GLM-5.3 review of source candidate `e00dd6b3` returned
+PASS/P0=0/P1=0/P2=5. These nonblocking residuals remain explicit:
+
+1. In the tiny worker-spawn/PID-write gap, a crash can leave an accepted
+   action with unknown spawn outcome. This **blocks** rather than launching a
+   duplicate physical restart; a human must reconcile durable action and
+   process evidence.
+2. Two detached coordinator processes may be briefly alive during a lock
+   handoff, but only one owns the global flock and can issue managed actions.
+   An action's own durable spawn intent independently prevents a second
+   physical restart.
+3. Intermediate directory symlinks are not a separate sandbox authority.
+   The operator-supplied data root is resolved before use, the journal and
+   lock/log leaf files are O_NOFOLLOW, and all writes are in the explicit
+   operator-controlled data directory. Do not treat this as an authorization
+   mechanism for arbitrary untrusted callers.
+4. The detached worker path re-reads the journal under its own global lock;
+   the worker entry and locked run both validate the immutable release ID and
+   data root before CAS or restart. Same-user concurrent journal tampering is
+   outside the trust boundary; no false-success outcome is permitted.
+5. A detached child can fail its bounded lock handoff and leave a nonterminal
+   `dispatching` journal. The action ledger and managed service identity are
+   the authoritative recovery facts; a later same-ID operator resume
+   reconciles them without replaying a physical restart.
+
+The architecture manifest is a mechanical declaration only. It does not
+replace the independent reviewer, original R9, GitHub CI, or managed release
+preflight. Deepin production and the Qwen 131K model are outside this change.
