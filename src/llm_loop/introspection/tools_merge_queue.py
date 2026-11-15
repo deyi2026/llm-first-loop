@@ -201,6 +201,37 @@ MERGE_QUEUE_TOOL_DEFS: list[dict] = [
 ]
 
 
+def _contract_same_key_hint_note(lanes: Any, lane: dict, lane_id: str) -> tuple[list, str]:
+    """M4-A（DESIGN-20261116 §6）: contract_changes 同键提示（hint + 渲染说明行）。
+
+    纯提示、零阻断、零审批，不改任何既有判定；同键 ≠ 设计冲突（语义由模型/人
+    判）；不读 approved_by/自报理由（本提示无任何授权语义）。计算失败只降级为
+    无提示（不得影响入队主流程）。
+    """
+    hint: list = []
+    try:
+        hint = lanes.contract_same_key_hint(
+            mine=[str(k) for k in lane.get("contract_changes") or []],
+            exclude_lane_id=lane_id,
+        )
+    except Exception:  # noqa: BLE001 — 提示失败不得影响入队主流程
+        hint = []
+    if not hint:
+        return hint, ""
+    rendered = []
+    for h in hint[:8]:
+        key = str(h.get("key") or "")
+        other = str(h.get("lane_id") or "")
+        goal = str(h.get("goal_id") or "")
+        rendered.append(f"{key} ← {other}(goal={goal})")
+    note = (
+        "contract 同键声明提示（非冲突结论）: "
+        + "; ".join(rendered)
+        + "（同键≠设计冲突，语义由模型/人判；纯提示，不阻断、不审批）"
+    )
+    return hint, note
+
+
 def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     tool = "lane_queue_submit"
     lane_id = str(args.get("lane_id") or "").strip()
@@ -223,27 +254,7 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     # M4-A（DESIGN-20261116 §6）: contract_changes 同键提示——纯提示、零阻断、
     # 零审批，不改任何既有判定；同键 ≠ 设计冲突（语义由模型/人判）；不读
     # approved_by/自报理由（本提示无任何授权语义）。计算失败只降级为无提示。
-    same_key_hint: list = []
-    try:
-        same_key_hint = lanes.contract_same_key_hint(
-            mine=[str(k) for k in lane.get("contract_changes") or []],
-            exclude_lane_id=lane_id,
-        )
-    except Exception:  # noqa: BLE001 — 提示失败不得影响入队主流程
-        same_key_hint = []
-    same_key_note = ""
-    if same_key_hint:
-        rendered = []
-        for h in same_key_hint[:8]:
-            key = str(h.get("key") or "")
-            other = str(h.get("lane_id") or "")
-            goal = str(h.get("goal_id") or "")
-            rendered.append(f"{key} ← {other}(goal={goal})")
-        same_key_note = (
-            "contract 同键声明提示（非冲突结论）: "
-            + "; ".join(rendered)
-            + "（同键≠设计冲突，语义由模型/人判；纯提示，不阻断、不审批）"
-        )
+    same_key_hint, same_key_note = _contract_same_key_hint_note(lanes, lane, lane_id)
     payload = {
         "lane_id": lane_id,
         "branch": str(args.get("branch") or lane.get("branch") or ""),

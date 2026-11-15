@@ -213,6 +213,88 @@ def _ts_key(raw: str):
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+def _frontier_projection(task_store, gid: str, notes: list[str]) -> tuple[dict, str, str]:
+    """单 goal frontier 计数/doing 标题/最近任务活动；损坏账本→degraded note。
+
+    notes 为调用方持有的同一 list（就地追加），保持 degraded 追加顺序不变。
+    """
+    counts = {
+        "tasks_total": 0,
+        "ready": 0,
+        "in_progress": 0,
+        "blocked": 0,
+        "waiting_cross_goal": 0,
+        "done": 0,
+    }
+    doing_title = ""
+    last_activity = ""
+    try:
+        fr = task_store.compute_frontier(gid)
+        last_activity = str(fr.get("last_activity") or "")
+        counts.update(
+            {
+                "tasks_total": int(fr.get("total", 0)),
+                "ready": len(fr.get("ready", [])),
+                "in_progress": len(fr.get("in_progress", [])),
+                "blocked": len(fr.get("blocked", [])),
+                "waiting_cross_goal": len(fr.get("waiting_cross_goal", [])),
+                "done": len(fr.get("completed", [])),
+            }
+        )
+        for note in fr.get("cross_goal_degraded", []) or []:
+            notes.append(str(note))
+        for e in fr.get("in_progress", []) or []:
+            task = e.get("task")
+            if task is not None and not doing_title:
+                doing_title = str(getattr(task, "title", "") or "")
+    except Exception as exc:  # noqa: BLE001 — 单 goal 任务账损坏不拖垮整体视图
+        notes.append(f"任务账不可读: {exc}")
+    return counts, doing_title, last_activity
+
+
+def _stalled_hint(status: str, activity_dt, now, window_hours: int) -> bool:
+    """M3 停滞候选（DESIGN-20261116 §5.2）: activity_at 落后阈值 → 提示行。
+
+    窗口模式（window_hours>0）下落后窗口的 goal 已被窗口过滤排除，该提示
+    主要在全量窗口（window_hours=0）可见；时间戳不可读 → 宁缺勿假不标注。
+    """
+    if status != "active" or activity_dt is None:
+        return False
+    stall_hours = int(window_hours) if int(window_hours) > 0 else _STALL_HINT_HOURS
+    try:
+        return (now - activity_dt).total_seconds() > stall_hours * 3600
+    except TypeError:  # naive/aware 混用 → 不标（宁缺勿假）
+        return False
+
+
+def _closure_for_active(
+    gid: str,
+    *,
+    status: str,
+    audit_dir: str,
+    ctx: Any | None,
+    open_tasks: int,
+    view_truncated: bool,
+) -> tuple[dict | None, list[str]]:
+    """M3 收口投影（§5.2）: 判定机械复用 goal_gates 三道门，零写路径。
+
+    只对 active goal 投影（BUG-11）: complete/blocked 等非 active goal 已有
+    终态或非在途，不得再建议「可 complete」或待补证据——实测 299 个 goal 中
+    99 个 complete 曾被投影成收口候选（2026-11-16 GPT-6 复审发现）。status
+    未知/异常值同样不投影（宁缺勿假，与停滞提示共用同一道 status 门；
+    goal_gates 判据实现不变，只是不再对非 active goal 调用）。
+    """
+    if status != "active":
+        return None, []
+    return _closure_projection(
+        gid,
+        audit_dir=audit_dir,
+        ctx=ctx,
+        open_tasks=open_tasks,
+        view_truncated=view_truncated,
+    )
+
+
 def _coordination_goal_entry(
     g: dict,
     task_store,
@@ -236,37 +318,7 @@ def _coordination_goal_entry(
         return None, []
 
     notes: list[str] = []
-    counts = {
-        "tasks_total": 0,
-        "ready": 0,
-        "in_progress": 0,
-        "blocked": 0,
-        "waiting_cross_goal": 0,
-        "done": 0,
-    }
-    doing_title = ""
-    last_task_activity = ""
-    try:
-        fr = task_store.compute_frontier(gid)
-        last_task_activity = str(fr.get("last_activity") or "")
-        counts.update(
-            {
-                "tasks_total": int(fr.get("total", 0)),
-                "ready": len(fr.get("ready", [])),
-                "in_progress": len(fr.get("in_progress", [])),
-                "blocked": len(fr.get("blocked", [])),
-                "waiting_cross_goal": len(fr.get("waiting_cross_goal", [])),
-                "done": len(fr.get("completed", [])),
-            }
-        )
-        for note in fr.get("cross_goal_degraded", []) or []:
-            notes.append(str(note))
-        for e in fr.get("in_progress", []) or []:
-            task = e.get("task")
-            if task is not None and not doing_title:
-                doing_title = str(getattr(task, "title", "") or "")
-    except Exception as exc:  # noqa: BLE001 — 单 goal 任务账损坏不拖垮整体视图
-        notes.append(f"任务账不可读: {exc}")
+    counts, doing_title, last_task_activity = _frontier_projection(task_store, gid, notes)
 
     # 窗口口径（N1-A8）: activity_at = max(goal.updated_at, 该 goal 最新 task.updated_at)。
     # 只比 goal.updated_at 会把「goal 久未改、任务仍在推进」误判为陈旧；实测本仓库
@@ -305,32 +357,15 @@ def _coordination_goal_entry(
         + counts["blocked"]
         + counts["waiting_cross_goal"]
     )
-    # M3 停滞候选（DESIGN-20261116 §5.2）: activity_at 落后窗口阈值 → 提示行。
-    # 窗口模式（window_hours>0）下落后窗口的 goal 已被上方窗口过滤排除，该提示
-    # 主要在全量窗口（window_hours=0）可见；时间戳不可读 → 宁缺勿假不标注。
-    stalled = False
-    if status == "active" and activity_dt is not None:
-        stall_hours = int(window_hours) if int(window_hours) > 0 else _STALL_HINT_HOURS
-        try:
-            stalled = (now - activity_dt).total_seconds() > stall_hours * 3600
-        except TypeError:  # naive/aware 混用 → 不标（宁缺勿假）
-            stalled = False
-    # M3 收口投影（§5.2）: 判定机械复用 goal_gates 三道门，零写路径。
-    # 只对 active goal 投影（BUG-11）: complete/blocked 等非 active goal 已有
-    # 终态或非在途，不得再建议「可 complete」或待补证据——实测 299 个 goal 中
-    # 99 个 complete 曾被投影成收口候选（2026-11-16 GPT-6 复审发现）。status
-    # 未知/异常值同样不投影（宁缺勿假，与上方停滞提示共用同一道 status 门；
-    # goal_gates 判据实现不变，只是不再对非 active goal 调用）。
-    if status == "active":
-        closure, closure_notes = _closure_projection(
-            gid,
-            audit_dir=audit_dir,
-            ctx=ctx,
-            open_tasks=open_tasks_val,
-            view_truncated=view_truncated,
-        )
-    else:
-        closure, closure_notes = None, []
+    stalled = _stalled_hint(status, activity_dt, now, window_hours)
+    closure, closure_notes = _closure_for_active(
+        gid,
+        status=status,
+        audit_dir=audit_dir,
+        ctx=ctx,
+        open_tasks=open_tasks_val,
+        view_truncated=view_truncated,
+    )
     notes.extend(closure_notes)
     entry = {
         "goal_id": gid,
@@ -1055,6 +1090,114 @@ def _scan_merge_queue_failed(
     return recs, failed_total, terminal_total, malformed
 
 
+def _queue_buckets() -> dict:
+    """四类分诊桶骨架（legacy 轨与 actionable 轨同构）。"""
+    return {
+        key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
+        for key in _QUEUE_BUCKET_LABELS
+    }
+
+
+def _merge_queue_degraded_block(
+    buckets: dict, actionable_buckets: dict, lane_health: dict
+) -> dict:
+    """账本不存在/不可读时的降级视图（双轨字段齐全，safe_to_execute=False）。"""
+    return {
+        "merge_queue": {
+            "available": False,
+            "failed_total": 0,
+            "buckets": buckets,
+            "actionable_total": 0,
+            "actionable_buckets": actionable_buckets,
+            "actionable_bucket_sum": 0,
+            "unknown_total": 0,
+            "source_complete": False,
+            "parsed_closure_ok": True,
+            "overall_view_ok": False,
+            "actionable_next_command": [],
+            "safe_to_execute": False,
+            "mq_bad_rows": 0,
+            "lane_health": dict(lane_health),
+        }
+    }
+
+
+def _lane_source_health(lane_health: dict, malformed: int) -> tuple[dict, bool]:
+    """lane 侧来源健康度 + source_complete（来源完整性 ≠ 解析闭合）。
+
+    lanes 可读无坏行无重复无无效 status，且 merge_queue.jsonl 无坏行；
+    任一不满足即 false，不得伪装「来源完整」。
+    """
+    lane_h = {
+        "read_ok": bool(lane_health.get("read_ok")),
+        "bad_rows": int(lane_health.get("bad_rows") or 0),
+        "duplicate_lane_ids": int(lane_health.get("duplicate_lane_ids") or 0),
+        "invalid_status_rows": int(lane_health.get("invalid_status_rows") or 0),
+        "conflict_lane_ids": list(lane_health.get("conflict_lane_ids") or ()),
+    }
+    source_complete = (
+        lane_h["read_ok"]
+        and lane_h["bad_rows"] == 0
+        and lane_h["duplicate_lane_ids"] == 0
+        and lane_h["invalid_status_rows"] == 0
+        and malformed == 0
+    )
+    return lane_h, source_complete
+
+
+def _project_queue_item(
+    r: dict,
+    buckets: dict,
+    actionable_buckets: dict,
+    *,
+    limit_per_bucket: int,
+    overall_view_ok: bool,
+) -> str:
+    """单条 failed 队列项投影：legacy 桶 + actionable 桶 + 安全降级 next_command。
+
+    BUG-10: overall_view_ok=false 或该条归 unknown → 降级为人工核对提示（不
+    携带写命令）。返回值: 该条属 actionable 且视图可信时返回其 next_command
+    （供 actionable_next_command 汇总），否则返回空串。
+    """
+    entry = r["entry"]
+    diag = r["diag"]
+    lid = r["lid"]
+    qid = str(entry.get("queue_id") or "")
+    bucket = r["bucket"]
+    cls = r["classification"]
+    if not overall_view_ok or cls == "unknown":
+        next_command = _degraded_queue_hint(lid, qid)
+    else:
+        next_command = _queue_next_command(entry, diag, r["lane_state"])
+    if len(buckets[bucket]["items"]) < limit_per_bucket:
+        buckets[bucket]["items"].append(
+            {
+                "queue_id": entry.get("queue_id"),
+                "lane_id": entry.get("lane_id"),
+                "failure_class": str(diag.get("failure_class") or "") or "unknown",
+                "primary_reason": str(diag.get("primary_reason") or ""),
+                "evidence_hint": str(diag.get("evidence_hint") or ""),
+                "lane_status": r["lane_state"],
+                "terminal": r["is_terminal"],
+                "next_command": next_command,
+                "classification": cls,
+            }
+        )
+    if cls == "actionable" and len(actionable_buckets[bucket]["items"]) < limit_per_bucket:
+        actionable_buckets[bucket]["items"].append(
+            {
+                "queue_id": entry.get("queue_id"),
+                "lane_id": entry.get("lane_id"),
+                "failure_class": str(diag.get("failure_class") or "") or "unknown",
+                "primary_reason": str(diag.get("primary_reason") or ""),
+                "next_command": next_command,
+            }
+        )
+        if overall_view_ok and not next_command.startswith("#"):
+            return next_command
+    return ""
+
+
 def _collect_merge_queue(
     audit_dir: str, *, limit_per_bucket: int = 3
 ) -> tuple[dict, list[str]]:
@@ -1083,32 +1226,9 @@ def _collect_merge_queue(
     valid_statuses = frozenset(LANE_STATUSES)
     path = Path(audit_dir) / "merge_queue.jsonl"
     lane_status, lane_health = _lane_status_map(audit_dir)
-    buckets = {
-        key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
-        for key in _QUEUE_BUCKET_LABELS
-    }
-    actionable_buckets = {
-        key: {"label": _QUEUE_BUCKET_LABELS[key], "count": 0, "items": []}
-        for key in _QUEUE_BUCKET_LABELS
-    }
-    degraded_block = {
-        "merge_queue": {
-            "available": False,
-            "failed_total": 0,
-            "buckets": buckets,
-            "actionable_total": 0,
-            "actionable_buckets": actionable_buckets,
-            "actionable_bucket_sum": 0,
-            "unknown_total": 0,
-            "source_complete": False,
-            "parsed_closure_ok": True,
-            "overall_view_ok": False,
-            "actionable_next_command": [],
-            "safe_to_execute": False,
-            "mq_bad_rows": 0,
-            "lane_health": dict(lane_health),
-        }
-    }
+    buckets = _queue_buckets()
+    actionable_buckets = _queue_buckets()
+    degraded_block = _merge_queue_degraded_block(buckets, actionable_buckets, lane_health)
     if not path.exists():
         return degraded_block, ["merge_queue: 账本不存在"]
 
@@ -1123,22 +1243,7 @@ def _collect_merge_queue(
     if malformed:
         notes.append(f"merge_queue 有 {malformed} 行不可解析（未计入分诊）")
 
-    lane_h = {
-        "read_ok": bool(lane_health.get("read_ok")),
-        "bad_rows": int(lane_health.get("bad_rows") or 0),
-        "duplicate_lane_ids": int(lane_health.get("duplicate_lane_ids") or 0),
-        "invalid_status_rows": int(lane_health.get("invalid_status_rows") or 0),
-        "conflict_lane_ids": list(lane_health.get("conflict_lane_ids") or ()),
-    }
-    # source_complete=来源完整性（≠解析闭合）: lanes 可读无坏行无重复无无效 status，
-    # 且 merge_queue.jsonl 无坏行；任一不满足即 false，不得伪装「来源完整」。
-    source_complete = (
-        lane_h["read_ok"]
-        and lane_h["bad_rows"] == 0
-        and lane_h["duplicate_lane_ids"] == 0
-        and lane_h["invalid_status_rows"] == 0
-        and malformed == 0
-    )
+    lane_h, source_complete = _lane_source_health(lane_health, malformed)
     unknown_total = sum(1 for r in recs if r["classification"] == "unknown")
     actionable_total = 0
     for r in recs:
@@ -1151,42 +1256,15 @@ def _collect_merge_queue(
 
     actionable_cmds: list[str] = []
     for r in recs:
-        entry = r["entry"]
-        diag = r["diag"]
-        lid = r["lid"]
-        qid = str(entry.get("queue_id") or "")
-        bucket = r["bucket"]
-        cls = r["classification"]
-        if not overall_view_ok or cls == "unknown":
-            next_command = _degraded_queue_hint(lid, qid)
-        else:
-            next_command = _queue_next_command(entry, diag, r["lane_state"])
-        if len(buckets[bucket]["items"]) < limit_per_bucket:
-            buckets[bucket]["items"].append(
-                {
-                    "queue_id": entry.get("queue_id"),
-                    "lane_id": entry.get("lane_id"),
-                    "failure_class": str(diag.get("failure_class") or "") or "unknown",
-                    "primary_reason": str(diag.get("primary_reason") or ""),
-                    "evidence_hint": str(diag.get("evidence_hint") or ""),
-                    "lane_status": r["lane_state"],
-                    "terminal": r["is_terminal"],
-                    "next_command": next_command,
-                    "classification": cls,
-                }
-            )
-        if cls == "actionable" and len(actionable_buckets[bucket]["items"]) < limit_per_bucket:
-            actionable_buckets[bucket]["items"].append(
-                {
-                    "queue_id": entry.get("queue_id"),
-                    "lane_id": entry.get("lane_id"),
-                    "failure_class": str(diag.get("failure_class") or "") or "unknown",
-                    "primary_reason": str(diag.get("primary_reason") or ""),
-                    "next_command": next_command,
-                }
-            )
-            if overall_view_ok and not next_command.startswith("#"):
-                actionable_cmds.append(next_command)
+        cmd = _project_queue_item(
+            r,
+            buckets,
+            actionable_buckets,
+            limit_per_bucket=limit_per_bucket,
+            overall_view_ok=overall_view_ok,
+        )
+        if cmd:
+            actionable_cmds.append(cmd)
 
     for r in recs:
         buckets[r["bucket"]]["count"] += 1
@@ -1223,6 +1301,17 @@ def _collect_merge_queue(
     )
 
 
+def _goals_truncated_note(shown: int, total: int) -> str:
+    """goals 截断自证说明（截断必须自证：不标注=静默丢 goal）。
+
+    旧值 200 在本仓库实测丢了 12 个 active goal（239 行账本，可见 78/90）。
+    """
+    return (
+        f"goals_truncated: {shown}/{total}"
+        f"（只呈现账本最近 {shown} 条；更早的 {total - shown} 条未进入窗口）"
+    )
+
+
 def coordination_snapshot(
     audit_dir: str,
     *,
@@ -1255,6 +1344,7 @@ def coordination_snapshot(
     # R5：队列失败分诊（只读；四类计数闭合性由 closure_ok 自证）
     queue_block, queue_notes = _collect_merge_queue(audit_dir)
     degraded.extend(queue_notes)
+    degraded_base = running_notes + events_notes + claims_notes + queue_notes
     capacity: dict = {
         "goals_limit": _GOALS_VIEW_LIMIT,
         "goals_in_ledger": 0,
@@ -1276,13 +1366,7 @@ def coordination_snapshot(
             truncated=total_goals > len(goals),
         )
         if capacity["truncated"]:
-            # 截断必须自证：不标注=静默丢 goal。旧值 200 在本仓库实测丢了 12 个
-            # active goal（239 行账本，可见 78/90）。
-            degraded.append(
-                f"goals_truncated: {len(goals)}/{total_goals}"
-                f"（只呈现账本最近 {len(goals)} 条；更早的"
-                f" {total_goals - len(goals)} 条未进入窗口）"
-            )
+            degraded.append(_goals_truncated_note(len(goals), total_goals))
     except Exception as exc:  # noqa: BLE001 — 账本不可读 → degraded 而非伪造空视图
         return {
             "ok": False,
@@ -1297,11 +1381,7 @@ def coordination_snapshot(
             **claims_block,
             **queue_block,
             # running/events/queue 都是真实采到的事实，账本失败不连坐它们。
-            "degraded": running_notes
-            + events_notes
-            + claims_notes
-            + queue_notes
-            + [f"goal 账本不可读: {exc}"],
+            "degraded": degraded_base + [f"goal 账本不可读: {exc}"],
         }
 
     from llm_loop.introspection.task_store import TaskStore
@@ -1398,6 +1478,34 @@ def _render_merge_queue(lines: list[str], mq: dict) -> None:
             lines.append(f"      [{key}] {lane_id} {reason} → {cmd}")
 
 
+def _render_goal_m3_lines(g: dict, lines: list[str]) -> None:
+    """M3（DESIGN-20261116 §5）: 收口候选/待补证据/停滞候选 只读投影行。"""
+    gid_txt = g.get("goal_id") or "-"
+    cl = g.get("closure") or {}
+    kind = str(cl.get("kind") or "")
+    owner_txt = g.get("owned_by")
+    mask_txt = g.get("owner_masked") or "-"
+    act_txt = g.get("activity_at") or "-"
+    if kind == "candidate":
+        lines.append(
+            f"      ✅ 收口候选 {gid_txt}: owner={owner_txt}({mask_txt})"
+            f" activity_at={act_txt} | 判据=goal_gates 全过"
+            " | 建议动作=update_goal complete + evidence_refs"
+            "（owner 会话执行；快照非事务，动作前权威重查）"
+        )
+    elif kind == "pending_evidence":
+        gaps_txt = "; ".join(str(x) for x in cl.get("gaps") or []) or "-"
+        lines.append(
+            f"      ⏳ 待补证据 {gid_txt}: {gaps_txt}"
+            "（判据=goal_gates；证据补齐前不得 complete，本行不构成「可 complete」结论）"
+        )
+    if g.get("stalled"):
+        lines.append(
+            f"      💤 停滞候选 {gid_txt}: activity_at={act_txt} 落后窗口阈值，"
+            "请 owner 检查（不判僵尸、无 TTL 结论）"
+        )
+
+
 def render_coordination(snapshot: dict) -> str:
     """把快照渲染成模型可读文本（Decision Packet 友好）。"""
     cap = snapshot.get("capacity") or {}
@@ -1431,31 +1539,7 @@ def render_coordination(snapshot: dict) -> str:
             lines.append(f"      last_cp {cp.get('ts','')} {cp.get('what','')}")
         for note in g.get("degraded") or []:
             lines.append(f"      ⚠ {note}")
-        # M3（DESIGN-20261116 §5）: 收口候选/待补证据/停滞候选 只读投影行。
-        gid_txt = g.get("goal_id") or "-"
-        cl = g.get("closure") or {}
-        kind = str(cl.get("kind") or "")
-        owner_txt = g.get("owned_by")
-        mask_txt = g.get("owner_masked") or "-"
-        act_txt = g.get("activity_at") or "-"
-        if kind == "candidate":
-            lines.append(
-                f"      ✅ 收口候选 {gid_txt}: owner={owner_txt}({mask_txt})"
-                f" activity_at={act_txt} | 判据=goal_gates 全过"
-                " | 建议动作=update_goal complete + evidence_refs"
-                "（owner 会话执行；快照非事务，动作前权威重查）"
-            )
-        elif kind == "pending_evidence":
-            gaps_txt = "; ".join(str(x) for x in cl.get("gaps") or []) or "-"
-            lines.append(
-                f"      ⏳ 待补证据 {gid_txt}: {gaps_txt}"
-                "（判据=goal_gates；证据补齐前不得 complete，本行不构成「可 complete」结论）"
-            )
-        if g.get("stalled"):
-            lines.append(
-                f"      💤 停滞候选 {gid_txt}: activity_at={act_txt} 落后窗口阈值，"
-                "请 owner 检查（不判僵尸、无 TTL 结论）"
-            )
+        _render_goal_m3_lines(g, lines)
     if cap.get("truncated"):
         # M3（§5.2）: 截断视图不投影收口候选（宁缺勿假），此行为段级标注。
         lines.append("  ⚠ 收口候选: 视图不完整（goals 截断），本轮不投影收口候选（宁缺勿假）")
