@@ -235,7 +235,7 @@ class LFRTStatusSnapshot:
     def to_status_dict(self) -> dict[str, object]:
         """Prompt-safe diagnostic projection; never exposes the LFRT executable path."""
 
-        return {
+        status = {
             "available": True,
             "observer": "lfrt",
             "state": self.launchd_state,
@@ -252,6 +252,9 @@ class LFRTStatusSnapshot:
             "drift": self.drift,
             "source_ref": self.source_ref,
         }
+        if self.configured_prompt_concurrency == -1 and self.configured_decode_concurrency == -1:
+            status["slot_mode"] = "auto"
+        return status
 
 
 @dataclass(frozen=True)
@@ -324,6 +327,24 @@ def _dict(value: object) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _llama_slot_facts(
+    live_flags: dict[str, Any], server: dict[str, Any], config: dict[str, Any]
+) -> tuple[int | None, int | None] | None:
+    """Return (live slots, configured slots); -1 means native auto, not capacity."""
+
+    observed = _positive_int(server.get("total_slots"))
+    configured_raw = config.get("n_parallel")
+    if type(configured_raw) is int and configured_raw == -1:
+        if "np" in live_flags:
+            return None  # config auto contradicts process flags
+        return observed, -1
+    configured = _positive_int(configured_raw)
+    live = _positive_int(live_flags.get("np")) if "np" in live_flags else observed
+    if observed is not None and live != observed:
+        return None  # process and /props disagree
+    return live, configured
+
+
 def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnapshot | None:
     """Validate one LFRT status payload; uncertainty is represented as ``None``."""
 
@@ -370,15 +391,13 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
     port = _positive_int(config.get("port"))
     live_port = _positive_int(live_flags.get("port"))
     if backend == "llama":
-        # llama-server uses one slot count for both prompt/decode capacity. LFRT
-        # omits -np from process flags when the llama.cpp default (1) is in use.
-        live_parallel = _positive_int(live_flags.get("np")) or 1
-        configured_parallel = _positive_int(config.get("n_parallel"))
-        live_prompt = live_parallel
-        live_decode = live_parallel
-        configured_prompt = configured_parallel
-        configured_decode = configured_parallel
+        facts = _llama_slot_facts(live_flags, server, config)
+        if facts is None:
+            return None
+        live_prompt = live_decode = facts[0]
+        configured_prompt = configured_decode = facts[1]
     else:
+        assert configured_concurrency is not None
         live_prompt = _positive_int(live_flags.get("prompt-concurrency"))
         live_decode = _positive_int(live_flags.get("decode-concurrency"))
         configured_prompt = _positive_int(configured_concurrency.get("prompt"))
@@ -427,8 +446,8 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
 
     drift = (
         model_path != configured_model
-        or live_prompt != configured_prompt
-        or live_decode != configured_decode
+        or (configured_prompt != -1 and live_prompt != configured_prompt)
+        or (configured_decode != -1 and live_decode != configured_decode)
     )
     return LFRTStatusSnapshot(
         observed_at=float(observed_at),
