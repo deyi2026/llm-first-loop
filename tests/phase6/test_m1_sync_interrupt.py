@@ -149,10 +149,21 @@ def test_s3_gate_off_falls_back_to_final_gate(build_test_engine, monkeypatch):
 def test_s4_multiple_interjections_all_consumed(build_test_engine):
     """窗口内多插话 → 全量进入下一轮（P1-3 批量口径）."""
     window_started = threading.Event()
+    second_request_accepted = threading.Event()
+
+    def _hold_second(_calls) -> LLMResponse:
+        # The first interjection can trigger the next provider call before the
+        # second HTTP request completes. Keep that call in flight until both
+        # requests are accepted, so the test checks actual batch consumption
+        # rather than scheduler timing under xdist load.
+        assert second_request_accepted.wait(timeout=10), "second interjection not accepted"
+        return LLMResponse(content="intermediate-after-multi", tool_calls=[], provider="fake")
+
     engine, fake, runner, client, sid = _start_sync_run(
         build_test_engine,
         [
             _blocking(window_started),
+            _hold_second,
             {"content": "final-after-multi"},
         ],
     )
@@ -160,16 +171,19 @@ def test_s4_multiple_interjections_all_consumed(build_test_engine):
     assert window_started.wait(timeout=10)
     time.sleep(INJECT_AT_S)
     queue_ids = []
-    for text in (INTERJECT_TEXT, "第二条插话内容-请并入"):
-        gen = (runner.get_handle(sid) or {}).get("run_generation")
-        r1 = client.post(
-            "/api/v1/chat/queue", json={"session_id": sid, "message": text}
-        )
-        assert r1.status_code == 202
-        qid = r1.json()["queue_id"]
-        r2 = _interject(client, sid, qid, gen)
-        assert r2.status_code == 202
-        queue_ids.append(qid)
+    try:
+        for text in (INTERJECT_TEXT, "第二条插话内容-请并入"):
+            gen = (runner.get_handle(sid) or {}).get("run_generation")
+            r1 = client.post(
+                "/api/v1/chat/queue", json={"session_id": sid, "message": text}
+            )
+            assert r1.status_code == 202
+            qid = r1.json()["queue_id"]
+            r2 = _interject(client, sid, qid, gen)
+            assert r2.status_code == 202
+            queue_ids.append(qid)
+    finally:
+        second_request_accepted.set()
     final = _wait_run_done(q, timeout=30)
     assert final.get("type") == "done"
     # Two separately accepted interjections can straddle model-call boundaries:

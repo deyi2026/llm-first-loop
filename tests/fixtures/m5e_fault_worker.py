@@ -48,10 +48,15 @@ budget = TaskBudgetStore(root / "ledger")
 
 
 def reached(label: str, *, pause: bool = True) -> None:
-    with open(marker, "x", encoding="utf-8") as stream:
+    # Publish the crash barrier only AFTER its bytes are flushed and fsynced.
+    # open(marker, "x") exposed an empty file to the parent before write(),
+    # allowing a real SIGKILL to land before the intended barrier was reached.
+    pending = marker.with_name(marker.name + ".pending")
+    with open(pending, "x", encoding="utf-8") as stream:
         stream.write(label)
         stream.flush()
         os.fsync(stream.fileno())
+    os.replace(pending, marker)
     if pause:
         signal.pause()
 
