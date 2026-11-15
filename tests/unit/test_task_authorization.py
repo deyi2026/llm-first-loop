@@ -12,16 +12,27 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import llm_loop.introspection.tools_task as tt
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id as _sid
 from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.task_store import TaskStore
 from llm_loop.introspection.tools_task import TASK_UPDATE_TOOL_DEF
 
 
+@pytest.fixture(autouse=True)
+def _trusted_goal_session():
+    """Task semantic confirmation tests still require a trusted owner identity."""
+    token = _sid.set("task-owner")
+    yield
+    _sid.reset(token)
+
+
 def _setup_goal_task():
     d = tempfile.mkdtemp()
-    g = GoalStore(d).create("目标T")
+    g = GoalStore(d).create("目标T", session_id="task-owner")
     store = TaskStore(d)
     t = store.create(g.id, "任务", acceptance=["可验收"])
     store.update(g.id, t.task_id, status="in_progress")

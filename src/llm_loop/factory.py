@@ -997,8 +997,7 @@ def build_engine(
         reasoning_efforts=(llm_params or {}).get("reasoning_efforts"),
         reasoning_default_effort=(llm_params or {}).get("reasoning_default_effort"),
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
-        thinking_supported=thinking_supported,
-        reasoning_capable=reasoning_capable,
+        thinking_supported=thinking_supported, reasoning_capable=reasoning_capable,
         reasoning_control=reasoning_control,
         provider=resolved_provider_id,
         send_tool_choice=bool((llm_params or {}).get("send_tool_choice", True)),
@@ -1828,6 +1827,7 @@ def build_engine(
             sandbox_mode=settings.tool_runtime.exec_sandbox,
             sandbox_image=settings.tool_runtime.exec_sandbox_image,
             review_gate_recorder=_review_gate_recorder,
+            safety_audit_dir=settings.audit_dir,
         ),
     )
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.

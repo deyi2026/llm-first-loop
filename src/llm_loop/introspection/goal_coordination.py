@@ -1,21 +1,8 @@
-"""跨会话 goal 协作仲裁（DESIGN-20261101 §4.3 写侧归属 + 读侧归属标注）.
+"""跨会话 Goal 归属仲裁：只信运行时绑定的 session，不信模型自报授权。
 
-真值源: docs/design/DESIGN-20261101-cross-session-coordination-v1.md §4.3/§5
-
-职责（只读判定 + 文案；不写存储、不改 goal 状态）:
-1. ``resolve_write_permission``: 返回 (decision, reason_code)，decision ∈
-   {allow, allow_annotated, deny}；判定顺序与文档一致（owner 空 → 同会话 →
-   显式跨会话授权 → 拒绝）。
-2. 拒绝文案含 owner 会话与三条可执行出口（只读 / 显式授权 / 移交归属）。
-3. 读侧归属字段派生（owner_session_id / owned_by / claimed_by_other）与恢复横幅。
-
-会话身份真值源: ``bound_session_id()``（contextvar 绑定）。不使用 ``ctx.session_id``
-这类 last-writer 字段作授权依据。
-
-已知与文档的差异（诚实登记，见 DESIGN §11-D1 补充）:
-- 当前执行无 session binding（bound_session_id 为空，如离线 CLI/单测装配）时，
-  文档未定义该态；本实现取 ``allow_annotated / session_unverified``，理由是硬拒会
-  锁死既有单会话流程（A9 零回归）。真实运行态 contextvar 必有值，该分支不可达。
+Goal/Task 账本仍是单一事实源。模型给出的 reason、evidence_refs 只能说明
+为何申请跨会话操作，不能证明人类已经授权；可信委派/迁移另行实现。
+未绑定 session 与 ownerless legacy Goal 只读保留，不静默认领或改写。
 """
 
 from __future__ import annotations
@@ -27,7 +14,7 @@ from typing import Any
 
 DENY_REASON = "cross_session_write_denied"
 REASON_OWNER_UNKNOWN = "owner_unknown"
-REASON_CROSS_AUTHORIZED = "cross_session_authorized"
+REASON_CROSS_UNVERIFIED = "cross_session_approval_unverified"
 REASON_SESSION_UNVERIFIED = "session_unverified"
 
 DECISION_ALLOW = "allow"
@@ -82,19 +69,6 @@ def mask_session(session_id: str) -> str:
     return sid if len(sid) <= 8 else f"{sid[:8]}…"
 
 
-def _override_authorized(args: dict | None) -> bool:
-    """显式跨会话授权：cross_session=true + 非空 reason + 非空 evidence_refs。"""
-    if not isinstance(args, dict):
-        return False
-    if args.get("cross_session") is not True:
-        return False
-    reason = str(args.get("reason") or "").strip()
-    refs = args.get("evidence_refs") or []
-    if not reason:
-        return False
-    return isinstance(refs, (list, tuple)) and any(str(r or "").strip() for r in refs)
-
-
 def resolve_write_permission(
     goal: dict | None,
     *,
@@ -113,69 +87,60 @@ def resolve_write_permission(
     if goal is None:
         # 存在性由调用方既有分支负责；此处不臆造结论
         return {**base, "decision": DECISION_ALLOW, "reason_code": "", "note": ""}
-    if not owner:
-        return {
-            **base,
-            "decision": DECISION_ALLOW_ANNOTATED,
-            "reason_code": REASON_OWNER_UNKNOWN,
-            "note": (
-                "reason_code=owner_unknown；该 goal 无 owner（legacy/未认领），"
-                "本次写入按 owner_unknown 标注放行"
-            ),
-        }
-    if sid and sid == owner:
-        return {**base, "decision": DECISION_ALLOW, "reason_code": "", "note": ""}
     if not sid:
         return {
             **base,
-            "decision": DECISION_ALLOW_ANNOTATED,
+            "decision": DECISION_DENY,
             "reason_code": REASON_SESSION_UNVERIFIED,
-            "note": (
-                "reason_code=session_unverified；当前执行无 session binding，"
-                "无法证明是本 goal owner "
-                f"（owner={base['owner_masked']}），按 session_unverified 标注放行"
-            ),
+            "note": "缺少可信 session binding，禁止写入",
         }
-    if _override_authorized(args):
+    if not owner:
         return {
             **base,
-            "decision": DECISION_ALLOW_ANNOTATED,
-            "reason_code": REASON_CROSS_AUTHORIZED,
-            "note": (
-                "reason_code=cross_session_authorized；显式跨会话授权"
-                "（cross_session=true + reason + evidence_refs）放行该写入"
-            ),
+            "decision": DECISION_DENY,
+            "reason_code": REASON_OWNER_UNKNOWN,
+            "note": "legacy Goal 无 owner，需受管迁移后才能写入",
+        }
+    if sid == owner:
+        return {**base, "decision": DECISION_ALLOW, "reason_code": "", "note": ""}
+    # 模型给出的 cross_session/reason/evidence_refs 都不是可信的授权来源。
+    # 不在本判定器中临时发明第二套授权或修改 Goal owner。
+    if isinstance(args, dict) and args.get("cross_session") is True:
+        return {
+            **base,
+            "decision": DECISION_DENY,
+            "reason_code": REASON_CROSS_UNVERIFIED,
+            "note": "模型提交的证据引用不能证明跨会话写入获授权",
         }
     return {**base, "decision": DECISION_DENY, "reason_code": DENY_REASON, "note": ""}
 
 
 def write_refusal_text(gid: str, perm: dict, *, supports_cross_session: bool = True) -> str:
-    """§4.3 拒绝回执模板（必须指路，且只指真实存在的出口）。
-
-    supports_cross_session=False 时必须不提 cross_session 参数（P1-5）：
-    任务类工具不接收该参数，给出不存在的出口会让模型陷入"按提示重试→仍被拒"的循环。
-    """
+    """拒绝必须给真实可执行出口，不诱导模型通过补参数自授权。"""
     owner = perm.get("owner_masked") or "?"
     cur = perm.get("current_masked") or "<无 binding>"
-    if supports_cross_session:
-        exit2 = (
-            '  2) 显式跨会话写入：同一调用加 cross_session=true + reason="<为什么必须由你写>"'
-            ' + evidence_refs=["evidence://..."]\n'
+    reason = perm.get("reason_code") or DENY_REASON
+    if reason == REASON_SESSION_UNVERIFIED:
+        recovery = "  2) 恢复当前受信会话绑定，再由 owner 会话重试；不要填写 session_id 冒充\n"
+    elif reason == REASON_OWNER_UNKNOWN:
+        recovery = (
+            "  2) legacy Goal 无 owner：保留原记录只读；经人工核验后在可信会话"
+            "创建新 Goal 并引用旧证据，不通过写入自动认领\n"
         )
     else:
-        exit2 = (
-            "  2) 本工具没有跨会话出口（task_* 不接受 cross_session 参数）："
-            "请由 owner 会话推进该任务图\n"
-        )
+        recovery = "  2) 请由原 owner 会话处理；如需委派，先走受管人工授权/迁移流程\n"
+    extra = (
+        "  3) reason / evidence_refs 是任务证据，不是授权令牌；本版本不支持参数式跨会话写入\n"
+        if supports_cross_session
+        else "  3) task_* 不提供跨会话写入出口，请由 owner 会话推进任务图\n"
+    )
     return (
-        f"[跨会话写入拒绝] reason_code={perm.get('reason_code') or DENY_REASON}\n"
+        f"[跨会话写入拒绝] reason_code={reason}\n"
         f"goal {gid} 属于会话 {owner}（owner），当前会话 {cur}。\n"
         "出口：\n"
-        f'  1) 只读查看：get_goal(goal_id="{gid}") / task_frontier(goal_id="{gid}")'
-        "（回执标注归属）\n"
-        f"{exit2}"
-        "  3) 移交归属：由 owner 会话调用 transfer_goal（P2，未实现前请在 owner 会话推进）\n"
-        "收口门（任务图/证据门）未被绕过，本条仅拦归属；本次写入未被接受，goal 记录未改。"
+        f'  1) 只读核对：get_goal(goal_id="{gid}") / task_frontier(goal_id="{gid}")\n'
+        f"{recovery}{extra}"
+        "本次写入未被接受，Goal/Task 状态未修改。"
     )
 
 
@@ -210,13 +175,12 @@ def read_side_banner(goal: dict | None, *, session_id: str | None = None) -> str
     if fields["owned_by"] == "other":
         return (
             f"⚠ 归属: 其他会话（owner_session_id={mask_session(owner)}）——跨会话写将被拒绝"
-            "（reason_code=cross_session_write_denied）；仅 goal 记录写入（checkpoint_goal/"
-            "update_goal）可走 cross_session=true + reason + evidence_refs 显式授权；"
-            "推进该 goal 的任务图（task_create/task_update）无跨会话出口，须由 owner 会话执行"
+            "（reason_code=cross_session_write_denied）；reason/evidence_refs 不授予写权限。"
+            "请由 owner 会话推进 Goal/Task；需要委派时先取得受管人工授权。"
         )
     if fields["owned_by"] == "unclaimed":
-        return "归属: 未认领（无 owner，legacy/新建未绑定；写入按 owner_unknown 标注）"
-    return f"归属: 本会话身份不可证明（owner_session_id={mask_session(owner)}，session_unverified）"
+        return "归属: 未认领（无 owner，legacy；只读，需受管迁移后才可写）"
+    return f"归属: 本会话身份不可证明（owner_session_id={mask_session(owner)}，session_unverified；写入拒绝）"
 
 
 # ---------------------------------------------------------------------------

@@ -137,6 +137,41 @@ _ENV_BLOCK_PATTERNS = (
 # （同 Unix 用户下 ~/.config 类路径可写），从子进程环境剔除。
 _ENV_CONTROL_PLANE_EXACT = frozenset({"COG_RUNTIME_ENFORCE_FILE"})
 
+def _host_grant_audit_conflict(canonical: str, audit_dir: object) -> str | None:
+    """P0-3: 受管审计账本不接受 host-grant 读写绑定（消费前 peek 即拒绝）.
+
+    realpath/commonpath 的任何异常（OSError/ValueError，如混合盘符或
+    前缀不可比较）同样按冲突处理——fail-closed，不因路径解析失败放行
+    （独立 Reviewer P2）。
+    """
+    if not canonical or audit_dir is None:
+        return None
+    try:
+        audit_root = os.path.realpath(str(audit_dir))
+        target_real = os.path.realpath(canonical)
+        contained = os.path.commonpath((target_real, audit_root)) == audit_root
+    except (OSError, ValueError):
+        return "受管审计账本不接受 host-grant 读写绑定（fail-closed）"
+    if contained:
+        return "受管审计账本不接受 host-grant 读写绑定（fail-closed）"
+    return None
+
+
+def _host_grant_binding_missing(binding: object) -> list[str]:
+    """P0 补修(2026-11-14): request_binding 缺任一必备字段（或非 dict）即不完整.
+
+    缺字段即拒绝，不因缺字段静默跳过对应核验（三重绑定
+    command_sha256/cwd/file_sha256 必须齐备才可核验）。
+    """
+    if not isinstance(binding, dict):
+        return ["request_binding"]
+    return [
+        _k
+        for _k in ("command_sha256", "cwd", "file_sha256")
+        if not str(binding.get(_k, "") or "")
+    ]
+
+
 def _scrubbed_env() -> dict[str, str]:
     """构造清洗后的子进程环境：白名单强制保留 + 密钥类/控制面剔除 + 其余保留."""
     scrubbed: dict[str, str] = {}
@@ -1026,19 +1061,13 @@ class ExecuteCommandTool:
                 errs.append("授权路径已成为符号链接（symlink 替换拒绝）")
             if not os.path.isfile(canonical):
                 errs.append("授权路径已不是常规文件（删除/权限/类型变化拒绝）")
+        # P0-3: 审计账本包含性判断（realpath/commonpath 异常同样拒绝，Reviewer P2）。
+        _audit_err = _host_grant_audit_conflict(canonical, self._safety_audit_dir)
+        if _audit_err:
+            errs.append(_audit_err)
         binding = grant.get("request_binding") or {}
-        # ── P0 补修(2026-11-14): 绑定完整性 fail-closed——request_binding
-        # 缺任一必备字段（或整段缺失/非 dict）即拒绝，不因缺字段静默跳过
-        # 对应核验（三重绑定 command_sha256/cwd/file_sha256 必须齐备才可核验）。
-        _bind_missing = (
-            [
-                _k
-                for _k in ("command_sha256", "cwd", "file_sha256")
-                if not str(binding.get(_k, "") or "")
-            ]
-            if isinstance(binding, dict)
-            else ["request_binding"]
-        )
+        # ── P0 补修(2026-11-14): 绑定完整性 fail-closed（缺任一必备字段即拒绝）。
+        _bind_missing = _host_grant_binding_missing(binding)
         if _bind_missing:
             errs.append(
                 "授权绑定不完整（缺 "
@@ -1134,6 +1163,10 @@ class ExecuteCommandTool:
                 mode=self._sandbox_mode,
                 image=self._sandbox_image,
                 extra_file_binds=extra_file_binds,
+                protected_roots=(
+                    [str(self._safety_audit_dir)] if self._safety_audit_dir is not None
+                    else []
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return ToolResult(
