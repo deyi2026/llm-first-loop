@@ -59,7 +59,10 @@ _DOCKER_INFO_TIMEOUT_S = 2.0
 # S2-6（安全建议书 2026-10-25）：note 文案必须与实际后端能力一一对应，不得夸大隔离范围。
 _BWRAP_NOTE = "（已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络）"
 _DOCKER_NOTE = "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）"
-_AUDIT_PROTECTED_NOTE = "（受管审计目录写保护已启用：普通工作区仍可写）"
+_AUDIT_PROTECTED_NOTE = (
+    "（受管审计目录写保护已启用：普通工作区仍可写；"
+    "audit_toctou=trusted_host_race_not_closed）"
+)
 _SANDBOX_EXEC_NOTE = (
     "（已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络；"
     "已知降级：ps 为 setuid 在沙箱内 exec 即拒(EPERM)、launchctl list 空输出——"
@@ -362,6 +365,7 @@ def _prepare_protected_roots(roots: Iterable[str]) -> list[str]:
     the policy is applied (macOS real test; Linux still needs native e2e).
     """
     prepared: list[str] = []
+    symlink_targets: set[str] = set()
     for raw in roots:
         if not raw:
             continue
@@ -385,16 +389,35 @@ def _prepare_protected_roots(roots: Iterable[str]) -> list[str]:
                         raise RuntimeError(
                             "protected audit contains pre-existing hardlink alias (fail-closed)"
                         )
-                    if stat.S_ISLNK(info.st_mode) and name in _AUDIT_CRITICAL_FILES:
-                        raise RuntimeError(
-                            "protected audit critical ledger is a symlink (fail-closed)"
-                        )
+                    if stat.S_ISLNK(info.st_mode):
+                        if name in _AUDIT_CRITICAL_FILES:
+                            raise RuntimeError(
+                                "protected audit critical ledger is a symlink (fail-closed)"
+                            )
+                        # Existing historical audit artifacts may contain
+                        # symlinks to provider config files. Rejecting every
+                        # symlink would disable ALL commands on that host.
+                        # Protect each resolved regular-file target as another
+                        # exact read-only path instead; directory/dangling
+                        # symlinks have unbounded scope and fail closed.
+                        target = os.path.realpath(item)
+                        if not _inside(target, real):
+                            target_info = os.stat(target)
+                            if not stat.S_ISREG(target_info.st_mode):
+                                raise RuntimeError(
+                                    "protected audit symlink target is not a regular file (fail-closed)"
+                                )
+                            if target_info.st_nlink != 1:
+                                raise RuntimeError(
+                                    "protected audit symlink target has hardlink alias (fail-closed)"
+                                )
+                            symlink_targets.add(target)
         except OSError as exc:
             raise RuntimeError(
                 f"protected audit cannot be inspected ({type(exc).__name__}; fail-closed)"
             ) from exc
         prepared.append(real)
-    return prepared
+    return prepared + sorted(symlink_targets - set(prepared))
 
 
 def _audit_overlay_roots(workdir: str, protected_roots: Iterable[str]) -> list[str]:
@@ -493,12 +516,12 @@ def docker_argv(
         "--volume", f"{workdir}:{workdir}:rw",
     ]
     for parent in _audit_ancestor_mounts(workdir, protected_roots):
-        if "," in parent:
-            raise RuntimeError("docker protected audit mount contains comma (fail-closed)")
+        if "," in parent or ":" in parent:
+            raise RuntimeError("docker protected audit mount contains comma/colon (fail-closed)")
         argv += ["--mount", f"type=bind,source={parent},target={parent}"]
     for root in _audit_overlay_roots(workdir, protected_roots):
-        if "," in root:
-            raise RuntimeError("docker protected audit mount contains comma (fail-closed)")
+        if "," in root or ":" in root:
+            raise RuntimeError("docker protected audit mount contains comma/colon (fail-closed)")
         argv += ["--mount", f"type=bind,source={root},target={root},readonly"]
     argv += ["--workdir", workdir, image, "sh", "-c", command]
     return argv

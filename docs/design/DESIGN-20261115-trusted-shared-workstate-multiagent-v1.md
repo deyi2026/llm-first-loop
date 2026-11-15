@@ -155,7 +155,7 @@ truncated: boolean, next_cursor
 | Deepin bwrap 假账本 | 真实 Linux bwrap：只读 audit overlay 可被父目录 rename 移走；补祖先 rw self-bind 后 direct/symlink/rename/hardlink/umount 拒绝，sibling 可写；候选源文件生成的 argv 再验 `EXACT_CODE_DEEPIN_BWRAP_PASS` | **临时目录真测通过** |
 | Docker / none | Docker argv 有审计 readonly overlay 与祖先 mountpoint；无本地镜像，未真测。none/auto-none 只给明确不隔离警告 | **Docker 待真测；none 不具强制隔离** |
 | GoalStore 锁故障 | 模拟 flock OSError 时写入仍成功（临时账本） | **P1-2 已证 fail-open，真实并发损坏未证** |
-| 相关 Goal/Task 回归 | 初轮 602 passed；扩大至 Goal/Task/Sandbox/HostGrant/Factory/跨会话联测：**735 passed、4 skipped、exit 0** | PASS |
+| 相关 Goal/Task 回归 | 初轮 602 passed；扩大至 Goal/Task/Sandbox/HostGrant/Factory/跨会话联测：初轮 **735 passed、4 skipped、exit 0**；P1 补修后 **738 passed、4 skipped、exit 0** | PASS |
 | Ruff / Pyright | 修改范围 Ruff PASS，目标模块 Pyright 0 errors、0 warnings，git diff --check PASS | PASS |
 | 原版完整 R9 | 需独审后运行，未执行 | **未执行** |
 | GLM-5.3 独立 Reviewer | 冻结候选后，审查代码/测试/设计完整变更 | **未执行** |
@@ -185,3 +185,13 @@ truncated: boolean, next_cursor
 **S4 生产**：仅在明确受管发布授权后按精确 SHA/服务代际发布并验证，不因本报告或本地测试自动重启 Mac/Deepin。
 
 **停止线**：P0-3 未关闭不得声称跨会话安全闭环；不得把“模型给出的证据”当权限；不得以新的共享状态覆盖原始证据；不得因安全修复静默丢旧 Goal；不得把本地 GREEN 说成生产已生效。
+
+## 7. 独立 GLM-5.3 审查（第一次 REVISE）与收敛记录
+
+- **冻结输入**：候选 `52ddc7e8b1112c415ae57e89162ec326b1c54b8f`，完整 16 文件补丁 SHA-256 `a69da1736c2915fdf52c0197d06e0099dfc6d68588d21e45a8c5d235126eed60`。
+- **Reviewer**：真实 `glm-5.3`、独立只读无工具 HTTP 请求；首次请求 `finish_reason=length` 且最终正文 0 字，**不算审查**。第二次显式 `reasoning_effort=low`，`finish_reason=stop`，获得 `VERDICT: REVISE / P0=0 P1=3 P2=4`。不借旧 SHA 的任何 PASS。
+- **P1-1（审计目录非关键 symlink）**：Reviewer 提议“一律拒绝任意 symlink”，但本机真实审计树只读统计有 10 个历史 Provider 配置文件 symlink（两个去重目标），直接拒绝会让所有正常命令失败。最小兼容修订：关键账本 symlink 拒绝；其它 symlink 若指向**审计根外常规文件**，把解析后的目标也加入只读保护集合（Mac final deny、Linux/Docker 文件 ro-bind）；目录/悬空目标拒绝，目标硬链接拒绝。Mac 实测目标经审计 symlink 与直接路径均写失败；Deepin 候选源文件真实 bwrap 运行 `DEEPIN_SYMLINK_TARGET_E2E_PASS`，普通业务文件仍可写。
+- **P1-2（TOCTOU）**：Reviewer 指出 preflight 到 spawn 的可信宿主并发修改窗口。不能用多线程进程中的 `preexec_fn` 或“spawn 后再 kill”冒充原子隔离。现阶段明确边界：**不可信子进程自身**不能在沙盒生效后 rename 受保护父目录/新增硬链接；**可信同 UID 宿主进程**可在 preflight 与 spawn 之间修改 inode/路径，此竞争不在本次物理隔离承诺内。每次沙盒回执增加机器可读 `audit_toctou=trusted_host_race_not_closed`；不宣称绝对 TOCTOU-free。未来若要求跨受信宿主进程的强隔离，应使用独立 OS 身份/服务进程与 fd/事务绑定，非本次最小批次。
+- **P1-3（Linux 真实 e2e 的 CI skip）**：Mac 运行 Linux bwrap 用例会显式 skip，不能计为 Linux PASS；新增 `LFL_REQUIRE_REAL_BWRAP_AUDIT=1` 资格开关，启用后缺少 bwrap/内核 userns 即测试失败。Deepin 已在真实 bwrap 中用本候选 `sandbox.py` 构造 argv 做临时目录物理验证，但不冒充“GitHub CI 已在 Linux 真跑”。
+- **P2 处置**：audit preflight 是 O(n) 元数据扫描（本机约 1.6 万目录项，热缓存观测约 0.13–0.52s/次）；为保证已有 hardlink 的 fail-closed 不引入不安全缓存，先接受该成本并纳入后续性能 A/B。Docker `--mount` 保护路径额外拒绝逗号/冒号，尚无现成镜像，仍不宣称 Docker 真测；CLI/WeCom 等身份绑定需独立入口验收；Mac 祖先 literal deny 的作用域按现有真实测试限定，不夸大。
+- **再审门槛**：上述改动必须形成新的冻结 SHA，重新由独立 Reviewer 审查，取得 `PASS/P0=P1=0` 后才可运行原版完整 R9。**第一次 REVISE 仍是历史事实，不得擦除或改记 PASS。**

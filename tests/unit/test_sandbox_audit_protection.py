@@ -5,6 +5,7 @@ All runtime probes use disposable test files. No production audit ledger is touc
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,56 @@ def test_symlink_inside_audit_blocks_sandbox_launch(tmp_path):
         sandbox_argv("true", str(ws), mode="bwrap", protected_roots=[str(audit)])
 
 
+def test_noncritical_audit_symlink_target_is_also_protected(tmp_path):
+    ws, audit, ledger = _workspace(tmp_path)
+    target = ws / "provider-config.json"
+    target.write_text('{"safe": true}\n')
+    (audit / "journal.jsonl").symlink_to(target)
+    with patch("llm_loop.tools.sandbox._probe_sandbox_exec", return_value=True):
+        argv, note = sandbox_argv(
+            "true", str(ws), mode="sandbox-exec", protected_roots=[str(audit)]
+        )
+    assert argv is not None
+    assert f'(deny file-write* (subpath "{target}"))' in argv[2]
+    assert "audit_toctou=" in note
+    with patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/bin/bwrap"):
+        b, _ = sandbox_argv(
+            "true", str(ws), mode="bwrap", protected_roots=[str(audit)]
+        )
+    assert b is not None
+    assert any(
+        b[i:i + 3] == ["--ro-bind", str(target), str(target)]
+        for i in range(len(b) - 2)
+    )
+    assert ledger.read_text() == "original\n"
+
+
+def test_macos_real_symlink_target_cannot_be_written(tmp_path):
+    if sys.platform != "darwin" or not sandbox_exec_available():
+        pytest.skip("real macOS sandbox-exec unavailable")
+    ws, audit, _ = _workspace(tmp_path)
+    target = ws / "provider-config.json"
+    target.write_text('{"safe": true}\n')
+    (audit / "journal.jsonl").symlink_to(target)
+    for command in (
+        "printf FORGED >> data/audit/journal.jsonl",
+        "printf FORGED >> provider-config.json",
+    ):
+        argv, _ = sandbox_argv(
+            command, str(ws), mode="sandbox-exec", protected_roots=[str(audit)]
+        )
+        result = subprocess.run(argv, cwd=ws, capture_output=True, text=True, timeout=12)
+        assert result.returncode != 0, result.stderr
+        assert target.read_text() == '{"safe": true}\n'
+
+
+def test_audit_directory_symlink_target_fails_closed(tmp_path):
+    ws, audit, _ = _workspace(tmp_path)
+    (audit / "unbounded").symlink_to(ws, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="not a regular file"):
+        sandbox_argv("true", str(ws), mode="bwrap", protected_roots=[str(audit)])
+
+
 def test_bwrap_ro_overlay_after_rw_workspace(tmp_path):
     ws, audit, _ = _workspace(tmp_path)
     argv = bwrap_argv("true", str(ws), protected_roots=[str(audit)])
@@ -96,8 +147,11 @@ def test_bwrap_ro_overlay_after_rw_workspace(tmp_path):
 
 
 def test_bwrap_real_audit_denied_normal_file_allowed(tmp_path):
+    require_real = os.environ.get("LFL_REQUIRE_REAL_BWRAP_AUDIT") == "1"
     if not shutil.which("bwrap") or sys.platform != "linux":
-        pytest.skip("real bwrap unavailable on this host")
+        if require_real:
+            pytest.fail("required real Linux bwrap audit gate unavailable")
+        pytest.skip("real bwrap unavailable on this host; Deepin e2e receipt required")
     ws, audit, ledger = _workspace(tmp_path)
     commands = [
         "printf BAD >> data/audit/goals.jsonl",
@@ -109,7 +163,9 @@ def test_bwrap_real_audit_denied_normal_file_allowed(tmp_path):
         argv = bwrap_argv(command, str(ws), protected_roots=[str(audit)])
         p = subprocess.run(argv, cwd=ws, capture_output=True, text=True, timeout=15)
         if "Operation not permitted" in p.stderr and "bwrap:" in p.stderr:
-            pytest.skip("outer container blocks Linux user namespaces")
+            if require_real:
+                pytest.fail("required bwrap audit gate blocked by outer user namespace")
+            pytest.skip("outer container blocks Linux user namespaces; no e2e claim")
         assert (p.returncode == 0) == command.startswith("printf OK"), (command, p.stderr)
         assert ledger.read_text() == "original\n"
     assert (ws / "data" / "sibling.txt").read_text() == "OK"

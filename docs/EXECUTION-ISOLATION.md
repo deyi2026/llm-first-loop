@@ -22,7 +22,8 @@
   仅 ro-bind audit 不足：父目录 rename 可使受管路径失效。
 - **Docker**：按相同顺序加入父目录 rw bind mount 和 audit readonly bind mount；
   只在 audit 位于 workdir 内时挂载，workdir 外的审计目录**不得因保护而被暴露**。
-  已做 argv/单元验证；由于验收机无现成镜像，尚未真运行容器，不可宣称已通过。
+  已做 argv/单元验证；路径含逗号/冒号拒绝。由于验收机无现成镜像，
+  尚未真运行容器，不可宣称已通过。
 - **none / auto→none**：仍为显式受信宿主模式，无内核写隔离；
   有受管 audit 时回执会标“审计账本未受沙箱写隔离”。
   多 Agent 非受信任务必须启用可用后端与 `EXEC_SANDBOX_STRICT=1`，
@@ -31,8 +32,11 @@
   即使额外可写根覆盖 audit，最后的 Mac deny / Linux readonly mount 仍优先。
 - **路径别名/残余风险**：预置硬链接在 Mac 上真实可绕过单纯路径 deny，
   因此每次执行前扫描受管目录并拒绝 `st_nlink != 1`。
-  文件/目录在可信并行进程变更时存在 TOCTOU，且其它独立文件工具尚未纳入
-  同一物理隔离门；本批次**不宣称所有 Agent 写入口的端到端强制 ACL**。
+  历史审计产物内存在指向外部常规配置文件的 symlink：关键账本 symlink
+  直接拒绝，其余 symlink 的解析后文件目标也被纳入只读保护；目录/悬空
+  symlink 拒绝。文件/目录在可信并行进程变更时存在 TOCTOU，回执明确
+  `audit_toctou=trusted_host_race_not_closed`；其它独立文件工具尚未纳入
+  同一物理隔离门，本批次**不宣称所有 Agent 写入口的端到端强制 ACL**。
   真实数据/服务未在本测试中修改。
 
 ## 运行条件（由 `EXEC_SANDBOX` 决定）
