@@ -1,0 +1,98 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-ci-main-timing",
+  "summary": "Repair three independent GitHub main-push CI failures caused by test timing/parallel scheduling: wall-clock performance assertion under xdist CPU contention, SIGKILL marker creation-before-write race, and interjection test second-response completion before the second HTTP request. No runtime business code, security thresholds, or CI gate script changes.",
+  "components": [
+    {
+      "component_id": "serial-perf-selection",
+      "paths": [
+        "tests/conftest.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing pytest serial_perf collection marker and scripts/ci_gate.sh serial supplement",
+      "disposition": "Reuse the existing serial_perf lane for Phase6 M3 wall-clock P50/P95 test, preserving exact 100/200ms thresholds and fail-closed empty-selection check. Parallel xdist explicitly excludes serial_perf and serial supplement runs it once, no coverage removed.",
+      "evidence": [
+        "main push CI run 43662115236 initial failure: tests/phase6/test_m3_metrics.py T1 P95=467.7ms >200ms under xdist; same test isolated serial PASS without threshold changes.",
+        "Three rounds of xdist focused regression 49 passed each, and serial_perf targeted 1 passed; exact-head R9/remote CI pending."
+      ],
+      "verification_level": "Local 25 focused passed; 3 xdist rounds 49 passed each; serial_perf 1 passed; exact-head original full R9 and remote CI required before merge.",
+      "model_evidence_veto_recovery_exit": "No relaxation of performance thresholds or bypass of CI. Missing serial_perf collection, serial test failure, or changed coverage is a hard stop.",
+      "rollback_route": "Revert the single serial_perf node-id registration; existing serial_perf mechanism and thresholds remain unchanged.",
+      "declaration_id": "reuse-existing-serial-perf-lane"
+    },
+    {
+      "component_id": "sigkill-marker-atomic",
+      "paths": [
+        "tests/fixtures/m5e_fault_worker.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Offline M5E SIGKILL process fault injection fixture",
+      "disposition": "Write/fsync a private pending marker and atomically os.link create-if-absent to publish the barrier, preserving duplicate-barrier failure; parent can no longer observe an empty marker before child writes it. Real SIGKILL and all durable-effect safety assertions remain unchanged.",
+      "evidence": [
+        "main push CI run 43662115236 rerun failure: expected after_run_end marker content but observed empty string after SIGKILL.",
+        "The fixture previously used open(marker,\"x\") followed by write/fsync; marker existence preceded complete content. 25 focused passed and 3 xdist rounds 49 passed each after atomic publish."
+      ],
+      "verification_level": "Focused and xdist stress PASS; original R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Never treat marker existence as proof of durable Provider settlement or permission to replay old run. Any fault-injection safety failure blocks.",
+      "rollback_route": "Revert fixture-only atomic marker change; no runtime data or production code touched."
+    },
+    {
+      "component_id": "interjection-two-request-barrier",
+      "paths": [
+        "tests/phase6/test_m1_sync_interrupt.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Phase6 M1 S4 multi-interjection test harness",
+      "disposition": "Hold second fake provider response until both HTTP interjections have been accepted, then allow an additional provider call to consume a straddling interjection. Preserve strict assertions that both interjections reach actual provider projection and receipt status is interject_received.",
+      "evidence": [
+        "main push CI run 43662115236 rerun failure: second accepted interjection missing from provider projections under xdist load.",
+        "Original test used 1.2s first response and immediate second fake response; under load the second HTTP request could finish after the second model call. 25 focused and 3 xdist rounds 49 passed after barrier."
+      ],
+      "verification_level": "Focused and xdist stress PASS; original R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Do not change production queue or consumption semantics to make test pass; preserve both receipt and projected-message assertions.",
+      "rollback_route": "Revert test-only barrier and third fake response; production unaffected."
+    },
+    {
+      "component_id": "architecture-manifest",
+      "paths": [
+        "docs/governance/submissions/20261115-ci-main-timing.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 exact-scope submission gate",
+      "disposition": "Declare four changed paths exactly; no gate script changes or bypass.",
+      "evidence": [
+        "PR23 initial A.5 red was repaired by an exact manifest; this follow-up supplies its required own declaration before first push."
+      ],
+      "verification_level": "Local scripts/check_architecture_submission.py --base/--head PASS required before PR push.",
+      "model_evidence_veto_recovery_exit": "Any path mismatch or declaration schema failure blocks merge.",
+      "rollback_route": "Revert this test-only PR as a whole."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-serial-perf-lane",
+      "g1": {
+        "necessity": "A real wall-clock P95 assertion becomes invalid when run simultaneously with xdist CPU-heavy workers, but the strict latency thresholds must remain unchanged and continue to block genuine slow behavior."
+      },
+      "g2": {
+        "authority_owner": "Existing pytest serial_perf marker, tests/conftest.py collection hook and scripts/ci_gate.sh serial_perf supplement.",
+        "relationship": "reuse",
+        "non_duplication": "Only add one node-id to the existing marker list; no new test runner, CI script or exception to required coverage."
+      },
+      "g3": {
+        "model_evidence": [
+          "GitHub main-push CI exact failure P95=467.7ms in parallel, while isolated serial test passes unchanged thresholds.",
+          "The serial_perf complement is run by original ci_gate.sh with exit5 empty-set fail-closed and nonzero failure blocking."
+        ],
+        "recovery_or_reason": "If serial test fails, hold release and investigate actual latency. Never accept serial PASS as a substitute for other parallel test failures."
+      },
+      "g4": {
+        "rollback": "Revert node-id registration, retain existing serial_perf infrastructure and full CI.",
+        "verification": [
+          "Targeted serial_perf1 PASS, xdist focused 3x49 PASS, 25 focused PASS.",
+          "Independent GLM-5.3 review PASS/P0=P1=0, original complete R9 exit0 and remote PR/main CI SUCCESS are required before production cutover."
+        ]
+      }
+    }
+  ]
+}

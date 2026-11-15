@@ -48,10 +48,20 @@ budget = TaskBudgetStore(root / "ledger")
 
 
 def reached(label: str, *, pause: bool = True) -> None:
-    with open(marker, "x", encoding="utf-8") as stream:
+    # Publish the crash barrier only AFTER its bytes are flushed and fsynced.
+    # open(marker, "x") exposed an empty file to the parent before write(),
+    # allowing a real SIGKILL to land before the intended barrier was reached.
+    pending = marker.with_name(marker.name + ".pending")
+    with open(pending, "x", encoding="utf-8") as stream:
         stream.write(label)
         stream.flush()
         os.fsync(stream.fileno())
+    # Atomic create-if-absent also preserves the old open(..., "x") behavior:
+    # a duplicate barrier must raise, never overwrite a published marker.
+    try:
+        os.link(pending, marker)
+    finally:
+        pending.unlink(missing_ok=True)
     if pause:
         signal.pause()
 
