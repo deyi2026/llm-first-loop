@@ -127,6 +127,40 @@ def test_interject_rejects_stale_click_generation_before_claim(build_test_engine
     assert runner.enqueued[0][2] == "gen-B"
 
 
+def test_interject_run_ends_after_claim_restores_queued_item(build_test_engine):
+    """Mailbox rejection after claim must release the queued turn, not lose it."""
+    engine, _ = build_test_engine([{"content": "unused"}])
+    client = _make_client(engine)
+    sid = engine.session.create()
+    qid = client.post(
+        "/api/v1/chat/queue", json={"session_id": sid, "message": "steer exact run"}
+    ).json()["queue_id"]
+
+    class _Runner:
+        enabled = True
+
+        def get_handle(self, session_id):
+            assert session_id == sid
+            return {"run_generation": "gen-A"}
+
+        def enqueue_interjection(self, session_id, payload, *, expected_run_generation=None):
+            assert session_id == sid
+            assert expected_run_generation == "gen-A"
+            return False  # The run ended after the queue item was claimed.
+
+    engine.runner = _Runner()
+    response = client.post(
+        "/api/v1/chat/queue/interject",
+        json={"session_id": sid, "queue_id": qid, "run_generation": "gen-A"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"] == "interject_run_changed"
+    active = client.get(f"/api/v1/chat/queue?session_id={sid}").json()["items"]
+    assert len(active) == 1
+    assert active[0]["queue_id"] == qid
+    assert active[0]["status"] == "queued"
+
+
 class TestHumanTurnQueueUnit:
     def test_interject_pending_is_durable_and_restart_falls_back_to_queue(self, tmp_path):
         hq = HumanTurnQueue(tmp_path)
