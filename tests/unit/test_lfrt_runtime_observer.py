@@ -74,6 +74,7 @@ def _llama_payload() -> dict:
                     "m": "/models/Qwen3.8-Flash-Next.gguf",
                     "port": "8901",
                     "alias": "qwen3.8-flash-next",
+                    "np": "1",
                 },
             },
             "server": {
@@ -108,7 +109,7 @@ def test_parser_projects_validated_live_facts_and_uses_live_capacity() -> None:
     assert snapshot.drift is False
 
 
-def test_parser_accepts_current_llama_status_contract_and_default_parallelism() -> None:
+def test_parser_accepts_current_llama_status_contract_and_explicit_parallelism() -> None:
     snapshot = parse_lfrt_status(_llama_payload(), observed_at=321.0)
 
     assert snapshot is not None
@@ -121,6 +122,58 @@ def test_parser_accepts_current_llama_status_contract_and_default_parallelism() 
     assert snapshot.aliases == ("qwen3.8-flash-next",)
     assert snapshot.endpoint_healthy is True
     assert snapshot.drift is False
+
+
+def test_parser_accepts_native_auto_slots_from_measured_props_only() -> None:
+    payload = _llama_payload()
+    del payload["data"]["process"]["flags"]["np"]
+    payload["data"]["config"]["n_parallel"] = -1
+    payload["data"]["server"]["total_slots"] = 4
+
+    snapshot = parse_lfrt_status(payload, observed_at=1.0)
+
+    assert snapshot is not None
+    assert snapshot.max_concurrency == 4
+    assert snapshot.configured_prompt_concurrency == -1
+    assert snapshot.configured_decode_concurrency == -1
+    assert snapshot.drift is False
+    status = snapshot.to_status_dict()
+    assert status["slot_mode"] == "auto"
+    assert status["configured_concurrency"] == {"prompt": -1, "decode": -1}
+    assert status["prompt_concurrency"] == 4
+
+
+@pytest.mark.parametrize("slots", [None, 0, -1, "four", True, 1.5])
+def test_parser_fails_closed_when_auto_slot_fact_is_missing_or_invalid(slots) -> None:
+    payload = _llama_payload()
+    del payload["data"]["process"]["flags"]["np"]
+    payload["data"]["config"]["n_parallel"] = -1
+    payload["data"]["server"]["total_slots"] = slots
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
+
+
+def test_parser_rejects_auto_config_with_explicit_np_process_flag() -> None:
+    payload = _llama_payload()
+    payload["data"]["config"]["n_parallel"] = -1
+    payload["data"]["server"]["total_slots"] = 4
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
+
+
+def test_parser_does_not_guess_one_slot_from_missing_np_with_explicit_config() -> None:
+    payload = _llama_payload()
+    del payload["data"]["process"]["flags"]["np"]
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
+    payload["data"]["server"]["total_slots"] = 4
+    snapshot = parse_lfrt_status(payload, observed_at=1.0)
+    assert snapshot is not None
+    assert snapshot.max_concurrency == 4
+    assert snapshot.drift is True  # config 1 vs actual auto 4
+
+
+def test_parser_rejects_conflicting_explicit_and_props_slot_facts() -> None:
+    payload = _llama_payload()
+    payload["data"]["server"]["total_slots"] = 4
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
 
 
 def test_parser_uses_explicit_llama_np_and_reports_parallelism_drift() -> None:
@@ -183,6 +236,7 @@ def test_parser_reports_config_drift_without_replacing_live_capacity() -> None:
         (lambda p: p["data"]["process"]["flags"].pop("prompt-concurrency"),),
         (lambda p: p["data"]["process"]["flags"].update(**{"decode-concurrency": "0"}),),
         (lambda p: p["data"]["process"]["flags"].update(port="8902"),),
+        (lambda p: p["data"]["config"].pop("concurrency"),),
         (lambda p: p["data"]["server"].update(health="yes"),),
     ],
 )
