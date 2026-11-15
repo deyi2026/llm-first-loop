@@ -159,10 +159,15 @@ def _enqueue_and_interject(client, sid, gen, rec_step, *, allow_natural_completi
     assert r1.status_code == 202, f"入队非 202: {r1.status_code}"
     queue_id = r1.json()["queue_id"]
     r2 = _interject(client, sid, queue_id, gen)
+    # A run can end before handle lookup or between queue claim and mailbox handoff.
+    # Both exact 409 outcomes leave the human message safely queued.
     natural_completion = (
         allow_natural_completion
         and r2.status_code == 409
-        and r2.json().get("error") == "interject_no_live_run"
+        and r2.json().get("error") in {
+            "interject_no_live_run",
+            "interject_run_changed",
+        }
     )
     assert r2.status_code == 202 or natural_completion, (
         f"插话受理非 202: {r2.status_code} {r2.text[:200]}"
