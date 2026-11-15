@@ -106,4 +106,6 @@ def test_task_refusal_offers_no_phantom_cross_session_exit():
     assert "cross_session=true" not in task_text
     assert "owner 会话" in task_text
     goal_text = write_refusal_text("G-1", perm)
-    assert "cross_session=true" in goal_text
+    assert "cross_session=true" not in goal_text
+    assert "不支持参数式跨会话写入" in goal_text
+    assert "原 owner 会话" in goal_text

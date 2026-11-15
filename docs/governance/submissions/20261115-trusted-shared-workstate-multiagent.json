@@ -15,7 +15,8 @@
         "tests/unit/test_goal_spec_archive_gate.py",
         "tests/unit/test_goal_write_authority_p0.py",
         "tests/unit/test_task_authorization.py",
-        "tests/unit/test_task_evidence_verifier.py"
+        "tests/unit/test_task_evidence_verifier.py",
+        "tests/unit/test_l1l2_review_fixes.py"
       ],
       "control_machinery": true,
       "declaration_id": "trusted-goal-owner-authority",
@@ -23,7 +24,8 @@
       "disposition": "REPLACE model-self-attested cross-session write authority with host-bound owner verification; preserve existing Goal API and denial semantics.",
       "evidence": [
         "Original frozen security patch 9a7be3dad and 98ba5a16d; explicit denial regression in test_goal_write_authority_p0.py.",
-        "Host independent review of old frozen candidate a39452aaf reported PASS P0=0 P1=0; new exact merged-base candidate must be reviewed afresh."
+        "Host independent review of old frozen candidate a39452aaf reported PASS P0=0 P1=0; new exact merged-base candidate must be reviewed afresh.",
+        "Update obsolete refusal-message test to reject cross_session=true in Goal text, preserving trusted-owner-only recovery instead of model self-authorization."
       ],
       "verification_level": "New exact SHA independent GLM-5.3 Reviewer, targeted authorization tests and original full R9 required before PR.",
       "model_evidence_veto_recovery_exit": "If the new reviewer rejects ownership/nonce/side-effect behavior, block push and integration, repair in this isolated worktree and repeat review plus R9.",
@@ -59,7 +61,7 @@
       "owning_subsystem": "Security design, residual-risk disclosure, and A.5 change-path declaration",
       "disposition": "ADMIT design and mechanical coverage record; explicitly avoid claims of Docker or global filesystem ACL completion.",
       "evidence": [
-        "Exact 17-path base...HEAD coverage must be verified by scripts/check_architecture_submission.py."
+        "Exact 18-path base...HEAD coverage must be verified by scripts/check_architecture_submission.py."
       ],
       "verification_level": "A.5 mechanical coverage PASS; independent semantic review required separately.",
       "model_evidence_veto_recovery_exit": "If reviewer finds overclaim or path omission, amend declaration and repeat exact-SHA review before promotion.",
