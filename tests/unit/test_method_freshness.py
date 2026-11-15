@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from llm_loop.methods import store as store_module
 from llm_loop.methods.store import MethodStore
 
 BODY = "## Trigger\n测试触发条件足够长\n"
@@ -65,10 +66,10 @@ def test_path_anchor_resolved_and_mtime_preserving_rewrite_flips_state(tmp_path)
     _append_baseline(record, {"a.txt": _sha(b"v1")})
 
     fresh = store.freshness(record.method_ref)
-    assert fresh["state"] == "current"
+    assert fresh["state"] == "current"  # _card ran annotate: trusted root+SHA baseline
     anchor = fresh["anchors"]["a.txt"]
     assert anchor["anchor_kind"] == "path"
-    assert anchor["anchor_root_id"] == "workspace"
+    assert anchor["anchor_root_id"] == "ws:" + store_module._root_fingerprint(ws)
     assert anchor["resolution_state"] == "resolved"
     assert anchor["content_sha256"] == _sha(b"v1")
     assert fresh["unresolvable_refs"] == []
@@ -214,7 +215,7 @@ def test_unbaselined_and_not_tracked_branches_expose_anchor_trio(tmp_path):
     # unresolvable-refs test: no resolvable anchor => no baseline).
     assert fresh["state"] == "current"
     assert fresh["anchors"]["b.txt"]["resolution_state"] == "resolved"
-    assert fresh["anchor_baseline"] == {"b.txt": _sha(b"hi")}
+    assert fresh["anchor_baseline"]["anchors"]["b.txt"]["content_sha256"] == _sha(b"hi")
     assert "unresolvable_refs" in fresh
 
 
@@ -229,15 +230,16 @@ def test_annotate_freshness_establishes_real_sha_baseline(tmp_path):
 
     fresh = store.freshness(record.method_ref)
     assert fresh["state"] == "current"
-    assert fresh["anchor_baseline"] == {"c.txt": _sha(b"k1")}
+    assert fresh["anchor_baseline"]["anchors"]["c.txt"]["content_sha256"] == _sha(b"k1")
+    assert fresh["anchor_baseline"]["resolver_version"] == "r4-anchor-v2"
     assert fresh["anchor_changed_refs"] == []
 
     journal = (tmp_path / "methods" / "annotations.jsonl").read_text(encoding="utf-8")
     payload = json.loads(journal.strip().splitlines()[-1])
     baseline = payload["anchor_baseline"]
-    assert baseline["resolver_version"] == "r4-anchor-v1"
+    assert baseline["resolver_version"] == "r4-anchor-v2"
     assert baseline["sampled_at"]
-    assert baseline["anchors"]["c.txt"]["anchor_root_id"] == "workspace"
+    assert baseline["anchors"]["c.txt"]["anchor_root_id"] == "ws:" + store_module._root_fingerprint(ws)
     assert baseline["anchors"]["c.txt"]["content_sha256"] == _sha(b"k1")
 
     (ws / "c.txt").write_bytes(b"k2")  # real content change, no manual baseline edit
@@ -273,7 +275,7 @@ def test_annotate_mixed_refs_baseline_excludes_unresolvable(tmp_path):
     record = store.annotate_freshness(record.method_ref, ["d.txt", "evidence://v1/y"])
 
     fresh = store.freshness(record.method_ref)
-    assert fresh["anchor_baseline"] == {"d.txt": _sha(b"m1")}
+    assert fresh["anchor_baseline"]["anchors"]["d.txt"]["content_sha256"] == _sha(b"m1")
     assert fresh["state"] == "unresolvable"  # not current while evidence unresolved
     assert fresh["unresolvable_refs"] == ["evidence://v1/y"]
     assert fresh["anchor_changed_refs"] == []
@@ -300,3 +302,107 @@ def test_code_anchor_root_id_via_worktree_pointer_and_packed_refs(tmp_path):
     assert anchor["anchor_kind"] == "code"
     assert anchor["anchor_root_id"] == "git:" + sha[:12]
     assert anchor["resolution_state"] == "resolved"
+
+
+def test_workspace_root_switch_same_content_is_not_current(tmp_path):
+    """P1-A counterexample: same methods dir, two workspace roots with byte-identical
+    contract.txt. Annotating under root_a and reading under root_b must NOT claim
+    current: the baseline binds root identity, so the switch is a root change."""
+    methods = tmp_path / "methods"
+    methods.mkdir()
+    root_a = tmp_path / "root_a"
+    root_b = tmp_path / "root_b"
+    for ws in (root_a, root_b):
+        ws.mkdir()
+        (ws / "contract.txt").write_bytes(b"same-bytes")
+
+    store_a = MethodStore(methods, workspace_root=root_a)
+    store_b = MethodStore(methods, workspace_root=root_b)
+    record = store_a.save_candidate(name="root switch probe", description="描述行足够区分", body=BODY)
+    store_a.annotate_freshness(record.method_ref, ["contract.txt"])
+
+    fresh_a = store_a.freshness(record.method_ref)
+    fresh_b = store_b.freshness(record.method_ref)
+    id_a = fresh_a["anchors"]["contract.txt"]["anchor_root_id"]
+    id_b = fresh_b["anchors"]["contract.txt"]["anchor_root_id"]
+    assert id_a != id_b
+    assert id_a.startswith("ws:") and id_b.startswith("ws:")
+    assert str(root_a) not in id_a and str(root_b) not in id_b  # no absolute-path leak
+    assert fresh_a["state"] == "current"
+    assert fresh_b["state"] == "changed"  # root change never reads as current
+    assert fresh_b["anchor_root_changed_refs"] == ["contract.txt"]
+    assert fresh_b["anchor_change_reasons"]["contract.txt"] == "root_changed"
+
+
+def test_bundle_mapped_anchor_is_authoritative_not_legacy_missing(tmp_path):
+    """P1-B counterexample (wheel simulation): the legacy snapshot still stats
+    ws/src/... and says "missing", but the anchor resolved through the bundle
+    layout — the R4 verdict must come from anchors.resolution_state, never the
+    legacy map; a real annotate baseline (same SHA + same root_id) is current."""
+    methods = tmp_path / "methods"
+    methods.mkdir()
+    ws = tmp_path / "ws"
+    bundled = ws / "_bundled"
+    (bundled / "llm_loop").mkdir(parents=True)
+    (bundled / "manifest.json").write_text(json.dumps({"version": "0.6.54"}), encoding="utf-8")
+    (bundled / "llm_loop" / "mod.py").write_bytes(b"x = 1\n")
+    store = MethodStore(methods, workspace_root=ws)
+    ref = "src/llm_loop/mod.py"
+    record = store.save_candidate(name="wheel authority probe", description="描述行足够区分", body=BODY)
+    store.annotate_freshness(record.method_ref, [ref])
+
+    fresh = store.freshness(record.method_ref)
+    anchor = fresh["anchors"][ref]
+    assert anchor["resolution_state"] == "resolved"
+    assert anchor["anchor_root_id"] == "bundle:0.6.54"
+    assert fresh["current"][ref] == "missing"  # legacy display keeps its vocabulary
+    assert fresh["missing_refs"] == []  # ...but never drives the verdict (P1-B)
+    assert fresh["state"] == "current"  # same SHA + same root_id baseline
+
+    (bundled / "llm_loop" / "mod.py").unlink()  # mapping gone: unresolvable, still not missing
+    fresh2 = store.freshness(record.method_ref)
+    assert fresh2["anchors"][ref]["resolution_state"] == "unresolvable"
+    assert fresh2["missing_refs"] == []
+    assert fresh2["state"] == "unresolvable"
+
+
+def test_same_sha_under_different_code_root_id_is_not_current(tmp_path):
+    """P1-A negative on code roots: byte-identical file under a repo checkout
+    (git identity) and a bundle layout — same SHA, different anchor_root_id.
+    A baseline bound to the repo root must not read current through the
+    bundle root."""
+    methods = tmp_path / "methods"
+    methods.mkdir()
+    content = b"print('same')\n"
+
+    repo_ws = tmp_path / "repo_ws"
+    (repo_ws / "src" / "llm_loop").mkdir(parents=True)
+    (repo_ws / "pyproject.toml").write_text("", encoding="utf-8")
+    (repo_ws / "src" / "llm_loop" / "m.py").write_bytes(content)
+    sha = "4f1628ed8110323e88ad5292025f88d337738383"
+    (repo_ws / ".git").mkdir()
+    (repo_ws / ".git" / "HEAD").write_text(f"{sha}\n", encoding="utf-8")
+
+    bundle_ws = tmp_path / "bundle_ws"
+    (bundle_ws / "_bundled" / "llm_loop").mkdir(parents=True)
+    (bundle_ws / "_bundled" / "manifest.json").write_text(
+        json.dumps({"version": "0.6.54"}), encoding="utf-8"
+    )
+    (bundle_ws / "_bundled" / "llm_loop" / "m.py").write_bytes(content)
+
+    repo_store = MethodStore(methods, workspace_root=repo_ws)
+    bundle_store = MethodStore(methods, workspace_root=bundle_ws)
+    ref = "src/llm_loop/m.py"
+    record = repo_store.save_candidate(
+        name="code root switch probe", description="描述行足够区分", body=BODY
+    )
+    repo_store.annotate_freshness(record.method_ref, [ref])
+
+    fresh_repo = repo_store.freshness(record.method_ref)
+    fresh_bundle = bundle_store.freshness(record.method_ref)
+    assert fresh_repo["anchors"][ref]["anchor_root_id"] == "git:" + sha[:12]
+    assert fresh_bundle["anchors"][ref]["anchor_root_id"] == "bundle:0.6.54"
+    assert fresh_repo["state"] == "current"
+    assert fresh_bundle["state"] == "changed"  # same SHA, different root: not current
+    assert fresh_bundle["anchor_root_changed_refs"] == [ref]
+    assert fresh_bundle["anchor_change_reasons"][ref] == "root_changed"

@@ -243,7 +243,15 @@ def _checked_freshness_refs(refs: list[str]) -> list[str]:
 # unresolvable}：wheel/bundle 布局缺 src 映射、evidence:// 无受信解析器、越界
 # 穿越/symlink 逃逸都判 unresolvable——不能把"解析不了"误报成 missing/current
 # （F10/F11/C8）。内容基线一律真实 SHA256；mtime/size 永不作为安全证明。
-_ANCHOR_RESOLVER_VERSION = "r4-anchor-v1"
+_ANCHOR_RESOLVER_VERSION = "r4-anchor-v2"
+
+
+def _root_fingerprint(root: Path) -> str:
+    """Stable per-root identity (16 hex of sha256 over the resolved root path)
+    for roots without a stronger identity (workspace / site-layout). Keeps
+    different roots distinguishable in baselines and receipts without leaking
+    absolute paths (P1-A)."""
+    return hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
 _CODE_ANCHOR_TOPS = frozenset({"src", "evals", "tests", "scripts", "docs"})
 
 
@@ -879,13 +887,13 @@ class MethodStore:
             return roots
         if (wr / "pyproject.toml").is_file() and (wr / "src" / "llm_loop").is_dir():
             sha = _read_git_head_sha(wr)
-            roots.append((f"git:{sha[:12]}" if sha else "repo-checkout", wr, True))
+            roots.append((f"git:{sha[:12]}" if sha else "repo:" + _root_fingerprint(wr), wr, True))
         bundled = wr / "_bundled"
         if bundled.is_dir():
             version = _bundle_manifest_version(bundled)
             roots.append((f"bundle:{version}" if version else "bundle:_bundled", bundled, False))
         if (wr / "llm_loop").is_dir() and not (wr / "src").is_dir():
-            roots.append(("site-layout", wr, False))
+            roots.append(("site:" + _root_fingerprint(wr), wr, False))
         return roots
 
     def _resolve_freshness_anchor(self, raw: str) -> dict[str, str]:
@@ -941,7 +949,7 @@ class MethodStore:
         target, ok = _safe_anchor_join(wr, raw)
         if not ok:
             return info
-        info["anchor_root_id"] = "workspace"
+        info["anchor_root_id"] = "ws:" + _root_fingerprint(wr)
         if not target.is_file():
             info["resolution_state"] = "missing"
             return info
@@ -980,13 +988,15 @@ class MethodStore:
                 out[raw] = "unreadable"
         return out
 
-    def _latest_anchor_baseline(self, record: MethodRecord) -> dict[str, str] | None:
-        """Latest annotate-time anchor baseline ({ref: sha}) from annotations.jsonl.
+    def _latest_anchor_baseline(self, record: MethodRecord) -> dict[str, Any] | None:
+        """Latest annotate-time anchor baseline payload from annotations.jsonl.
 
-        R4 §4.4②: annotate_freshness records real content SHAs for resolvable
-        refs in the existing journal; unresolvable refs never create entries.
-        Only the newest annotate event counts (it supersedes older journals);
-        a missing/unreadable journal reads as "no baseline" — never as current.
+        R4 §4.4②/P1-A: the payload binds resolver_version plus per-ref
+        {anchor_kind, anchor_root_id, content_sha256}; readers must compare
+        root identity AND resolver version AND SHA — identical bytes under a
+        different root is a root change, never "current". Unresolvable refs
+        never create entries; only the newest annotate event counts; a
+        missing/unreadable journal reads as "no baseline" — never as current.
         """
         path = self._dir / "annotations.jsonl"
         try:
@@ -1005,14 +1015,27 @@ class MethodStore:
             ):
                 continue
             payload = entry.get("anchor_baseline")
-            if isinstance(payload, dict) and isinstance(payload.get("anchors"), dict):
-                out = {
-                    str(ref): str(info.get("content_sha256"))
-                    for ref, info in payload["anchors"].items()
-                    if isinstance(info, dict) and info.get("content_sha256")
-                }
-                return out or None
-            return None
+            if not (isinstance(payload, dict) and isinstance(payload.get("anchors"), dict)):
+                return None
+            anchors_out: dict[str, dict[str, str]] = {}
+            for ref, info in payload["anchors"].items():
+                if (
+                    isinstance(info, dict)
+                    and info.get("content_sha256")
+                    and info.get("anchor_root_id")
+                ):
+                    anchors_out[str(ref)] = {
+                        "anchor_kind": str(info.get("anchor_kind") or ""),
+                        "anchor_root_id": str(info["anchor_root_id"]),
+                        "content_sha256": str(info["content_sha256"]),
+                    }
+            if not anchors_out:
+                return None
+            return {
+                "resolver_version": str(payload.get("resolver_version") or ""),
+                "sampled_at": str(payload.get("sampled_at") or ""),
+                "anchors": anchors_out,
+            }
         return None
 
     def freshness(self, method_ref: str) -> dict[str, Any]:
@@ -1024,14 +1047,20 @@ class MethodStore:
         cards and old qualification baselines keep comparing unchanged. New
         keys: ``anchors`` ({ref: {anchor_kind, anchor_root_id,
         resolution_state, content_sha256}}), ``unresolvable_refs``,
-        ``anchor_baseline`` (annotate-time {ref: sha} from annotations.jsonl)
-        and ``anchor_changed_refs``.
+        ``anchor_baseline`` (annotate-time payload {resolver_version,
+        sampled_at, anchors} from annotations.jsonl), ``anchor_changed_refs``,
+        ``anchor_root_changed_refs`` and ``anchor_change_reasons``.
 
         State precedence (P1-A guard): changed > missing > unresolvable >
-        current — a card can never report ``current`` while any anchor is
-        unresolved; evidence refs are never stat-ed and release-layout misses
-        read unresolvable, not missing (F10/F11). Read-only: never invalidates
-        or rewrites the card (锚失效只修锚，不失效卡).
+        unbaselined > current — a card can never report ``current`` while any
+        anchor is unresolved or unbaselined. The baseline comparison binds
+        root identity + resolver version + SHA (identical bytes under a
+        different root is a root change, never current); evidence refs are
+        never stat-ed and release-layout misses read unresolvable, not missing
+        (F10/F11). The legacy ``current``/``baseline`` pair is display-only:
+        a legacy qualification baseline may surface a real "changed" but can
+        never fake "current" (P1-B). Read-only: never invalidates or rewrites
+        the card (锚失效只修锚，不失效卡).
         """
         record = self.get(method_ref)
         if record is None:
@@ -1051,37 +1080,107 @@ class MethodStore:
             if isinstance(value, dict):
                 baseline = {str(k): str(v) for k, v in value.items()}
                 break
-        if baseline is None and anchor_baseline is None:
-            return {
-                "state": "unbaselined",
-                "refs": list(record.freshness_refs),
-                "current": current,
-                "anchors": anchors,
-                "unresolvable_refs": unresolvable,
-                "anchor_baseline": None,
-            }
-        anchor_changed = [
-            ref for ref, sha in (anchor_baseline or {}).items()
-            if anchors[ref]["resolution_state"] == "resolved"
-            and anchors[ref]["content_sha256"] != sha
+        missing = [
+            ref for ref in record.freshness_refs
+            if anchors[ref]["resolution_state"] == "missing"
         ]
-        changed: list[str] = []
+        legacy_changed: list[str] = []
         if baseline is not None:
-            changed = [ref for ref in record.freshness_refs if current.get(ref) != baseline.get(ref)]
+            legacy_changed = [
+                ref for ref in record.freshness_refs if current.get(ref) != baseline.get(ref)
+            ]
+        if anchor_baseline is None:
+            if baseline is None:
+                return {
+                    "state": "unbaselined",
+                    "refs": list(record.freshness_refs),
+                    "changed_refs": [],
+                    "missing_refs": missing,
+                    "unresolvable_refs": unresolvable,
+                    "anchors": anchors,
+                    "anchor_baseline": None,
+                    "anchor_changed_refs": [],
+                    "anchor_root_changed_refs": [],
+                    "anchor_change_reasons": {},
+                    "unbaselined_anchor_refs": list(record.freshness_refs),
+                    "current": current,
+                    "baseline": None,
+                }
+            # P1-B (legacy-only): a qualification-era content-SHA baseline still
+            # proves real change for anchors that RESOLVE under the legacy root
+            # view; unresolvable or legacy-blind anchors (snapshot value not a
+            # content SHA, e.g. wheel-mapped refs the legacy stat called
+            # "missing") can never reach "current" through the legacy channel.
+            changed: list[str] = []
+            unbaselined_refs: list[str] = []
+            for ref in record.freshness_refs:
+                if anchors[ref]["resolution_state"] != "resolved":
+                    continue
+                snapshot_value = current.get(ref, "")
+                if re.fullmatch(r"[0-9a-f]{64}", snapshot_value) is None:
+                    unbaselined_refs.append(ref)
+                elif snapshot_value != baseline.get(ref):
+                    changed.append(ref)
+            if changed:
+                state = "changed"
+            elif missing:
+                state = "missing"
+            elif unresolvable:
+                state = "unresolvable"
+            elif unbaselined_refs:
+                state = "unbaselined"
+            else:
+                state = "current"
+            return {
+                "state": state,
+                "refs": list(record.freshness_refs),
+                "changed_refs": changed,
+                "missing_refs": missing,
+                "unresolvable_refs": unresolvable,
+                "anchors": anchors,
+                "anchor_baseline": None,
+                "anchor_changed_refs": [],
+                "anchor_root_changed_refs": [],
+                "anchor_change_reasons": {},
+                "unbaselined_anchor_refs": unbaselined_refs,
+                "current": current,
+                "baseline": baseline,
+            }
+        base_anchors = anchor_baseline["anchors"]
+        version_ok = anchor_baseline["resolver_version"] == _ANCHOR_RESOLVER_VERSION
+        anchor_changed: list[str] = []
+        root_changed: list[str] = []
+        reasons: dict[str, str] = {}
+        unbaselined_refs: list[str] = []
+        for ref in record.freshness_refs:
+            if anchors[ref]["resolution_state"] != "resolved":
+                continue  # missing / unresolvable classified above
+            bound = base_anchors.get(ref)
+            if bound is None:
+                unbaselined_refs.append(ref)
+                reasons[ref] = "no_anchor_baseline"
+            elif not version_ok:
+                anchor_changed.append(ref)
+                reasons[ref] = "resolver_version_mismatch"
+            elif bound["anchor_root_id"] != anchors[ref]["anchor_root_id"]:
+                anchor_changed.append(ref)
+                root_changed.append(ref)
+                reasons[ref] = "root_changed"
+            elif bound["content_sha256"] != anchors[ref]["content_sha256"]:
+                anchor_changed.append(ref)
+                reasons[ref] = "content_sha_changed"
+        changed: list[str] = list(legacy_changed)
         for ref in anchor_changed:
             if ref not in changed:
                 changed.append(ref)
-        missing = [
-            ref for ref in record.freshness_refs
-            if current.get(ref) == "missing"
-            and anchors[ref]["resolution_state"] != "unresolvable"
-        ]
-        if changed:
+        if anchor_changed:
             state = "changed"
         elif missing:
             state = "missing"
         elif unresolvable:
             state = "unresolvable"
+        elif unbaselined_refs:
+            state = "unbaselined"
         else:
             state = "current"
         return {
@@ -1093,6 +1192,9 @@ class MethodStore:
             "anchors": anchors,
             "anchor_baseline": anchor_baseline,
             "anchor_changed_refs": anchor_changed,
+            "anchor_root_changed_refs": root_changed,
+            "anchor_change_reasons": reasons,
+            "unbaselined_anchor_refs": unbaselined_refs,
             "current": current,
             "baseline": baseline,
         }
