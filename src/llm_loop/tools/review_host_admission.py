@@ -2264,6 +2264,23 @@ def _push_dst_ref(refspec: str) -> str:
     return dst if dst.startswith("refs/") else f"refs/heads/{dst}"
 
 
+def _neutral_ssh_command() -> str:
+    """Absolute system ssh binary for the neutralized ls-remote transport.
+
+    An empty ``core.sshCommand`` makes git fork an empty command name, so
+    every ssh push URL failed base resolution outright ("cannot run : No
+    such file or directory") and the gate could never admit a legitimate
+    ssh-only remote. Pinning the absolute system path preserves the
+    neutralization goal (attacker-writable repo config still cannot inject
+    an arbitrary transport command or its arguments) while restoring ssh
+    transports. Fail-closed fallback keeps the previous empty-string
+    behavior when no system ssh exists.
+    """
+    if os.path.isfile("/usr/bin/ssh") and os.access("/usr/bin/ssh", os.X_OK):
+        return "/usr/bin/ssh"
+    return ""
+
+
 def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]:
     """Current commit of the push destination ref; fail closed without remote facts.
 
@@ -2309,7 +2326,7 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]
         ["git", "--no-replace-objects",
          # Neutralize shell-executed transport hooks sourced from the same
          # attacker-writable config before contacting the remote.
-         "-c", "core.sshCommand=", "-c", "core.gitProxy=",
+         "-c", f"core.sshCommand={_neutral_ssh_command()}", "-c", "core.gitProxy=",
          "-C", str(repo), "ls-remote", "--", push_url, dst_ref],
         capture_output=True, timeout=12, check=False,
     )
@@ -2326,7 +2343,7 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]
     # both show that this is a first upload against that anchor.
     sym_run = subprocess.run(
         ["git", "--no-replace-objects",
-         "-c", "core.sshCommand=", "-c", "core.gitProxy=",
+         "-c", f"core.sshCommand={_neutral_ssh_command()}", "-c", "core.gitProxy=",
          "-C", str(repo), "ls-remote", "--symref", "--", push_url, "HEAD"],
         capture_output=True, timeout=12, check=False,
     )
