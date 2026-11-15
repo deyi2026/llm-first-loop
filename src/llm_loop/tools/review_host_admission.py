@@ -3665,7 +3665,7 @@ class HostReviewAdmission:
         tier_counts: tuple[int, int] | None = None,
         full_test_base: str | None = None,
         full_test_first_push_ref: str = "",
-    ) -> tuple[str, str, str, str, dict[str, str], list[tuple[str, int]]]:
+    ) -> tuple[str, str, str, str, dict[str, Any], list[tuple[str, int]]]:
         if kind == "article_publish":
             if not target_name or _PUBLISH_LABEL_RE.fullmatch(target_name) is None:
                 raise ValueError("publication_target_name_required")
@@ -3680,7 +3680,7 @@ class HostReviewAdmission:
             # article_publish carries no push metadata and no段落视图：返回空段落，
             # 拒绝回执据此如实不给分批计划（不伪造）。
             return sha, f"article_publish:{target_name}", text, "", {}, []
-        push_extra: dict[str, str] = {}
+        push_extra: dict[str, Any] = {}
         if kind not in {"full_test", "git_push"} or classify_host_shell(command) != kind:
             raise ValueError("review_kind_command_mismatch")
         if not workdir:
@@ -3937,7 +3937,7 @@ class HostReviewAdmission:
         self, kind: str, parent: str, target: str, sha: str, child: str, *,
         scope_receipt: dict[str, Any], scope_paths: tuple[str, ...], out_scope: str,
         tier_counts: tuple[int, int] | None, review_deadline: float,
-        previous_row: _Frozen | None, push_extra: dict[str, str], task_chars: int,
+        previous_row: _Frozen | None, push_extra: dict[str, Any], task_chars: int,
         workdir: str = "",
     ) -> _Frozen:
         """构造 admission 冻结记录（2026-11-03 自 ``start`` 抽出，行为不变）。
@@ -3982,7 +3982,7 @@ class HostReviewAdmission:
         self, *, child: str, sha: str, kind: str, target: str,
         scope_receipt: dict[str, Any], task_chars: int, review_deadline: float,
         estimated: float, coverage: dict[str, Any] | None,
-        push_remote_commit: str, push_extra: dict[str, str],
+        push_remote_commit: str, push_extra: dict[str, Any],
     ) -> dict[str, Any]:
         """签发回执组装（2026-11-02 自 ``start`` 抽出，行为不变，只为棘轮归零）。"""
         receipt: dict[str, Any] = {

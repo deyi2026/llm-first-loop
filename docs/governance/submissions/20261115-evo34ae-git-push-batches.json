@@ -1,0 +1,105 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-evo34ae-git-push-batches",
+  "summary": "Integrate EVO-20261115-34ae7c99(A) git_push batch joint coverage on remote main 55d2698; minimal Pyright mixed-metadata type correction, tests, knowledge and A.5 declaration; no bypass or production action.",
+  "components": [
+    {
+      "component_id": "host-review-admission",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing HostReviewAdmission and Git push review grant store",
+      "disposition": "Extend existing one-shot git_push review consumption with jointly complete batch coverage; retain parent/target/command, SHA, CAS and fail-closed semantics. Correct mixed push_extra metadata type annotations without runtime behavior change.",
+      "evidence": [
+        "c4bcc243 implementation; 4 annotation-only changes after first R9 Pyright errors",
+        "Independent GLM-5.3 reviewer PASS P0/P1=0, P2=2 on 41baa170; final SHA re-review required",
+        "First full R9 on 41baa170 exit 1 from 5 Pyright errors; no passing claim"
+      ],
+      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
+      "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized.",
+      "declaration_id": "reuse-review-host-admission"
+    },
+    {
+      "component_id": "negative-regressions",
+      "paths": [
+        "tests/unit/test_review_host_admission.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest review-host-admission suite",
+      "disposition": "Preserve 6 new negative batch-consumption tests and existing regression coverage.",
+      "evidence": [
+        "282 focused tests passed before type correction",
+        "R9 must run on final exact candidate SHA"
+      ],
+      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
+      "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized."
+    },
+    {
+      "component_id": "knowledge-assets",
+      "paths": [
+        "data/methods/probe-named-anchor-existence-then-ship-verifiable-later-checklist-55f5e8745dc9/METHOD.md",
+        "data/methods/repeated-identical-rejections-diagnose-gate-release-conditions-c10e44d0c444/METHOD.md",
+        "experiences/EXPERIENCE-20261115-分段过闸推送前先做-dag-瓶颈边分析-单-commit-增量超闸预算-结构性死锁-首段端点选择会锁.md",
+        "experiences/EXPERIENCE-20261115-授权记录新增形态前先穷举全部消费口-evo-20261115-34ae7c99-实证.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing methods and experience knowledge library",
+      "disposition": "Preserve four independently authored method/experience notes without granting execution authority.",
+      "evidence": [
+        "4 knowledge files included in exact remote-main delta",
+        "No additional runtime or approval issuer"
+      ],
+      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
+      "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized."
+    },
+    {
+      "component_id": "architecture-declaration",
+      "paths": [
+        "docs/governance/submissions/20261115-evo34ae-git-push-batches.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 G1-G4 submission checker",
+      "disposition": "Declare exact changed-path coverage; no checker changes or bypass.",
+      "evidence": [
+        "A.5 preflight on 41baa170 exit 2 due missing manifest",
+        "Declaration is not a substitute for R9, reviewer or remote CI"
+      ],
+      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
+      "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-review-host-admission",
+      "g1": {
+        "necessity": "Existing review-host git_push admission cannot authorize a valid push split into bounded independent review batches; full coverage must be checked atomically before one-shot consumption."
+      },
+      "g2": {
+        "authority_owner": "Existing HostReviewAdmission review-grant store and git_push command binding",
+        "relationship": "reuse",
+        "non_duplication": "No new grant issuer or execution bypass. Batch metadata is frozen in existing review records; single-batch PASS cannot authorize push."
+      },
+      "g3": {
+        "model_evidence": [
+          "Frozen 41baa170 GLM-5.3 reviewer PASS P0=0 P1=0 P2=2, final SHA requires re-review",
+          "282 targeted tests passed; initial full R9 Pyright gate blocked by mixed metadata type declarations",
+          "No real push is executed by a review receipt; git and remote gates remain mandatory"
+        ],
+        "recovery_or_reason": "Deny on stale target, missing batch, revoked/consumed grant, SHA drift or CAS mismatch. Preserve unconsumed grants on partial failure; require fresh review for drift."
+      },
+      "g4": {
+        "rollback": "Revert batch admission changes and related tests/docs; do not alter production services without a separately approved managed release.",
+        "verification": [
+          "Final exact SHA independent GLM-5.3 review PASS P0/P1=0",
+          "Original full R9 true exit 0 with Pyright complete and focused tests",
+          "Exact remote GitHub CI/A.5/privacy PASS and PR review before main integration"
+        ]
+      }
+    }
+  ]
+}
