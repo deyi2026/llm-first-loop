@@ -145,3 +145,53 @@ def test_provider_preflight_hard_overflow_still_holds_without_exact_ref():
     )
     assert hold == "context_capacity_unavailable"
     assert result == view
+
+
+def test_hold_diagnostics_identify_rebuild_mismatch_without_raw_content():
+    engine, sess, view, events, _rebuild_calls = _scenario(alter_arguments=True)
+    result, hold = _check(engine, sess, view)
+    assert hold == "context_capacity_unavailable"
+    assert result == view
+    receipt = next(
+        payload for kind, payload in events
+        if kind == "request.observation_visibility"
+        and payload.get("action") == "provider_send_blocked"
+    )
+    assert receipt["latest_group_valid"] is True
+    assert receipt["active_ingress_present"] is True
+    assert receipt["physical_limit"] is True
+    assert receipt["budget_chars"] == 1000000
+    assert [row["rejection"] for row in receipt["stage_checks"]] == [
+        "raw_not_visible", "raw_not_visible"
+    ]
+    assert receipt["stage_checks"][1]["rebuild_state"] == "rebuilt"
+    assert "RAW_0:" not in str(receipt)
+
+
+def test_hold_diagnostics_distinguish_real_budget_pressure():
+    engine, sess, view, events, _rebuild_calls = _scenario()
+    _result, hold = _check(engine, sess, view, budget=4000)
+    assert hold == "context_capacity_unavailable"
+    receipt = next(
+        payload for kind, payload in events
+        if kind == "request.observation_visibility"
+        and payload.get("action") == "provider_send_blocked"
+    )
+    assert receipt["stage_checks"][0]["rejection"] == "raw_over_budget"
+    assert receipt["stage_checks"][0]["projected_chars"] > 4000
+    assert "RAW_0:" not in str(receipt)
+
+
+def test_hold_diagnostics_distinguish_provider_preflight_overflow():
+    engine, sess, view, events, _rebuild_calls = _scenario()
+    _result, hold = _check(
+        engine, sess, view, preflight=lambda *_args, **_kwargs: {"hard_overflow": True}
+    )
+    assert hold == "context_capacity_unavailable"
+    receipt = next(
+        payload for kind, payload in events
+        if kind == "request.observation_visibility"
+        and payload.get("action") == "provider_send_blocked"
+    )
+    assert receipt["stage_checks"][0]["rejection"] == "preflight_overflow"
+    assert "RAW_0:" not in str(receipt)

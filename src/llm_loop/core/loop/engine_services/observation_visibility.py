@@ -222,6 +222,10 @@ def ensure_latest_observation_visible(
         )
         if group is None:
             return messages, ""
+        # No raw arguments/content/refs in diagnostics. At most two candidate
+        # stages are inspected; this makes the next HOLD attributable without
+        # weakening the existing fail-closed visibility invariant.
+        stage_facts: list[dict[str, Any]] = []
         if group.get("valid"):
             raw_visible = group_visible_in_provider_view(
                 group, messages, active_ingress_ref=active_ingress_ref
@@ -235,6 +239,7 @@ def ensure_latest_observation_visible(
             )
             # Current view first, then a read-only Session rebuild; never replay tools.
             for stage in ("current", "rebuilt"):
+                stage_fact: dict[str, Any] = {"stage": stage}
                 if stage == "current":
                     candidate = first
                 else:
@@ -245,6 +250,9 @@ def ensure_latest_observation_visible(
                         planned_label=planned_label,
                         logical_round=rounds,
                     )
+                    stage_fact["rebuild_state"] = rebuilt.state
+                    stage_fact["retired_groups"] = getattr(rebuilt, "retired_groups", None)
+                    stage_fact["rebuild_chars"] = getattr(rebuilt, "projected_chars", None)
                     candidate = list(rebuilt.messages) if rebuilt.state == "rebuilt" else None
                     if candidate is not None and not group_visible_in_provider_view(
                         group, candidate, active_ingress_ref=active_ingress_ref
@@ -255,14 +263,25 @@ def ensure_latest_observation_visible(
                 if candidate is None or not group_visible_in_provider_view(
                     group, candidate, active_ingress_ref=active_ingress_ref
                 ):
+                    stage_fact["rejection"] = "raw_not_visible"
+                    stage_facts.append(stage_fact)
                     continue
                 projected_chars = sum(dict_wire_chars(row) for row in candidate)
+                stage_fact["projected_chars"] = projected_chars
                 raw_fits = not physical_limit or projected_chars <= effective_budget
+                if not raw_fits:
+                    stage_fact["rejection"] = "raw_over_budget"
                 if raw_fits and callable(request_preflight):
                     preflight = request_preflight(candidate, tools_param, model=chat_model_arg)
                     raw_fits = isinstance(preflight, Mapping) and not bool(
                         preflight.get("hard_overflow", False)
                     )
+                    if not raw_fits:
+                        stage_fact["rejection"] = (
+                            "preflight_overflow"
+                            if isinstance(preflight, Mapping) and preflight.get("hard_overflow")
+                            else "preflight_invalid"
+                        )
                 if raw_fits:
                     if stage == "rebuilt" or not raw_visible:
                         engine._event_append(
@@ -310,6 +329,8 @@ def ensure_latest_observation_visible(
                         },
                     )
                     return ref_messages, ""
+                stage_fact["exact_ref_qualified"] = False
+                stage_facts.append(stage_fact)
         engine._event_append(
             session_id,
             "request.observation_visibility",
@@ -320,6 +341,15 @@ def ensure_latest_observation_visible(
                 "visible": False,
                 "action": "provider_send_blocked",
                 "reason": "context_capacity_unavailable",
+                "latest_group_valid": bool(group.get("valid")),
+                "active_ingress_present": bool(active_ingress_ref),
+                "raw_visible_in_current": (
+                    bool(raw_visible) if group.get("valid") else False
+                ),
+                "physical_limit": physical_limit,
+                "limited_by": (budget_info or {}).get("limited_by"),
+                "budget_chars": effective_budget,
+                "stage_checks": stage_facts,
             },
         )
         engine._record_action(
