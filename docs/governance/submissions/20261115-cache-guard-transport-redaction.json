@@ -1,0 +1,87 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-cache-guard-transport-redaction",
+  "summary": "Fix a real privacy_leak BLOCK caused by previously persisted command output and Evidence hydration containing the current LLM_API_KEY. Preserve the hard privacy guard and durable Evidence truth while projecting a safe copy before Provider transport.",
+  "components": [
+    {
+      "component_id": "provider-outbound-privacy-projection",
+      "paths": [
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/llm/outbound_privacy.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing LLMClient final Provider request boundary and cache_guard rule E",
+      "disposition": "After authorized provider replay projection and before the existing cache_guard, apply existing redact_secrets_for_transport to a copy-on-write request view: system text, historical messages, nested tool arguments and tool schemas. Reject any sensitive structural identifier or signed native replay field rather than rewriting it. Independently check all outbound strings for residual rule-E matches and fail closed without sending Provider. Never mutate original Session/Evidence, source versions, hashes or tool pairing.",
+      "evidence": [
+        "2026-11-15 10:40:45 local Web gen415 audit: session d7d570d1-4d88-404b-9c9e-79d8afafaeed, round 5 privacy_leak BLOCK after five read_evidence results; four prior rounds ALLOW",
+        "Read-only local secure exact-value comparison without disclosing the key: two execute_command messages and one read_evidence message contain four actual LLM_API_KEY matches; existing redactor removes the matches when the process has its configured secret",
+        "Offline replay of the original persisted Session: 179 historical messages, 5 redacted fields, no Provider calls, unchanged durable Session SHA",
+        "Synthetic focused tests PASS, including cache_guard and signed replay negative cases; unchanged architecture function-size guard PASS"
+      ],
+      "verification_level": "Synthetic focused tests and offline incident reproduction completed. Independent GLM-5.3 Reviewer, original full R9 and remote CI are required on the frozen final SHA before merge or deployment.",
+      "model_evidence_veto_recovery_exit": "No model instruction can override privacy hard BLOCK, owner-scoped Evidence authorization, physical budget or Provider preflight. Unredactable signed fields and unexpected projection errors fail closed before transport; no automatic tool replay. Old M4-C Provider debt stays HOLD.",
+      "rollback_route": "Revert only the isolated privacy-projection patch under managed change control, preserving existing rule-E hard BLOCK, original durable evidence and the previous Web generation as the rollback target.",
+      "declaration_id": "reuse-existing-privacy-authority"
+    },
+    {
+      "component_id": "synthetic-provider-privacy-tests",
+      "paths": [
+        "tests/unit/test_provider_outbound_secret_redaction.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest fake transport and privacy guard regression suite",
+      "disposition": "Use only synthetic environment secrets and fake Provider transport to verify late historical tool content, nested tool arguments and schemas, GuardRequestContext, signed-field denial, copy-on-write preservation, clean prefix identity, failure-closed behavior, other strong patterns and session isolation.",
+      "evidence": [
+        "138 related privacy/cache_guard/LLMClient tests PASS; 43 observation/architecture guard tests PASS, with overlap not counted as unique",
+        "No actual Provider calls, no real secret values in test fixtures, no durable Session rewrite"
+      ],
+      "verification_level": "Deterministic offline tests only; final full R9 and remote CI still required.",
+      "model_evidence_veto_recovery_exit": "Do not weaken negative assertions or mark a failed guard as success.",
+      "rollback_route": "Revert test changes with the associated code patch."
+    },
+    {
+      "component_id": "architecture-submission-declaration",
+      "paths": [
+        "docs/governance/submissions/20261115-cache-guard-transport-redaction.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture-submission governance",
+      "disposition": "Declare exact four-file change scope and existing privacy control authority; do not alter the A.5 checker, rule E, or any test thresholds.",
+      "evidence": [
+        "Existing lfl.architecture_submission.v0.1 schema and current repository submission examples"
+      ],
+      "verification_level": "Run unchanged A.5 checker on exact frozen final SHA, independent review, full R9, remote CI.",
+      "model_evidence_veto_recovery_exit": "The declaration is not a waiver of safety, testing or release gates.",
+      "rollback_route": "Revert the full isolated patch if this declaration or its exact path coverage fails."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-privacy-authority",
+      "g1": {
+        "necessity": "Previously captured command and Evidence output contains an actual configured credential. Rule E correctly blocks it, but the session cannot progress because historical content is re-projected without outbound redaction."
+      },
+      "g2": {
+        "authority_owner": "Existing LLMClient Provider boundary, security_guard redact_secrets_for_transport, and cache_guard rule E",
+        "relationship": "reuse",
+        "non_duplication": "No new credential store, secret exception list, model semantic gate, Provider retry or Evidence mutation. Reuse the existing redactor and hard privacy decision."
+      },
+      "g3": {
+        "model_evidence": [
+          "Configured secret values and existing high-confidence patterns at the local transport boundary",
+          "Original Session/Evidence remains durable and unchanged; redacted Provider view is explicitly distinct from exact-byte source evidence",
+          "Structural IDs and signed replay fields are protected from mutation; residual privacy hits fail closed"
+        ],
+        "recovery_or_reason": "Only the sanitized copy reaches cache_guard and Provider. If structural fields require redaction or any residual leak remains, stop before transport with explicit privacy denial. No tool replay or automatic continuation of historical Provider debt."
+      },
+      "g4": {
+        "rollback": "Managed rollback to prior generation while retaining hard privacy guard and source evidence; never disable rule E.",
+        "verification": [
+          "Synthetic fake-transport tests, including negative no-Provider-send cases",
+          "Read-only actual Session offline reproduction without outputting or persisting secret values",
+          "Independent GLM-5.3 PASS P0/P1=0, original full R9 exit0 and exact remote CI success required before main integration"
+        ]
+      }
+    }
+  ]
+}

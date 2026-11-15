@@ -23,7 +23,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -54,6 +54,7 @@ from llm_loop.llm.errors import (
     LLMStreamProviderError,
     LLMTimeoutError,
 )
+from llm_loop.llm.outbound_privacy import redact_provider_request
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
 from llm_loop.runtime.causality import effective_generation_contract
 from llm_loop.timekeeping import system_local_now
@@ -1792,6 +1793,15 @@ class LLMClient:
             provider=self.provider,
             model=actual_model,
         )
+        # The durable Session/Evidence remain original; only a copy-on-write
+        # privacy-safe view reaches cache_guard and the Provider transport.
+        messages, tools, safe_system, _redacted = redact_provider_request(
+            messages, tools, str(_guard_ctx.system_text or "")
+        )
+        if safe_system != (_guard_ctx.system_text or ""):
+            _guard_ctx = replace(_guard_ctx, system_text=safe_system)
+        if _redacted:
+            logger.info("provider outbound privacy redactions=%d", _redacted)
         # cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
         self._guard_start_ts = 0
         if self.guard_enabled:
