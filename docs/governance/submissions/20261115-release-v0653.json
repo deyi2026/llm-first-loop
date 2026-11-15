@@ -1,0 +1,45 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-release-v0653",
+  "summary": "PR #23 is a version-only 0.6.52 to 0.6.53 release identity for Deepin after the reviewed PR #22. This new A.5 declaration repairs a missing required manifest; no runtime control, sandbox, model, or CI gate is changed.",
+  "components": [
+    {
+      "component_id": "v0653-release-identity",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py",
+        "uv.lock"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing release version metadata and Web SERVICE_VERSION",
+      "disposition": "Bump only public and packaging version identity to 0.6.53, because the existing Deepin 0.6.52 wheel cannot be overwritten with different bytes. PR #22 runtime security implementation is already in the base main and is unchanged here.",
+      "evidence": [
+        "Prior six-file candidate 54d70ae5 received independent GLM-5.3 PASS/P0=0/P1=0/P2=2; original complete R9 exit 0 with 15192 passed, 161 skipped, 3 xfailed; WebUI Vitest 600 passed; Ruff and Pyright complete.",
+        "Prior candidate wheel METADATA version 0.6.53, httpx[socks], bundled WebUI verified; SHA256 3148c4882f61c939cbd576b460c349d6ea351aa09e24afbf4666481c3dbf4bb3."
+      ],
+      "verification_level": "Prior six-file candidate review/R9 PASS, but this new manifest is not covered by those receipts. Fresh exact-head independent review, original R9 exit 0 and remote CI including A.5 must pass before merge.",
+      "model_evidence_veto_recovery_exit": "Model or reviewer cannot grant production deployment. If exact changed-path coverage, version consistency, independent review, R9 or remote CI fails, do not merge or publish. Existing Deepin 0.6.52/gen15 stays live.",
+      "rollback_route": "Revert this release-identity-only PR or return to the reviewed base main 1616137d0fa560ff06452be838e1f1620bce7174; preserve existing Deepin 0.6.52 wheel and managed rollback."
+    },
+    {
+      "component_id": "a5-release-submission",
+      "paths": [
+        "docs/governance/submissions/20261115-release-v0653.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture submission governance",
+      "disposition": "Declare exact seven-path PR coverage without adding runtime authority or weakening architecture gate. Required by scripts/check_architecture_submission.py and the remote A.5 workflow.",
+      "evidence": [
+        "PR #23 initial A.5 workflow 43659817370 failed because it found zero changed architecture-submission manifests.",
+        "Existing schema and v0.6.51 release manifest establish version-only non-control components and exact coverage convention."
+      ],
+      "verification_level": "After commit, verify scripts/check_architecture_submission.py --base 1616137d0fa560ff06452be838e1f1620bce7174 --head HEAD returns PASS; then fresh independent reviewer and original R9, followed by remote PR CI.",
+      "model_evidence_veto_recovery_exit": "No bypass of architecture submission checker; manifest cannot declare unmodified paths or omit changed paths. If exact scope differs, reject merge.",
+      "rollback_route": "If the manifest or release fails, revert the entire version-only PR to reviewed base main 1616137d0fa560ff06452be838e1f1620bce7174. The earlier six-file candidate 54d70ae556d587753adba982d250b693d60f4f1e is historical evidence only and is not a publishable A.5-green rollback target; no production state touched."
+    }
+  ],
+  "declarations": []
+}
