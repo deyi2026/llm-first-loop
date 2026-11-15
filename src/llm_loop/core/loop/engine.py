@@ -60,6 +60,9 @@ from llm_loop.core.loop.engine_services.routing import (
 from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
 from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
+from llm_loop.core.loop.engine_services.schema_capacity import (
+    admit_request_schema_capacity,
+)
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
@@ -1209,19 +1212,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 session_messages=sess.messages,
                 logical_round=rounds,
             )
+            tool_schemas, tools_param, _schema_capacity = admit_request_schema_capacity(
+                self, llm_client, tool_schemas, tools_param, session_id, rounds
+            )
             _tool_schema_chars = len(_json_dumps_args({"tools": tools_param}))
-            _tool_schema_tokens: int | None = None
-            _schema_counter = getattr(llm_client, "count_tool_schema_tokens", None)
-            if callable(_schema_counter):
-                try:
-                    _measured_schema_tokens = _schema_counter(tools_param)
-                    if (
-                        isinstance(_measured_schema_tokens, int)
-                        and _measured_schema_tokens >= 0
-                    ):
-                        _tool_schema_tokens = _measured_schema_tokens
-                except Exception:  # noqa: BLE001 — optional tokenizer authority is fail-soft
-                    logger.debug("tool-schema token measurement failed; using fallback", exc_info=True)
+            _tool_schema_tokens = _schema_capacity.authoritative_tokens
             _budget_info = dict(self._run_state().last_budget_info or {})
             _pre_tool_budget = effective_budget
             effective_budget = self._routing.reserve_tool_schema_from_history_budget(
