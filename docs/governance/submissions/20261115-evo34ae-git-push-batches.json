@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261115-evo34ae-git-push-batches",
-  "summary": "Integrate EVO-20261115-34ae7c99(A) git_push batch joint coverage on remote main 55d2698; correct mixed-metadata Pyright types and register two independently reviewed function-size growths via guard(r9); preserve negative tests, knowledge and exact A.5 declaration. No bypass or production action.",
+  "summary": "EVO-20261115-34ae7c99(A) git_push complete multi-batch review coverage, with later P1 fixes for >40-path legitimate batches and cross-plan stale batch recovery, strict section labels, regression tests, official guard(r9) size registration, knowledge and A.5 G1-G4. Isolated PR30 candidate, no production change.",
   "components": [
     {
       "component_id": "host-review-admission",
@@ -10,14 +10,14 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "Existing HostReviewAdmission and Git push review grant store",
-      "disposition": "Extend existing one-shot git_push review consumption with jointly complete batch coverage; retain parent/target/command, SHA, CAS and fail-closed semantics. Correct mixed push_extra metadata type annotations without runtime behavior change.",
+      "disposition": "Reuse existing HostReviewAdmission and one-shot git_push grant. Require every current diff section to have independently PASS SHA-valid batch coverage; fail closed on gaps, drift, revoke, target/ref/command mismatch. Permit legitimate >40-path planned batch only when exact plan membership is checked; stale other-plan batch records are atomically consumed with valid current-plan approval to restore liveness. Reject malformed section labels; preserve 40-path cap for other kinds. Type-only push_extra annotation repair.",
       "evidence": [
-        "c4bcc243 implementation; 4 annotation-only changes after first R9 Pyright errors",
-        "Independent GLM-5.3 reviewer PASS P0/P1=0, P2=2 on 41baa170; final SHA re-review required",
-        "First full R9 on 41baa170 exit 1 from 5 Pyright errors; no passing claim",
-        "Full R9 on 25829d3b exit1 at Tier-0 function-size guard; official guard(r9) registration added in b5a21f0e6, final R9 pending"
+        "c4bcc243 original implementation; e597cfcc7 >40-path legitimate batch P1 fix; 7faa0c7d8 stale plan liveness P1 and strict label fixes",
+        "Independent GLM-5.3 on earlier e8f342057 PASS P0=0/P1=0/P2=3; later independent local review REVISE P0=0/P1=1 on cross-plan stale rows, addressed by 7faa0c7d8",
+        "Original full R9 on e8f342057 CLEAN PASS exit0, 15246 passed/161 skipped/3 xfailed, WebUI 600; PR30 exact e8f342057 remote CI/A.5/privacy all SUCCESS",
+        "Integrated candidate 56f7cd70 focused review_host_admission tests 289 passed; Pyright complete PASS new=0; final merged+guard SHA requires independent re-review and full R9 before PR update"
       ],
-      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "verification_level": "Original PR30 e8f342 full R9 and remote CI passed; current P1-integrated candidate requires exact-SHA independent GLM-5.3 PASS/P0=P1=0, original R9 exit0 and remote PR CI before merge.",
       "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
       "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized.",
       "declaration_id": "reuse-review-host-admission"
@@ -29,13 +29,13 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "Existing AST function-size ratchet and guard(r9) baseline registration",
-      "disposition": "Register exact reviewed start() 73→99 and _target() new 163 AST lines, plus tightened observation_visibility bound 144→143; preserve thresholds and test logic.",
+      "disposition": "Preserve original AST guard and threshold. Official guard(r9) registration of start() 99 and _target() 163 plus newly introduced _consume_joint_push_batches() 131; existing unrelated function-size shrink retained. No guard bypass.",
       "evidence": [
-        "First full R9 25829d3b exit1 at tier0: start 99>73 and _target 163 not registered",
-        "Official regen_function_size_baseline.py --only function_lines changed only function_lines keys; guard(r9) b5a21f0e6",
-        "Targeted guard test passed 1/1 after registration"
+        "Original official guard(r9) b5a21f0e6 for start() and _target()",
+        "Official guard(r9) a2c829d72 adds _consume_joint_push_batches 131 AST lines, no threshold/test changes",
+        "AST guard targeted unit passed 1/1 after registration; final R9 pending"
       ],
-      "verification_level": "Function-size guard unit passed after registration; exact final SHA independent review and full R9 still required.",
+      "verification_level": "Original PR30 e8f342 full R9 and remote CI passed; current P1-integrated candidate requires exact-SHA independent GLM-5.3 PASS/P0=P1=0, original R9 exit0 and remote PR CI before merge.",
       "model_evidence_veto_recovery_exit": "The size ledger registers reviewed growth, not permission to bypass host authorization, skip negative tests or claim full R9 PASS.",
       "rollback_route": "Revert guard(r9) registration with the related reviewed code if the feature is rolled back.",
       "declaration_id": "existing-function-size-guard"
@@ -47,12 +47,13 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "Existing pytest review-host-admission suite",
-      "disposition": "Preserve 6 new negative batch-consumption tests and existing regression coverage.",
+      "disposition": "Preserve focused negative coverage for batch eligibility, >40-path planned batches versus crafted paths, cross-plan stale record recovery, fail-closed on missing PASS, strict label parsing and kind-fixed wrapper.",
       "evidence": [
-        "282 focused tests passed before type correction",
-        "R9 must run on final exact candidate SHA"
+        "282 focused tests on original e8f342 candidate",
+        "289 focused tests on 56f7cd70 integrated source (after two local P1 fixes), exit0",
+        "Full R9 on final exact candidate not yet executed"
       ],
-      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "verification_level": "Original PR30 e8f342 full R9 and remote CI passed; current P1-integrated candidate requires exact-SHA independent GLM-5.3 PASS/P0=P1=0, original R9 exit0 and remote PR CI before merge.",
       "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
       "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized."
     },
@@ -71,7 +72,7 @@
         "4 knowledge files included in exact remote-main delta",
         "No additional runtime or approval issuer"
       ],
-      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "verification_level": "Original PR30 e8f342 full R9 and remote CI passed; current P1-integrated candidate requires exact-SHA independent GLM-5.3 PASS/P0=P1=0, original R9 exit0 and remote PR CI before merge.",
       "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
       "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized."
     },
@@ -85,9 +86,10 @@
       "disposition": "Declare exact changed-path coverage; no checker changes or bypass.",
       "evidence": [
         "A.5 preflight on 41baa170 exit 2 due missing manifest",
-        "Declaration is not a substitute for R9, reviewer or remote CI"
+        "Declaration is not a substitute for R9, reviewer or remote CI",
+        "Original PR30 e8f342 A.5 remote SUCCESS; updated declaration includes two local P1 fixes and official guard(r9) registration; final SHA revalidation pending"
       ],
-      "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
+      "verification_level": "Original PR30 e8f342 full R9 and remote CI passed; current P1-integrated candidate requires exact-SHA independent GLM-5.3 PASS/P0=P1=0, original R9 exit0 and remote PR CI before merge.",
       "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
       "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized."
     }
@@ -96,34 +98,35 @@
     {
       "declaration_id": "reuse-review-host-admission",
       "g1": {
-        "necessity": "Existing review-host git_push admission cannot authorize a valid push split into bounded independent review batches; full coverage must be checked atomically before one-shot consumption."
+        "necessity": "Existing review-host git_push admission must authorize large diffs only when all current sections have independent valid batch review; P1 defects in 40-path cap and stale cross-plan records made legitimate reviewed pushes unexecutable and must be fixed without weakening coverage."
       },
       "g2": {
         "authority_owner": "Existing HostReviewAdmission review-grant store and git_push command binding",
         "relationship": "reuse",
-        "non_duplication": "No new grant issuer or execution bypass. Batch metadata is frozen in existing review records; single-batch PASS cannot authorize push."
+        "non_duplication": "No new grant issuer or execution bypass. Batch metadata and SHA/ref binding remain in existing review records; >40-path exemption is only for exact planned git_push batch membership, and stale rows are atomically consumed on valid complete coverage."
       },
       "g3": {
         "model_evidence": [
-          "Frozen 41baa170 GLM-5.3 reviewer PASS P0=0 P1=0 P2=2, final SHA requires re-review",
-          "282 targeted tests passed; initial full R9 Pyright gate blocked by mixed metadata type declarations",
-          "No real push is executed by a review receipt; git and remote gates remain mandatory"
+          "GLM-5.3 independent earlier e8f342 review PASS/P0=P1=0; separate local reviewer found cross-plan liveness P1 (REVISE) addressed in 7faa0c7d8; final merged SHA review pending",
+          "289 focused tests passed on integrated 56f7cd70 including >40-path and cross-plan recovery; static Pyright complete PASS",
+          "Original e8f342 R9 CLEAN PASS exit0 and remote PR CI/A.5/privacy SUCCESS; integrated candidate not yet fully gated",
+          "A review receipt never executes git_push; HostReviewAdmission still denies missing/invalid/stale approvals"
         ],
         "recovery_or_reason": "Deny on stale target, missing batch, revoked/consumed grant, SHA drift or CAS mismatch. Preserve unconsumed grants on partial failure; require fresh review for drift."
       },
       "g4": {
         "rollback": "Revert batch admission changes and related tests/docs; do not alter production services without a separately approved managed release.",
         "verification": [
-          "Final exact SHA independent GLM-5.3 review PASS P0/P1=0",
-          "Original full R9 true exit 0 with Pyright complete and focused tests",
-          "Exact remote GitHub CI/A.5/privacy PASS and PR review before main integration"
+          "Final exact SHA independent GLM-5.3 review PASS P0/P1=0 after P1 fixes",
+          "Original full R9 exit0 on final exact SHA, no flaky or unknown static checks",
+          "Updated PR30 exact SHA GitHub CI/A.5/privacy/Linux x86_64 and aarch64 PASS before merge"
         ]
       }
     },
     {
       "declaration_id": "existing-function-size-guard",
       "g1": {
-        "necessity": "The original AST ratchet correctly blocked reviewed new git_push batch code until exact function-size deltas were registered; registration must remain auditable and narrowly scoped."
+        "necessity": "The original AST ratchet correctly blocked new git_push batch code until reviewed function-size deltas are registered. The later liveness fix introduced _consume_joint_push_batches 131 AST lines, which must be registered without changing guard logic."
       },
       "g2": {
         "authority_owner": "Existing tests/unit/test_arch_guards.py and tests/guards/function_size_baseline.json",
@@ -132,18 +135,18 @@
       },
       "g3": {
         "model_evidence": [
-          "First final R9 on 25829d3b exit1 at tier0, two exact size redlines",
-          "Guard regeneration b5a21f0e6 and targeted AST ratchet test 1 passed",
-          "GLM-5.3 code review PASS P0/P1=0 before ledger update; exact final SHA re-review required"
+          "Official generator guard(r9) b5a21f0e6 registers start and _target; a2c829d72 registers _consume_joint_push_batches 131",
+          "Targeted AST guard test 1 passed on a2c829d72; full R9 final SHA pending",
+          "Independent GLM-5.3 review of merged final SHA required, previous PASS cannot substitute"
         ],
         "recovery_or_reason": "Fail closed on any unregistered growth; do not disable or skip the guard. Revert guard registration if the related code is reverted."
       },
       "g4": {
         "rollback": "Revert function-size ledger registration with the reviewed implementation; preserve original guard test and thresholds.",
         "verification": [
-          "Guard test 1 passed after official regeneration",
-          "Exact final SHA full R9 exit0 still required",
-          "GitHub PR A.5 and remote CI on exact SHA required"
+          "Official function-size regen --check and AST guard test pass on final SHA",
+          "Full original R9 exit0 on final SHA",
+          "Updated PR30 remote CI/A.5 PASS on exact SHA"
         ]
       }
     }
