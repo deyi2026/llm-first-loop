@@ -164,6 +164,47 @@ def test_authorized_exact_ref_is_model_visible_before_second_send(tmp_path):
     assert second["range"]["next_start"] is None
 
 
+def test_bounded_latest_result_uses_authorized_ref_when_raw_cannot_fit(tmp_path):
+    engine, session, ref, schemas, events, raw = _fixture(tmp_path)
+    calls = session.messages[1].tool_calls
+    view = [
+        {"role": "system", "content": "policy"},
+        {"role": "user", "content": "根据证据回答", "_active_run_ingress_ref": "0"},
+        {"role": "assistant", "content": "", "tool_calls": calls},
+        {"role": "tool", "tool_call_id": "c1", "content": "[bounded_first_view] " + raw[:1000]},
+    ]
+    rebuilt = []
+
+    def conservative(*_args, **_kwargs):
+        rebuilt.append(True)
+        return SimpleNamespace(state="rebuilt", messages=tuple(view), projected_chars=2000)
+
+    engine._build_conservative_active_run_messages = conservative
+    projected, hold = ensure_latest_observation_visible(
+        engine,
+        session,
+        view,
+        session_id=session.id,
+        active_turn_ref=0,
+        active_ingress_ref="0",
+        effective_budget=3698,
+        budget_info={"limited_by": "model_window"},
+        request_preflight=lambda *_args, **_kwargs: {"hard_overflow": False},
+        tools_param=schemas,
+        chat_model_arg="local",
+        model="local",
+        planned_label="local",
+        rounds=2,
+    )
+    assert hold == ""
+    assert not rebuilt, "validated ref must not require an unnecessary second rebuild"
+    capsule = json.loads(projected[-1]["content"])
+    assert capsule["evidence_ref"] == ref
+    assert capsule["read_tool"] == "read_evidence"
+    assert raw not in projected[-1]["content"]
+    assert any(payload.get("action") == "exact_ref_projected" for _, payload in events)
+
+
 def test_cross_owner_ref_must_not_leak_or_send(tmp_path):
     engine, session, ref, schemas, _events, _raw = _fixture(tmp_path, owner_mismatch=True)
     view, hold = _project(engine, session, schemas)

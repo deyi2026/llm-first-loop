@@ -1,0 +1,89 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-observation-first-view-presend",
+  "summary": "Repair the existing pre-send observation visibility guard when an 8192-character first-view projection hides a fully persisted latest tool result even though the actual model budget can fit the raw observation. No new execution authority or retry path is introduced.",
+  "components": [
+    {
+      "component_id": "existing-observation-visibility-gate",
+      "paths": [
+        "src/llm_loop/core/loop/engine_services/observation_visibility.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing LoopEngine final Provider pre-send observation guard, durable Session truth, request preflight and EvidenceReadTool",
+      "disposition": "Before interpreting a bounded first-view as missing evidence, restore only the exact latest atomic tool group from the same durable Session when ingress, call signatures and receipt IDs match. Check physical budget and Provider preflight; if raw cannot fit, retain the existing owner/version/hydration/schema-qualified exact-ref path or fail closed. No tool re-execution or new semantic authority.",
+      "evidence": [
+        "2026-11-15 incident session d7d570d1-4d88-404b-9c9e-79d8afafaeed: latest four-call group index 90, original first result 9307 chars, bounded projection 8733 chars, observation guard blocked the Provider before send",
+        "Frozen implementation candidate 642b60b08dfeadb94fcaa28508d71516e9bf3612 passed 53 targeted tests; independent GLM-5.3 Reviewer completed PASS P0=0/P1=0/P2=2 with zero tool calls",
+        "Offline replay of persisted Session and real working-set projection: raw visibility false before fix, true after fix, with no conservative rebuild or Provider call"
+      ],
+      "verification_level": "Focused tests and independent GLM-5.3 review passed on the three-file code candidate. This additional governance manifest must receive a separate scope review; original full R9 and remote PR CI must pass on the exact final commit before merge.",
+      "model_evidence_veto_recovery_exit": "No user or model assertion can override final preflight or owner-qualified exact-ref checks. Invalid pairing, ambiguous ingress, physical overflow or unavailable authorized ref must leave provider_sent=false/run_incomplete. Old M4-C Provider debt remains HOLD; do not automatically replay historical tools.",
+      "rollback_route": "Revert the complete isolated patch only under managed change control. Keep the existing pre-send guard enabled, preserve original Session/evidence records, and do not auto-retry tools or force-send a partial observation.",
+      "declaration_id": "reuse-existing-provider-observation-authority"
+    },
+    {
+      "component_id": "observation-regression-tests",
+      "paths": [
+        "tests/unit/test_observation_exact_ref_red.py",
+        "tests/unit/test_observation_first_view_restore.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest offline observation and exact-ref fixtures",
+      "disposition": "Add synthetic first-view restoration, four-call atomicity, changed arguments, incomplete group, physical overflow and preflight rejection cases; cover qualified exact-ref fallback when raw cannot fit.",
+      "evidence": [
+        "Initial regression reproduced context_capacity_unavailable on the old implementation",
+        "53 focused tests passed after the fix, including existing exact-ref negative cases and new first-view scenarios"
+      ],
+      "verification_level": "Deterministic offline tests only; no real Provider or source-tool replay. Original full R9 and remote CI remain mandatory.",
+      "model_evidence_veto_recovery_exit": "Tests do not confer deployment authority; any safety regression blocks merge.",
+      "rollback_route": "Revert these tests with their associated code change; never weaken assertions to obtain a green CI."
+    },
+    {
+      "component_id": "architecture-submission-declaration",
+      "paths": [
+        "docs/governance/submissions/20261115-observation-first-view-presend.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture-submission governance",
+      "disposition": "Declare exact four-path scope and G1-G4 reuse of existing authority without modifying the checker or its enforcement.",
+      "evidence": [
+        "Initial local A.5 check rejected the three-file candidate because no architecture-submission manifest changed",
+        "Existing repository schema lfl.architecture_submission.v0.1 and prior observation-guard submission provide the declaration pattern"
+      ],
+      "verification_level": "Run unchanged scripts/check_architecture_submission.py on the exact final candidate, then independent review, original full R9 and remote PR CI.",
+      "model_evidence_veto_recovery_exit": "The manifest is a declaration, not a waiver of security, test, or release gates; reject mismatched changed-path coverage.",
+      "rollback_route": "Revert the full PR to its reviewed base if this submission fails; no production state is touched."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-provider-observation-authority",
+      "g1": {
+        "necessity": "A bounded first-view is a representation policy, not evidence that the model window cannot fit the original latest tool observation. The incident produced two false context_capacity_unavailable HOLDs despite a large physical context window."
+      },
+      "g2": {
+        "authority_owner": "Existing LoopEngine pre-send guard, durable Session, EvidenceReadTool and request-envelope preflight",
+        "relationship": "reuse",
+        "non_duplication": "No new evidence store, model semantic judge, automatic tool retry, or separate capacity authority. The patch reuses the current Session raw group and the already-qualified exact-ref fallback."
+      },
+      "g3": {
+        "model_evidence": [
+          "exact current-run ingress identity and latest complete assistant/tool group",
+          "call IDs, function names and arguments and complete tool-result contents",
+          "physical projected-character budget and Provider hard-overflow preflight",
+          "owner-scoped EvidenceReadTool authorization, source version/freshness and blob SHA when exact-ref is required"
+        ],
+        "recovery_or_reason": "Send the original tool observation only when exact pairing and capacity preflight pass. Otherwise send a qualified bounded exact-ref capsule, or HOLD without Provider send or tool replay. The model remains responsible for semantic interpretation."
+      },
+      "g4": {
+        "rollback": "Revert the isolated change under managed release/rollback while keeping observation safety and original evidence durable; no silent disabling of the guard.",
+        "verification": [
+          "Original incident persisted Session reproduced the bounded-view mismatch offline",
+          "53 focused tests PASS and Ruff check PASS on the code candidate",
+          "Independent GLM-5.3 code review PASS/P0=0/P1=0, P2=2; zero tool calls",
+          "Final exact-head A.5, original full R9 exit 0 and remote CI required before main integration"
+        ]
+      }
+    }
+  ]
+}

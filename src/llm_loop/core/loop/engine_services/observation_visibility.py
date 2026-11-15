@@ -36,7 +36,9 @@ def _call_signature(call: Any) -> tuple[str, str, str]:
     if isinstance(args, str):
         with contextlib.suppress(ValueError, TypeError):
             args = json.loads(args)
-    encoded = json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    encoded = json.dumps(
+        args, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
     return str(call_id or ""), str(name or ""), encoded
 
 
@@ -131,6 +133,63 @@ def group_visible_in_provider_view(
     return False
 
 
+def _restore_latest_raw_group(
+    group: dict,
+    provider_messages: list[dict],
+    *,
+    active_ingress_ref: str,
+) -> list[dict] | None:
+    """Replace only a paired latest first-view with exact durable Session bytes.
+
+    The current provider projection may have bounded an otherwise recoverable
+    tool result to 8192 characters. That representation limit is not a physical
+    model-window limit. Never restore on missing ingress, changed arguments,
+    incomplete/duplicate receipts, or ambiguous matching groups.
+    """
+    if not group.get("valid") or not active_ingress_ref:
+        return None
+    ingress_positions = [
+        i
+        for i, row in enumerate(provider_messages)
+        if str(row.get("_active_run_ingress_ref") or "") == active_ingress_ref
+    ]
+    if len(ingress_positions) != 1:
+        return None
+    expected_receipts = group["receipts"]
+    matched: list[int] = []
+    for i in range(ingress_positions[0] + 1, len(provider_messages)):
+        if (
+            _role(provider_messages[i]) != "assistant"
+            or _calls(provider_messages[i]) != group["calls"]
+        ):
+            continue
+        segment = provider_messages[i + 1 : i + 1 + len(expected_receipts)]
+        if len(segment) != len(expected_receipts) or any(_role(row) != "tool" for row in segment):
+            continue
+        ids = [str(row.get("tool_call_id") or "") for row in segment]
+        if len(ids) != len(set(ids)) or set(ids) != set(expected_receipts):
+            continue
+        if (
+            i + 1 + len(segment) < len(provider_messages)
+            and _role(provider_messages[i + 1 + len(segment)]) == "tool"
+        ):
+            continue
+        if any(
+            _role(row) == "assistant" and _calls(row)
+            for row in provider_messages[i + 1 + len(segment) :]
+        ):
+            continue
+        matched.append(i)
+    if len(matched) != 1:
+        return None
+    candidate = [dict(row) for row in provider_messages]
+    for row in candidate[matched[0] + 1 : matched[0] + 1 + len(expected_receipts)]:
+        row["content"] = expected_receipts[str(row["tool_call_id"])]
+    if not group_visible_in_provider_view(group, candidate, active_ingress_ref=active_ingress_ref):
+        return None
+    return candidate
+
+
 def ensure_latest_observation_visible(
     engine: Any,
     sess: Any,
@@ -155,79 +214,79 @@ def ensure_latest_observation_visible(
     rebuild; a soft history cap alone is not proof of physical non-fit.
     """
     try:
+        from llm_loop.core.message import dict_wire_chars
         group = latest_completed_tool_group(sess.messages, active_turn_ref)
         physical_limit = (budget_info or {}).get("limited_by") in (
-            "model_window", "input_token_budget"
-        )
-        raw_visible = group_visible_in_provider_view(
-            group, messages, active_ingress_ref=active_ingress_ref
+            "model_window",
+            "input_token_budget",
         )
         if group is None:
             return messages, ""
-        if raw_visible:
-            from llm_loop.core.message import dict_wire_chars
-
-            raw_overflow = (
-                physical_limit
-                and sum(dict_wire_chars(row) for row in messages) > effective_budget
+        if group.get("valid"):
+            raw_visible = group_visible_in_provider_view(
+                group, messages, active_ingress_ref=active_ingress_ref
             )
-            if not raw_overflow and callable(request_preflight):
-                preflight = request_preflight(messages, tools_param, model=chat_model_arg)
-                raw_overflow = (
-                    not isinstance(preflight, Mapping)
-                    or bool(preflight.get("hard_overflow", False))
+            first = (
+                messages
+                if raw_visible
+                else _restore_latest_raw_group(
+                    group, messages, active_ingress_ref=active_ingress_ref
                 )
-            if not raw_overflow:
-                return messages, ""
-        if group and group.get("valid"):
-            if raw_visible:
-                ref_source = messages
-            else:
-                rebuilt = engine._build_conservative_active_run_messages(
-                    sess,
-                    max_chars=effective_budget,
-                    model=model,
-                    planned_label=planned_label,
-                    logical_round=rounds,
-                )
-                raw_fits = (
-                    rebuilt.state == "rebuilt"
-                    and (not physical_limit or rebuilt.projected_chars <= effective_budget)
-                )
-                raw_messages = list(rebuilt.messages) if raw_fits else []
-                if raw_messages and callable(request_preflight):
-                    preflight = request_preflight(
-                        raw_messages, tools_param, model=chat_model_arg
+            )
+            # Current view first, then a read-only Session rebuild; never replay tools.
+            for stage in ("current", "rebuilt"):
+                if stage == "current":
+                    candidate = first
+                else:
+                    rebuilt = engine._build_conservative_active_run_messages(
+                        sess,
+                        max_chars=effective_budget,
+                        model=model,
+                        planned_label=planned_label,
+                        logical_round=rounds,
                     )
-                    raw_fits = (
-                        isinstance(preflight, Mapping)
-                        and not bool(preflight.get("hard_overflow", False))
-                    )
-                if raw_fits and group_visible_in_provider_view(
-                    group, raw_messages, active_ingress_ref=active_ingress_ref
+                    candidate = list(rebuilt.messages) if rebuilt.state == "rebuilt" else None
+                    if candidate is not None and not group_visible_in_provider_view(
+                        group, candidate, active_ingress_ref=active_ingress_ref
+                    ):
+                        candidate = _restore_latest_raw_group(
+                            group, candidate, active_ingress_ref=active_ingress_ref
+                        )
+                if candidate is None or not group_visible_in_provider_view(
+                    group, candidate, active_ingress_ref=active_ingress_ref
                 ):
-                    engine._event_append(
-                        session_id,
-                        "request.observation_visibility",
-                        {
-                            "round": rounds,
-                            "action": "raw_group_rebuilt_from_current_session",
-                            "group_index": group["index"],
-                            "projected_chars": rebuilt.projected_chars,
-                            "budget_chars": effective_budget,
-                        },
+                    continue
+                projected_chars = sum(dict_wire_chars(row) for row in candidate)
+                raw_fits = not physical_limit or projected_chars <= effective_budget
+                if raw_fits and callable(request_preflight):
+                    preflight = request_preflight(candidate, tools_param, model=chat_model_arg)
+                    raw_fits = isinstance(preflight, Mapping) and not bool(
+                        preflight.get("hard_overflow", False)
                     )
-                    return raw_messages, ""
-                ref_source = list(rebuilt.messages) if rebuilt.state == "rebuilt" else []
-            # The raw group cannot fit; a durable ref is not sufficient until
-            # the registered hydration tool, owner/version and final capsule
-            # are all qualified for this exact provider tool surface.
-            if ref_source:
+                if raw_fits:
+                    if stage == "rebuilt" or not raw_visible:
+                        engine._event_append(
+                            session_id,
+                            "request.observation_visibility",
+                            {
+                                "round": rounds,
+                                "action": (
+                                    "raw_group_rebuilt_from_current_session"
+                                    if stage == "rebuilt"
+                                    else "raw_group_restored_from_session"
+                                ),
+                                "group_index": group["index"],
+                                "projected_chars": projected_chars,
+                                "budget_chars": effective_budget,
+                            },
+                        )
+                    return candidate, ""
+                # Exact-ref still requires owner, version, hydration, schema and preflight.
                 exact_ref = _qualified_exact_ref_projection(
                     engine,
                     sess,
                     group,
-                    ref_source,
+                    candidate,
                     session_id=session_id,
                     active_ingress_ref=active_ingress_ref,
                     tools_param=tools_param,
