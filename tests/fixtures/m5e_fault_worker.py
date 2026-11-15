@@ -56,7 +56,12 @@ def reached(label: str, *, pause: bool = True) -> None:
         stream.write(label)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(pending, marker)
+    # Atomic create-if-absent also preserves the old open(..., "x") behavior:
+    # a duplicate barrier must raise, never overwrite a published marker.
+    try:
+        os.link(pending, marker)
+    finally:
+        pending.unlink(missing_ok=True)
     if pause:
         signal.pause()
 

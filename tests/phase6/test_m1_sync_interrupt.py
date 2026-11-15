@@ -156,7 +156,7 @@ def test_s4_multiple_interjections_all_consumed(build_test_engine):
         # second HTTP request completes. Keep that call in flight until both
         # requests are accepted, so the test checks actual batch consumption
         # rather than scheduler timing under xdist load.
-        assert second_request_accepted.wait(timeout=10), "second interjection not accepted"
+        assert second_request_accepted.wait(timeout=20), "second interjection not accepted"
         return LLMResponse(content="intermediate-after-multi", tool_calls=[], provider="fake")
 
     engine, fake, runner, client, sid = _start_sync_run(

@@ -27,7 +27,7 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "Offline M5E SIGKILL process fault injection fixture",
-      "disposition": "Write/fsync a private pending marker and atomically os.replace to publish the barrier; parent can no longer observe an empty marker before child writes it. Real SIGKILL and all durable-effect safety assertions remain unchanged.",
+      "disposition": "Write/fsync a private pending marker and atomically os.link create-if-absent to publish the barrier, preserving duplicate-barrier failure; parent can no longer observe an empty marker before child writes it. Real SIGKILL and all durable-effect safety assertions remain unchanged.",
       "evidence": [
         "main push CI run 43662115236 rerun failure: expected after_run_end marker content but observed empty string after SIGKILL.",
         "The fixture previously used open(marker,\"x\") followed by write/fsync; marker existence preceded complete content. 25 focused passed and 3 xdist rounds 49 passed each after atomic publish."
