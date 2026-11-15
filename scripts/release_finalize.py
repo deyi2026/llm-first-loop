@@ -376,6 +376,24 @@ class GhCli:
         except json.JSONDecodeError as exc:
             raise GhError(f"gh release view 输出不可解析: {exc}") from exc
 
+    def resolve_tag_commit(self, tag: str) -> str:
+        """Resolve the immutable tag's peeled commit, never Release.targetCommitish."""
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repo):
+            raise GhError("非法 GitHub repository 名称")
+        if not _TAG_RE.fullmatch(tag):
+            raise GhError("非法 Release tag")
+        cmd = ["gh", "api", f"repos/{self.repo}/commits/{tag}", "--jq", ".sha"]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+        except FileNotFoundError as exc:
+            raise GhError(f"gh CLI 不可用: {exc}") from exc
+        if proc.returncode != 0:
+            raise GhError(f"无法解析 tag {tag} 对应提交: {proc.stderr.strip()}")
+        sha = proc.stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise GhError(f"tag {tag} 对应提交 SHA 无效")
+        return sha
+
     def download_all(self, tag: str, dest_dir: Path) -> None:
         self._run("release", "download", tag, "--dir", str(dest_dir), "--clobber")
 
@@ -392,13 +410,22 @@ class GhCli:
 class FakeGh:
     """内存版 Release 模型（--self-check 专用；不触网、不调 gh）。接口同 GhCli。"""
 
-    def __init__(self, assets, draft=True, body="", target_commitish=None, url="https://example.invalid/r"):
+    def __init__(
+        self, assets, draft=True, body="", target_commitish=None,
+        url="https://example.invalid/r", tag_commit=None,
+    ):
         self.assets = dict(assets)
         self.draft = draft
         self.body = body
         self.target_commitish = target_commitish or "f" * 40
+        self.tag_commit = tag_commit or self.target_commitish
         self.url = url
         self.mutations = []
+
+    def resolve_tag_commit(self, tag: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{40}", self.tag_commit):
+            raise GhError("FakeGh tag SHA 无效")
+        return self.tag_commit
 
     def view(self, tag: str):
         return {
@@ -449,8 +476,13 @@ def collect_local_facts(from_dir: str):
         raise GhError(f"--from-dir 不存在: {directory}")
     facts = {}
     for path in sorted(directory.iterdir()):
-        if path.is_file() and path.name != MANIFEST_NAME:
-            facts[path.name] = (sha256_file(path), path.stat().st_size)
+        # dist/.gitignore is a build-control file; release-body-status.md is
+        # Release description text, not an uploaded asset. Neither may enter
+        # the authoritative asset manifest (including on repeated invocations).
+        if (not path.is_file() or path.name.startswith(".")
+                or path.name in (MANIFEST_NAME, "release-body-status.md")):
+            continue
+        facts[path.name] = (sha256_file(path), path.stat().st_size)
     if not facts:
         raise GhError(f"--from-dir 目录为空: {directory}")
     return facts
@@ -490,7 +522,9 @@ def sync_manifest_from_release(gh, tag: str, absent_platforms=()) -> int:
         if not facts:
             print("[guard] Release 上没有任何工件资产，拒绝生成空 manifest。")
             return EXIT_GUARD
-        manifest = build_manifest(facts, tag, str(rel.get("targetCommitish", "")), absent_platforms)
+        # GitHub Release.targetCommitish can be the moving branch name "main".
+        # Resolve the tag to its actual commit, including annotated tags.
+        manifest = build_manifest(facts, tag, gh.resolve_tag_commit(tag), absent_platforms)
         if isinstance(old_manifest, dict):
             old_map = {a.get("name"): a.get("sha256") for a in old_manifest.get("artifacts", []) if isinstance(a, dict)}
             for art in manifest["artifacts"]:
@@ -549,6 +583,14 @@ def finalize_release(gh, tag: str, require_platforms=RELEASE_PLATFORMS) -> int:
             print("[finalize] 保持 draft，未做任何修改。")
             return EXIT_MANIFEST_INVALID
         invalid = validate_manifest(manifest, tag)
+        # A manifest from a moving targetCommitish must never pass finalize,
+        # even when every artifact hash matches the downloaded assets.
+        expected_commit = gh.resolve_tag_commit(tag)
+        if manifest.get("commit_sha") != expected_commit:
+            invalid.append(
+                f"commit_sha 不等于 tag {tag} 的固定提交: "
+                f"manifest={manifest.get('commit_sha')!r}, tag={expected_commit}"
+            )
         if invalid:
             for line in invalid:
                 print(f"[缺项][manifest] {line}")

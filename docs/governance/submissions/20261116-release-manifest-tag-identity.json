@@ -1,0 +1,84 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-release-manifest-tag-identity",
+  "summary": "Fix two confirmed release identity defects from v0.6.54 without changing the signed package gate or production services: exclude local build-control/description files from manifest and bind remote manifest/finalize to the immutable peeled tag commit.",
+  "components": [
+    {
+      "component_id": "release-manifest-and-finalize-control",
+      "paths": [
+        "scripts/release_finalize.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "GitHub Draft Release artifact identity and publication safety gate",
+      "disposition": "Exclude hidden build-control files and generated Release body from local manifest. Resolve annotated/lightweight tag to its actual commit through GitHub commits/tag endpoint; never use moving Release.targetCommitish. Reject finalization when manifest commit differs from current tag commit, with zero Release mutation.",
+      "evidence": [
+        "At v0.6.54 Draft, GitHub Release.targetCommitish is literally main while v0.6.54 peeled commit is 7ecc0c4e31c96fd83f5f0643484546dae65df78b.",
+        "The local dist/.gitignore is not in the GitHub Release upload asset list, but collect_local_facts previously included it."
+      ],
+      "verification_level": "Offline self-check, targeted positive/negative regression tests, Ruff, independent managed GLM-5.3 Reviewer PASS/P0=0/P1=0 on exact frozen SHA, original full R9 exit 0, exact-SHA GitHub PR and push CI.",
+      "model_evidence_veto_recovery_exit": "Reject missing/invalid tag resolution, mismatched manifest tag commit, absent signed macOS package, asset SHA mismatch, or missing platform. Do not publish Draft or mutate already tagged v0.6.54.",
+      "rollback_route": "Revert this isolated three-path fix if review or tests fail; preserve existing v0.6.54 tag, Draft assets, Mac and Deepin production state.",
+      "declaration_id": "existing-release-finalize-identity-control"
+    },
+    {
+      "component_id": "release-manifest-identity-regression-tests",
+      "paths": [
+        "tests/unit/test_release_manifest_identity.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Release finalize offline regression tests",
+      "disposition": "Verify hidden/build-control exclusion, immutable tag SHA under moving main, fail-closed finalization for branch/moved tag, and GitHub tag SHA validation without network.",
+      "evidence": [
+        "Targeted pytest and release_finalize.py --self-check must run offline."
+      ],
+      "verification_level": "Targeted tests and original full R9.",
+      "model_evidence_veto_recovery_exit": "Do not remove or weaken existing Release finalization safety checks.",
+      "rollback_route": "Revert tests with this single-purpose release fix if required."
+    },
+    {
+      "component_id": "a5-release-identity-declaration",
+      "paths": [
+        "docs/governance/submissions/20261116-release-manifest-tag-identity.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 exact changed-path declaration",
+      "disposition": "Declare all three changed paths and explicitly classify release-finalize control code.",
+      "evidence": [
+        "Exact branch based on remote main 7ecc0c4e."
+      ],
+      "verification_level": "scripts/check_architecture_submission.py --staged and --base/--head PASS.",
+      "model_evidence_veto_recovery_exit": "Fail closed if any changed path is missing or incorrectly classified.",
+      "rollback_route": "Drop declaration together with the isolated code and test changes."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-release-finalize-identity-control",
+      "g1": {
+        "necessity": "Release.targetCommitish can equal moving main; a mutable identity or a hidden build-control file in the authoritative manifest can produce an unpublishable or misidentified release. Exact immutable tag and upload-asset set are mechanically verifiable safety facts."
+      },
+      "g2": {
+        "authority_owner": "Existing repository release_finalize.py and GitHub annotated tag",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing Draft/manifest/sha256/finalize gates and GitHub API; do not add a new publication authority, service or bypass."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_release_manifest_identity.py",
+          "scripts/release_finalize.py --self-check",
+          "scripts/check_architecture_submission.py --staged"
+        ],
+        "recovery_or_reason": "When tag cannot resolve, return a fail-closed error without changing Draft. When manifest tag SHA mismatches, reject finalize with no edits; recover only through authorized manifest sync of the same immutable tag."
+      },
+      "g4": {
+        "rollback": "Revert only this three-file isolated patch; existing v0.6.54 tag/Draft and Mac/Deepin production are untouched.",
+        "verification": [
+          "Six targeted regression tests passed",
+          "Eight offline release self-check scenarios passed",
+          "Ruff and A.5 staged must pass",
+          "Independent GLM-5.3 Reviewer, full R9, remote PR/CI required before merge"
+        ]
+      }
+    }
+  ]
+}
