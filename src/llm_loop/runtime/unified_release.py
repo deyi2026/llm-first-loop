@@ -17,11 +17,11 @@ import stat
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.runtime import service_control as sc
+from llm_loop.timekeeping import system_local_now_iso
 
 _RELEASE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 _SERVICES = ("web", "feishu", "learning", "wecom")
@@ -32,7 +32,7 @@ class ReleaseAlreadyRunningError(RuntimeError):
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now_iso()
 
 
 def _paths(data_dir: Path, release_id: str) -> tuple[Path, Path, Path]:

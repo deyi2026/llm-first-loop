@@ -195,3 +195,14 @@ PASS/P0=0/P1=0/P2=5. These nonblocking residuals remain explicit:
 The architecture manifest is a mechanical declaration only. It does not
 replace the independent reviewer, original R9, GitHub CI, or managed release
 preflight. Deepin production and the Qwen 131K model are outside this change.
+
+## R9 host-local timekeeping correction
+
+The first original full R9 on `b26fe7b26` returned exit 1 with one genuine
+new red: `tests/unit/test_timekeeping_local.py::test_source_does_not_serialize_new_wall_clock_in_utc`
+(15,325 passed, 1 failed). The coordinator's new `_now()` used
+`datetime.now(UTC).isoformat()`, violating the existing host-local timestamp
+contract. It now calls the authoritative `system_local_now_iso()` helper;
+negative regression checks both `updated_at` and `completed_at` UTC offsets.
+The guard/test was not modified or weakened. A new exact-SHA independent
+review and original full R9 are required before GitHub integration.

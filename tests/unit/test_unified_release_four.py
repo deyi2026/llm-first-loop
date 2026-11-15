@@ -584,3 +584,15 @@ def test_direct_resume_rejects_journal_data_dir_swap(rig):
         ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
     assert rig.store.calls == []
     assert not rig.store.actions
+
+
+def test_release_journal_uses_authoritative_host_local_clock(rig):
+    from datetime import datetime
+
+    ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    state = ur._read(rig.journal)
+    local_offset = datetime.now().astimezone().utcoffset()
+    for key in ("updated_at", "completed_at"):
+        parsed = datetime.fromisoformat(state[key])
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset() == local_offset
