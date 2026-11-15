@@ -1,0 +1,44 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-release-v0654",
+  "summary": "Version-only 0.6.54 Deepin release candidate based on independently qualified PR #34 + PR #35 merged main 1b457042; no runtime or safety-control changes in this release delta. Exact seven changed paths declared for A.5.",
+  "components": [
+    {
+      "component_id": "v0654-release-identity",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py",
+        "uv.lock"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Public release identity and packaging version metadata",
+      "disposition": "Only bump 0.6.53 to 0.6.54 in pyproject, uv.lock, Web SERVICE_VERSION and README badges; prepend accurate CHANGELOG. Do not alter security controls or runtime behavior.",
+      "evidence": [
+        "Baseline main 1b4570429d30ee6075dcb7089bfeb4db5027add2 includes merged PR #34 and PR #35 with independent GLM-5.3 PASS P0/P1=0, original R9 exit 0, and exact-main GitHub CI success.",
+        "Deepin current wheel version 0.6.53 must not be overwritten with changed bytes; Mac gen423 four services already converge to baseline main SHA."
+      ],
+      "verification_level": "Fresh exact-head independent GLM-5.3 PASS P0/P1=0, original full R9 CLEAN exit 0, PR CI, wheel METADATA/lock/WebUI/hash and Deepin isolated acceptance are required before publication. Baseline evidence does not qualify this new SHA.",
+      "model_evidence_veto_recovery_exit": "Do not publish if versions diverge, exact changed-path coverage fails, independent review/R9/CI are incomplete, or wheel identity differs. Never infer Docker/none/TOCTOU coverage from this release.",
+      "rollback_route": "Abandon or revert the version-only branch; keep remote main 1b457042 unchanged and Deepin 0.6.53 wheel/gen unchanged until separately authorized cutover."
+    },
+    {
+      "component_id": "a5-release-submission",
+      "paths": [
+        "docs/governance/submissions/20261115-release-v0654.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture declaration for exact changed-path release diff",
+      "disposition": "Add one non-control governance manifest; no runtime authority or bypass.",
+      "evidence": [
+        "Existing 0.6.53 and 0.6.51 release submissions require exact seven-path coverage; architecture checker must independently validate staged/committed candidate."
+      ],
+      "verification_level": "scripts/check_architecture_submission.py --staged and --base/--head must PASS; fresh exact-SHA Reviewer, R9 and remote CI remain required.",
+      "model_evidence_veto_recovery_exit": "If A.5 rejects changed-path coverage, stop and correct the declaration; do not bypass checks.",
+      "rollback_route": "Drop this declaration together with version-only changes; no live service touched."
+    }
+  ],
+  "declarations": []
+}

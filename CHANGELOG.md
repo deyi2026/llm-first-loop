@@ -1,5 +1,12 @@
 # Changelog（公开变更记录）
 
+## v0.6.54 — 可信共享工作状态与多 Agent 协同安全发行（2026-11-15）
+
+- 以 GitHub `main` 精确提交 `1b4570429d30ee6075dcb7089bfeb4db5027add2` 为代码基线，包含已合并 PR #34 的本地知识与 Reviewer 门禁修复，以及 PR #35 的可信共享工作状态、Goal 写入权限和审计保护。
+- 本次发行候选只同步包版本、Web SERVICE_VERSION、双语 README、锁文件和发行说明；不新增安全权限、沙盒执行路径或模型行为。
+- Mac 四服务在 gen423 已按精确主线 SHA 受管验收；Deepin 现有 0.6.53 wheel 不得同版本覆盖。0.6.54 需先通过独立 Reviewer、完整 R9、GitHub CI、wheel 成品与 Deepin 旁路验收，实际切换须单独授权。
+- 安全边界：Docker 真实容器、none/auto-none 无物理隔离、其它文件写入工具与宿主 TOCTOU 仍需单独验证，不宣称全域保护完成。
+
 ## v0.6.53 — Deepin 沙盒外人工授权与 FD 固定绑定发行（2026-11-15）
 
 - 以已审查并完成 GitHub main CI 的 `1616137d0fa560ff06452be838e1f1620bce7174` 为代码基线，承接 PR #22 的 Deepin 单文件人工授权、FD 固定绑定及验证失败拒绝执行。
