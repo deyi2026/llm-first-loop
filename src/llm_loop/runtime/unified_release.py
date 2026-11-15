@@ -274,7 +274,7 @@ def _run_locked(store: sc.ManagedServiceDeploymentStore, journal: Path, state: d
         _await_action(store, candidate, second.action_id, timeout_s=timeout_s, poll_s=poll_s)
         _verify_live(store, candidate, _SERVICES)
         _save(journal, state, status="succeeded", completed_at=_now(), worker_pid=0)
-    except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+    except (OSError, ValueError, RuntimeError, TimeoutError, KeyError) as exc:
         _save(journal, state, status="blocked", last_error=str(exc), worker_pid=0)
         raise
     return state
@@ -372,7 +372,8 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
         _save(journal, current, status="dispatching", worker_pid=proc.pid)
     finally:
         os.close(fd)
-    print(json.dumps({"ok": True, "accepted": True, "detached": True, "status": "dispatching", "release_id": state["release_id"], "journal": str(journal)}))
+    # Exit 0 acknowledges durable dispatch, NOT successful deployment.
+    print(json.dumps({"accepted": True, "completed": False, "detached": True, "status": "dispatching", "release_id": state["release_id"], "journal": str(journal)}))
     return 0
 
 

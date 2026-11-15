@@ -5731,7 +5731,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "release-four":
         try:
             return unified_release.main(args)
-        except (OSError, ValueError, RuntimeError) as exc:
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 2
     if args.command == "publish-wheel":

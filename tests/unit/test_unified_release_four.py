@@ -431,3 +431,28 @@ def test_opened_journal_inode_rejects_symlink(tmp_path):
     with pytest.raises(OSError):
         ur._read(path)
     assert target.read_text() == '{"schema": 1}'
+
+
+def test_detached_dispatch_never_claims_completion(rig, monkeypatch, capsys):
+    _, _, log = ur._paths(rig.store.data_dir, "release-test")
+    monkeypatch.setattr(ur.sc, "ManagedServiceDeploymentStore", lambda path: rig.store)
+    monkeypatch.setattr(ur.sc, "_control_subprocess_env", lambda **kw: {})
+    monkeypatch.setattr(ur, "_pid_alive", lambda pid: False)
+    monkeypatch.setattr(ur.subprocess, "Popen", lambda *a, **kw: SimpleNamespace(pid=98765))
+    assert ur._launch_worker(ur._read(rig.journal), rig.journal, log, wait=False) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["accepted"] is True
+    assert output["completed"] is False
+    assert "ok" not in output
+    assert ur._read(rig.journal)["status"] == "dispatching"
+    assert not rig.store.calls
+
+
+def test_malformed_journal_missing_sha_is_durable_block(rig):
+    state = ur._read(rig.journal)
+    state.pop("expected_sha")
+    ur._save(rig.journal, state)
+    with pytest.raises(KeyError, match="expected_sha"):
+        ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    assert ur._read(rig.journal)["status"] == "blocked"
+    assert not rig.store.calls

@@ -24,8 +24,9 @@ python -m llm_loop.runtime.service_control release-four \
   --reason "four-service coordinated rollout"
 ```
 
-The command returns a durable journal path and detaches the coordinator by
-default; it does **not** claim deployment success. `--status-only` reads the
+The command returns `accepted=true, completed=false` and a durable journal
+path, then detaches the coordinator by default; it does **not** claim deployment
+success. Only terminal `status=succeeded` means four-service completion. `--status-only` reads the
 journal. Reissuing the **same release ID and arguments** resumes after a
 coordinator interruption. `--wait` is for controlled foreground operation only.
 The existing `update`, `deploy`, `restart`, and `all` contracts remain unchanged.
@@ -110,3 +111,8 @@ seek operator adjudication. Only when there is positive evidence that the
 original action never reached a physical restart may an operator arrange
 a single controlled recovery using the existing managed worker path. Never
 run `restart_mirror.sh` directly or clear barriers to force completion.
+
+- Reviewer P2 accepted: a `spawn_intent` whose spawn call raises remains
+  fail-closed. The caller cannot prove whether the exception happened before
+  or after a child process was created; clearing the intent could permit a
+  duplicate physical restart. Require manual evidence instead.
