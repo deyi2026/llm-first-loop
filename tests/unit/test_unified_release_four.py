@@ -307,3 +307,45 @@ def test_cli_requires_explicit_requester_and_sha(tmp_path, capsys):
     assert sc.main(args) == 2
     assert "requester" in capsys.readouterr().err
     assert not (tmp_path / "runtime/unified-releases/new-one.json").exists()
+
+
+def test_verify_evidence_ready_waits_without_retry(rig, monkeypatch):
+    def pending_spawn(store, action_id):
+        action = store.read_action(action_id)
+        store.calls.append(("spawn", action.target))
+        store.set_action(action_id, status="verify_evidence_ready", worker_pid=123)
+
+    monkeypatch.setattr(ur.sc, "spawn_service_control_worker", pending_spawn)
+    with pytest.raises(TimeoutError, match="verify_evidence_ready"):
+        ur.run_release(rig.store, "release-test", timeout_s=0, poll_s=0)
+    assert [a.target for a in rig.store.actions] == ["all"]
+    assert rig.store.calls.count(("spawn", "all")) == 1
+
+
+def test_detached_duplicate_is_reported_as_already_running(rig, monkeypatch, capsys):
+    import fcntl
+    import os
+
+    _, lock, log = ur._paths(rig.store.data_dir, "release-test")
+    monkeypatch.setattr(ur.sc, "ManagedServiceDeploymentStore", lambda path: rig.store)
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert ur._launch_worker(ur._read(rig.journal), rig.journal, log, wait=False) == 12
+        assert json.loads(capsys.readouterr().out)["status"] == "already_running"
+        assert not rig.store.calls
+    finally:
+        os.close(fd)
+
+
+def test_detached_symlinked_log_is_refused(rig, monkeypatch):
+    _, _, log = ur._paths(rig.store.data_dir, "release-test")
+    target = rig.store.data_dir / "protected"
+    target.write_text("unchanged")
+    log.symlink_to(target)
+    monkeypatch.setattr(ur.sc, "ManagedServiceDeploymentStore", lambda path: rig.store)
+    monkeypatch.setattr(ur.sc, "_control_subprocess_env", lambda **kw: {})
+    with pytest.raises(ValueError, match="log must not be a symlink"):
+        ur._launch_worker(ur._read(rig.journal), rig.journal, log, wait=False)
+    assert target.read_text() == "unchanged"
+    assert not rig.store.calls

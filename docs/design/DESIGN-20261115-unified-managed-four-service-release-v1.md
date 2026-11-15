@@ -33,7 +33,7 @@ The existing `update`, `deploy`, `restart`, and `all` contracts remain unchanged
 ## State machine and safety invariants
 
 1. Validate the release ID and persist the immutable request under
-   `data/runtime/unified-releases/<release-id>.json` (mode 0600). One
+   `<data-dir>/runtime/unified-releases/<release-id>.json` (mode 0600). One
    exclusive global coordinator file lock serializes four-service rollouts
    across release IDs (existing single-service operators keep their own gates).
 2. Build the exact source-checkout deployment using existing source/WebUI
@@ -77,3 +77,19 @@ unguarded rollback or direct kill/restart is introduced.
 This is a **Mac source-checkout** coordinator. Wheel/systemd rollout on Deepin
 is not implied. It is an explicit four-service operator mode, not a silent
 change to the semantics of `target=all`.
+
+## Reviewer P2 disposition
+
+- `verify_evidence_ready` is now polled as nonterminal until the bounded
+  deadline; it is never treated as success or physically retried.
+- Duplicate CLI dispatches are rejected by the global lock, with the child
+  waiting briefly for the parent's PID-journal handoff; an existing live
+  worker PID is reported as `already_running`, not a second success.
+- The journal path is documented relative to `<data-dir>`.
+- Residual P2: the coordinator does not infer failure solely from a stale
+  worker PID (PID reuse can make that inference unreliable). It times out
+  without replaying physical work and can be resumed by the same release ID.
+- Residual P2: the per-stage 3600-second wait remains fixed in v1. This is
+  a bounded observation window, not an idle-gate override; a still-busy
+  service is never forced to restart and the same release ID can resume.
+  Adjustable timeouts can be added after real operator evidence warrants it.

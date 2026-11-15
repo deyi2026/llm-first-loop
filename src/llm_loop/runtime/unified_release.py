@@ -151,8 +151,8 @@ def _await_action(
             return action
         if action.status == "failed":
             raise RuntimeError(f"action {action_id} failed; no automatic retry")
-        if action.status == "verify_evidence_ready":
-            raise RuntimeError(f"action {action_id} awaits independent verification")
+        # verify_evidence_ready is nonterminal: a separate reviewer may still
+        # acknowledge the evidence. Never treat it as succeeded or retry it.
         if time.monotonic() >= deadline:
             raise TimeoutError(f"action {action_id} still {action.status}; resume after checking")
         time.sleep(poll_s)
@@ -244,20 +244,44 @@ def _run_locked(store: sc.ManagedServiceDeploymentStore, journal: Path, state: d
     return state
 
 
-def run_release(store: sc.ManagedServiceDeploymentStore, release_id: str, *, timeout_s: float = 3600, poll_s: float = 2) -> dict[str, Any]:
+def run_release(
+    store: sc.ManagedServiceDeploymentStore,
+    release_id: str,
+    *,
+    timeout_s: float = 3600,
+    poll_s: float = 2,
+    lock_wait_s: float = 0,
+) -> dict[str, Any]:
     journal, lock, _ = _paths(store.data_dir, release_id)
     if journal.is_symlink() or lock.is_symlink():
         raise ValueError("unified release journal/lock must not be a symlink")
     fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("unified release already running") from exc
+        deadline = time.monotonic() + lock_wait_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("unified release already running") from exc
+                time.sleep(0.1)
         state = _read(journal)
         return _run_locked(store, journal, state, timeout_s=timeout_s, poll_s=poll_s)
     finally:
         os.close(fd)
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)  # read-only liveness check, never sends a signal
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: bool) -> int:
@@ -271,19 +295,45 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
         print(json.dumps({"ok": result["status"] == "succeeded", "status": result["status"], "journal": str(journal)}))
         return 0 if result["status"] == "succeeded" else 1
 
-    argv = [sys.executable, "-m", "llm_loop.runtime.service_control", "release-four", "--release-id", state["release_id"], "--data-dir", state["data_dir"], "--worker"]
-    env = sc._control_subprocess_env(
-        code_root=state["code_root"],
-        runtime_root=state["runtime_root"],
-        python_src=Path(__file__).resolve().parents[2],
-    )
-    with log.open("a", encoding="utf-8") as stream:
-        subprocess.Popen(  # noqa: S603 - fixed argv, validated journal, no shell
-            argv, cwd=state["runtime_root"], env=env,
-            stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
-            start_new_session=True, close_fds=True,
+    # Hold the global coordinator lock through Popen + journal PID write.
+    # The child waits briefly for the parent to release it. A second caller
+    # sees already_running instead of launching a duplicate worker.
+    _, lock, _ = _paths(store.data_dir, state["release_id"])
+    if lock.is_symlink():
+        raise ValueError("unified release lock must not be a symlink")
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
+            return 12
+        current = _read(journal)
+        if current["status"] == "succeeded":
+            print(json.dumps({"ok": True, "status": "succeeded", "journal": str(journal)}))
+            return 0
+        if _pid_alive(int(current.get("worker_pid") or 0)):
+            print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
+            return 12
+        argv = [sys.executable, "-m", "llm_loop.runtime.service_control", "release-four", "--release-id", state["release_id"], "--data-dir", state["data_dir"], "--worker"]
+        env = sc._control_subprocess_env(
+            code_root=state["code_root"],
+            runtime_root=state["runtime_root"],
+            python_src=Path(__file__).resolve().parents[2],
         )
-    print(json.dumps({"ok": True, "detached": True, "status": state["status"], "release_id": state["release_id"], "journal": str(journal)}))
+        if log.is_symlink():
+            raise ValueError("unified release log must not be a symlink")
+        log_fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(log_fd, "a", encoding="utf-8") as stream:
+            proc = subprocess.Popen(  # noqa: S603 - fixed argv, validated journal, no shell
+                argv, cwd=state["runtime_root"], env=env,
+                stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
+                start_new_session=True, close_fds=True,
+            )
+        _save(journal, current, status="dispatching", worker_pid=proc.pid)
+    finally:
+        os.close(fd)
+    print(json.dumps({"ok": True, "accepted": True, "detached": True, "status": "dispatching", "release_id": state["release_id"], "journal": str(journal)}))
     return 0
 
 
@@ -311,7 +361,7 @@ def main(args: argparse.Namespace) -> int:
         raise ValueError("unified release journal must not be a symlink")
     if args.worker:
         try:
-            result = run_release(sc.ManagedServiceDeploymentStore(data_dir), args.release_id)
+            result = run_release(sc.ManagedServiceDeploymentStore(data_dir), args.release_id, lock_wait_s=5)
             return 0 if result["status"] == "succeeded" else 1
         except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
             print(f"unified release blocked: {exc}", file=sys.stderr)
