@@ -1884,6 +1884,7 @@ def _source_snapshot_sections(
     tier_counts: tuple[int, int] | None = None,
     committed_projection: str = "full",
     identity_scope: str = "material",
+    extra_scope_header: Sequence[tuple[str, str]] = (),
 ) -> tuple[str, str, list[tuple[str, int]], str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
@@ -2067,6 +2068,9 @@ def _source_snapshot_sections(
     header_fields.extend(
         _scope_header_fields(scope_paths, out_of_scope_untracked, tier_counts)
     )
+    # EVO-20261115-34ae7c99(C)（独立审查 P1 实测）：批注记必须随材料头冻结——
+    # 否则审查者把"切片 + bound_unreviewed=0"读成"声称覆盖全量推送"。
+    header_fields.extend(extra_scope_header)
     header_fields.extend(extra_header)
     material = _frozen_material(
         header_fields, committed, working, new_files, backlog=backlog_manifest,
@@ -3284,6 +3288,27 @@ def _compose_review_task(
         "paths bound as unreviewed were NOT sent to you -- you may note their "
         "existence but must not claim to have reviewed them, and their absence "
         "from the artifact is not by itself a defect. "
+    )
+    if "push_batch_joint=1" in material:
+        # EVO-20261115-34ae7c99(C)：批切片必须自证身份；任务书同步讲清两级
+        # 口径（切片外=兄弟批覆盖、消费口 fail-closed；bound_unreviewed=工作树
+        # 口径），防止把"切片≠全量"再次误判为 P1（独立审查实测）。
+        task += (
+            "BATCH CONTEXT: this artifact is ONE batch of a gate-generated "
+            "joint-coverage plan for a single git push (see header push_batch_"
+            "index / push_batch_total / push_range_paths). The full push delta "
+            "is larger than this slice; out-of-slice push-range paths are "
+            "frozen and reviewed in sibling batches, and the gate enforces "
+            "union coverage before the push may run (fail-closed; no single "
+            "batch ever authorizes the push). The header bound_unreviewed_* "
+            "counts refer to working-tree/untracked items outside the declared "
+            "scope, NOT to push-range siblings. Judge this batch's delivered "
+            "content on its own merits; do not flag the slice's incompleteness "
+            "relative to the full push as a defect, but do flag any internal "
+            "inconsistency between the batch header and the delivered "
+            "sections. "
+        )
+    task += (
         "Inspect the actual patch/page for correctness, leak/security issues, "
         "scope, user intent, and side effects of the stated action. "
         "The independent review DOES NOT grant user permission. Do not use tools. "
@@ -3770,15 +3795,8 @@ class HostReviewAdmission:
                 # locally or the reviewed delta cannot be computed at all.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
             push_head = _push_src_commit(repo, refspec)
-            sha, text, sections, reviewed_fp, pushed_fp = _source_snapshot_sections(
-                true_dir, push_base=push_base, push_head=push_head,
-                first_push_ref=dst_ref if first_push else "",
-                scope_paths=scope_paths, tier_counts=tier_counts,
-                # EVO-20261107-3ebd74b6: git_push identity 绑定 commit 集
-                # （push 上传的物理对象），不随共享树的并行工作区产物漂移。
-                identity_scope="commit_set",
-            )
             push_batch: dict[str, Any] | None = None
+            batch_header: list[tuple[str, str]] = []
             if scope_paths:
                 # EVO-20261115-34ae7c99(A)（人工批准 2026-11-15，exec_override）：
                 # git_push 分批冻结。闸先冻结全量段落视图并**自己装箱**；声明的
@@ -3824,6 +3842,43 @@ class HostReviewAdmission:
                     "paths": tuple(str(p) for p in plan[hit]["paths"]),
                     "full_material_chars": len(f_text),
                 }
+                # EVO-20261115-34ae7c99(C)（独立审查 P1 实测）：批工件必须自证
+                # "切片身份"。此前 push_batch 只进回执/记录，审查材料头只写
+                # scope/tier——审查者把"32 条切片 + bound_unreviewed=0"读成
+                # "声称覆盖全量推送"，每批必然 REVISE（联合协议不可执行）。
+                # 注记随材料一起冻结进 sha；联合消费按同一路径复算，天然一致。
+                try:
+                    full_path_count = len(
+                        {_section_path(label) for label, _ in f_sections}
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"push_batch_header_unfreezable:{exc}"
+                    ) from exc
+                batch_path_count = len(set(push_batch["paths"]))
+                batch_header = [
+                    ("push_batch_joint", "1"),
+                    (
+                        "push_batch_index",
+                        f"{push_batch['index'] + 1}/{push_batch['total']}",
+                    ),
+                    ("push_batch_plan_id", plan_id[:16]),
+                    ("push_range_paths", str(full_path_count)),
+                    ("push_batch_paths", str(batch_path_count)),
+                    (
+                        "push_range_out_of_slice_paths",
+                        str(full_path_count - batch_path_count),
+                    ),
+                ]
+            sha, text, sections, reviewed_fp, pushed_fp = _source_snapshot_sections(
+                true_dir, push_base=push_base, push_head=push_head,
+                first_push_ref=dst_ref if first_push else "",
+                scope_paths=scope_paths, tier_counts=tier_counts,
+                # EVO-20261107-3ebd74b6: git_push identity 绑定 commit 集
+                # （push 上传的物理对象），不随共享树的并行工作区产物漂移。
+                identity_scope="commit_set",
+                extra_scope_header=tuple(batch_header),
+            )
             dest = _push_target(command, true_dir)
             push_extra = {"src_commit": push_head,
                           "first_push": "1" if first_push else "",

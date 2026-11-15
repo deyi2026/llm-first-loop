@@ -1,0 +1,152 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-mac-gen421-local-three-commits",
+  "summary": "Reconcile three already deployed local Mac gen421 commits with GitHub main 5693b1c without dropping review-host push batch material identity or five knowledge assets. Only the A.5 declaration and an official guard(r9) exact AST function-size registration are new; no runtime code changes beyond deployed local commits. Independent exact-SHA reviewer, original full R9, remote CI, and CAS-managed release remain mandatory. The new main also includes unrelated PR #33 semantic/video test fixes; no path overlap with the eight declared changes.",
+  "components": [
+    {
+      "component_id": "review-host-batch-material-identity",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing HostReviewAdmission git_push frozen review grant and joint batch coverage",
+      "disposition": "Preserve the already-deployed local change: the frozen per-batch review material explicitly states joint batch identity, plan prefix, index, total and out-of-slice count. Reviewer receives BATCH CONTEXT; original grant issuer, all-batches union check, exact SHA, target, CAS and fail-closed conditions remain unchanged.",
+      "evidence": [
+        "Local deployed commit 2dcda9936435627a021a4d4779731a6cb5cdc03f",
+        "Integrated merge candidate 554a77b5b5abfe1c3a96a7ebe86987cbfe878c1a exact source blob matches Mac live gen421 10a9ebc9c",
+        "289 focused test_review_host_admission.py tests passed, Ruff PASS, Pyright 0 errors; independent new-SHA review and full R9 pending"
+      ],
+      "verification_level": "Local targeted 289 PASS; exact final SHA independent GLM-5.3 review, original full R9 exit0, remote CI and managed deployment verification are mandatory",
+      "model_evidence_veto_recovery_exit": "Only existing HostReviewAdmission consumes grants. Partial, stale, missing, revoked or mismatched batches remain denied; reviewer text cannot itself authorize push. No second grant issuer or bypass.",
+      "rollback_route": "Revert this isolated merge or new reviewed batch-header change if rejected; keep current Mac gen421 until a separately approved safe replacement is verified.",
+      "declaration_id": "reuse-host-review-admission"
+    },
+    {
+      "component_id": "review-host-batch-regression-tests",
+      "paths": [
+        "tests/unit/test_review_host_admission.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest HostReviewAdmission negative/positive test suite",
+      "disposition": "Add exact reviewer-task checks for BATCH CONTEXT and frozen plan identity without relaxing any prior rejection cases.",
+      "evidence": [
+        "289 focused tests PASS exit0 on exact pre-manifest candidate tree f95dc6b79e4dd52365514cab566d3b0a5a288be5",
+        "No test exclusion, no gate edit"
+      ],
+      "verification_level": "Targeted PASS; full original R9 pending",
+      "model_evidence_veto_recovery_exit": "Tests do not issue execution authorization; production host still validates frozen records and exact target.",
+      "rollback_route": "Revert with the associated reviewed batch-header change."
+    },
+    {
+      "component_id": "function-size-guard-exact-registration",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing R9 AST function-size ratchet (tests/unit/test_arch_guards.py and official regen_function_size_baseline.py)",
+      "disposition": "Official guard(r9) registration of two measured already-deployed HostReviewAdmission function growths (_source_snapshot_sections 243->247; _target 163->193) and one LFRT observer shrink (parse_lfrt_status 124->122). No changes to guard logic, thresholds, exemptions, test skips or runtime behavior.",
+      "evidence": [
+        "First original full R9 on bbca81dd exit1 at tier0: two exact AST ratchet growths from deployed commit 2dcda9936; Ruff/Pyright/WebUI 600/600 PASS",
+        "Official regen_function_size_baseline.py --only function_lines touched exactly three measured values; guard(r9) commit 462e6a8ebfcd351f7c9295ebee0d6c0189c1848b",
+        "r9_commit_check.sh HEAD PASS; official --only function_lines --check PASS; two targeted AST guard tests PASS"
+      ],
+      "verification_level": "Guard(r9) registration complete and focused PASS; new exact SHA independent GLM-5.3 review, original full R9 exit0 and GitHub CI still mandatory.",
+      "model_evidence_veto_recovery_exit": "The numeric ledger is an explicit reviewed size registration, not an exemption, authorization issuer, test skip or guard disablement. Any further growth fails closed until separately registered.",
+      "rollback_route": "Revert the guard(r9) registration with the associated deployed batch-header code only after confirming the running target and new baseline are consistent.",
+      "declaration_id": "reuse-existing-ast-size-guard"
+    },
+    {
+      "component_id": "existing-method-and-experience-knowledge",
+      "paths": [
+        "data/methods/source-call-params-from-prior-receipt-fields-not-memory-5d57f5adfc04/METHOD.md",
+        "experiences/EXPERIENCE-20261115-同批次抓取脚本收尾会重抓并覆盖同源回执-定稿前必须回读最终回执的实读值再改正文.md",
+        "experiences/EXPERIENCE-20261115-图内标题的计数口径必须与正文小标题同源-同一组读数不能一处写-四种结局-一处写-三种结局.md",
+        "experiences/EXPERIENCE-20261115-无空格中文标题的-首词-提取必须按标点切-用-split-会把整句标题当成首词-让标题规范门禁空转.md",
+        "experiences/EXPERIENCE-20261115-转述摘要的限定词时不得自行展开其含义-matched-neutral-note-不等于-同样长度-同.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Method/Experience knowledge library",
+      "disposition": "Carry forward one local Method card and four Experience notes from live Mac gen421. They are knowledge assets, not runtime policy or new approval authorities.",
+      "evidence": [
+        "Local commits 2a2dc209c and 10a9ebc9c are already present in live gen421",
+        "All five files are additions relative to GitHub main 5693b1c"
+      ],
+      "verification_level": "Content diff reviewed with exact final SHA; full R9 and remote CI pending",
+      "model_evidence_veto_recovery_exit": "Knowledge text does not override host admission, execute commands, or grant privileges.",
+      "rollback_route": "Revert the five knowledge files if rejected; do not erase live knowledge data outside managed rollback."
+    },
+    {
+      "component_id": "architecture-declaration",
+      "paths": [
+        "docs/governance/submissions/20261115-mac-gen421-local-three-commits.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 G1-G4 architecture-submission gate",
+      "disposition": "Declare exact nine changed paths (seven inherited local paths, this manifest, and official AST baseline registration) without changing the A.5 checker.",
+      "evidence": [
+        "Initial A.5 denied no-manifest integration; exact 8-path manifest passed on bbca81dd",
+        "First original full R9 bbca81dd exit1 on two AST size growths; official guard(r9) 462e6a8eb registration and 2 focused tests PASS",
+        "Final A.5 nine-path check, independent reviewer, full R9 and remote CI pending"
+      ],
+      "verification_level": "A.5 exact changed-path gate must PASS on final SHA; reviewer, R9 and remote CI remain required",
+      "model_evidence_veto_recovery_exit": "Manifest records evidence but cannot issue reviewer PASS, grant execution, bypass gate, or authorize release.",
+      "rollback_route": "Revert manifest with the candidate; preserve prior main and running gen421."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-host-review-admission",
+      "g1": {
+        "necessity": "Reviewer must be able to distinguish a planned slice of a large git_push from an unreviewed claim of whole-push coverage; without frozen batch identity legitimate complete joint reviews can be rejected as missing coverage."
+      },
+      "g2": {
+        "authority_owner": "Existing HostReviewAdmission frozen grant and joint batch consumption path",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing plan generation, SHA/target binding, scoped review record and union coverage check; no new authorization issuer, global override or relaxed file coverage."
+      },
+      "g3": {
+        "model_evidence": [
+          "Existing earlier GLM-5.3 reviews of PR30 do not substitute for exact final integration SHA review",
+          "289 focused HostReviewAdmission tests passed, including reviewer task frozen batch header assertions; Pyright 0, Ruff PASS",
+          "Final SHA independent GLM-5.3 review pending; original full R9 and exact remote CI pending"
+        ],
+        "recovery_or_reason": "Deny incomplete, stale, revoked, cross-plan, out-of-scope, changed SHA or target review; require fresh exact-material review. Preserve current running gen421 until managed release is safe."
+      },
+      "g4": {
+        "rollback": "Revert the reviewed integration or isolated batch-header change; preserve the current deployed gen421 and existing grant authority until a verified replacement is ready.",
+        "verification": [
+          "Final exact SHA GLM-5.3 independent PASS/P0=P1=0",
+          "Original unchanged bash scripts/ci_gate.sh exit0 on final SHA",
+          "GitHub PR exact head CI/A.5/privacy/Linux install all green, then managed CAS release PID/SHA/health and rollback check"
+        ]
+      }
+    },
+    {
+      "declaration_id": "reuse-existing-ast-size-guard",
+      "g1": {
+        "necessity": "The original full R9 blocked exact AST growth in two HostReviewAdmission functions introduced by already-deployed 2dcda9936; preserve the ratchet while registering measured and independently reviewed size changes through the official guard(r9) path."
+      },
+      "g2": {
+        "authority_owner": "Existing AST function-size guard and official deterministic baseline generator",
+        "relationship": "reuse",
+        "non_duplication": "No new guard, threshold, exemption or alternative generator. The existing baseline is updated by the official --only function_lines command, preserving other sections and metadata."
+      },
+      "g3": {
+        "model_evidence": [
+          "Full original R9 bbca81dd exit1 due exactly two growths; no functional or type failures at that point",
+          "Official generator measured 243->247 and 163->193; also tightened LFRT parse status 124->122",
+          "guard(r9) commit checker PASS, generator --check PASS, targeted AST guard 2 PASS; independent exact-final-SHA GLM-5.3 review and full R9 pending"
+        ],
+        "recovery_or_reason": "If any future AST growth is unregistered, test_function_lines_ratchet_within_baseline denies. This registration is explicit in guard(r9) commit and must not be used to waive other gates."
+      },
+      "g4": {
+        "rollback": "Revert the exact registration together with corresponding reviewed runtime changes when rolling back; do not change live Mac service without a managed CAS rollback.",
+        "verification": [
+          "Official guard(r9) commit check PASS and baseline generator --check PASS",
+          "Independent GLM-5.3 review PASS/P0=P1=0 for final SHA including this registration",
+          "Original full R9 exit0 on final SHA and exact remote CI/A.5/privacy/Linux install checks green before managed publish"
+        ]
+      }
+    }
+  ]
+}
