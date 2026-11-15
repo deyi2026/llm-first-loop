@@ -102,6 +102,26 @@ container 方案后续可扩展：CI runner 上以条件 B/C 为门禁（未启�
   外泄面必须依赖出站闸门与环境脱敏，**不能**指望本后端。
 - 执行形态：`/usr/bin/sandbox-exec -p <profile> /bin/bash -lc <command>`（shell=False）。
 - 非 darwin 平台或 sandbox-exec 不可用时显式配置 → fail-closed 拒绝执行。
+- **单文件授权（EVO-20261115-488367d4 P0-1）**：`execute_command(host_grant_id=...)`
+  在本后端经**可写根追加**生效——授权文件的精确路径作为该次命令的唯一新增可写根进入
+  profile；无 FD 传递通道（区别于 bwrap 的 FD 固定挂载），spawn 前一刻做
+  O_NOFOLLOW + inode + sha256 复验，残余竞态由 Seatbelt 写域兜底（symlink 目标
+  在可写根外仍被内核拒绝写入）。写回执语义与 bwrap 不同：授权文件与既有可写根
+  （工作区/缓存——本后端无覆盖层，写=真实宿主效果）之外的路径写入**非静默**，
+  被 profile 拒绝、命令非零退出。
+
+### 已知静默降级命令（EVO-20261115-488367d4 P1-1/P2，2026-11-15 实测）
+
+沙箱内以下命令**输出不可信**，不得作为证据源（banner note 每次回执都会提示）：
+
+| 命令 | 实测表现 | 根因 | 可信替代 |
+|---|---|---|---|
+| `/bin/ps` | exec 即拒（`Operation not permitted`） | `/bin/ps` 为 **setuid root**（`-rwsr-xr-x`），Seatbelt 内 exec setuid 二进制被内核拒绝——与 profile 过滤规则无关，**无法用放行规则修复** | `lsof -p <pid>`、`sysctl`（进程/系统信息均可得） |
+| `launchctl list` | 空输出，exit 码 0 或 1 不定（假成功/假空表） | 用户域 launchd 查询通道在沙箱内不可达，静默退化 | `launchctl print user/$(id -u)`（实测可用） |
+
+另注：嵌套套用沙箱 profile 必被拒（`sandbox_apply: Operation not permitted`）——
+在 LFL 会话内再用 `sandbox-exec` 做 A/B 对照实验不可行，真执行验证只能由
+宿主/裸机 runner 承担（对应 e2e 环境感知分支）。
 
 ### worktree 语义（S2-6）
 

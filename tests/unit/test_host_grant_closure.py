@@ -290,7 +290,12 @@ def _gid_for(store, gstore, target, *, operation="write", session_id="host-grant
 
 
 @pytest.fixture
-def tool_exec_sbx():
+def tool_exec_sbx(monkeypatch):
+    # EVO-20261115-488367d4 P0-1: sandbox-exec 后端预检读 _probe_sandbox_exec；
+    # 嵌套沙箱（pytest 在 LFL 会话内跑）内层套用必 EPERM → 探针恒 False，会让
+    # 成功路径断言环境相关。钉 True 使可用性环境无关；不可用负例由
+    # test_host_grant_sandbox_exec.py 的 fail-closed 用例覆盖。
+    monkeypatch.setattr("llm_loop.tools.sandbox._probe_sandbox_exec", lambda: True)
     return ExecuteCommandTool(sandbox_mode="sandbox-exec")
 
 

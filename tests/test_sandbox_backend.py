@@ -27,7 +27,11 @@ from tests import env_channel
 
 BWRAP_NOTE = "（已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络）"
 DOCKER_NOTE = "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）"
-SBX_NOTE = "（已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络）"
+SBX_NOTE = (
+    "（已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络；"
+    "已知降级：ps 为 setuid 在沙箱内 exec 即拒(EPERM)、launchctl list 空输出——"
+    "进程/服务信息改用 lsof、sysctl、launchctl print）"
+)  # EVO-20261115-488367d4 P1-1/P2：banner 增列已知静默降级命令类别
 
 
 @pytest.fixture(autouse=True)

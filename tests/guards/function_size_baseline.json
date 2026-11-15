@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "004fdb49a",
+    "head_commit": "b49b89164",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1204,8 +1204,8 @@
     "src/llm_loop/introspection/tools_lane.py::run_lane_reap": 132,
     "src/llm_loop/core/loop/engine_services/observation_visibility.py::_qualified_exact_ref_projection": 174,
     "src/llm_loop/core/loop/engine_services/observation_visibility.py::ensure_latest_observation_visible": 144,
-    "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 179,
-    "src/llm_loop/tools/builtin/execute_command.py::execute": 215
+    "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 192,
+    "src/llm_loop/tools/builtin/execute_command.py::execute": 234
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",

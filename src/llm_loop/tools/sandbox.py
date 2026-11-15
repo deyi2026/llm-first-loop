@@ -58,7 +58,11 @@ _DOCKER_INFO_TIMEOUT_S = 2.0
 # S2-6（安全建议书 2026-10-25）：note 文案必须与实际后端能力一一对应，不得夸大隔离范围。
 _BWRAP_NOTE = "（已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络）"
 _DOCKER_NOTE = "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）"
-_SANDBOX_EXEC_NOTE = "（已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络）"
+_SANDBOX_EXEC_NOTE = (
+    "（已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络；"
+    "已知降级：ps 为 setuid 在沙箱内 exec 即拒(EPERM)、launchctl list 空输出——"
+    "进程/服务信息改用 lsof、sysctl、launchctl print）"
+)
 
 # auto 解析进程内缓存（backend, reasons）；docker daemon 探测结果独立缓存。
 _auto_cache: tuple[str, list[str]] | None = None
@@ -190,6 +194,15 @@ def _probe_sandbox_exec() -> bool:
     applicable, detail, _nested = _sandbox_exec_applicable()
     _sandbox_exec_detail = detail
     return applicable
+
+
+def sandbox_exec_available() -> bool:
+    """sandbox-exec 可用性公开探针（EVO-20261115-488367d4 P0-1）.
+
+    host-grant 前置检查用：macOS 上 grant 消费走 sandbox-exec 可写根追加，
+    后端不可用时提前拒绝，不浪费人工审批（fail-closed 语义与 bwrap 预检一致）。
+    """
+    return _probe_sandbox_exec()
 
 
 def _sandbox_exec_nested_note() -> str:

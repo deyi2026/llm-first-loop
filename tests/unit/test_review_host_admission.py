@@ -1710,6 +1710,55 @@ def test_push_base_rejects_hostile_push_url(tmp_path: Path) -> None:
     assert runner.started == 0
 
 
+def test_push_base_ssh_remote_pins_system_ssh_and_neutralizes_injected_sshcommand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 空值 core.sshCommand 会让 git fork 空命令名（"cannot run : No such file or
+    # directory"），ssh-only 远端的 base 解析因此必败。修复后必须钉死系统 ssh
+    # 绝对路径：既恢复 ssh transport，也不放行 repo config 注入的任意 transport
+    # 命令（应拦输入实测：注入 /bin/echo pwned 必须被命令行 -c 覆盖）。
+    _origin, repo, _base = _bare_origin_and_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "remote.origin.pushurl",
+         "ssh://git@127.0.0.1:1/llm-first-loop.git"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "core.sshCommand", "/bin/echo pwned"],
+        check=True,
+    )
+    captured: list[list[str]] = []
+    real_run = subprocess.run
+
+    def capture_ls_remote(args, **kwargs):
+        if "ls-remote" in args:
+            captured.append(list(args))
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"unreachable port")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(rha.subprocess, "run", capture_ls_remote)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    verdict = host.start("author-ssh-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert captured, "ls-remote must be attempted for the ssh push URL"
+    ssh_args = [a for a in captured[0] if a.startswith("core.sshCommand=")]
+    assert ssh_args == [f"core.sshCommand={rha._neutral_ssh_command()}"]
+    assert ssh_args[0] in {"core.sshCommand=/usr/bin/ssh", "core.sshCommand="}
+    assert "/bin/echo" not in ssh_args[0]
+    # ls-remote 失败（不可达端口）仍 fail-closed，未启动 reviewer。
+    assert verdict["accepted"] is False
+    assert "push_base_unresolvable_fail_closed" in str(verdict)
+    assert runner.started == 0
+
+
+def test_neutral_ssh_command_falls_back_to_empty_without_system_ssh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(rha.os.path, "isfile", lambda _p: False)
+    assert rha._neutral_ssh_command() == ""
+
+
 def test_push_refspec_rejects_deletion_and_force(tmp_path: Path) -> None:
     # A push-base..HEAD delta cannot honestly represent ref deletion or a
     # forced rewrite; both must be refused at admission time.
