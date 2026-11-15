@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-postmerge-ci-semantic-video",
+  "summary": "Replace a Method post-save wall-clock threshold with event-gated evidence; await bounded video slot cleanup without changing worker durability or recovery semantics.",
+  "components": [
+    {
+      "component_id": "postmerge-ci-test-determinism-20261115",
+      "paths": [
+        "docs/governance/submissions/20261115-postmerge-ci-semantic-video.json",
+        "tests/unit/test_semantic_resource_safety.py",
+        "tests/web/test_video_generation.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Method semantic resource safety and local video worker lifecycle tests",
+      "disposition": "ADMIT minimal test-only correction; no production runtime, test marker, timeout policy or CI gate changes",
+      "evidence": [
+        "Merged main ea27ecc0 push CI run 43712330211: Method save 138.3ms versus <30ms and video terminal persisted before inherited lock descriptor close",
+        "The existing _GatedAPI proves the Method save returns while background embed_batch is blocked",
+        "Video worker.py finally publishes job.json before os.close(lock_fd); runtime.job() uses the slot lock for interrupted recovery, so reversing order would create a new interrupted race"
+      ],
+      "verification_level": "Targeted real worker and Method tests, deterministic gate assertions, repeated targeted runs, independent GLM-5.3 review, original full R9, exact-SHA remote CI",
+      "model_evidence_veto_recovery_exit": "Independent reviewer may veto the patch on lifecycle or test regressions; return to isolated branch, repair, re-freeze, re-review, and re-run gates before integration.",
+      "rollback_route": "Revert the test-only commit and its manifest; runtime state, deployment, and production services are unchanged."
+    }
+  ],
+  "declarations": []
+}

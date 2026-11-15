@@ -260,8 +260,18 @@ def test_cancel_owns_process_and_releases_slot(video_client, tmp_path, monkeypat
     assert client.post("/api/v1/video/jobs", json={"prompt": "second"}).status_code == 409
     assert client.post(f"/api/v1/video/jobs/{job_id}/cancel").status_code == 202
     assert _terminal(runtime, job_id)["status"] == "cancelled"
-    with file_lock(runtime.root / "execution.lock", blocking=False):
-        pass
+    # The worker persists terminal state while it still owns the slot, then
+    # closes the inherited descriptor. Allow that bounded cleanup interval.
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            with file_lock(runtime.root / "execution.lock", blocking=False):
+                break
+        except VideoError as exc:
+            if exc.status != 409 or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+    assert runtime.job(job_id)["status"] == "cancelled"
     assert client.get(f"/api/v1/video/jobs/{job_id}/files/output").status_code == 409
 
 
