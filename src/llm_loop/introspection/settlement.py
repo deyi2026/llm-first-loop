@@ -478,9 +478,11 @@ def build_pending_settlement(
 
 # ── M0-C11 刷锚待办（freshness_refresh）：只读派生，与使用结算完全分列 ──
 
-_FRESHNESS_REFRESH_STALE_STATES = frozenset({"changed", "missing"})
-# pre-R4 词汇（本基线无 unresolvable_refs 键）：unsupported/unreadable 属"解析不了"类，
-# 按 DESIGN v1.3.1 §4.4④ 归入 unresolvable 触发；R4 合并后自动改用 unresolvable_refs。
+# 触发态仅限 freshness().state 的显式 stale 词汇：changed/missing（pre-R4）与
+# unresolvable（R4 起）。unbaselined/current/not_tracked 即使携带 unresolvable 类
+# 锚或 unresolvable_refs 也不派生（DESIGN v1.3.1 §4.4④；状态语义不确定时保守不派生）。
+_FRESHNESS_REFRESH_STALE_STATES = frozenset({"changed", "missing", "unresolvable"})
+# pre-R4 快照词汇：仅用于已派生条目的 reason 锚列举，不作为触发旁路（QA-P1 B）。
 _FRESHNESS_REFRESH_UNRESOLVABLE_VALUES = frozenset({"unsupported", "unreadable"})
 FRESHNESS_REFRESH_MAX_ITEMS = 50
 
@@ -495,9 +497,10 @@ def collect_freshness_refresh_items(
     """M0-C11（DESIGN v1.3.1 §4.4④/C11/V9）：只读派生"刷锚"待办。
 
     派生条件（全部满足）：usage 账本中归属当前 session/work_unit 的
-    ``record_use`` 条目 ``decision=applied``，且该卡 ``freshness()`` 处于
-    changed/missing，或存在 unresolvable 类锚（本基线=快照值
-    unsupported/unreadable；R4 合并后=unresolvable_refs）。产出
+    ``record_use`` 条目 ``decision=applied``（调用方提供的每个归属维度都须
+    非空且精确匹配），且该卡 ``freshness()`` 的 state 为显式触发态
+    changed/missing/unresolvable（QA-P1：unbaselined/current 即使带
+    unresolvable 类锚也不派生）。产出
     ``item_kind=freshness_refresh`` 条目，与使用结算完全分列：不进
     settlement_submit 的 kind 面（method/experience/lesson/rule）、不计入
     items/settled_count、不写任何账本、不刷 SHA、不降级 Method 生命周期。
@@ -525,10 +528,14 @@ def collect_freshness_refresh_items(
         entry_wu = str(entry.get("work_unit_id") or "").strip()
         if not entry_session and not entry_wu:
             continue  # 条目归属不明：保守不派生
-        in_scope = bool(
-            (session_id and entry_session == session_id)
-            or (work_unit_id and entry_wu == work_unit_id)
-        )
+        # QA-P1（A）修复：调用方提供的每个归属维度都必须非空且精确匹配——
+        # 不允许借相同 work_unit 跨 session 串，也不允许借相同 session 跨 work_unit 串；
+        # 仅提供单一维度时按该维度单独匹配（条目在该维度为空即不匹配）。
+        in_scope = True
+        if session_id:
+            in_scope = entry_session == session_id
+        if in_scope and work_unit_id:
+            in_scope = entry_wu == work_unit_id
         if not in_scope:
             continue
         ts = str(entry.get("ts") or "")
@@ -554,11 +561,11 @@ def collect_freshness_refresh_items(
         for anchor_ref, value in current.items():
             if str(value) in _FRESHNESS_REFRESH_UNRESOLVABLE_VALUES:
                 reason_refs.add(str(anchor_ref))
-        unresolvable_hit = any(
-            str(v) in _FRESHNESS_REFRESH_UNRESOLVABLE_VALUES for v in current.values()
-        ) or bool(fresh.get("unresolvable_refs"))
-        if state not in _FRESHNESS_REFRESH_STALE_STATES and not unresolvable_hit:
-            continue  # current/unbaselined/未变更：不派生
+        if state not in _FRESHNESS_REFRESH_STALE_STATES:
+            # QA-P1（B）修复：只有显式触发态（changed/missing/unresolvable）才派生；
+            # 原 unresolvable_hit 值启发式旁路已删除——unbaselined/current 即使带
+            # unresolvable 类锚或 unresolvable_refs 也不得猜成 stale。
+            continue
         items.append(
             {
                 "item_kind": "freshness_refresh",

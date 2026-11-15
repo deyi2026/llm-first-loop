@@ -741,7 +741,7 @@ def test_c11_forward_compat_unresolvable_refs(tmp_path):
 
     def fake_freshness(ref):
         result = original(ref)
-        result["state"] = "current"
+        result["state"] = "unresolvable"
         result["unresolvable_refs"] = ["evidence://v1/x"]
         return result
 
@@ -749,6 +749,66 @@ def test_c11_forward_compat_unresolvable_refs(tmp_path):
     items = collect_freshness_refresh_items(method_store=store, session_id="sess-1")
     assert items and items[0]["reason"] == ["evidence://v1/x"]
 
+
+def test_c11_qa_p1_attribution_requires_every_provided_dimension(tmp_path):
+    """QA-P1(A) 回归：OR 归属串味——每个提供的维度都须精确匹配。"""
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    cross_session = _c11_card(store, "c11 qa cross session", ["a.txt"], baseline={"a.txt": "x"})
+    cross_wu = _c11_card(store, "c11 qa cross wu", ["a.txt"], baseline={"a.txt": "x"})
+    exact_pair = _c11_card(store, "c11 qa exact pair", ["a.txt"], baseline={"a.txt": "x"})
+    _c11_use(store, cross_session.method_ref, session="session-B", wu="TASK-A")
+    _c11_use(store, cross_wu.method_ref, session="session-A", wu="TASK-B")
+    _c11_use(store, exact_pair.method_ref, session="session-A", wu="TASK-A")
+
+    both = collect_freshness_refresh_items(
+        method_store=store, session_id="session-A", work_unit_id="TASK-A"
+    )
+    assert {i["ref"] for i in both} == {exact_pair.method_ref}  # 借 wu/借 session 串味都被拦
+
+    by_wu = collect_freshness_refresh_items(method_store=store, work_unit_id="TASK-A")
+    assert {i["ref"] for i in by_wu} == {cross_session.method_ref, exact_pair.method_ref}
+
+    by_session = collect_freshness_refresh_items(method_store=store, session_id="session-A")
+    assert {i["ref"] for i in by_session} == {cross_wu.method_ref, exact_pair.method_ref}
+
+
+def test_c11_qa_p1_unbaselined_or_current_with_unresolvable_never_derives(tmp_path):
+    """QA-P1(B) 回归：值启发式旁路——非显式触发态一律不派生。"""
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    card = _c11_card(store, "c11 qa unresolvable bypass", ["evidence://v1/x"])
+    _c11_use(store, card.method_ref, session="sess-1", wu="TASK-A")
+    original = store.freshness
+
+    def _fake(state, current=None, unresolvable=None):
+        def fake(ref):
+            result = original(ref)
+            result["state"] = state
+            if current is not None:
+                result["current"] = dict(current)
+            if unresolvable is not None:
+                result["unresolvable_refs"] = list(unresolvable)
+            return result
+
+        return fake
+
+    # QA 原始反例：unbaselined + 快照值 unsupported → 不派生
+    store.freshness = _fake("unbaselined", current={"a.txt": "unsupported"})  # type: ignore[method-assign]
+    assert collect_freshness_refresh_items(method_store=store, session_id="sess-1") == []
+    # current / unbaselined 带 unresolvable_refs → 不派生（不得猜成 stale）
+    store.freshness = _fake("current", unresolvable=["evidence://v1/x"])  # type: ignore[method-assign]
+    assert collect_freshness_refresh_items(method_store=store, session_id="sess-1") == []
+    store.freshness = _fake("unbaselined", unresolvable=["evidence://v1/x"])  # type: ignore[method-assign]
+    assert collect_freshness_refresh_items(method_store=store, session_id="sess-1") == []
+    # 显式 unresolvable 触发态 → 派生（正向控制）
+    store.freshness = _fake("unresolvable", unresolvable=["evidence://v1/x"])  # type: ignore[method-assign]
+    items = collect_freshness_refresh_items(method_store=store, session_id="sess-1")
+    assert items and items[0]["state"] == "unresolvable"
+    assert items[0]["reason"] == ["evidence://v1/x"]
 
 def test_c11_read_only_zero_side_effects(tmp_path):
     from llm_loop.introspection.settlement import collect_freshness_refresh_items
