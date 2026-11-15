@@ -2747,13 +2747,22 @@ def _review_deadline_seconds(material_chars: int) -> float:
     return max(sized, estimated * 1.25)
 
 
-def _normalize_scope_paths(paths: Sequence[str] | None) -> tuple[tuple[str, ...], str]:
+def _normalize_scope_paths(
+    paths: Sequence[str] | None, *, limit: int | None = _REVIEW_SCOPE_PATH_LIMIT
+) -> tuple[tuple[str, ...], str]:
     """E1: validate caller-declared review paths; return (paths, error).
 
     Only repo-relative paths are accepted. Anything absolute, escaping the
     workspace (`..`), or absurdly long a list is refused instead of silently
     narrowed -- a scope that cannot be stated exactly must fall back to the
     explicit ``scope="tree"`` request, never to a guess.
+
+    EVO-20261115-34ae7c99(A) 补丁：``limit=None`` 供 git_push 批候选使用。
+    闸自算的 split_plan 单批可含 >40 路径（装箱只按字符预算）；计数上限若
+    先于"精确等于某一整批"校验执行，闸给出的合法批反而不可受理——闸生成
+    的计划超过闸自己的受理上限，协议结构性不可执行（2026-11-15 gitee
+    142-commit 增量实测撞上 too_many:41）。批候选的权威上限是
+    push_batch_not_in_plan 整批匹配，比任何计数上限更强。
     """
     out: list[str] = []
     for raw in paths or ():
@@ -2779,7 +2788,7 @@ def _normalize_scope_paths(paths: Sequence[str] | None) -> tuple[tuple[str, ...]
             return (), item
         if item not in out:
             out.append(item)
-        if len(out) > _REVIEW_SCOPE_PATH_LIMIT:
+        if limit is not None and len(out) > limit:
             return (), f"too_many:{len(out)}"
     return tuple(out), ""
 
@@ -3009,7 +3018,14 @@ def _resolve_scope(
     requested = str(scope or "patch").strip().lower()
     if requested not in _REVIEW_SCOPES:
         return {}, (), f"review_scope_invalid:{requested}"
-    scope_paths, error = _normalize_scope_paths(paths)
+    # git_push 的 paths 只有批候选一种合法形态，权威校验是"精确等于闸自算
+    # 某一整批"（push_batch_not_in_plan）——计数上限在此先行拒绝会把闸自己
+    # 装箱出的 >40 路径合法批变成不可执行计划（2026-11-15 实测）。其余
+    # kind 的 40 条计数上限不变。
+    if kind == "git_push":
+        scope_paths, error = _normalize_scope_paths(paths, limit=None)
+    else:
+        scope_paths, error = _normalize_scope_paths(paths)
     if error:
         return {}, (), f"review_scope_path_invalid:{error}"
     if requested == "tree":

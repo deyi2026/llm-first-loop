@@ -3889,6 +3889,88 @@ def test_push_batch_row_never_derives_full_test_qualification(tmp_path: Path) ->
     ]
 
 
+def _wide_push_repo(tmp_path: Path) -> Path:
+    """批路径数超 _REVIEW_SCOPE_PATH_LIMIT(40) 的仓库（真实常量，无 monkeypatch）。
+
+    90 个 committed 文件 × ~5.5k chars ≈ 495k chars（est≈4950s>3600s）→ 整量
+    被 duration 预检拒；320k ceiling 装箱 → 首批 ≈58 路径 > 40，其余进第二批。
+    """
+    repo = _repo(tmp_path)
+    baseline = _git_out(repo, "rev-parse", "HEAD")
+    for i in range(90):
+        (repo / f"w{i:03d}.txt").write_text(f"# w{i:03d}\n" + "x" * 5_500 + "\n")
+    _git_out(repo, "add", "-A")
+    _git_out(repo, "commit", "-qm", "wide delta")
+    _bare_remote(repo, tmp_path, baseline)
+    return repo
+
+
+def test_push_batch_over_path_limit_is_startable(tmp_path: Path) -> None:
+    """[回归] 闸自算批路径数可超 40——计数上限不得先于整批匹配拒绝合法批。
+
+    2026-11-15 gitee 142-commit 增量实测：split_plan 首批 77 路径被
+    review_scope_path_invalid:too_many:41 拒——闸生成的计划超过闸自己的
+    受理上限，协议不可执行。批候选的权威校验是整批精确匹配。
+    """
+    repo = _wide_push_repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _SeqChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin main"
+
+    plan = _gate_split_plan(host, repo, command)
+    sizes = [len(b["paths"]) for b in plan]
+    assert any(n > rha._REVIEW_SCOPE_PATH_LIMIT for n in sizes), sizes
+
+    for batch in plan:
+        issued = host.start(
+            "author-1", "git_push", workdir=str(repo), command=command,
+            paths=list(batch["paths"]),
+        )
+        assert issued["accepted"], issued
+        _batch_pass(host, runner, issued)
+
+    assert host.check_shell("author-1", command, str(repo)).allowed
+
+
+def test_push_batch_crafted_over_limit_paths_still_not_in_plan(tmp_path: Path) -> None:
+    """[应拦实测] 计数上限豁免后，自造批（>40 条非整批路径）必须仍被拒。
+
+    拒绝原因是 push_batch_not_in_plan 且先于 spawn——豁免只服务闸自算批，
+    精确整批匹配才是权威，不得退化为计数放行。
+    """
+    repo = _wide_push_repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _SeqChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin main"
+
+    plan = _gate_split_plan(host, repo, command)
+    wide = next(b for b in plan if len(b["paths"]) > rha._REVIEW_SCOPE_PATH_LIMIT)
+    crafted = host.start(
+        "author-1", "git_push", workdir=str(repo), command=command,
+        paths=list(wide["paths"])[: rha._REVIEW_SCOPE_PATH_LIMIT + 1],
+    )
+    assert crafted["accepted"] is False
+    assert crafted["reason"].startswith("push_batch_not_in_plan"), crafted
+    assert runner.started == 0, "拒绝必须先于 spawn"
+
+
+def test_scope_path_count_cap_unchanged_outside_push_batches() -> None:
+    """[应拦实测] 计数上限豁免仅限 git_push：其它 kind 41 条路径仍 too_many 硬拒。"""
+    many = [f"d{i}/f.txt" for i in range(rha._REVIEW_SCOPE_PATH_LIMIT + 1)]
+    receipt, paths, error = rha._resolve_scope("full_test", "patch", many)
+    assert error == (
+        f"review_scope_path_invalid:too_many:{rha._REVIEW_SCOPE_PATH_LIMIT + 1}"
+    )
+    assert paths == () and receipt == {}
+
+    receipt, paths, error = rha._resolve_scope("git_push", "patch", many)
+    assert error == ""
+    assert receipt["mode"] == "push_batch_candidate"
+    assert len(paths) == rha._REVIEW_SCOPE_PATH_LIMIT + 1
+
+
 def test_target_tuple_shape_is_pinned(tmp_path: Path) -> None:
     """``_target`` 的 6 元组形状必须可断言，免得"元数不匹配"只能靠读代码判。
 
