@@ -787,7 +787,8 @@
       "service_control_state": {
         "owner": "runtime",
         "paths": [
-          "src/llm_loop/runtime/service_control.py"
+          "src/llm_loop/runtime/service_control.py",
+          "src/llm_loop/runtime/unified_release.py"
         ],
         "rationale": "T2 已实施（2026-10-08，复用 ScheduleStore durability contract）：desired-state 与 service-control action 落盘统一走 _atomic_json 两阶段写路径（tmp O_EXCL+file fsync+os.replace，replace 前有界重试整 payload；replace 后仅重试目录 fsync，绝不重写/重命名）。outcome 分型：replace 前=definitely_not_committed；目录 fsync 耗尽=commit_outcome_uncertain+持 state lease readback。desired CAS 由 expected_generation 阻断盲重放；action transition 对 uncertain+visible_state=matches 再做完整 ServiceControlAction exact readback，仅 exact match 才继续 barrier/event 后置 effects，不重写 action；mismatch/unreadable fail-closed。accepted 建 barrier、terminal release、running→failed keep barrier 语义均有故障注入钉住。验收=tests/unit/test_service_control_durability.py（12 项）+ service_control 相邻回归。",
         "status": "conform",
