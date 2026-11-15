@@ -3682,12 +3682,14 @@ class _SeqChildRunner(FakeChildRunner):
     def __init__(self) -> None:
         super().__init__()
         self._seq = 0
+        self.tasks: dict[str, str] = {}  # EVO-…(C)：捕获各批评查者收到的任务书
 
     def start(self, task: str, **kwargs):
         self._seq += 1
         result = super().start(task, **kwargs)
         if result.get("accepted"):
             result["child_id"] = f"child-batch-{self._seq}"
+            self.tasks[result["child_id"]] = task
         return result
 
     def result_current(self, child_id: str, wait_seconds=0):
@@ -3760,6 +3762,16 @@ def test_push_batch_joint_coverage_happy_path(tmp_path: Path) -> None:
         assert meta["index"] == batch["batch"] - 1
         assert list(meta["paths"]) == list(batch["paths"])
         assert issued["scope"]["mode"] == "push_batch_candidate"
+        # EVO-20261115-34ae7c99(C) [应见实测]：批工件必须自证切片身份——
+        # 材料头带联合覆盖注记、任务书带 BATCH CONTEXT 说明。缺了它，审查者
+        # 会把"切片+bound_unreviewed=0"读成"声称覆盖全量推送"而必然 REVISE。
+        reviewer_task = runner.tasks[issued["child_id"]]
+        assert "push_batch_joint=1" in reviewer_task, reviewer_task[:400]
+        assert (
+            f"push_batch_index={batch['batch']}/{len(plan)}" in reviewer_task
+        ), reviewer_task[:400]
+        assert "push_range_out_of_slice_paths=" in reviewer_task
+        assert "BATCH CONTEXT" in reviewer_task
         _batch_pass(host, runner, issued)
 
     decision = host.check_shell("author-1", command, str(repo))
