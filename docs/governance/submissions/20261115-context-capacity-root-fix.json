@@ -1,0 +1,111 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-context-capacity-root-fix",
+  "summary": "Mechanically reduce eligible Provider tool-schema representation only under verified input-window pressure; retain full discovery-tool arguments, execution authority and fail-closed observation visibility, and add non-sensitive HOLD diagnostics. Historical MiniMax round-103 rejection remains not conclusively explained.",
+  "components": [
+    {
+      "component_id": "schema-capacity-admission",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/engine_services/schema_capacity.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing LoopEngine, ToolCycle/ToolRegistry and LLMClient authoritative schema token counter",
+      "disposition": "Only when measured schema cost exceeds half the allowed input tokens, project the same eligible callable names/order through existing ToolRegistry index_schemas at deterministic 80/48/0 description tiers. Preserve get_tool_schema full machine-readable required tool_name contract, update actual Provider tool fingerprint and token budget, keep execution-time registry/authorization unchanged. Unknown budget or incomplete discovery falls back to stable representation.",
+      "evidence": [
+        "32K window with 101 tools and authoritative 28863 schema tokens previously left only 3514 chars for history; bounded real-loop fake transport shows selected index and latest tool result visible",
+        "Pure admission and negative tests preserve callable names/order, discovery tool required argument, and no promotion of unauthorized tools",
+        "One bounded real MiniMax-M3.1-Flash OpenAI-wire call with 101 schemas accepted and no tool executed; receipt docs/RECEIPT-20261115-context-capacity-minimax-wire.md"
+      ],
+      "verification_level": "Independent GLM-5.3 review/adjudication PASS P0/P1=0; original full R9 exit0 on e4329f6d before declaration-only amendment; exact final SHA must pass A.5, R9 and remote PR CI.",
+      "model_evidence_veto_recovery_exit": "Tool eligibility and execution-time argument authority remain with existing registry and security guards; no model can use the compact schema to invoke unauthorized tools, override pre-send visibility, or replay an uncertain Provider/Tool action.",
+      "rollback_route": "Revert the full reviewed candidate or managed-rollback the Web generation; do not weaken original execution authorization or visibility guards.",
+      "declaration_id": "reuse-existing-loop-budget-and-observation-authority"
+    },
+    {
+      "component_id": "observation-hold-diagnostics",
+      "paths": [
+        "src/llm_loop/core/loop/engine_services/observation_visibility.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing latest-observation pre-send guard and EventLog",
+      "disposition": "Emit bounded non-sensitive stage rejection facts and budget/visibility counters to explain future context_capacity_unavailable holds; preserve raw/exact-ref qualification, no Provider send on hard refusal, and no automatic retries.",
+      "evidence": [
+        "Actual MiniMax round-103 prior HOLD remains unexplained despite read-only offline reconstruction; added telemetry does not claim to fix that historical branch",
+        "Negative tests confirm stage_checks are populated on final HOLD paths and exact-ref success returns without a HOLD",
+        "Frozen candidate 127 focused/architecture tests PASS, Ruff/Pyright PASS; GLM-5.3 adjudication retracted mistaken missing-stage-check P1"
+      ],
+      "verification_level": "Non-sensitive synthetic negative tests and original full R9 exit0; no historical Provider or tool replay.",
+      "model_evidence_veto_recovery_exit": "Diagnostics are observations only; owner-scoped exact-ref authorization, atomic latest observation and physical budget preflight remain hard vetoes.",
+      "rollback_route": "Revert the telemetry with the patch; retain durable original Session/Evidence and old M4-C Provider debt HOLD.",
+      "declaration_id": "reuse-existing-loop-budget-and-observation-authority"
+    },
+    {
+      "component_id": "tests-and-incident-documents",
+      "paths": [
+        "tests/unit/test_observation_first_view_restore.py",
+        "tests/unit/test_schema_capacity_admission.py",
+        "tests/unit/test_schema_capacity_real_loop.py",
+        "docs/DESIGN-20261115-context-capacity-root-fix.md",
+        "docs/RECEIPT-20261115-context-capacity-minimax-wire.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing pytest offline loop tests and project design/receipt documentation",
+      "disposition": "Add deterministic pressure, stable-path, missing discovery, tool authorization and final-HOLD negative cases, real Loop fake Provider exercise, design and bounded MiniMax wire receipt.",
+      "evidence": [
+        "Focused plus architecture 127 passed; original R9 Python 15231 passed/161 skipped/3 xfailed and WebUI 600 passed on frozen e4329f6d",
+        "Independent GLM-5.3 full review and targeted dispute adjudication PASS P0/P1=0; no reviewer tools"
+      ],
+      "verification_level": "Local test evidence plus final exact-SHA remote CI/A.5/privacy required; tests and a wire smoke do not establish historical MiniMax incident root cause.",
+      "model_evidence_veto_recovery_exit": "Synthetic tests and model judgments do not replace actual execution authority, independent reviewer or final CI gates.",
+      "rollback_route": "Revert tests and docs with associated code patch; preserve original incident evidence."
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261115-context-capacity-root-fix.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 G1-G4 structured submission checker",
+      "disposition": "Declare exactly the nine changed paths and the reuse of existing loop budget, schema, and observation authorities; do not alter A.5 checker or weaken its coverage rule.",
+      "evidence": [
+        "PR #27 A.5 failed with expected exactly one changed manifest found 0",
+        "Repository schema lfl.architecture_submission.v0.1 and prior submission examples used without changing validator"
+      ],
+      "verification_level": "Run unchanged check_architecture_submission.py against final base/head and original R9; require remote A.5 success.",
+      "model_evidence_veto_recovery_exit": "Declaration is not an approval waiver; missing path, false classification or failed gate blocks integration.",
+      "rollback_route": "Revert this manifest together with full candidate if final gate fails."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-loop-budget-and-observation-authority",
+      "g1": {
+        "necessity": "101 full tool schemas reserve 28863 of 32768 allowed input tokens in one observed Qwen case; final tool observations may be excluded despite valid permissions. The separate MiniMax round-103 HOLD is not proven to share this cause."
+      },
+      "g2": {
+        "authority_owner": "Existing LoopEngine request admission, LLMClient authoritative schema token counter, ToolRegistry execution authorization, and latest-observation guard",
+        "relationship": "reuse",
+        "non_duplication": "No new tool authority, policy judge, evidence store, retry ledger, or separate model router; only a deterministic Provider representation and additional audit facts."
+      },
+      "g3": {
+        "model_evidence": [
+          "Authoritative allowed_input_tokens and schema token reserve; fallback measurement source labeled explicitly",
+          "Same eligible tool names/order and full get_tool_schema required tool_name parameter in indexed view",
+          "Current Session atomic assistant/tool group, raw/exact-ref preflight and owner-scoped evidence qualification",
+          "Non-sensitive stage reason and budget facts for future HOLD investigation"
+        ],
+        "recovery_or_reason": "Under measured schema share pressure, retain eligible tool discovery while reducing Provider schema text; keep the original representation if discovery or budget facts are invalid. If latest raw/exact-ref cannot be legally shown, stop before Provider transport with explicit HOLD reason; never replay uncertain actions."
+      },
+      "g4": {
+        "rollback": "Use existing managed Web rollback to prior generation or revert the entire reviewed patch; retain all original safety vetoes and durable evidence.",
+        "verification": [
+          "127 related and architecture tests PASS with negative authorization/HOLD cases",
+          "Independent GLM-5.3 review/adjudication PASS P0=0/P1=0 on frozen e4329f6d",
+          "Original full R9 exit0 (15231 pytest passed; WebUI 600) on e4329f6d",
+          "Final declaration-only SHA requires unchanged A.5, independent incremental review, original full R9 and remote CI before merge and release"
+        ]
+      }
+    }
+  ]
+}
