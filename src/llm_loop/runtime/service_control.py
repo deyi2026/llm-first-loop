@@ -5709,10 +5709,6 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
-    from llm_loop.runtime import unified_release
-
-    unified_release.add_parser(sub)
-
     barriers = sub.add_parser("barriers")
     barriers.add_argument("--data-dir", required=True)
 
@@ -5728,12 +5724,6 @@ def main(argv: list[str] | None = None) -> int:
     barrier_release.add_argument("--reason", required=True)
 
     args = parser.parse_args(argv)
-    if args.command == "release-four":
-        try:
-            return unified_release.main(args)
-        except (OSError, ValueError, RuntimeError, KeyError) as exc:
-            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
-            return 2
     if args.command == "publish-wheel":
         return _publish_wheel_cli(args)
     if args.command == "publish":

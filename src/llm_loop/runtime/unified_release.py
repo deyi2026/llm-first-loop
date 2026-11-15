@@ -354,7 +354,7 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
         if _pid_alive(int(current.get("worker_pid") or 0)):
             print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
             return 12
-        argv = [sys.executable, "-m", "llm_loop.runtime.service_control", "release-four", "--release-id", state["release_id"], "--data-dir", state["data_dir"], "--worker"]
+        argv = [sys.executable, "-m", "llm_loop.runtime.unified_release", "--release-id", state["release_id"], "--data-dir", state["data_dir"], "--worker"]
         env = sc._control_subprocess_env(
             code_root=state["code_root"],
             runtime_root=state["runtime_root"],
@@ -377,9 +377,9 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
     return 0
 
 
-def add_parser(sub: Any) -> None:
-    """Register one explicit operator mode; legacy `all` is unchanged."""
-    four = sub.add_parser("release-four", help="publish once, verify all, then safely restart WeCom")
+def build_parser() -> argparse.ArgumentParser:
+    """Independent operator entry; service_control's legacy CLI stays untouched."""
+    four = argparse.ArgumentParser(prog="llm_loop.runtime.unified_release")
     four.add_argument("--release-id", required=True)
     four.add_argument("--data-dir", required=True)
     four.add_argument("--code-root")
@@ -391,6 +391,7 @@ def add_parser(sub: Any) -> None:
     four.add_argument("--wait", action="store_true", help="foreground wait (can take hours); default detached")
     four.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     four.add_argument("--status-only", action="store_true")
+    return four
 
 
 def main(args: argparse.Namespace) -> int:
@@ -452,3 +453,16 @@ def main(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": True, "status": "succeeded", "journal": str(journal)}))
         return 0
     return _launch_worker(state, journal, log, wait=args.wait)
+
+
+def cli(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return main(args)
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

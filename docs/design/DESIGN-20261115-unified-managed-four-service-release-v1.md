@@ -13,7 +13,7 @@ must retain its current meaning, including its coverage warning and tests.
 ## New explicit operator entry
 
 ```
-python -m llm_loop.runtime.service_control release-four \
+python -m llm_loop.runtime.unified_release \
   --release-id release-unique-20261115 \
   --code-root /absolute/verified/release-checkout \
   --runtime-root /absolute/runtime-root \
@@ -29,7 +29,8 @@ path, then detaches the coordinator by default; it does **not** claim deployment
 success. Only terminal `status=succeeded` means four-service completion. `--status-only` reads the
 journal. Reissuing the **same release ID and arguments** resumes after a
 coordinator interruption. `--wait` is for controlled foreground operation only.
-The existing `update`, `deploy`, `restart`, and `all` contracts remain unchanged.
+The existing `service_control update`, `deploy`, `restart`, and `all`
+contracts remain unchanged; no new import is added to service_control.
 
 ## State machine and safety invariants
 

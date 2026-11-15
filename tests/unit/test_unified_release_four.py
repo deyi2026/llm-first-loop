@@ -300,11 +300,11 @@ def test_global_coordinator_lock_blocks_parallel_release(rig):
 
 def test_cli_requires_explicit_requester_and_sha(tmp_path, capsys):
     args = [
-        "release-four", "--release-id", "new-one", "--data-dir", str(tmp_path),
+        "--release-id", "new-one", "--data-dir", str(tmp_path),
         "--code-root", str(tmp_path), "--runtime-root", str(tmp_path),
         "--expected-generation", "4", "--expected-sha", "a" * 40,
     ]
-    assert sc.main(args) == 2
+    assert ur.cli(args) == 2
     assert "requester" in capsys.readouterr().err
     assert not (tmp_path / "runtime/unified-releases/new-one.json").exists()
 
