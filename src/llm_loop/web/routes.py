@@ -2914,6 +2914,8 @@ def escalation_detail(request: Request, id: str = "") -> Response:
             "status": rec.get("status", ""),
             "created_at": rec.get("created_at", ""),
             "session_id": rec.get("session_id", ""),
+            "request_kind": rec.get("request_kind", "command"),
+            **({"host_request": rec.get("host_request", {})} if rec.get("host_request") else {}),
         }
     )
 
@@ -2993,6 +2995,29 @@ async def escalation_review(request: Request) -> Response:
         _audit("not_found", decided_by=decided_by, channel=channel)
         return JSONResponse(content={"error": f"请求不存在: {payload.id}"}, status_code=404)
 
+    # ── DESIGN-20261114（Deepin P0）: host-grant 类审批的人类因子强化 ──
+    # loopback 免认证部署下 web:loopback 对本类**不满足**人类授权要求
+    # （本机任何进程都可直连回环，loopback 不能自批）；必须持有有效浏览器
+    # 登录会话（web_session 通道）。灾难命令类审批语义不变。
+    if rec.get("request_kind") == "host_grant" and channel != "web_session":
+        _audit(
+            "rejected_human_auth_required",
+            decided_by=decided_by,
+            channel=channel,
+            command_sha256=str(rec.get("command_sha256") or ""),
+        )
+        return JSONResponse(
+            content={
+                "error": "human_auth_required",
+                "detail": (
+                    "host-grant（沙盒外路径授权）审批必须来自已登录的浏览器会话；"
+                    "loopback 未登录或 Bearer API 通道不能自批。请先在浏览器访问 "
+                    "/login 显式登录（需已配置 WEB_LOGIN_PASSWORD_HASH）后重试。"
+                ),
+            },
+            status_code=403,
+        )
+
     # ── P0-5 展示-审批绑定: expected_sha256 必填且等于待审记录 command_sha256 ──
     command_sha256 = str(rec.get("command_sha256") or "")
     expected = (payload.expected_sha256 or "").strip().lower()
@@ -3022,6 +3047,63 @@ async def escalation_review(request: Request) -> Response:
             status_code=409,
         )
 
+    # ── DESIGN-20261114（Deepin P0）: host-grant 批准 → 先签发持久 grant 再落决定 ──
+    # 顺序: issue（可被审计/撤销）→ decide(host_grant_id=...)；decide 冲突时撤销
+    # 孤儿 grant（fail-closed）。崩溃窗口内产生的孤儿 grant 不被任何记录引用，
+    # AI 侧拿不到 grant_id，按 ttl 自然过期（审计链有 issue 记录）。
+    host_grant_id = ""
+    grant_store = None
+    host_request = rec.get("host_request") if rec.get("request_kind") == "host_grant" else None
+    if isinstance(host_request, dict) and host_request and payload.decision == "approved":
+        from llm_loop.tools.escalation import HostCapabilityGrantStore, host_grant_store_home
+
+        # P0-1（2026-11-14）：构造移入 fail-closed——账本 home 不安全/不可达
+        # （env 污染、路径重叠等）时签发不可完成，决定不落盘（503）。
+        try:
+            grant_store = HostCapabilityGrantStore(host_grant_store_home())
+        except Exception as exc:  # noqa: BLE001 — 账本不可用=审批不可完成
+            _audit(
+                "host_grant_issue_failed",
+                decided_by=decided_by, channel=channel,
+                command_sha256=command_sha256, detail=repr(exc)[:300],
+            )
+            return JSONResponse(
+                content={
+                    "error": "host_grant_issue_failed",
+                    "detail": f"授权账本不可用（fail-closed，决定未落盘）: {exc}",
+                },
+                status_code=503,
+            )
+        try:
+            grant = grant_store.issue(
+                tool_name=str(rec.get("tool_name") or "execute_command"),
+                canonical_path=str(host_request.get("host_canonical_path", "")),
+                operation=str(host_request.get("host_operation", "")),
+                requester_session_id=str(host_request.get("host_session_id", "")),
+                ttl_s=max(1, min(int(host_request.get("host_ttl_s", 600) or 600), 600)),
+                approver_identity=decided_by,
+                request_binding={
+                    "command_sha256": str(host_request.get("host_command_sha256", "")),
+                    "cwd": str(host_request.get("host_cwd", "")),
+                    "file_sha256": str(host_request.get("host_file_sha256", "")),
+                    "request_id": str(payload.id),
+                },
+            )
+            host_grant_id = str(grant.get("grant_id", ""))
+        except Exception as exc:  # noqa: BLE001 — 签发失败=审批不可完成（fail-closed）
+            _audit(
+                "host_grant_issue_failed",
+                decided_by=decided_by, channel=channel,
+                command_sha256=command_sha256, detail=repr(exc)[:300],
+            )
+            return JSONResponse(
+                content={
+                    "error": "host_grant_issue_failed",
+                    "detail": f"持久授权签发失败（fail-closed，决定未落盘）: {exc}",
+                },
+                status_code=503,
+            )
+
     rec, reason = store.decide(
         payload.id,
         payload.decision,
@@ -3030,8 +3112,17 @@ async def escalation_review(request: Request) -> Response:
         note=payload.note,
         ttl_minutes=payload.ttl_minutes,
         expected_sha256=expected,
+        host_grant_id=host_grant_id,
     )
     if rec is None:
+        if host_grant_id and grant_store is not None:
+            # decide 失败（冲突/状态漂移）→ 撤销孤儿 grant，杜绝批准外泄漏
+            try:
+                grant_store.revoke(
+                    host_grant_id, revoked_by=f"web:review-conflict:{payload.id}"
+                )
+            except Exception:  # noqa: BLE001 — 撤销失败仅告警（ttl 兜底过期）
+                logger.warning("孤儿 host-grant 撤销失败（ttl 兜底）", exc_info=True)
         code = 404 if "不存在" in reason else 409
         _audit(
             "conflict", decided_by=decided_by, channel=channel,

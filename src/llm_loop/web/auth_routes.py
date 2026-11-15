@@ -189,7 +189,11 @@ def browser_entry(request: Request):
 def login_page(request: Request, next: str = "/ui/v2/"):
     next_path = _safe_next(next)
     if not request_auth_required(request):
-        return RedirectResponse(next_path, status_code=303)
+        # DESIGN-20261114（Deepin P0）: loopback 免认证部署下保留显式登录入口——
+        # host-grant 审批要求有效浏览器会话；已登录 → 正常跳转，未登录 → 表单。
+        if request_authenticated(request):
+            return RedirectResponse(next_path, status_code=303)
+        return _login_response(next_path=next_path)
     if request_authenticated(request):
         return RedirectResponse(next_path, status_code=303)
     return _login_response(next_path=next_path)
@@ -198,10 +202,18 @@ def login_page(request: Request, next: str = "/ui/v2/"):
 @router.post("/auth/login", response_model=None)
 async def login(request: Request):
     password, next_path, wants_json = await _login_payload(request)
-    if not request_auth_required(request):
-        if wants_json:
-            return JSONResponse({"status": "ok", "next": next_path, "auth_required": False})
-        return RedirectResponse(next_path, status_code=303)
+    if not request_auth_required(request) and wants_json:
+        # DESIGN-20261114（Deepin P0）: loopback 免认证部署下，浏览器表单 POST =
+        # 用户主动要求登录会话（host-grant 审批需要）——落到下方完整验证+签发
+        # （空密码由 verify_login_password 统一报错）。JSON 客户端保持零打扰短路；
+        # AI/自动化试图用 JSON 通道显式登录 → 拒绝（防自批铺垫）。
+        if password:
+            return JSONResponse(
+                {"error": "explicit_login_browser_only",
+                 "detail": "loopback 免认证部署下显式登录仅接受浏览器表单（host-grant 审批用）"},
+                status_code=400,
+            )
+        return JSONResponse({"status": "ok", "next": next_path, "auth_required": False})
     if not browser_login_configured():
         if wants_json:
             return JSONResponse({"error": "browser_login_not_configured"}, status_code=503)
@@ -210,6 +222,16 @@ async def login(request: Request):
             error="浏览器登录尚未配置。",
             status_code=503,
         )
+
+    if not request_auth_required(request) and not wants_json:
+        # A form content-type is not proof of a browser. On the optional
+        # loopback explicit-login path, require an actual same-origin browser
+        # POST before issuing a host-grant-capable session cookie.
+        expected = f"{request.url.scheme}://{request.url.netloc}"
+        origin = request.headers.get("origin", "").strip()
+        fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+        if origin != expected or (fetch_site and fetch_site not in ("same-origin", "none")):
+            return JSONResponse({"error": "explicit_login_origin_required"}, status_code=403)
 
     limiter = getattr(request.app.state, "login_rate_limiter", None)
     if not isinstance(limiter, LoginRateLimiter):

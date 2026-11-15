@@ -67,8 +67,10 @@ def test_direct_loopback_bypasses_public_auth_policy(
     assert client.get("/health").status_code == 200
     assert client.get("/ui/v2/", follow_redirects=False).status_code == 200
     login = client.get("/login?next=/ui/v2/", follow_redirects=False)
-    assert login.status_code == 303
-    assert login.headers["location"] == "/ui/v2/"
+    # Loopback bypass still serves the UI, but explicit browser login must
+    # display the form for host-grant human approval (no silent redirect).
+    assert login.status_code == 200
+    assert "<form" in login.text
     status = client.get("/auth/status").json()
     assert status["auth_required"] is False
     assert status["authenticated"] is False

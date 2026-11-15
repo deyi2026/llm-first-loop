@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 from collections.abc import Callable
@@ -40,7 +41,7 @@ from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExce
 
 # P2-2/P2-3（安全建议书 2026-10-25）: argv 结构化执行 + 提权令牌覆盖守卫阻断。
 # 置于顶层第一方 import 块安全：safety/escalation 均为独立叶子模块，此处仅类型与工具类。
-from llm_loop.tools.escalation import EscalationStore
+from llm_loop.tools.escalation import EscalationStore, HostCapabilityGrantStore
 from llm_loop.tools.review_gate import (
     REVIEW_GATE_OBLIGATION,
     classify_review_gate_command,
@@ -62,6 +63,47 @@ from llm_loop.workspace.worktree_isolation import (
 )
 
 _argv_logger = logging.getLogger(__name__)
+
+
+def _open_pinned_host_grant_file(ctx: dict) -> int:
+    """Pin the approved inode before bwrap; reject symlink or byte changes.
+
+    Caller closes the fd after process spawn. The child bwrap inherits this
+    fd and uses its procfs path as the bind source, never the mutable pathname.
+    """
+    path = str(ctx["canonical_path"])
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("grant target is not a regular file")
+        if (info.st_dev, info.st_ino) != (ctx["st_dev"], ctx["st_ino"]):
+            raise ValueError("grant target inode changed before execution")
+        with os.fdopen(os.dup(fd), "rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+        if digest != ctx["expected_file_sha256"]:
+            raise ValueError("grant target bytes changed before execution")
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _pin_bwrap_bind_source(argv: list[str], canonical_path: str, fd: int) -> list[str]:
+    """Replace only the validated single-file bind SOURCE, not its target."""
+    if not argv or argv[0] != "bwrap":
+        raise ValueError("host-grant pinned fd requires bwrap")
+    hits = [
+        i + 1 for i in range(len(argv) - 2)
+        if argv[i] in ("--bind", "--ro-bind")
+        and argv[i + 1] == canonical_path and argv[i + 2] == canonical_path
+    ]
+    if len(hits) != 1:
+        raise ValueError("host-grant exact file bind missing or ambiguous")
+    result = list(argv)
+    result[hits[0]] = f"/proc/self/fd/{fd}"
+    return result
 
 # EVO-20260814-61a52baf: 执行环境清洗（Harness defensive-patterns #6）
 # 不给不可信输出 ambient environment：密钥类环境变量一律剔除，白名单基础键强制保留，
@@ -390,6 +432,17 @@ class ExecuteCommandTool:
                     "命令哈希基准为 shlex.join(argv)。"
                 ),
             },
+            "host_grant_id": {
+                "type": "string",
+                "description": (
+                    "沙盒外单文件授权 grant ID（DESIGN-20261114，可选）。"
+                    "host_access_request 申请、web 面板**已登录会话**人工批准后由 "
+                    "escalation_wait 返回。grant 绑定精确命令文本/cwd/会话/路径/文件"
+                    "版本，任何一项不同都会被拒；单次消费（执行尝试即消耗）；"
+                    "执行必须启用沙箱（none/docker 拒绝），授权文件以精确单文件 "
+                    "ro-bind/bind 注入沙盒。与 escalation_id/escalation_token 互斥。"
+                ),
+            },
         },
         # P2-2: command 与 argv 二选一（互斥在 execute() 内确定性裁决，
         # 两者都给/都不给均为参数错误），故不再单列 required。
@@ -421,6 +474,7 @@ class ExecuteCommandTool:
         self._escalation_store = escalation_store
         self._safety_audit_dir = safety_audit_dir
         self._tool_guard: CatastrophicGuard | None = None
+        self._grant_store: HostCapabilityGrantStore | None = None  # DESIGN-20261114 惰性
         # P1-5 + Stop: 工具实例跨 session 共享，单 `_active_proc` 会被并发覆盖并
         # 导致超时/Stop 杀错进程。按 current_session_id 保存前台进程，锁保护跨线程访问。
         self._active_procs: dict[str, subprocess.Popen] = {}
@@ -842,8 +896,204 @@ class ExecuteCommandTool:
                 tool_name=self.name,
             )
 
+    def _host_grant_store(self) -> HostCapabilityGrantStore | None:
+        """host-grant 持久存储惰性解析（与 web 审批端点共用 data/grants）."""
+        if self._grant_store is None:
+            try:
+                from llm_loop.tools.escalation import host_grant_store_home
+
+                self._grant_store = HostCapabilityGrantStore(host_grant_store_home())
+            except Exception:  # noqa: BLE001 — 存储不可达=授权通道 fail-closed
+                _argv_logger.warning("host-grant 存储解析失败，授权执行将拒绝", exc_info=True)
+                return None
+        return self._grant_store
+
+    def _resolve_host_grant(
+        self, host_grant_id: str, command: str, workdir: str | None
+    ) -> tuple[dict | None, ToolResult | None]:
+        """DESIGN-20261114 P0: grant 预检（peek 只读，消费在全部闸通过后）.
+
+        校验维度：工具/会话/操作/路径现检（symlink 替换、文件消失）/绑定
+        （命令文本哈希、cwd、文件版本 sha256）/沙盒模式（none、docker 拒绝；
+        bwrap 不可用 fail-closed 提前拒绝，不浪费人工审批）。
+        """
+        store = self._host_grant_store()
+        if store is None:
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content="[host-grant 拒绝] grant 存储不可达（fail-closed）",
+                error_type="host_grant_unavailable",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        try:
+            grant = store.peek(host_grant_id)
+        except Exception as exc:  # noqa: BLE001 — 任何读取异常均 fail-closed
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=f"[host-grant 拒绝] grant 读取失败（fail-closed）: {exc}",
+                error_type="host_grant_read_failed",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        # ── P0-1（2026-11-14，独立 Reviewer P0）: MAC 验签优先于一切诊断——
+        # 不可信记录的生命周期/维度诊断本身不可信。伪造（status=approved +
+        # 自洽 request_binding 的无密钥 JSON）、篡改、他进程签发、服务重启后
+        # 的旧记录，一律在此拒绝；不消费、不执行。
+        if grant.get("_sig_unverified"):
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[host-grant 拒绝] grant 签名校验失败（伪造/篡改/他进程签发"
+                    f"或服务已重启，grant …{host_grant_id[-12:]}；不可信记录"
+                    "不消费——host-grant 审批与消费须同进程部署；如仍必要请"
+                    "重新发起 host_access_request 人工审批）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        # ── P0 补修(2026-11-14): 生命周期诊断优先级——已撤销/已消费/已过期的
+        # grant 先于维度比对短路拒绝，避免次生诊断（如"目标文件内容已变化"）
+        # 掩盖"授权已用"这一根因。fail-closed 语义不变：仍拒绝、不消费、不执行。
+        from llm_loop.timekeeping import system_local_now
+        from llm_loop.tools.escalation import _parse_ts as _esc_parse_ts
+
+        _gid_tail = host_grant_id[-12:]
+        if grant.get("status") == "revoked":
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[host-grant 拒绝] 授权已撤销（grant …{_gid_tail}；"
+                    "如仍必要请重新发起 host_access_request）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if grant.get("status") == "consumed" or int(grant.get("uses") or 0) >= int(
+            grant.get("max_uses") or 1
+        ):
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[host-grant 拒绝] 授权已用（单次消费已执行，grant …{_gid_tail}；"
+                    "重放不产生新授权，如仍必要请重新发起 host_access_request）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        _expires = _esc_parse_ts(str(grant.get("expires_at") or ""))
+        if _expires is None or _expires <= system_local_now():
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[host-grant 拒绝] 授权已过期（grant …{_gid_tail}；"
+                    "如仍必要请重新发起 host_access_request）"
+                ),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        errs: list[str] = []
+        sid = current_session_id.get() or ""
+        if grant.get("tool_name") != "execute_command":
+            errs.append(f"工具不匹配（grant 绑定 {grant.get('tool_name')!r}）")
+        if grant.get("requester_session_id") != sid:
+            errs.append("会话不匹配（grant 绑定签发时会话，跨会话不可用）")
+        operation = str(grant.get("operation", "") or "")
+        if operation not in ("read", "write"):
+            errs.append(f"操作非法: {operation!r}")
+        canonical = str(grant.get("canonical_path", "") or "")
+        if not canonical or not os.path.isabs(canonical):
+            errs.append("grant 路径异常")
+        else:
+            if os.path.islink(canonical):
+                errs.append("授权路径已成为符号链接（symlink 替换拒绝）")
+            if not os.path.isfile(canonical):
+                errs.append("授权路径已不是常规文件（删除/权限/类型变化拒绝）")
+        binding = grant.get("request_binding") or {}
+        # ── P0 补修(2026-11-14): 绑定完整性 fail-closed——request_binding
+        # 缺任一必备字段（或整段缺失/非 dict）即拒绝，不因缺字段静默跳过
+        # 对应核验（三重绑定 command_sha256/cwd/file_sha256 必须齐备才可核验）。
+        _bind_missing = (
+            [
+                _k
+                for _k in ("command_sha256", "cwd", "file_sha256")
+                if not str(binding.get(_k, "") or "")
+            ]
+            if isinstance(binding, dict)
+            else ["request_binding"]
+        )
+        if _bind_missing:
+            errs.append(
+                "授权绑定不完整（缺 "
+                + "/".join(_bind_missing)
+                + "，无法核验即拒绝 fail-closed；如仍必要请重新发起 host_access_request）"
+            )
+        if isinstance(binding, dict) and canonical and os.path.isfile(canonical) and not os.path.islink(canonical):
+            want_cmd = str(binding.get("command_sha256", "") or "")
+            if want_cmd and want_cmd != hashlib.sha256(command.encode("utf-8")).hexdigest():
+                errs.append("命令文本与授权绑定不一致（任何差异即拒绝）")
+            want_cwd = str(binding.get("cwd", "") or "")
+            eff_cwd = os.path.realpath(workdir or workspace_base())
+            if want_cwd and want_cwd != eff_cwd:
+                errs.append(f"cwd 不匹配（授权绑定 {want_cwd}，实际 {eff_cwd}）")
+            want_fsha = str(binding.get("file_sha256", "") or "")
+            if want_fsha:
+                try:
+                    with open(canonical, "rb") as _fh:
+                        cur = hashlib.sha256(_fh.read()).hexdigest()
+                except OSError:
+                    cur = ""
+                if cur != want_fsha:
+                    errs.append("目标文件内容已变化（授权绑定申请时版本，防竞态替换）")
+        if self._sandbox_mode == "none":
+            errs.append("host-grant 执行必须启用沙箱（EXEC_SANDBOX=none 拒绝：无 bind 边界）")
+        elif self._sandbox_mode == "docker":
+            errs.append("docker 后端暂不支持 host-grant 单文件绑定（P0: bwrap/sandbox-exec）")
+        elif self._sandbox_mode == "bwrap" and shutil.which("bwrap") is None:
+            errs.append("bwrap 不可用（fail-closed：提前拒绝，不消耗人工审批）")
+        if errs:
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content="[host-grant 拒绝] " + "；".join(errs),
+                error_type="host_grant_rejected",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        try:
+            file_identity = os.stat(canonical, follow_symlinks=False)
+            if not stat.S_ISREG(file_identity.st_mode):
+                raise ValueError("grant target is no longer a regular file")
+        except (OSError, ValueError):
+            return None, ToolResult(
+                status=ToolResultStatus.ERROR,
+                content="[host-grant 拒绝] 授权文件身份变化，需重新申请",
+                error_type="host_grant_identity_changed",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        return (
+            {
+                "grant_id": host_grant_id,
+                "canonical_path": canonical,
+                "operation": operation,
+                "session_id": sid,
+                "expected_file_sha256": str(binding["file_sha256"]),
+                "st_dev": file_identity.st_dev,
+                "st_ino": file_identity.st_ino,
+            },
+            None,
+        )
+
     def _apply_sandbox_policy(
-        self, spec: _CommandSpec, workdir: str | None, wt_note_in: Callable[[str], str]
+        self,
+        spec: _CommandSpec,
+        workdir: str | None,
+        wt_note_in: Callable[[str], str],
+        extra_file_binds: list[tuple[str, str, str]] | None = None,
     ) -> tuple[list[str] | None, str] | ToolResult:
         """EXEC_SANDBOX 沙箱包装 + argv 模式包装尾部替换（P3-3/P2-2，前台/后台共用）."""
         # P3-3(2026-08-15)/P2-1(2026-10-25): EXEC_SANDBOX=auto/bwrap/docker/sandbox-exec →
@@ -857,8 +1107,9 @@ class ExecuteCommandTool:
                 str(workdir or "."),
                 mode=self._sandbox_mode,
                 image=self._sandbox_image,
+                extra_file_binds=extra_file_binds,
             )
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=wt_note_in(f"[沙箱不可用] {exc}"),
@@ -939,13 +1190,19 @@ class ExecuteCommandTool:
         guard_override_note: str,
         wt_note_in: Callable[[str], str],
         cwd_line: str = "",
+        extra_file_binds: list[tuple[str, str, str]] | None = None,
+        pinned_grant_fd: int | None = None,
     ) -> ToolResult:
         """后台分支: effect fence 下 Popen 不阻塞 + JobRegistry 登记 + 启动回执组装."""
         # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
-        wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in)
+        wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in, extra_file_binds)
         if isinstance(wrapped, ToolResult):
             return wrapped
         bg_cmd, bg_sandbox_note = wrapped
+        if pinned_grant_fd is not None:
+            if not extra_file_binds or len(extra_file_binds) != 1:
+                raise ValueError("host-grant exact file bind missing")
+            bg_cmd = _pin_bwrap_bind_source(bg_cmd or [], extra_file_binds[0][0], pinned_grant_fd)
         from llm_loop.core.tool_execution_journal import (
             current_effect_mutation_authority,
             format_effect_denial,
@@ -985,6 +1242,7 @@ class ExecuteCommandTool:
                 cwd=workdir,
                 env=env,
                 start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
+                pass_fds=(pinned_grant_fd,) if pinned_grant_fd is not None else (),
             )
         job_id = self._register_background_job(proc, spec, workdir)
         if isinstance(job_id, ToolResult):
@@ -1023,12 +1281,18 @@ class ExecuteCommandTool:
         env: dict[str, str],
         gate_line: str,
         wt_note_in: Callable[[str], str],
+        extra_file_binds: list[tuple[str, str, str]] | None = None,
+        pinned_grant_fd: int | None = None,
     ) -> ToolResult | _ForegroundOutcome:
         """前台分支: 沙箱包装 + effect fence + Popen + communicate 兜底超时与句柄清理."""
-        wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in)
+        wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in, extra_file_binds)
         if isinstance(wrapped, ToolResult):
             return wrapped
         sandbox_cmd, sandbox_note = wrapped
+        if pinned_grant_fd is not None:
+            if not extra_file_binds or len(extra_file_binds) != 1:
+                raise ValueError("host-grant exact file bind missing")
+            sandbox_cmd = _pin_bwrap_bind_source(sandbox_cmd or [], extra_file_binds[0][0], pinned_grant_fd)
         from llm_loop.core.tool_execution_journal import (
             current_effect_mutation_authority,
             format_effect_denial,
@@ -1067,6 +1331,7 @@ class ExecuteCommandTool:
                 # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
                 # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
                 start_new_session=True,
+                pass_fds=(pinned_grant_fd,) if pinned_grant_fd is not None else (),
             )
         self._sandbox_note = sandbox_note
         _proc_key = current_session_id.get() or "__default__"
@@ -1215,6 +1480,7 @@ class ExecuteCommandTool:
         exec_argv: list[str] | None,
         workdir: str | None,
         isolation: bool,
+        grant_write_paths: frozenset[str] = frozenset(),
     ) -> ToolResult | None:
         """P1-a 命令写侧闸（DESIGN-20261030 §16）：返回拒绝回执或 None（放行）.
 
@@ -1230,17 +1496,58 @@ class ExecuteCommandTool:
                 "isolation_not_allowed_under_write_scope",
                 "受限写域下禁止 worktree 隔离（隔离会写 .git/ 元数据，超出 scope）",
             )
+        if grant_write_paths:
+            # DESIGN-20261114: host-grant 豁免仅授权单文件（绝对路径精确匹配），
+            # 传给扫描器的 extra_write_allowed；deny 清单（宿主明确禁止）优先于
+            # 豁免——父 write-scope 不可被绕过（含绝对 fnmatch 兜底，见
+            # command_scope_guard._extra_path_denied）。
+            pass
         text = shlex.join(exec_argv) if exec_argv else str(command or "")
         decision = check_command_scope(
             text,
             scope=scope,
             workspace_root=workspace_base(),
             workdir=workdir or "",
+            extra_write_allowed=frozenset(grant_write_paths),
         )
         if not decision.allowed:
             return self._write_scope_reject(decision.reason, decision.detail)
         for path, reason in decision.unverified:
             write_scope_audit_record_unverified(path, reason)
+        return None
+
+    def _grant_home_workdir_guard(self, workdir: str | None) -> ToolResult | None:
+        """P0-1 防线 B：workdir 不得圈住 host-grant 授权账本（fail-closed）。
+
+        bwrap --bind workdir workdir 与 sandbox-exec 可写根都以 workdir 为
+        界——workdir 落在账本内（或为账本祖先）即模型可改写 grants/audit。
+        候选集：生效账本（env 校验通过者）+ 平台默认账本（env 被拒时默认
+        路径仍是真实账本）。只读判定，无副作用。
+        """
+        from llm_loop.tools.escalation import (
+            _paths_overlap,
+            grant_home_guard_candidates,
+        )
+
+        try:
+            effective = os.path.realpath(
+                workdir if workdir else workspace_base()
+            )
+        except OSError:
+            return None
+        for cand in grant_home_guard_candidates():
+            if _paths_overlap(effective, cand):
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=(
+                        "[参数错误] workdir 与 host-grant 授权账本目录重叠"
+                        f"（workdir {effective} vs 账本 {cand}；沙盒以 workdir"
+                        " 为可写根，账本必须在沙盒可写根之外——拒绝执行）"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                    error_type="workdir_overlaps_grant_home",
+                )
         return None
 
     def _write_scope_reject(self, reason: str, detail: str) -> ToolResult:
@@ -1270,6 +1577,12 @@ class ExecuteCommandTool:
         if isinstance(flags, ToolResult):
             return flags
         workdir, run_bg, fail_fast, isolation, launch_command = flags
+        # ── P0-1（2026-11-14，独立 Reviewer P0）: workdir 账本禁区——
+        # bwrap --bind workdir workdir / sandbox-exec 可写根以 workdir 为界，
+        # workdir 落在授权账本内（或为其祖先）= 模型可改写 grants/audit。
+        grant_home_guard = self._grant_home_workdir_guard(workdir)
+        if grant_home_guard is not None:
+            return grant_home_guard
         # EVO-20261105-64a037d9: 只对**显式** workdir 回显绝对 cwd（默认路径零噪音）。
         explicit_workdir = workdir is not None
         spec = _CommandSpec(
@@ -1293,9 +1606,33 @@ class ExecuteCommandTool:
         # EVO-20261029-04c73530：转换成功时后续一切（审核门/回执展示/执行）
         # 都以转换后规格为准——回执如实展示转换形态，不伪装原样执行。
         command = spec.command
+        # ── DESIGN-20261114（Deepin P0）: 沙盒外单文件授权解析 ──
+        host_grant_id = str(kwargs.get("host_grant_id", "") or "").strip()
+        grant_ctx: dict | None = None
+        if host_grant_id:
+            if esc_id or esc_token:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] host_grant_id 与灾难提权 (escalation_id, escalation_token) 互斥（授权通道不同）",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            grant_ctx, grant_err = self._resolve_host_grant(host_grant_id, spec.command, workdir)
+            if grant_err is not None:
+                return grant_err
         # ── P1-a（DESIGN-20261030 §16）: 受限写域的命令通道写侧闸 ──
         # 判定对象是转换后的最终命令串；位置在任何执行之前（含隔离租约准备）。
-        _gate = self._write_scope_command_gate(command, exec_argv, workdir, isolation)
+        _gate = self._write_scope_command_gate(
+            command,
+            exec_argv,
+            workdir,
+            isolation,
+            grant_write_paths=(
+                frozenset({grant_ctx["canonical_path"]})
+                if grant_ctx and grant_ctx.get("operation") == "write"
+                else frozenset()
+            ),
+        )
         if _gate is not None:
             return _gate
         # RULE-AI-28: caller-visible obligation is in the schema before invocation;
@@ -1326,6 +1663,79 @@ class ExecuteCommandTool:
         cwd_line = (
             f"[cwd {os.path.realpath(workdir)}]" if explicit_workdir and workdir else ""
         )
+        # ── DESIGN-20261114: grant 单次消费（全部闸通过、进程启动前）──
+        # 严格单次语义：消费即消耗（执行尝试无论成败）；竞态下仅一个赢家。
+        host_grant_note = ""
+        extra_file_binds: list[tuple[str, str, str]] | None = None
+        pinned_grant_fd: int | None = None
+        if grant_ctx is not None:
+            from llm_loop.tools.sandbox import resolve_auto_backend, sandbox_mode
+
+            backend = sandbox_mode(self._sandbox_mode)
+            if backend == "auto":
+                backend, _reasons = resolve_auto_backend()
+            if backend != "bwrap":
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content="[host-grant 拒绝] P0 单文件授权仅支持 Linux bwrap 的 FD 固定挂载；其他后端 fail-closed",
+                    error_type="host_grant_backend_unpinned",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            _store = self._host_grant_store()
+            if _store is None:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content="[host-grant 拒绝] grant 存储不可达（fail-closed）",
+                    error_type="host_grant_unavailable",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            consumed = _store.consume(
+                host_grant_id,
+                tool_name="execute_command",
+                canonical_path=grant_ctx["canonical_path"],
+                operation=grant_ctx["operation"],
+                requester_session_id=grant_ctx["session_id"],
+            )
+            if consumed is None:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=(
+                        "[host-grant 拒绝] 授权消费失败（已用/过期/撤销/维度不符/"
+                        "签名失效——如仍必要请重新申请 host_access_request）"
+                    ),
+                    error_type="host_grant_consume_failed",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            try:
+                pinned_grant_fd = _open_pinned_host_grant_file(grant_ctx)
+            except (OSError, ValueError) as exc:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=f"[host-grant 拒绝] 授权文件固定失败（单次 grant 已消费）：{type(exc).__name__}",
+                    error_type="host_grant_pin_failed",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            _access = "rw" if grant_ctx["operation"] == "write" else "ro"
+            extra_file_binds = [
+                (grant_ctx["canonical_path"], grant_ctx["canonical_path"], _access)
+            ]
+            host_grant_note = (
+                f"[host-grant] {grant_ctx['operation']} {grant_ctx['canonical_path']} "
+                f"grant={host_grant_id} 已消费（单次）\n"
+            )
+            if grant_ctx["operation"] == "write":
+                # P0 补修(2026-11-14): 沙盒诚实性——bwrap 下未 bind 路径的写
+                # 可能落入沙盒私有层（如 --tmpfs /tmp）exit0 但宿主无变化；
+                # 回执必须区分"授权 bind 文件的宿主写"与"无宿主效果的成功码"。
+                host_grant_note += (
+                    "[host-grant] 宿主写效果仅保证授权 bind 的目标文件；"
+                    "命令中写其他未授权路径可能 exit0 而宿主无变化"
+                    "（沙盒私有层，如 bwrap tmpfs），勿视为外部写成功\n"
+                )
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()
@@ -1333,11 +1743,17 @@ class ExecuteCommandTool:
             env["LLM_EXEC_CWD"] = workdir or os.getcwd()
             # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
             if run_bg:
-                return self._run_background(
+                bg_result = self._run_background(
                     spec, workdir, env, gate_line, guard_override_note,
-                    wtrelease.note_in, cwd_line,
+                    wtrelease.note_in, cwd_line, extra_file_binds, pinned_grant_fd,
                 )
-            fg = self._run_foreground(spec, workdir, env, gate_line, wtrelease.note_in)
+                if host_grant_note and isinstance(bg_result, ToolResult) and bg_result.content:
+                    bg_result.content = host_grant_note + bg_result.content
+                return bg_result
+            fg = self._run_foreground(
+                spec, workdir, env, gate_line, wtrelease.note_in, extra_file_binds,
+                pinned_grant_fd,
+            )
             if isinstance(fg, ToolResult):
                 return fg
         except OSError as exc:
@@ -1350,8 +1766,13 @@ class ExecuteCommandTool:
                 error_detail=str(exc),
             )
         finally:
+            if pinned_grant_fd is not None:
+                os.close(pinned_grant_fd)
             wtrelease.release_in_finally()
 
-        return self._compose_foreground_result(
+        fg_result = self._compose_foreground_result(
             fg, spec, env, gate_line, guard_override_note, wtrelease.note_in, cwd_line
         )
+        if host_grant_note and isinstance(fg_result, ToolResult) and fg_result.content:
+            fg_result.content = host_grant_note + fg_result.content
+        return fg_result
