@@ -437,7 +437,6 @@ def test_detached_dispatch_never_claims_completion(rig, monkeypatch, capsys):
     _, _, log = ur._paths(rig.store.data_dir, "release-test")
     monkeypatch.setattr(ur.sc, "ManagedServiceDeploymentStore", lambda path: rig.store)
     monkeypatch.setattr(ur.sc, "_control_subprocess_env", lambda **kw: {})
-    monkeypatch.setattr(ur, "_pid_alive", lambda pid: False)
     monkeypatch.setattr(ur.subprocess, "Popen", lambda *a, **kw: SimpleNamespace(pid=98765))
     assert ur._launch_worker(ur._read(rig.journal), rig.journal, log, wait=False) == 0
     output = json.loads(capsys.readouterr().out)
@@ -456,3 +455,115 @@ def test_malformed_journal_missing_sha_is_durable_block(rig):
         ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
     assert ur._read(rig.journal)["status"] == "blocked"
     assert not rig.store.calls
+
+
+def test_phase2_accepted_without_journal_id_recovers_single_spawn(rig):
+    rig.store.current = rig.candidate
+    first = rig.store.accept_restart(
+        target="all", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase1",
+    )
+    rig.store.set_action(first.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    second = rig.store.accept_restart(
+        target="wecom", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase2",
+    )
+    ur._save(rig.journal, ur._read(rig.journal), candidate=rig.candidate.to_dict(),
+             phase1_action_id=first.action_id, status="phase1_verified")
+    rig.store.calls.clear()
+    result = ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    assert result["status"] == "succeeded"
+    assert result["phase2_action_id"] == second.action_id
+    assert rig.store.calls == [("spawn", "wecom")]
+    assert len(rig.store.actions) == 2
+    assert ur.run_release(rig.store, "release-test") == result
+    assert rig.store.calls == [("spawn", "wecom")]
+
+
+def test_adopt_inflight_external_wecom_without_second_restart(rig):
+    rig.store.current = rig.candidate
+    first = rig.store.accept_restart(
+        target="all", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase1",
+    )
+    rig.store.set_action(first.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    external = rig.store.accept_restart(
+        target="wecom", expected_generation=12, requester_session_id="another-session",
+        origin="restart",
+    )
+    rig.store.set_action(external.action_id, status="waiting_for_idle", worker_pid=555)
+    ur._save(rig.journal, ur._read(rig.journal), candidate=rig.candidate.to_dict(),
+             phase1_action_id=first.action_id, status="phase1_verified")
+    rig.store.calls.clear()
+    with pytest.raises(TimeoutError, match="waiting_for_idle"):
+        ur.run_release(rig.store, "release-test", timeout_s=0, poll_s=0)
+    state = ur._read(rig.journal)
+    assert state["phase2_adopted"] is True
+    assert state["phase2_action_id"] == external.action_id
+    assert rig.store.calls == []
+    rig.store.set_action(external.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    assert ur.run_release(rig.store, "release-test", timeout_s=0, poll_s=0)["status"] == "succeeded"
+    assert len(rig.store.actions) == 2
+    assert rig.store.calls == []
+
+
+def test_failed_external_wecom_does_not_trigger_automatic_reconnect(rig):
+    rig.store.current = rig.candidate
+    first = rig.store.accept_restart(
+        target="all", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase1",
+    )
+    rig.store.set_action(first.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    external = rig.store.accept_restart(
+        target="wecom", expected_generation=12, requester_session_id="another-session",
+        origin="restart",
+    )
+    rig.store.set_action(external.action_id, status="failed", verify_verdict="confirmed_fail")
+    ur._save(rig.journal, ur._read(rig.journal), candidate=rig.candidate.to_dict(),
+             phase1_action_id=first.action_id, status="phase1_verified")
+    rig.store.calls.clear()
+    with pytest.raises(RuntimeError, match="prior unverified WeCom"):
+        ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    assert len(rig.store.actions) == 2
+    assert rig.store.calls == []
+
+
+def test_pid_reuse_cannot_block_detached_resume(rig, monkeypatch, capsys):
+    _, _, log = ur._paths(rig.store.data_dir, "release-test")
+    monkeypatch.setattr(ur.sc, "ManagedServiceDeploymentStore", lambda path: rig.store)
+    monkeypatch.setattr(ur.sc, "_control_subprocess_env", lambda **kw: {})
+    monkeypatch.setattr(ur.subprocess, "Popen", lambda *a, **kw: SimpleNamespace(pid=98765))
+    ur._save(rig.journal, ur._read(rig.journal), worker_pid=777, status="dispatching")
+    assert ur._launch_worker(ur._read(rig.journal), rig.journal, log, wait=False) == 0
+    assert json.loads(capsys.readouterr().out)["completed"] is False
+    assert ur._read(rig.journal)["worker_pid"] == 98765
+
+
+def test_status_only_missing_release_does_not_create_directory(tmp_path, capsys):
+    assert ur.cli(["--release-id", "missing", "--data-dir", str(tmp_path), "--status-only"]) == 2
+    assert "No such file" in capsys.readouterr().err
+    assert not (tmp_path / "runtime").exists()
+
+
+def test_adopted_external_wecom_failed_while_waiting_blocks_no_replay(rig):
+    rig.store.current = rig.candidate
+    first = rig.store.accept_restart(
+        target="all", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase1",
+    )
+    rig.store.set_action(first.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    external = rig.store.accept_restart(
+        target="wecom", expected_generation=12, requester_session_id="another-session",
+        origin="restart",
+    )
+    rig.store.set_action(external.action_id, status="waiting_for_idle", worker_pid=777)
+    ur._save(rig.journal, ur._read(rig.journal), candidate=rig.candidate.to_dict(),
+             phase1_action_id=first.action_id, status="phase1_verified")
+    rig.store.calls.clear()
+    with pytest.raises(TimeoutError, match="waiting_for_idle"):
+        ur.run_release(rig.store, "release-test", timeout_s=0, poll_s=0)
+    rig.store.set_action(external.action_id, status="failed", verify_verdict="confirmed_fail")
+    with pytest.raises(RuntimeError, match="failed; no automatic retry"):
+        ur.run_release(rig.store, "release-test", timeout_s=0, poll_s=0)
+    assert len(rig.store.actions) == 2
+    assert rig.store.calls == []

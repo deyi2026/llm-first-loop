@@ -24,7 +24,6 @@ from typing import Any
 from llm_loop.runtime import service_control as sc
 
 _RELEASE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
-_TERMINAL = frozenset({"succeeded", "failed"})
 _SERVICES = ("web", "feishu", "learning", "wecom")
 
 
@@ -201,13 +200,21 @@ def _adopt_wecom(store: sc.ManagedServiceDeploymentStore, candidate: Any) -> Any
         if a.target == "wecom"
         and a.deployment_id == candidate.deployment_id
         and a.deployment_generation == candidate.generation
-        and a.status == "succeeded"
-        and a.verify_verdict == "confirmed_ok"
     ]
     if not matches:
         return None
-    _verify_live(store, candidate, ("wecom",))
-    return sorted(matches, key=lambda a: (a.updated_at, a.action_id))[-1]
+    # A managed WeCom restart in progress must not race a second reconnect.
+    # Persist its exact action ID and wait for its own verified completion.
+    pending = [a for a in matches if a.status not in {"succeeded", "failed"}]
+    if len(pending) > 1:
+        raise RuntimeError("multiple in-flight WeCom restarts; operator review required")
+    if pending:
+        return pending[0]
+    verified = [a for a in matches if a.status == "succeeded" and a.verify_verdict == "confirmed_ok"]
+    if verified:
+        _verify_live(store, candidate, ("wecom",))
+        return sorted(verified, key=lambda a: (a.updated_at, a.action_id))[-1]
+    raise RuntimeError("prior unverified WeCom action; refusing automatic reconnect")
 
 
 def _run_locked(store: sc.ManagedServiceDeploymentStore, journal: Path, state: dict[str, Any], *, timeout_s: float, poll_s: float) -> dict[str, Any]:
@@ -254,16 +261,18 @@ def _run_locked(store: sc.ManagedServiceDeploymentStore, journal: Path, state: d
                 or second.target != "wecom"
                 or second.deployment_id != candidate.deployment_id
                 or second.deployment_generation != candidate.generation
-                or second.status != "succeeded"
-                or second.verify_verdict != "confirmed_ok"
+                or (second.status == "succeeded" and second.verify_verdict != "confirmed_ok")
             ):
                 raise RuntimeError("adopted WeCom receipt missing or invalid; no restart replay")
-            _verify_live(store, candidate, ("wecom",))
         else:
-            second = _find_action(
+            # If accept_restart committed but journaling the action ID did not,
+            # _start_or_recover_action must record and resume that same action.
+            # Never skip it by treating a found action as fully recovered.
+            own = _find_action(
                 store, state=state, stage="phase2", target="wecom", candidate=candidate
             )
-            if second is None and not state.get("phase2_action_id"):
+            second = None
+            if own is None and not state.get("phase2_action_id"):
                 second = _adopt_wecom(store, candidate)
                 if second is not None:
                     _save(journal, state, phase2_action_id=second.action_id, phase2_adopted=True)
@@ -308,18 +317,6 @@ def run_release(
         os.close(fd)
 
 
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)  # read-only liveness check, never sends a signal
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: bool) -> int:
     store = sc.ManagedServiceDeploymentStore(state["data_dir"])
     if wait:
@@ -351,9 +348,9 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
         if current["status"] == "succeeded":
             print(json.dumps({"ok": True, "status": "succeeded", "journal": str(journal)}))
             return 0
-        if _pid_alive(int(current.get("worker_pid") or 0)):
-            print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
-            return 12
+        # Acquiring the global flock proves no coordinator currently owns it.
+        # A journal PID may have been reused by an unrelated process; the
+        # durable per-action spawn intent, not PID liveness, guards replay.
         argv = [sys.executable, "-m", "llm_loop.runtime.unified_release", "--release-id", state["release_id"], "--data-dir", state["data_dir"], "--worker"]
         env = sc._control_subprocess_env(
             code_root=state["code_root"],
@@ -397,6 +394,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(args: argparse.Namespace) -> int:
     data_dir = Path(args.data_dir).expanduser().resolve()
     journal, _, log = _paths(data_dir, args.release_id)
+    if args.status_only:
+        # Status is a pure observation; do not create directories or lock files.
+        print(json.dumps(_read(journal), ensure_ascii=False, sort_keys=True))
+        return 0
     journal.parent.mkdir(parents=True, exist_ok=True)
     if journal.is_symlink():
         raise ValueError("unified release journal must not be a symlink")
@@ -407,9 +408,6 @@ def main(args: argparse.Namespace) -> int:
         except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
             print(f"unified release blocked: {exc}", file=sys.stderr)
             return 1
-    if args.status_only:
-        print(json.dumps(_read(journal), ensure_ascii=False, sort_keys=True))
-        return 0
     if not journal.exists():
         if args.expected_generation is None or not args.code_root or not args.runtime_root:
             raise ValueError("new release requires code-root, runtime-root, expected-generation")
@@ -436,6 +434,12 @@ def main(args: argparse.Namespace) -> int:
             out.write("\n")
             out.flush()
             os.fsync(out.fileno())
+        # The initial directory entry must survive a power loss as well.
+        dir_fd = os.open(journal.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     state = _read(journal)
     if state["release_id"] != args.release_id or state["data_dir"] != str(data_dir):
         raise ValueError("journal identity mismatch")

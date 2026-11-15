@@ -117,3 +117,35 @@ run `restart_mirror.sh` directly or clear barriers to force completion.
   fail-closed. The caller cannot prove whether the exception happened before
   or after a child process was created; clearing the intent could permit a
   duplicate physical restart. Require manual evidence instead.
+
+## Latest independent review and minimal repairs
+
+A follow-up GLM-5.3 review of `fa1a8e5e9` returned REVISE/P0=0/P1=1:
+phase2 could discover its own accepted WeCom action after a crash before
+`phase2_action_id` was journaled, then reject it as an identity mismatch.
+The coordinator now routes every such own action through the same
+`_start_or_recover_action` path used by phase1, persisting the action ID
+before any worker spawn. The targeted negative test injects exactly this
+accepted-but-not-journaled state and verifies one spawn and no replay.
+
+Additional reviewer P2 disposition:
+
+- Existing external WeCom action in flight is now adopted by exact action ID,
+  then awaited through the existing receipt/verification path. A failed or
+  unverified external action blocks a second reconnect, rather than being
+  silently ignored. An ambiguous pair of in-flight actions blocks.
+- A detached coordinator's recorded PID is not an authority for liveness
+  (PID reuse). Global `flock` ownership plus the per-action spawn-intent
+  journal are the safety authorities; acquiring the lock permits resume.
+- The unused terminal-status constant was removed. Existing action status
+  contract has only `succeeded` and `failed` as terminal states;
+  `verify_evidence_ready` remains nonterminal and is awaited.
+- The initial journal file and its containing directory are fsynced,
+  matching the durable atomic-write contract used on later updates.
+- The child lock-handoff timeout is intentionally fail-closed: it logs an
+  explicit error, does not claim release success, and does not mutate a
+  journal while a different coordinator owns the global lock. A later
+  operator-initiated same-ID resume rechecks existing action receipts.
+
+No direct service restart, forced idle override, or `all` semantics change
+was introduced by these repairs.
