@@ -75,7 +75,7 @@
 
 ### R3 外部证据淘汰（移除对照）
 
-- **来源**：F6（161 条 qualification 里 `not_evaluated` 62 / `mixed` 68 / `fail` 仅 2；带 `promotion=pass` 的 67 张卡中 51 张仍停在 candidate——**正向出口在动、负向出口被锁死**）、F8（独立打分通道长期不可用）⇒ 负向证据稀疏（使用账本 `rejected=0`、独立打分通道不健康）；按 §2.3 判断 1 的口径，这是“**入口存在、当前证据不足**”，不能推断为“制度只有模型自评”（v1.3.1 勘误：原句“实际上只有模型自评”已被 §2.3 判断 1 撤回，此处同步）。
+- **来源**：F6（161 条 qualification 里 `not_evaluated` 62 / `mixed` 68 / `fail` 仅 2；带 `promotion=pass` 的 67 张卡中 51 张仍停在 candidate）、F8（独立打分通道长期不可用）⇒ 负向证据稀疏（使用账本 `rejected=0`、独立打分通道不健康）；按 §2.3 判断 1 的口径，这是“**入口存在、当前证据不足**”，不能推断为“制度只有模型自评”（v1.3.1 勘误：原句“实际上只有模型自评”已被 §2.3 判断 1 撤回，此处同步）。
 - **要求**：
   1. 对"有真实使用记录、净收益尚不确定"的卡做**只在实验会话中停止注入 + 配对对照**，产出外部证据包；**不得先假定该卡无效**。
   2. 隔离可逆（不删卡、不改 status），对照结论只作**补充证据**。
@@ -93,7 +93,7 @@
   1. **锚根语义**：锚分 `path`（工作区相对）、`code`（**版本化仓库或发行物**相对）、`evidence`（`evidence://...`，须走证据解析器）三类；输出 `anchor_kind`、`anchor_root_id`（如 repo SHA/release digest）和解析状态。**wheel 的 code_root 不保证存在 `src/...` 路径**；解析不到正确源码/发行映射时标 `unresolvable`，不能误报 `missing` 或 `current`。
   2. **基线**：`annotate_freshness` 只在锚**成功解析且实际内容可读**时写 `freshness_hashes`，并绑定内容 SHA、root_id、解析器版本和采样时间；解析失败不建立"空基线"，不能把首次观测的陈旧内容洗成"已验证正确"。
   3. **覆盖率**：现仅 11/1917 卡声明锚。冷路径脚本只**提出**候选锚及证据，按 `card-lifecycle.md` 三分支核实后才落卡；不凭卡正文猜路径、不批量制造虚假 `current`，**锚失效只修锚，不失效卡**。
-  4. **读取侧闭环**：`search_records` 已回带 freshness；使用后（`record_use`=applied）若状态 `changed`/`missing`/`unresolvable`（`unresolvable` 表示锚根不可解析，对应待办是补锚根映射而非刷内容），在现有结算清单（`settlement_pending`/`settlement_submit`）里给出"刷锚"待办（带 `item_kind=freshness_refresh` 隔离标记，与知识使用结算项分列、不互相抵扣，见 §4.4④/C11/V9），**不新建持久层**。
+  4. **读取侧闭环**：`search_records` 已回带 freshness；使用后（`record_use`=applied）若状态 `changed`/`missing`/`unresolvable`（`unresolvable` 表示锚根不可解析，对应待办是补锚根映射而非刷内容），在现有只读清单 `settlement_pending` 里给出带 `item_kind=freshness_refresh` 隔离标记的"刷锚"待办（见 §4.4④/C11/V9）——**该待办只作提示，不得进入 `settlement_submit` 与知识使用结算互相抵扣**；旧客户端无法安全区分两类计数时回退 `architecture_status` 展示，**不新建持久层**。
 - **可验收判据**：
   - 同一张卡在运行态根与源码根下分别给出**带根标识**的状态，不再出现"同锚不同结论且无解释"。
   - `evidence://` 锚不再被当成路径 stat；无可信解析器时报告 `unresolvable`，不得声称内容已核验。
@@ -480,8 +480,8 @@ validation_state: <verified | unverified>
 
 | # | 位置 | 勘误前问题 | v1.3.1 处置 |
 |---|---|---|---|
-| ED1 | §1 R3 来源行 | “现有淘汰判据实际上只有模型自评”已被 §2.3 判断 1（入口存在、当前证据不足）撤回，未同步 | 改为“负向证据稀疏……不能推断为制度只有模型自评”，显式引用 §2.3 判断 1 |
-| ED2 | §1 R4 读取侧闭环 | 触发态只列 changed/missing（缺 unresolvable）；刷锚待办未与结算项隔离——与 §4.4④/C8/C11/V9 矛盾 | 触发态补 unresolvable（补锚根映射而非刷内容）；待办带 item_kind=freshness_refresh 隔离，两类不互相抵扣 |
+| ED1 | §1 R3 来源行 | “现有淘汰判据实际上只有模型自评”与“正向出口在动、负向出口被锁死”解释性短语未按 §2.3 判断 1（入口存在、当前证据不足）口径同步 | 改为“负向证据稀疏……不能推断为制度只有模型自评”并删除该解释性短语（F6 数值原样保留；§2.1 F6 行与 §7.4 历史审查记录中的同源短语作为历史快照保留，解释一律以 §2.3 为准） |
+| ED2 | §1 R4 读取侧闭环 | 触发态只列 changed/missing（缺 unresolvable）；刷锚待办未与结算项隔离——与 §4.4④/C8/C11/V9 矛盾 | 触发态补 unresolvable（补锚根映射而非刷内容）；待办带 item_kind=freshness_refresh 隔离——只提示、不得进入 settlement_submit，旧客户端不兼容时回退 architecture_status |
 | ED3 | §6 失败模式矩阵“通道依赖不可用”行 | “R3 自带离线对照臂”与 §11 残余风险 5“不能宣称自带离线对照臂就足够”互斥 | 对齐 §11 风险 5：R3 对照臂须在另行合格的 DPE 仪器下运行 |
 | ED4 | 事实基准头部 | v1.2 的 0.6.54 运行态快照未标注属 Deepin 侧；“本轮只读观察”停在 2b548ef39/ahead 8 旧时点 | 三点口径：Mac live=0.6.53@.releases/1b457042（实测）；origin/main=0.6.54@9e6b438c（PR#36 已合并，非“准备中”）；Deepin 0.6.54/gen17=历史回执未重核。main 观察更新为 075061769＋双向分叉逐侧计数（本地 10 / ref 侧 33；远端 tip 已至 4f1628ed） |
 | ED5 | 版本链/状态行/收口声明 | 版本仍标 v1.3 | 升 v1.3.1；§7.4–§7.7 链路补全；收口声明更新并注明配套 DPE 规格在另一 lane 新增、未合并未推送 |
