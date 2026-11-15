@@ -114,7 +114,12 @@ def select_schema_capacity_projection(
             catalog = {row["name"]: row for row in registry.index_schemas(desc_chars=desc_chars)}
             if any(name not in catalog for name in names):
                 return result(eligible_schemas, original, "stable", original_tokens, "index_incomplete")
-            candidate_schemas = [catalog[name] for name in names]
+            # The discovery tool must retain its own machine-readable required
+            # arguments; otherwise index mode would make hydration unusable.
+            candidate_schemas = [
+                original if name == "get_tool_schema" else catalog[name]
+                for name, original in zip(names, eligible_schemas, strict=True)
+            ]
             candidate_tools = [schema_to_param(row) for row in candidate_schemas]
         except (AttributeError, KeyError, TypeError, ValueError):
             # An incomplete or malformed discovery surface cannot authorize an

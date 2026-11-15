@@ -44,7 +44,11 @@ def test_real_loop_recovers_after_large_observation_with_101_tools(
     def tokenizer(tools):
         # Reproduce authoritative 28,863-token large schema surface. A genuine
         # whole-surface index has no inline parameter properties and costs less.
-        if any((row.get("function") or {}).get("parameters", {}).get("properties") for row in tools):
+        full_contracts = sum(
+            bool((row.get("function") or {}).get("parameters", {}).get("properties"))
+            for row in tools
+        )
+        if full_contracts > 1:
             return 28863
         return 4000
 
@@ -69,7 +73,10 @@ def test_real_loop_recovers_after_large_observation_with_101_tools(
     assert len(names[0]) == len(names[1]) == 101
     assert names[0] == names[1]
     assert "get_tool_schema" in names[0]
-    assert all(row["function"]["parameters"] == {"type": "object"} for row in fake.calls[0]["tools"])
+    schema_by_name = {row["function"]["name"]: row["function"]["parameters"] for row in fake.calls[0]["tools"]}
+    assert "tool_name" in schema_by_name["get_tool_schema"]["required"]
+    assert "tool_name" in schema_by_name["get_tool_schema"]["properties"]
+    assert all(params == {"type": "object"} for name, params in schema_by_name.items() if name != "get_tool_schema")
     second_observations = [
         row["content"] for row in fake.calls[1]["messages"] if row.get("role") == "tool"
     ]

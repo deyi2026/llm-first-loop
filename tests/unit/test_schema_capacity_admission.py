@@ -62,7 +62,9 @@ def test_schema_pressure_switches_all_tools_to_index_without_hiding():
     assert chosen.selected_tokens <= chosen.threshold_tokens
     assert [row["name"] for row in chosen.schemas] == [row["name"] for row in schemas]
     assert len(chosen.tools) == 101
-    assert all(row["function"]["parameters"] == {"type": "object"} for row in chosen.tools)
+    assert chosen.schemas[0]["name"] == "get_tool_schema"
+    assert chosen.schemas[0]["parameters"] == schemas[0]["parameters"]
+    assert all(row["function"]["parameters"] == {"type": "object"} for row in chosen.tools[1:])
     assert chosen.token_source == "authoritative_tokenizer"
 
 
