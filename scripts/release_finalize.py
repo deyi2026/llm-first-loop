@@ -513,8 +513,21 @@ def sync_manifest_from_release(gh, tag: str, absent_platforms=()) -> int:
         if (tmpdir / MANIFEST_NAME).is_file():
             try:
                 old_manifest = json.loads((tmpdir / MANIFEST_NAME).read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                old_manifest = None
+            except (OSError, json.JSONDecodeError):
+                print("[guard] 现有 Release manifest 无法解析；拒绝静默替换身份。")
+                return EXIT_MANIFEST_INVALID
+            if not isinstance(old_manifest, dict):
+                print("[guard] 现有 Release manifest 不是对象；拒绝静默替换身份。")
+                return EXIT_MANIFEST_INVALID
+        # A moved tag must not be able to launder existing assets under a new
+        # commit identity.  Even a legacy `main` value needs explicit repair.
+        tag_commit = gh.resolve_tag_commit(tag)
+        if old_manifest is not None and (
+            old_manifest.get("tag") != tag or old_manifest.get("commit_sha") != tag_commit
+        ):
+            print("[guard] 现有 manifest 的 tag/commit_sha 与固定 tag 提交不一致；"
+                  "拒绝同步，需人工核验并走显式修复流程。")
+            return EXIT_MANIFEST_INVALID
         facts = {}
         for path in sorted(tmpdir.rglob("*")):
             if path.is_file() and path.name != MANIFEST_NAME:
@@ -524,7 +537,7 @@ def sync_manifest_from_release(gh, tag: str, absent_platforms=()) -> int:
             return EXIT_GUARD
         # GitHub Release.targetCommitish can be the moving branch name "main".
         # Resolve the tag to its actual commit, including annotated tags.
-        manifest = build_manifest(facts, tag, gh.resolve_tag_commit(tag), absent_platforms)
+        manifest = build_manifest(facts, tag, tag_commit, absent_platforms)
         if isinstance(old_manifest, dict):
             old_map = {a.get("name"): a.get("sha256") for a in old_manifest.get("artifacts", []) if isinstance(a, dict)}
             for art in manifest["artifacts"]:

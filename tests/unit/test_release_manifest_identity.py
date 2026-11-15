@@ -91,3 +91,41 @@ def test_finalize_rejects_retargeted_tag_even_with_matching_assets(tmp_path):
     assert release.finalize_release(fake, "v0.6.38") == release.EXIT_MANIFEST_INVALID
     assert fake.draft is True
     assert fake.mutations == before
+
+
+@pytest.mark.parametrize("old_sha", ["a" * 40, "main", ""])
+def test_sync_rejects_retargeted_tag_without_writes(tmp_path, old_sha):
+    dist = tmp_path / "dist"
+    release._make_ci_dist(dist)
+    fake = release._draft_fake_from_dist(dist, commit="a" * 40)
+    fake.tag_commit = "b" * 40
+    manifest = json.loads(fake.assets[release.MANIFEST_NAME])
+    manifest["commit_sha"] = old_sha
+    fake.assets[release.MANIFEST_NAME] = release.manifest_bytes(manifest)
+    before = fake.assets[release.MANIFEST_NAME]
+
+    assert release.sync_manifest_from_release(fake, "v0.6.38") == release.EXIT_MANIFEST_INVALID
+    assert fake.mutations == []
+    assert fake.assets[release.MANIFEST_NAME] == before
+
+
+def test_sync_rejects_existing_manifest_with_wrong_tag(tmp_path):
+    dist = tmp_path / "dist"
+    release._make_ci_dist(dist)
+    fake = release._draft_fake_from_dist(dist, commit="a" * 40)
+    manifest = json.loads(fake.assets[release.MANIFEST_NAME])
+    manifest["tag"] = "v0.6.37"
+    fake.assets[release.MANIFEST_NAME] = release.manifest_bytes(manifest)
+
+    assert release.sync_manifest_from_release(fake, "v0.6.38") == release.EXIT_MANIFEST_INVALID
+    assert fake.mutations == []
+
+
+def test_sync_rejects_corrupt_existing_manifest_without_writes(tmp_path):
+    dist = tmp_path / "dist"
+    release._make_ci_dist(dist)
+    fake = release._draft_fake_from_dist(dist, commit="a" * 40)
+    fake.assets[release.MANIFEST_NAME] = b"{not json"
+
+    assert release.sync_manifest_from_release(fake, "v0.6.38") == release.EXIT_MANIFEST_INVALID
+    assert fake.mutations == []
