@@ -33,6 +33,7 @@ import httpx
 from llm_loop.cache_guard.guard import (
     PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
 )
+from llm_loop.cache_guard.outbound_privacy import project_guard_request
 from llm_loop.cognitive.cache_tags import (  # M4.3 认知缓存标记（研究线）
     apply_cognitive_cache_tags,
     tagging_enabled_for,
@@ -1774,8 +1775,7 @@ class LLMClient:
         # an exact provider+model+generation-contract match; visible assistant state
         # remains ordinary history when that hidden transport scope does not match.
         messages = self._project_provider_replay(messages, model=actual_model)
-        # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
-        # 局部快照，后续整个流（含终态 telemetry）都不再读取共享 per-request 字段。
+        # 每请求 guard 快照：显式优先；legacy fallback 不读取共享 per-request 状态。
         _guard_ctx = guard_context or GuardRequestContext(
             session_id=self.guard_session_id or "__global__",
             system_text=(
@@ -1792,6 +1792,7 @@ class LLMClient:
             provider=self.provider,
             model=actual_model,
         )
+        messages, tools, _guard_ctx = project_guard_request(messages, tools, _guard_ctx)
         # cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
         self._guard_start_ts = 0
         if self.guard_enabled:
