@@ -143,7 +143,10 @@ def _await_action(
     while True:
         _assert_desired(store, candidate)
         action = store.read_action(action_id)
-        if action is None or action.deployment_id != candidate.deployment_id:
+        if (
+            action is None or action.deployment_id != candidate.deployment_id
+            or action.deployment_generation != candidate.generation
+        ):
             raise RuntimeError("action disappeared or deployment identity changed")
         if action.status == "succeeded":
             if action.verify_verdict != "confirmed_ok":
@@ -224,15 +227,32 @@ def _run_locked(store: sc.ManagedServiceDeploymentStore, journal: Path, state: d
         _verify_live(store, candidate, ("web", "feishu", "learning"))
         _save(journal, state, status="phase1_verified")
 
-        second = _find_action(
-            store, state=state, stage="phase2", target="wecom", candidate=candidate
-        )
-        if second is None and not state.get("phase2_action_id"):
-            second = _adopt_wecom(store, candidate)
-            if second is not None:
-                _save(journal, state, phase2_action_id=second.action_id, phase2_adopted=True)
-        if second is None:
-            second = _start_or_recover_action(store, candidate, state, journal, stage="phase2", target="wecom")
+        if state.get("phase2_adopted"):
+            # An externally owned verified WeCom action has a different origin
+            # and requester. Resume must use its recorded immutable action ID,
+            # never look for it among this coordinator's own actions.
+            adopted_id = state.get("phase2_action_id")
+            second = store.read_action(adopted_id) if adopted_id else None
+            if (
+                second is None or second.action_id != adopted_id
+                or second.target != "wecom"
+                or second.deployment_id != candidate.deployment_id
+                or second.deployment_generation != candidate.generation
+                or second.status != "succeeded"
+                or second.verify_verdict != "confirmed_ok"
+            ):
+                raise RuntimeError("adopted WeCom receipt missing or invalid; no restart replay")
+            _verify_live(store, candidate, ("wecom",))
+        else:
+            second = _find_action(
+                store, state=state, stage="phase2", target="wecom", candidate=candidate
+            )
+            if second is None and not state.get("phase2_action_id"):
+                second = _adopt_wecom(store, candidate)
+                if second is not None:
+                    _save(journal, state, phase2_action_id=second.action_id, phase2_adopted=True)
+            if second is None:
+                second = _start_or_recover_action(store, candidate, state, journal, stage="phase2", target="wecom")
         if state.get("phase2_action_id") != second.action_id:
             raise RuntimeError("phase2 action identity mismatch")
         _await_action(store, candidate, second.action_id, timeout_s=timeout_s, poll_s=poll_s)
@@ -290,6 +310,9 @@ def _launch_worker(state: dict[str, Any], journal: Path, log: Path, *, wait: boo
         try:
             result = run_release(store, state["release_id"])
         except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+            if str(exc) == "unified release already running":
+                print(json.dumps({"ok": False, "status": "already_running", "journal": str(journal)}))
+                return 12
             print(json.dumps({"ok": False, "error": str(exc), "journal": str(journal)}))
             return 1
         print(json.dumps({"ok": result["status"] == "succeeded", "status": result["status"], "journal": str(journal)}))

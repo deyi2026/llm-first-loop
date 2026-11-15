@@ -93,3 +93,20 @@ change to the semantics of `target=all`.
   a bounded observation window, not an idle-gate override; a still-busy
   service is never forced to restart and the same release ID can resume.
   Adjustable timeouts can be added after real operator evidence warrants it.
+
+## Interrupted adoption and ambiguous spawn recovery
+
+An adopted external WeCom receipt is reloaded by its **recorded action ID**
+on resume, not by the coordinator requester/origin. The coordinator validates
+target, exact deployment ID/generation, succeeded/confirmed_ok, and current
+live identity before declaring completion. If any check fails, it blocks and
+does not restart WeCom.
+
+For `spawn outcome unknown`, do not repeat `release-four` expecting it to
+re-spawn a worker. Inspect the journal's phase action ID, the durable action
+file, recorded worker PID, per-action restart log, runtime manifests and
+service-control barriers. If any physical side effect is uncertain, STOP and
+seek operator adjudication. Only when there is positive evidence that the
+original action never reached a physical restart may an operator arrange
+a single controlled recovery using the existing managed worker path. Never
+run `restart_mirror.sh` directly or clear barriers to force completion.

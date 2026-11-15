@@ -349,3 +349,61 @@ def test_detached_symlinked_log_is_refused(rig, monkeypatch):
         ur._launch_worker(ur._read(rig.journal), rig.journal, log, wait=False)
     assert target.read_text() == "unchanged"
     assert not rig.store.calls
+
+
+def test_adopted_wecom_resume_after_live_check_interruption(rig, monkeypatch):
+    rig.store.current = rig.candidate
+    first = rig.store.accept_restart(
+        target="all", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase1",
+    )
+    rig.store.set_action(first.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    external = rig.store.accept_restart(
+        target="wecom", expected_generation=12, requester_session_id="another-session",
+        origin="restart",
+    )
+    rig.store.set_action(external.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    ur._save(rig.journal, ur._read(rig.journal), candidate=rig.candidate.to_dict(),
+             phase1_action_id=first.action_id, status="phase1_verified")
+    rig.store.calls.clear()
+    real_verify = ur._verify_live
+    failures = {"remaining": 1}
+
+    def interrupt_after_adoption(store, candidate, names):
+        if names == ur._SERVICES and failures["remaining"]:
+            failures["remaining"] -= 1
+            raise RuntimeError("simulated interruption after adoption")
+        real_verify(store, candidate, names)
+
+    monkeypatch.setattr(ur, "_verify_live", interrupt_after_adoption)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    blocked = ur._read(rig.journal)
+    assert blocked["status"] == "blocked"
+    assert blocked["phase2_adopted"] is True
+    assert blocked["phase2_action_id"] == external.action_id
+    assert ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)["status"] == "succeeded"
+    assert rig.store.calls == []
+    assert len(rig.store.actions) == 2
+
+
+def test_adopted_wecom_receipt_identity_change_fails_closed(rig):
+    rig.store.current = rig.candidate
+    first = rig.store.accept_restart(
+        target="all", expected_generation=12, requester_session_id="tester",
+        origin="unified-release:release-test:phase1",
+    )
+    rig.store.set_action(first.action_id, status="succeeded", verify_verdict="confirmed_ok")
+    external = rig.store.accept_restart(
+        target="wecom", expected_generation=12, requester_session_id="another-session",
+        origin="restart",
+    )
+    rig.store.set_action(external.action_id, status="succeeded", verify_verdict="confirmed_fail")
+    ur._save(rig.journal, ur._read(rig.journal), candidate=rig.candidate.to_dict(),
+             phase1_action_id=first.action_id, phase2_action_id=external.action_id,
+             phase2_adopted=True, status="blocked")
+    rig.store.calls.clear()
+    with pytest.raises(RuntimeError, match="adopted WeCom receipt missing or invalid"):
+        ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    assert rig.store.calls == []
+    assert len(rig.store.actions) == 2
