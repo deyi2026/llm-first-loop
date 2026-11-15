@@ -1,0 +1,70 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261115-s15-interject-race-409",
+  "summary": "Correct one existing S15 test helper whitelist for the documented 409 run-ended race; add deterministic after-claim queue restoration regression. No production code, timeout changes, serial markers or gate bypass.",
+  "components": [
+    {
+      "component_id": "s15-race-exact-status-whitelist",
+      "paths": [
+        "tests/phase4/test_m0_scenarios.py",
+        "tests/web/test_chat_queue.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing S15 phase4 race test helper and Web queue/interject regression tests",
+      "disposition": "Accept only two exact HTTP 409 codes in S15 natural-completion mode: interject_no_live_run and interject_run_changed. Preserve final done, queued item, and no-model-consumption assertions; add direct route test for post-claim mailbox failure restoring queued state.",
+      "evidence": [
+        "GitHub merged main 55d2698971c90f4cc74876397d1134c9f44ad8fd push CI 43701707213 returned success but ci_gate emitted FLAKY-PASS: first parallel run failed test_s15_race_natural_vs_interrupt with 409 interject_run_changed, then serial and parallel retry passed.",
+        "src/llm_loop/web/routes.py returns 409 interject_run_changed when enqueue_interjection rejects after queue claim, after calling hq.release_interject; it also returns 409 interject_no_live_run when no handle is present.",
+        "Existing S15 _one_tool_sample already verifies a 409 case ends with final done, item queued and model_saw_interject false.",
+        "New deterministic route regression and existing stale-generation regression passed together: 2 passed, 34 deselected; Ruff and py_compile passed."
+      ],
+      "verification_level": "Static and two targeted queue regressions PASS; full S15 timing test, independent GLM-5.3 review, exact-head original R9 CLEAN and remote CI still required.",
+      "model_evidence_veto_recovery_exit": "Do not treat arbitrary 409/503 as natural completion. Any non-whitelisted error, missing queued restoration, model-visible interjection, R9 failure, FLAKY-PASS or remote red blocks release; do not mark S15 serial or widen timing.",
+      "rollback_route": "Revert only test-helper whitelist, deterministic regression and A.5 declaration; production route and services unchanged.",
+      "declaration_id": "reuse-existing-s15-race-and-queue-tests"
+    },
+    {
+      "component_id": "a5-submission-s15",
+      "paths": [
+        "docs/governance/submissions/20261115-s15-interject-race-409.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing A.5 architecture submission gate",
+      "disposition": "One required machine-readable declaration for exact three changed paths, no gate script or policy changes.",
+      "evidence": [
+        "A.5 PR gate requires a single changed submission manifest with exact changed-path coverage."
+      ],
+      "verification_level": "Local A.5 PASS required before review; remote A.5 PASS required before merge.",
+      "model_evidence_veto_recovery_exit": "A.5 presence check is not a semantic proof; reviewer and original full R9 remain mandatory.",
+      "rollback_route": "Revert with the isolated S15 test patch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-s15-race-and-queue-tests",
+      "g1": {
+        "necessity": "Existing S15 accepts 409 interject_no_live_run as legitimate natural completion but rejects 409 interject_run_changed, which the production endpoint emits after the same run ends between queue claim and mailbox enqueue, restoring the human turn to queued. This mismatch caused a specific first-round CI failure."
+      },
+      "g2": {
+        "authority_owner": "Existing src/llm_loop/web/routes.py endpoint semantics and tests/phase4/test_m0_scenarios.py S15 test; existing tests/web/test_chat_queue.py route regression suite.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing S15 helper and Web queue test, no new runner, no new status semantics, no production code, no timeout change and no serial marker."
+      },
+      "g3": {
+        "model_evidence": [
+          "Exact merged-main GitHub run 43701707213 had S15 test failure: HTTP 409 interject_run_changed, then serial and same-parallel retry passed, yielding FLAKY-PASS despite GitHub success.",
+          "Route implementation releases claimed queue item on enqueue failure and returns the precise 409; S15 postconditions already require final done, queued and not model-consumed.",
+          "Deterministic after-claim failure regression and existing stale-generation test both passed in isolated candidate (2 passed); original S15 under load and full R9 remain unverified."
+        ],
+        "recovery_or_reason": "Preserve legitimate natural-completion branch without masking loss or arbitrary errors; if a 409 does not leave the turn queued or a run does not finish normally, fail and investigate actual production queue behavior."
+      },
+      "g4": {
+        "rollback": "Revert this isolated test-only change and governance manifest; no production state touched.",
+        "verification": [
+          "Exact changed files: tests/phase4/test_m0_scenarios.py, tests/web/test_chat_queue.py, and this A.5 JSON only.",
+          "Before PR merge require independent GLM-5.3 PASS P0/P1=0, original complete R9 CLEAN exit0, exact PR SHA remote CI and no unexpected first-round failures."
+        ]
+      }
+    }
+  ]
+}

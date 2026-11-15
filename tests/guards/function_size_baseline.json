@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "b49b89164",
+    "head_commit": "7faa0c7d8",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1185,7 +1185,7 @@
     "src/llm_loop/tools/review_host_admission.py::_source_snapshot": 15,
     "src/llm_loop/tools/review_host_admission.py::_source_snapshot_sections": 243,
     "src/llm_loop/tools/review_host_admission.py::poll": 67,
-    "src/llm_loop/tools/review_host_admission.py::start": 73,
+    "src/llm_loop/tools/review_host_admission.py::start": 99,
     "src/llm_loop/tools/safety.py::_scan_tokens": 230,
     "src/llm_loop/web/__init__.py::build_app": 144,
     "src/llm_loop/web/__init__.py::main": 147,
@@ -1203,9 +1203,11 @@
     "src/llm_loop/workspace/human_file_ops.py::edit": 137,
     "src/llm_loop/introspection/tools_lane.py::run_lane_reap": 132,
     "src/llm_loop/core/loop/engine_services/observation_visibility.py::_qualified_exact_ref_projection": 174,
-    "src/llm_loop/core/loop/engine_services/observation_visibility.py::ensure_latest_observation_visible": 144,
+    "src/llm_loop/core/loop/engine_services/observation_visibility.py::ensure_latest_observation_visible": 143,
     "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 192,
-    "src/llm_loop/tools/builtin/execute_command.py::execute": 234
+    "src/llm_loop/tools/builtin/execute_command.py::execute": 234,
+    "src/llm_loop/tools/review_host_admission.py::_consume_joint_push_batches": 131,
+    "src/llm_loop/tools/review_host_admission.py::_target": 163
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
@@ -1236,7 +1238,7 @@
     "src/llm_loop/cli.py::application_main": 323,
     "src/llm_loop/config.py::load_settings": 370,
     "src/llm_loop/core/history.py::build_history_messages": 745,
-    "src/llm_loop/core/loop/engine.py::_run_stream_inner": 2215,
+    "src/llm_loop/core/loop/engine.py::_run_stream_inner": 2207,
     "src/llm_loop/core/loop/lifecycle.py::run_stream": 311,
     "src/llm_loop/factory.py::build_engine": 2157,
     "src/llm_loop/llm/client.py::_stream_openai": 433,
