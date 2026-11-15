@@ -32,7 +32,7 @@
       "owning_subsystem": "Existing pytest fake transport and privacy guard regression suite",
       "disposition": "Use only synthetic environment secrets and fake Provider transport to verify late historical tool content, nested tool arguments and schemas, GuardRequestContext, signed-field denial, copy-on-write preservation, clean prefix identity, failure-closed behavior, other strong patterns and session isolation.",
       "evidence": [
-        "138 related privacy/cache_guard/LLMClient tests PASS; 43 observation/architecture guard tests PASS, with overlap not counted as unique",
+        "147 related privacy/cache_guard/LLMClient tests PASS including four actual fake-transport protocol payloads; 43 observation/architecture guard tests PASS, with overlap not counted as unique",
         "No actual Provider calls, no real secret values in test fixtures, no durable Session rewrite"
       ],
       "verification_level": "Deterministic offline tests only; final full R9 and remote CI still required.",

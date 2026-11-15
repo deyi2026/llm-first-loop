@@ -143,8 +143,12 @@ def test_guard_context_uses_redacted_system_and_is_not_mutated(monkeypatch, tmp_
         client = _client(tmp_path)
         guard = client.ensure_guard()
         with mock.patch.object(guard, "check", wraps=guard.check) as spy:
-            response = client.chat([{"role": "user", "content": "hi"}], [], guard_context=ctx)
+            response = client.chat([
+                {"role": "system", "content": "system " + SECRET},
+                {"role": "user", "content": "hi"},
+            ], [], guard_context=ctx)
             assert SECRET not in spy.call_args.kwargs["system_text"]
+            assert SECRET not in json.dumps(cls.return_value.stream.call_args.kwargs["json"])
         assert response.content == "ok"
     assert ctx.system_text.endswith(SECRET)
 
@@ -166,3 +170,81 @@ def test_no_cross_session_secret_state(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", second)
     b, _, _, _ = redact_provider_request([{"role": "user", "content": second}], [], "")
     assert first not in a[0]["content"] and second not in b[0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("protocol", "lines"),
+    [
+        ("openai", [
+            'data: {"choices": [{"delta": {"content": "ok"}}]}',
+            'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ]),
+        ("anthropic", [
+            'data: {"type":"message_start","message":{"id":"m","usage":{}}}',
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+            'data: {"type":"message_stop"}',
+        ]),
+        ("google", [
+            'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}',
+        ]),
+        ("lms-chat", [
+            'data: {"type":"message.delta","content":"ok"}',
+            'data: {"type":"chat.end","result":{}}',
+        ]),
+    ],
+)
+def test_all_protocols_wire_payload_is_sanitized(monkeypatch, tmp_path, protocol, lines):
+    monkeypatch.setenv("LLM_API_KEY", SECRET)
+    messages = [
+        {"role": "system", "content": "system " + SECRET},
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "old tool observation: " + SECRET},
+        {"role": "user", "content": "continue"},
+    ]
+    tools = [{"type": "function", "function": {
+        "name": "lookup", "description": "tool info " + SECRET,
+        "parameters": {"type": "object", "properties": {}},
+    }}]
+    with mock.patch("httpx.Client") as cls:
+        cls.return_value.stream.return_value = _Stream()
+        cls.return_value.stream.return_value.iter_lines = lambda: iter(lines)
+        client = LLMClient(
+            api_key="k", base_url="https://fake.local/v1", model="m",
+            wire_protocol=protocol, guard_audit_file=tmp_path / f"{protocol}.jsonl",
+        )
+        response = client.chat(messages, tools)
+        payload = cls.return_value.stream.call_args.kwargs["json"]
+    assert response.content == "ok"
+    assert SECRET not in json.dumps(payload, ensure_ascii=False)
+    assert SECRET in messages[0]["content"] and SECRET in tools[0]["function"]["description"]
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic", "google", "lms-chat"])
+def test_all_protocols_signed_secret_denied_before_transport(monkeypatch, tmp_path, protocol):
+    monkeypatch.setenv("LLM_API_KEY", SECRET)
+    with mock.patch("httpx.Client") as cls:
+        client = LLMClient(
+            api_key="k", base_url="https://fake.local/v1", model="m",
+            wire_protocol=protocol, guard_audit_file=tmp_path / f"{protocol}.jsonl",
+        )
+        with pytest.raises(CacheGuardBlockedError):
+            client.chat([{"role": "assistant", "reasoning_details": [{
+                "signature": "signed", "text": SECRET,
+            }]}], [])
+        cls.return_value.stream.assert_not_called()
+
+
+def test_redacted_json_tool_arguments_remain_valid(monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", SECRET)
+    raw = [{"role": "assistant", "tool_calls": [{
+        "id": "c", "type": "function", "function": {
+            "name": "lookup", "arguments": json.dumps({"nested": {"secret": SECRET}}),
+        },
+    }]}]
+    safe, _, _, count = redact_provider_request(raw, [], "")
+    assert count > 0
+    args = json.loads(safe[0]["tool_calls"][0]["function"]["arguments"])
+    assert SECRET not in json.dumps(args)
+    assert json.loads(raw[0]["tool_calls"][0]["function"]["arguments"])["nested"]["secret"] == SECRET
