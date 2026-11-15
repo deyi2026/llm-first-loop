@@ -149,3 +149,18 @@ Additional reviewer P2 disposition:
 
 No direct service restart, forced idle override, or `all` semantics change
 was introduced by these repairs.
+
+## P2 closure after the exact-SHA review
+
+GLM-5.3 review of `83288ef3` returned PASS/P0=0/P1=0/P2=4. The worker
+identity P2 was addressed by validating `release_id` and `data_dir` from the
+opened journal against the requested path in both the worker entry and the
+locked coordinator; read-only status also validates identity. Negative tests
+cover swapped release IDs and data directories before any CAS or restart.
+
+The source-checkout Python path is intentionally derived from this module's
+package root. Installed wheel/Deepin rollout remains out of scope. PID/lock
+handoff and fake-store test coverage remain explicitly documented residuals;
+no real service was restarted by these tests. The production release still
+requires independent review of the revised SHA, original R9 exit 0 and
+exact-SHA GitHub CI before any operator-controlled switch.

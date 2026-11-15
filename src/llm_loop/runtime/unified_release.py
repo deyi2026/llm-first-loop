@@ -55,6 +55,13 @@ def _read(path: Path) -> dict[str, Any]:
     return data
 
 
+def _read_bound_request(path: Path, release_id: str, data_dir: Path) -> dict[str, Any]:
+    state = _read(path)
+    if state.get("release_id") != release_id or state.get("data_dir") != str(data_dir):
+        raise ValueError("unified release journal identity mismatch")
+    return state
+
+
 def _save(path: Path, state: dict[str, Any], **updates: Any) -> None:
     state.update(updates)
     state["updated_at"] = _now()
@@ -311,7 +318,7 @@ def run_release(
                 if time.monotonic() >= deadline:
                     raise ReleaseAlreadyRunningError("unified release already running") from exc
                 time.sleep(0.1)
-        state = _read(journal)
+        state = _read_bound_request(journal, release_id, Path(store.data_dir))
         return _run_locked(store, journal, state, timeout_s=timeout_s, poll_s=poll_s)
     finally:
         os.close(fd)
@@ -396,13 +403,14 @@ def main(args: argparse.Namespace) -> int:
     journal, _, log = _paths(data_dir, args.release_id)
     if args.status_only:
         # Status is a pure observation; do not create directories or lock files.
-        print(json.dumps(_read(journal), ensure_ascii=False, sort_keys=True))
+        print(json.dumps(_read_bound_request(journal, args.release_id, data_dir), ensure_ascii=False, sort_keys=True))
         return 0
     journal.parent.mkdir(parents=True, exist_ok=True)
     if journal.is_symlink():
         raise ValueError("unified release journal must not be a symlink")
     if args.worker:
         try:
+            _read_bound_request(journal, args.release_id, data_dir)
             result = run_release(sc.ManagedServiceDeploymentStore(data_dir), args.release_id, lock_wait_s=5)
             return 0 if result["status"] == "succeeded" else 1
         except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
@@ -440,9 +448,7 @@ def main(args: argparse.Namespace) -> int:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
-    state = _read(journal)
-    if state["release_id"] != args.release_id or state["data_dir"] != str(data_dir):
-        raise ValueError("journal identity mismatch")
+    state = _read_bound_request(journal, args.release_id, data_dir)
     if args.code_root and str(Path(args.code_root).expanduser().resolve()) != state["code_root"]:
         raise ValueError("code-root does not match durable release request")
     if args.runtime_root and str(Path(args.runtime_root).expanduser().resolve()) != state["runtime_root"]:

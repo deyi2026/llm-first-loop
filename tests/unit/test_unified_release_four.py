@@ -567,3 +567,20 @@ def test_adopted_external_wecom_failed_while_waiting_blocks_no_replay(rig):
         ur.run_release(rig.store, "release-test", timeout_s=0, poll_s=0)
     assert len(rig.store.actions) == 2
     assert rig.store.calls == []
+
+
+def test_worker_rejects_journal_identity_swap_before_cas(rig, monkeypatch, capsys):
+    ur._save(rig.journal, ur._read(rig.journal), release_id="different-release")
+    monkeypatch.setattr(ur.sc, "ManagedServiceDeploymentStore", lambda path: rig.store)
+    assert ur.cli(["--release-id", "release-test", "--data-dir", str(rig.store.data_dir), "--worker"]) == 1
+    assert "identity mismatch" in capsys.readouterr().err
+    assert rig.store.calls == []
+    assert not rig.store.actions
+
+
+def test_direct_resume_rejects_journal_data_dir_swap(rig):
+    ur._save(rig.journal, ur._read(rig.journal), data_dir="/tmp/other-data")
+    with pytest.raises(ValueError, match="journal identity mismatch"):
+        ur.run_release(rig.store, "release-test", timeout_s=0.1, poll_s=0)
+    assert rig.store.calls == []
+    assert not rig.store.actions
