@@ -448,7 +448,7 @@ def test_method_startup_warmup_has_a_hard_candidate_budget_and_status_diversity(
 
 def test_new_method_candidate_vectors_after_durable_write(tmp_path):
     methods = MethodStore(tmp_path / "methods")
-    emb = _FakeAPI(prewarm_delay=0.05)
+    emb = _GatedAPI()
     retriever = SemanticRetriever(emb, timeout_s=1.0)
     retriever.configure_method_dir(tmp_path / "methods")
     methods.add_post_save_hook(
@@ -457,7 +457,6 @@ def test_new_method_candidate_vectors_after_durable_write(tmp_path):
         )
     )
 
-    started = time.monotonic()
     target = methods.save_candidate(
         name="Cache truth source",
         description="Use provider usage counters as the authoritative cache-hit source.",
@@ -467,9 +466,16 @@ def test_new_method_candidate_vectors_after_durable_write(tmp_path):
             "## Verification\ncompare counter delta\n\n## Counterexamples\nprompt length inference"
         ),
     )
-    save_ms = (time.monotonic() - started) * 1000
-    assert save_ms < 30
+    # Prove the durable save returned while vectorization remains blocked,
+    # without a CI-runner-dependent wall-clock threshold.
+    try:
+        assert emb.entered.wait(2.0), "background vectorization never started"
+        assert not emb.returned, "save waited for background vectorization"
+        assert retriever._background_diag_snapshot()["background_prewarm_inflight"] is True
+    finally:
+        emb.release.set()
     _wait_background(retriever)
+    assert emb.returned
 
     result = retriever.search(
         "how should cache hit truth be measured",
