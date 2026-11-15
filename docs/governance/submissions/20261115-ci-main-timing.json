@@ -17,7 +17,8 @@
       ],
       "verification_level": "Local 25 focused passed; 3 xdist rounds 49 passed each; serial_perf 1 passed; exact-head original full R9 and remote CI required before merge.",
       "model_evidence_veto_recovery_exit": "No relaxation of performance thresholds or bypass of CI. Missing serial_perf collection, serial test failure, or changed coverage is a hard stop.",
-      "rollback_route": "Revert the single serial_perf node-id registration; existing serial_perf mechanism and thresholds remain unchanged."
+      "rollback_route": "Revert the single serial_perf node-id registration; existing serial_perf mechanism and thresholds remain unchanged.",
+      "declaration_id": "reuse-existing-serial-perf-lane"
     },
     {
       "component_id": "sigkill-marker-atomic",
