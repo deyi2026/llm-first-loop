@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261115-evo34ae-git-push-batches",
-  "summary": "Integrate EVO-20261115-34ae7c99(A) git_push batch joint coverage on remote main 55d2698; minimal Pyright mixed-metadata type correction, tests, knowledge and A.5 declaration; no bypass or production action.",
+  "summary": "Integrate EVO-20261115-34ae7c99(A) git_push batch joint coverage on remote main 55d2698; correct mixed-metadata Pyright types and register two independently reviewed function-size growths via guard(r9); preserve negative tests, knowledge and exact A.5 declaration. No bypass or production action.",
   "components": [
     {
       "component_id": "host-review-admission",
@@ -14,12 +14,31 @@
       "evidence": [
         "c4bcc243 implementation; 4 annotation-only changes after first R9 Pyright errors",
         "Independent GLM-5.3 reviewer PASS P0/P1=0, P2=2 on 41baa170; final SHA re-review required",
-        "First full R9 on 41baa170 exit 1 from 5 Pyright errors; no passing claim"
+        "First full R9 on 41baa170 exit 1 from 5 Pyright errors; no passing claim",
+        "Full R9 on 25829d3b exit1 at Tier-0 function-size guard; official guard(r9) registration added in b5a21f0e6, final R9 pending"
       ],
       "verification_level": "Independent GLM-5.3 PASS P0/P1=0 on frozen pre-fix 41baa170; minimal type-only gate fix and exact final SHA re-review/R9/remote CI still required.",
       "model_evidence_veto_recovery_exit": "Review approval never replaces HostReviewAdmission grant or authorizes push; fail closed on stale/partial/missing approvals.",
       "rollback_route": "Revert this candidate and preserve previously validated main; managed rollback only if a deployment is separately authorized.",
       "declaration_id": "reuse-review-host-admission"
+    },
+    {
+      "component_id": "function-size-guard",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing AST function-size ratchet and guard(r9) baseline registration",
+      "disposition": "Register exact reviewed start() 73→99 and _target() new 163 AST lines, plus tightened observation_visibility bound 144→143; preserve thresholds and test logic.",
+      "evidence": [
+        "First full R9 25829d3b exit1 at tier0: start 99>73 and _target 163 not registered",
+        "Official regen_function_size_baseline.py --only function_lines changed only function_lines keys; guard(r9) b5a21f0e6",
+        "Targeted guard test passed 1/1 after registration"
+      ],
+      "verification_level": "Function-size guard unit passed after registration; exact final SHA independent review and full R9 still required.",
+      "model_evidence_veto_recovery_exit": "The size ledger registers reviewed growth, not permission to bypass host authorization, skip negative tests or claim full R9 PASS.",
+      "rollback_route": "Revert guard(r9) registration with the related reviewed code if the feature is rolled back.",
+      "declaration_id": "existing-function-size-guard"
     },
     {
       "component_id": "negative-regressions",
@@ -98,6 +117,33 @@
           "Final exact SHA independent GLM-5.3 review PASS P0/P1=0",
           "Original full R9 true exit 0 with Pyright complete and focused tests",
           "Exact remote GitHub CI/A.5/privacy PASS and PR review before main integration"
+        ]
+      }
+    },
+    {
+      "declaration_id": "existing-function-size-guard",
+      "g1": {
+        "necessity": "The original AST ratchet correctly blocked reviewed new git_push batch code until exact function-size deltas were registered; registration must remain auditable and narrowly scoped."
+      },
+      "g2": {
+        "authority_owner": "Existing tests/unit/test_arch_guards.py and tests/guards/function_size_baseline.json",
+        "relationship": "reuse",
+        "non_duplication": "No changes to guard logic, thresholds or test exclusions; official generator updates measured values only under guard(r9) commit."
+      },
+      "g3": {
+        "model_evidence": [
+          "First final R9 on 25829d3b exit1 at tier0, two exact size redlines",
+          "Guard regeneration b5a21f0e6 and targeted AST ratchet test 1 passed",
+          "GLM-5.3 code review PASS P0/P1=0 before ledger update; exact final SHA re-review required"
+        ],
+        "recovery_or_reason": "Fail closed on any unregistered growth; do not disable or skip the guard. Revert guard registration if the related code is reverted."
+      },
+      "g4": {
+        "rollback": "Revert function-size ledger registration with the reviewed implementation; preserve original guard test and thresholds.",
+        "verification": [
+          "Guard test 1 passed after official regeneration",
+          "Exact final SHA full R9 exit0 still required",
+          "GitHub PR A.5 and remote CI on exact SHA required"
         ]
       }
     }
