@@ -1206,7 +1206,8 @@
     "src/llm_loop/core/loop/engine_services/observation_visibility.py::ensure_latest_observation_visible": 143,
     "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 192,
     "src/llm_loop/tools/builtin/execute_command.py::execute": 234,
-    "src/llm_loop/tools/review_host_admission.py::_target": 163
+    "src/llm_loop/tools/review_host_admission.py::_target": 163,
+    "src/llm_loop/tools/review_host_admission.py::_consume_joint_push_batches": 131
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
