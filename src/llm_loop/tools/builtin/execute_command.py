@@ -105,6 +105,18 @@ def _pin_bwrap_bind_source(argv: list[str], canonical_path: str, fd: int) -> lis
     result[hits[0]] = f"/proc/self/fd/{fd}"
     return result
 
+
+def _verify_host_grant_file(ctx: dict) -> None:
+    """sandbox-exec 后端（EVO-20261115-488367d4 P0-1）：spawn 前即时复验授权文件.
+
+    与 FD 固定同一套校验（O_NOFOLLOW + regular + inode + sha256），但不保留
+    fd——sandbox-exec 无 FD 传递通道，写授权经 Seatbelt writable_roots 路径名
+    生效；校验到 Popen 前一刻，残余竞态由 Seatbelt 写域兜底（symlink 指向
+    可写根外的目标仍会被 profile 拒绝写入）。
+    """
+    fd = _open_pinned_host_grant_file(ctx)
+    os.close(fd)
+
 # EVO-20260814-61a52baf: 执行环境清洗（Harness defensive-patterns #6）
 # 不给不可信输出 ambient environment：密钥类环境变量一律剔除，白名单基础键强制保留，
 # 其余非敏感键保留（避免破坏 git/ssh/代理等正常功能，零回归）。
@@ -439,8 +451,9 @@ class ExecuteCommandTool:
                     "host_access_request 申请、web 面板**已登录会话**人工批准后由 "
                     "escalation_wait 返回。grant 绑定精确命令文本/cwd/会话/路径/文件"
                     "版本，任何一项不同都会被拒；单次消费（执行尝试即消耗）；"
-                    "执行必须启用沙箱（none/docker 拒绝），授权文件以精确单文件 "
-                    "ro-bind/bind 注入沙盒。与 escalation_id/escalation_token 互斥。"
+                    "执行必须启用沙箱（none/docker 拒绝），授权文件以精确单文件注入"
+                    "沙盒（bwrap=ro-bind/bind FD 固定；sandbox-exec=可写根追加，"
+                    "EVO-20261115-488367d4）。与 escalation_id/escalation_token 互斥。"
                 ),
             },
         },
@@ -1055,6 +1068,19 @@ class ExecuteCommandTool:
             errs.append("docker 后端暂不支持 host-grant 单文件绑定（P0: bwrap/sandbox-exec）")
         elif self._sandbox_mode == "bwrap" and shutil.which("bwrap") is None:
             errs.append("bwrap 不可用（fail-closed：提前拒绝，不消耗人工审批）")
+        elif self._sandbox_mode == "sandbox-exec":
+            from llm_loop.tools.sandbox import sandbox_exec_available
+
+            if not sandbox_exec_available():
+                errs.append("sandbox-exec 不可用（fail-closed：提前拒绝，不消耗人工审批）")
+        elif self._sandbox_mode == "auto":
+            from llm_loop.tools.sandbox import resolve_auto_backend
+
+            _mode, _why = resolve_auto_backend()
+            # resolve_auto_backend 只返回探测可用的后端（审查 rev1 P2-2：不再重复
+            # 探测）；此处只做白名单收口——docker/none 提前拒绝，不消耗人工审批。
+            if _mode not in ("bwrap", "sandbox-exec"):
+                errs.append(f"auto 后端解析为 {_mode}（host-grant 仅支持 bwrap/sandbox-exec，fail-closed）")
         if errs:
             return None, ToolResult(
                 status=ToolResultStatus.ERROR,
@@ -1674,10 +1700,13 @@ class ExecuteCommandTool:
             backend = sandbox_mode(self._sandbox_mode)
             if backend == "auto":
                 backend, _reasons = resolve_auto_backend()
-            if backend != "bwrap":
+            if backend not in ("bwrap", "sandbox-exec"):
                 return ToolResult(
                     status=ToolResultStatus.ERROR,
-                    content="[host-grant 拒绝] P0 单文件授权仅支持 Linux bwrap 的 FD 固定挂载；其他后端 fail-closed",
+                    content=(
+                        "[host-grant 拒绝] P0 单文件授权仅支持 bwrap 的 FD 固定挂载与"
+                        f" sandbox-exec 的可写根追加（EVO-20261115-488367d4）；当前后端 {backend} fail-closed"
+                    ),
                     error_type="host_grant_backend_unpinned",
                     tool_call_id="",
                     tool_name=self.name,
@@ -1710,7 +1739,13 @@ class ExecuteCommandTool:
                     tool_name=self.name,
                 )
             try:
-                pinned_grant_fd = _open_pinned_host_grant_file(grant_ctx)
+                if backend == "bwrap":
+                    pinned_grant_fd = _open_pinned_host_grant_file(grant_ctx)
+                else:
+                    # sandbox-exec（EVO-20261115-488367d4）：无 FD 传递通道，可写根
+                    # 走路径名；spawn 前一刻同标准复验（O_NOFOLLOW+inode+sha），
+                    # 残余竞态由 Seatbelt 写域兜底（symlink 目标在可写根外仍被拒）。
+                    _verify_host_grant_file(grant_ctx)
             except (OSError, ValueError) as exc:
                 return ToolResult(
                     status=ToolResultStatus.ERROR,
@@ -1728,14 +1763,24 @@ class ExecuteCommandTool:
                 f"grant={host_grant_id} 已消费（单次）\n"
             )
             if grant_ctx["operation"] == "write":
-                # P0 补修(2026-11-14): 沙盒诚实性——bwrap 下未 bind 路径的写
-                # 可能落入沙盒私有层（如 --tmpfs /tmp）exit0 但宿主无变化；
-                # 回执必须区分"授权 bind 文件的宿主写"与"无宿主效果的成功码"。
-                host_grant_note += (
-                    "[host-grant] 宿主写效果仅保证授权 bind 的目标文件；"
-                    "命令中写其他未授权路径可能 exit0 而宿主无变化"
-                    "（沙盒私有层，如 bwrap tmpfs），勿视为外部写成功\n"
-                )
+                if backend == "bwrap":
+                    # P0 补修(2026-11-14): 沙盒诚实性——bwrap 下未 bind 路径的写
+                    # 可能落入沙盒私有层（如 --tmpfs /tmp）exit0 但宿主无变化；
+                    # 回执必须区分"授权 bind 文件的宿主写"与"无宿主效果的成功码"。
+                    host_grant_note += (
+                        "[host-grant] 宿主写效果仅保证授权 bind 的目标文件；"
+                        "命令中写其他未授权路径可能 exit0 而宿主无变化"
+                        "（沙盒私有层，如 bwrap tmpfs），勿视为外部写成功\n"
+                    )
+                else:
+                    # sandbox-exec：写域即 Seatbelt profile（deny file-write* + 可写根）。
+                    # 授权文件与既有可写根之外的写被内核拒绝（exit 非零）——不是
+                    # bwrap 式静默私有层；既有可写根（工作区/缓存）的写=真实宿主效果。
+                    host_grant_note += (
+                        "[host-grant] 宿主写效果=授权文件与既有可写根（工作区/缓存，"
+                        "真实落盘）；授权文件与既有可写根之外的路径会被沙箱 profile "
+                        "拒绝（命令报错非零退出），勿视为外部写成功\n"
+                    )
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()

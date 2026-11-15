@@ -207,6 +207,39 @@ def test_real_bwrap_default_deny_and_grant_write(ctx):
         shutil.rmtree(outside_root, ignore_errors=True)
 
 
+# ── 3b. EVO-20261115-488367d4 P0-1: sandbox-exec 后端真执行（环境感知） ──
+
+def test_grant_sandbox_exec_real_write(store, gstore, ctx):
+    """macOS sandbox-exec 真执行：授权单文件写入 + 未授权路径仍拒.
+
+    嵌套沙箱上下文（pytest 在 LFL 会话内运行）内层 sandbox-exec 套用必
+    EPERM——无法从会话内证明真执行；本用例仅在 `_sandbox_usable(
+    "sandbox-exec")` 真探测可用（宿主/裸机 runner）时运行，否则 skip 并由
+    tests/unit/test_host_grant_sandbox_exec.py 覆盖管道层（argv/profile/
+    消费穿线/预检）。
+    """
+    if not _sandbox_usable("sandbox-exec"):
+        pytest.skip("嵌套沙箱上下文：sandbox-exec 内层套用必拒（真执行由裸机 runner 覆盖）")
+    outside = ctx.parent / "outside-sbx"
+    outside.mkdir()
+    target = (outside / "e2e-target.txt").resolve()
+    target.write_text("before", encoding="utf-8")
+    sibling = outside / "not-authorized.txt"
+    sibling.write_text("untouched", encoding="utf-8")
+    cmd = f"printf after > {target}"
+    gid = _full_pipeline(store, gstore, ctx, target, operation="write", command=cmd)
+    tool = ExecuteCommandTool(timeout_s=20, sandbox_mode="sandbox-exec")
+    r1 = tool.execute(command=cmd, host_grant_id=gid, workdir=str(ctx))
+    assert r1.status.name == "SUCCESS", r1.content
+    assert target.read_text(encoding="utf-8") == "after"
+    assert sibling.read_text(encoding="utf-8") == "untouched"
+    assert "[host-grant]" in r1.content and "会被沙箱 profile 拒绝" in r1.content
+    # 单次消费：重放拒绝
+    r2 = tool.execute(command=cmd, host_grant_id=gid, workdir=str(ctx))
+    assert r2.status.name == "ERROR"
+    assert "已用" in r2.content or "消费失败" in r2.content
+
+
 # ── 4. grant 与灾难提权令牌互斥 ───────────────────────────
 
 def test_grant_mutually_exclusive_with_catastrophic_token(store, gstore, ctx):

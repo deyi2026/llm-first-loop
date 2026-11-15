@@ -82,7 +82,8 @@ class HostAccessRequestTool:
         "沙盒外单个既存文件 read/write 的人工授权申请（DESIGN-20261114 Deepin P0）。"
         "申请内容服务端冻结：会话/工具/cwd/真实路径/文件 sha256/精确命令文本，"
         "web 审批面板人工批准后签发一次性持久 grant（默认 600s 过期），"
-        "凭 execute_command(host_grant_id=...) 在沙盒内以精确单文件 bind 执行一次。"
+        "凭 execute_command(host_grant_id=...) 在沙盒内以精确单文件授权执行一次"
+        "（后端：Linux bwrap=FD 固定挂载；macOS sandbox-exec=可写根追加，EVO-20261115-488367d4）。"
         "仅支持既存常规单文件（symlink/目录/不存在/通配符拒绝）；operation 仅 read|write；"
         "command 必须与随后 execute_command 的 command 参数逐字一致；"
         "批准通道仅限已登录浏览器会话（未登录 loopback/Bearer 不能自批）。"
@@ -98,7 +99,7 @@ class HostAccessRequestTool:
             "operation": {
                 "type": "string",
                 "enum": ["read", "write"],
-                "description": "read=沙盒内只读可见（--ro-bind）；write=沙盒内可写（--bind，文件级）",
+                "description": "read=沙盒内只读可见（bwrap --ro-bind；sandbox-exec 读本就放开，授权仍冻结文件版本与单次语义）；write=沙盒内可写（bwrap --bind / sandbox-exec 可写根，文件级）",
             },
             "command": {
                 "type": "string",
