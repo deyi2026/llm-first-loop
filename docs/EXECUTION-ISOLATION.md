@@ -3,6 +3,38 @@
 > 状态：v0.6.14 起生效。本文如实声明 `execute_command` 在不同配置下的**实际**隔离能力与边界，
 > 不宣称未实现的安全性。代码实现见 `src/llm_loop/tools/sandbox.py`。
 
+## 2026-11-15 P0-3：受管审计账本隔离（隔离候选，尚未生产发布）
+
+受管 `factory.py` 向 `ExecuteCommandTool` 注入可信的 `settings.audit_dir`，
+`sandbox_argv(protected_roots=...)` 在命令前核验审计目录与 inode 链接数，
+拒绝预置 hardlink 和关键账本 symlink。此检查是对工具写权限的**补充**，
+并不授予 Goal 跨会话权限。
+
+- **Mac sandbox-exec**：在既有工作区/缓存可写规则之后，对 audit 子树加
+  `deny file-write*`，并对每一级祖先加 `deny file-write* literal`。
+  只拒绝目录自身的移动/删除等操作，不妨碍同父目录普通文件写入。
+  临时假账本真实 `ExecuteCommandTool` 验证：直接写失败、正常文件成功；
+  单独 `deny subpath` 会被父目录重命名绕过，故祖先规则是必要条件。
+- **Linux bwrap**：`--bind workdir workdir` 后依次对 audit 的各级父目录
+  做 **rw self-bind** 固定挂载点，最后 `--ro-bind audit audit`。
+  在 Deepin Deepin 验收主机 的 /tmp 临时目录实测：直接写、symlink、
+  祖先 rename、link、umount 均被拒绝；正常 sibling 写入成功。
+  仅 ro-bind audit 不足：父目录 rename 可使受管路径失效。
+- **Docker**：按相同顺序加入父目录 rw bind mount 和 audit readonly bind mount；
+  只在 audit 位于 workdir 内时挂载，workdir 外的审计目录**不得因保护而被暴露**。
+  已做 argv/单元验证；由于验收机无现成镜像，尚未真运行容器，不可宣称已通过。
+- **none / auto→none**：仍为显式受信宿主模式，无内核写隔离；
+  有受管 audit 时回执会标“审计账本未受沙箱写隔离”。
+  多 Agent 非受信任务必须启用可用后端与 `EXEC_SANDBOX_STRICT=1`，
+  不得将 none 模式记为 P0 完成。
+- **host-grant**：受管 audit 下的单文件绑定在预检阶段拒绝，不消耗批准；
+  即使额外可写根覆盖 audit，最后的 Mac deny / Linux readonly mount 仍优先。
+- **路径别名/残余风险**：预置硬链接在 Mac 上真实可绕过单纯路径 deny，
+  因此每次执行前扫描受管目录并拒绝 `st_nlink != 1`。
+  文件/目录在可信并行进程变更时存在 TOCTOU，且其它独立文件工具尚未纳入
+  同一物理隔离门；本批次**不宣称所有 Agent 写入口的端到端强制 ACL**。
+  真实数据/服务未在本测试中修改。
+
 ## 运行条件（由 `EXEC_SANDBOX` 决定）
 
 | 条件 | 配置 | 平台 | 隔离强度 | 网络隔离 |

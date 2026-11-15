@@ -1026,6 +1026,14 @@ class ExecuteCommandTool:
                 errs.append("授权路径已成为符号链接（symlink 替换拒绝）")
             if not os.path.isfile(canonical):
                 errs.append("授权路径已不是常规文件（删除/权限/类型变化拒绝）")
+        # P0-3: a user-approved host-file grant must not become an alternate
+        # route to mutate the runtime's own Goal/Task/approval audit ledger.
+        # Reject during peek/preflight, BEFORE the single-use grant is consumed.
+        if canonical and self._safety_audit_dir is not None:
+            audit_root = os.path.realpath(str(self._safety_audit_dir))
+            target_real = os.path.realpath(canonical)
+            if os.path.commonpath((target_real, audit_root)) == audit_root:
+                errs.append("受管审计账本不接受 host-grant 读写绑定（fail-closed）")
         binding = grant.get("request_binding") or {}
         # ── P0 补修(2026-11-14): 绑定完整性 fail-closed——request_binding
         # 缺任一必备字段（或整段缺失/非 dict）即拒绝，不因缺字段静默跳过
@@ -1134,6 +1142,10 @@ class ExecuteCommandTool:
                 mode=self._sandbox_mode,
                 image=self._sandbox_image,
                 extra_file_binds=extra_file_binds,
+                protected_roots=(
+                    [str(self._safety_audit_dir)] if self._safety_audit_dir is not None
+                    else []
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return ToolResult(

@@ -1828,6 +1828,7 @@ def build_engine(
             sandbox_mode=settings.tool_runtime.exec_sandbox,
             sandbox_image=settings.tool_runtime.exec_sandbox_image,
             review_gate_recorder=_review_gate_recorder,
+            safety_audit_dir=settings.audit_dir,
         ),
     )
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.

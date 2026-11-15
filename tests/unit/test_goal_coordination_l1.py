@@ -95,8 +95,8 @@ def test_foreign_session_task_create_blocked(tmp_path):
     assert "reason_code=cross_session_write_denied" in res.content
 
 
-# A3: 显式跨会话授权（cross_session + reason + evidence_refs）→ allow_annotated
-def test_cross_session_authorized_allows(tmp_path):
+# A3: 模型自报的跨会话理由与 evidence_ref 不能充当可信授权
+def test_cross_session_self_claim_does_not_authorize(tmp_path):
     g = _goal(tmp_path)
     _bind(OTHER)
 
@@ -111,9 +111,9 @@ def test_cross_session_authorized_allows(tmp_path):
             "evidence_refs": ["evidence://v1/deadbeef"],
         },
     )
-    assert cp.status == ToolResultStatus.SUCCESS
-    assert "cross_session_authorized" in cp.content
-    assert len(GoalStore(str(tmp_path)).get(g.id)["checkpoints"]) == 1
+    assert cp.status == ToolResultStatus.FAILURE
+    assert "reason_code=cross_session_approval_unverified" in cp.content
+    assert len(GoalStore(str(tmp_path)).get(g.id)["checkpoints"]) == 0
 
 
 def test_cross_session_without_evidence_still_denied(tmp_path):
@@ -125,25 +125,25 @@ def test_cross_session_without_evidence_still_denied(tmp_path):
         {"goal_id": g.id, "what": "缺证据的授权", "cross_session": True, "reason": "想写"},
     )
     assert cp.status == ToolResultStatus.FAILURE
-    assert "reason_code=cross_session_write_denied" in cp.content
+    assert "reason_code=cross_session_approval_unverified" in cp.content
     assert len(GoalStore(str(tmp_path)).get(g.id)["checkpoints"]) == 0
 
 
 # A1b: 未认领 goal 允许首个写入者
-def test_unclaimed_goal_writable(tmp_path):
+def test_unclaimed_goal_read_only_until_migration(tmp_path):
     g = _goal(tmp_path, session_id="")
     _bind(OTHER)
     cp = run_checkpoint_goal(None, _host(tmp_path), {"goal_id": g.id, "what": "首写认领"})
-    assert cp.status == ToolResultStatus.SUCCESS
+    assert cp.status == ToolResultStatus.FAILURE
     assert "owner_unknown" in cp.content
 
 
 # 无 session binding: 放行但如实标注未验证（残余风险，DESIGN §7）
-def test_missing_session_binding_warns(tmp_path):
+def test_missing_session_binding_rejects(tmp_path):
     g = _goal(tmp_path)
     _bind("")
     cp = run_checkpoint_goal(None, _host(tmp_path), {"goal_id": g.id, "what": "无绑定写入"})
-    assert cp.status == ToolResultStatus.SUCCESS
+    assert cp.status == ToolResultStatus.FAILURE
     assert "session_unverified" in cp.content
 
 

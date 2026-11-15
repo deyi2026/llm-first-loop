@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
@@ -58,6 +59,7 @@ _DOCKER_INFO_TIMEOUT_S = 2.0
 # S2-6（安全建议书 2026-10-25）：note 文案必须与实际后端能力一一对应，不得夸大隔离范围。
 _BWRAP_NOTE = "（已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络）"
 _DOCKER_NOTE = "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）"
+_AUDIT_PROTECTED_NOTE = "（受管审计目录写保护已启用：普通工作区仍可写）"
 _SANDBOX_EXEC_NOTE = (
     "（已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络；"
     "已知降级：ps 为 setuid 在沙箱内 exec 即拒(EPERM)、launchctl list 空输出——"
@@ -335,11 +337,107 @@ def _bwrap_bind_args(host: str, sbx: str, access: str) -> list[str]:
     return argv
 
 
+# P0-3: never treat a model-visible audit directory as an ordinary workspace
+# subdirectory. A writable mount/Seatbelt allow on the parent must not grant
+# write access to durable Goal/Task/approval records.
+_AUDIT_CRITICAL_FILES = frozenset(
+    {"goals.jsonl", "tasks.jsonl", "task_claims.jsonl", "escalation_requests.json"}
+)
+
+
+def _inside(path: str, root: str) -> bool:
+    """Component-safe containment; no lexical-prefix or ../ ambiguity."""
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
+
+
+def _prepare_protected_roots(roots: Iterable[str]) -> list[str]:
+    """Preflight trusted audit roots; reject existing hardlink aliases.
+
+    A pre-existing hardlink outside the denied path can mutate the SAME inode
+    despite a macOS path deny or a Linux read-only bind. Fail before spawn.
+    An untrusted child cannot create new hardlinks from the protected path once
+    the policy is applied (macOS real test; Linux still needs native e2e).
+    """
+    prepared: list[str] = []
+    for raw in roots:
+        if not raw:
+            continue
+        path = os.path.abspath(os.path.expanduser(os.fspath(raw)))
+        if os.path.islink(path):
+            raise RuntimeError("protected audit root is a symlink (fail-closed)")
+        real = os.path.realpath(path)
+        if real == os.sep or not os.path.isdir(real):
+            raise RuntimeError("protected audit root is missing or unsafe (fail-closed)")
+        if real in prepared:
+            continue
+        try:
+            for directory, dirs, files in os.walk(
+                real, followlinks=False,
+                onerror=lambda exc: (_ for _ in ()).throw(exc),
+            ):
+                for name in (*dirs, *files):
+                    item = os.path.join(directory, name)
+                    info = os.lstat(item)
+                    if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
+                        raise RuntimeError(
+                            "protected audit contains pre-existing hardlink alias (fail-closed)"
+                        )
+                    if stat.S_ISLNK(info.st_mode) and name in _AUDIT_CRITICAL_FILES:
+                        raise RuntimeError(
+                            "protected audit critical ledger is a symlink (fail-closed)"
+                        )
+        except OSError as exc:
+            raise RuntimeError(
+                f"protected audit cannot be inspected ({type(exc).__name__}; fail-closed)"
+            ) from exc
+        prepared.append(real)
+    return prepared
+
+
+def _audit_overlay_roots(workdir: str, protected_roots: Iterable[str]) -> list[str]:
+    """Overlay only audit roots reachable inside the writable workspace mount.
+
+    Outside roots must NOT be mounted: that would disclose host audit records
+    to a sandbox which previously could not see them.
+    """
+    cwd = os.path.realpath(workdir)
+    result: list[str] = []
+    for root in protected_roots:
+        protected = os.path.realpath(root)
+        if _inside(cwd, protected):
+            raise RuntimeError("workdir overlaps protected audit (fail-closed)")
+        if _inside(protected, cwd):
+            result.append(protected)
+    return result
+
+
+def _audit_ancestor_mounts(workdir: str, protected_roots: Iterable[str]) -> list[str]:
+    """Pin each writable parent as a mountpoint, preventing rename-away bypass.
+
+    Linux bwrap/docker: an audit-only read-only overlay is insufficient:
+    `mv data data_old` can move the protected mount, then a new data/audit
+    can be created at the old location. A writable self-bind on each ancestor
+    makes its rename fail EBUSY without preventing writes to sibling files.
+    """
+    cwd = os.path.realpath(workdir)
+    ancestors: set[str] = set()
+    for root in _audit_overlay_roots(workdir, protected_roots):
+        parent = os.path.dirname(root)
+        while parent != cwd:
+            ancestors.add(parent)
+            parent = os.path.dirname(parent)
+    return sorted(ancestors, key=lambda p: (p.count(os.sep), p))
+
+
 def bwrap_argv(
     command: str,
     workdir: str,
     *,
     extra_file_binds: Sequence[tuple[str, str, str]] | None = None,
+    protected_roots: Iterable[str] = (),
 ) -> list[str]:
     """构造 bwrap argv（shell=False 执行，避免 shell=True 引号地狱）.
 
@@ -358,12 +456,23 @@ def bwrap_argv(
     argv += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     for host, sbx, access in validate_file_binds(extra_file_binds):
         argv += _bwrap_bind_args(host, sbx, access)
-    argv += ["--bind", workdir, workdir, "--chdir", workdir]
+    argv += ["--bind", workdir, workdir]
+    for parent in _audit_ancestor_mounts(workdir, protected_roots):
+        # Pin writable ancestors: moving a parent must not relocate the
+        # protected mount and allow a forged replacement at the old path.
+        argv += ["--bind", parent, parent]
+    for root in _audit_overlay_roots(workdir, protected_roots):
+        # Read-only overlay AFTER all writable self-binds.
+        argv += ["--ro-bind", root, root]
+    argv += ["--chdir", workdir]
     argv += ["/bin/sh", "-c", command]
     return argv
 
 
-def docker_argv(command: str, workdir: str, *, image: str = _DEFAULT_IMAGE) -> list[str]:
+def docker_argv(
+    command: str, workdir: str, *, image: str = _DEFAULT_IMAGE,
+    protected_roots: Iterable[str] = (),
+) -> list[str]:
     """构造 docker run argv（容器后端）.
 
     - --network=none: 断网（严于 bwrap）
@@ -373,7 +482,7 @@ def docker_argv(command: str, workdir: str, *, image: str = _DEFAULT_IMAGE) -> l
     """
     image = str(image or _DEFAULT_IMAGE).strip() or _DEFAULT_IMAGE
     uid, gid = os.getuid(), os.getgid()
-    return [
+    argv = [
         "docker", "run", "--rm",
         "--network=none",
         "--read-only",
@@ -382,10 +491,17 @@ def docker_argv(command: str, workdir: str, *, image: str = _DEFAULT_IMAGE) -> l
         "--tmpfs", "/tmp:rw,size=64m",
         "--user", f"{uid}:{gid}",
         "--volume", f"{workdir}:{workdir}:rw",
-        "--workdir", workdir,
-        image,
-        "sh", "-c", command,
     ]
+    for parent in _audit_ancestor_mounts(workdir, protected_roots):
+        if "," in parent:
+            raise RuntimeError("docker protected audit mount contains comma (fail-closed)")
+        argv += ["--mount", f"type=bind,source={parent},target={parent}"]
+    for root in _audit_overlay_roots(workdir, protected_roots):
+        if "," in root:
+            raise RuntimeError("docker protected audit mount contains comma (fail-closed)")
+        argv += ["--mount", f"type=bind,source={root},target={root},readonly"]
+    argv += ["--workdir", workdir, image, "sh", "-c", command]
+    return argv
 
 
 def _sbx_escape(path: str) -> str:
@@ -420,20 +536,46 @@ def macos_writable_roots(workdir: str, *, extra: Iterable[str] = ()) -> list[str
     return roots
 
 
-def sandbox_exec_profile(writable_roots: Iterable[str]) -> str:
-    """生成 Seatbelt profile：deny 全部写，再逐 subpath 放行（父代理 2026-10-25 实测形态）."""
+def sandbox_exec_profile(
+    writable_roots: Iterable[str], *, protected_roots: Iterable[str] = ()
+) -> str:
+    """Seatbelt write allow with final deny for audit and ancestor renames.
+
+    A subpath deny alone is NOT sufficient: renaming its writable parent
+    changes the path and bypasses the rule. Literal denies on each ancestor
+    prevent that rename while still allowing ordinary sibling file creation.
+    """
     allows = "".join(
         f'(allow file-write* (subpath "{_sbx_escape(os.fspath(root))}"))'
         for root in writable_roots
     )
-    return f"(version 1)(allow default)(deny file-write*){allows}"
+    denies: list[str] = []
+    seen: set[str] = set()
+    for root in protected_roots:
+        real = os.path.realpath(os.fspath(root))
+        rule = f'(deny file-write* (subpath "{_sbx_escape(real)}"))'
+        if rule not in seen:
+            seen.add(rule)
+            denies.append(rule)
+        parent = os.path.dirname(real)
+        while parent and parent != os.sep:
+            rule = f'(deny file-write* (literal "{_sbx_escape(parent)}"))'
+            if rule not in seen:
+                seen.add(rule)
+                denies.append(rule)
+            parent = os.path.dirname(parent)
+    return f"(version 1)(allow default)(deny file-write*){allows}{''.join(denies)}"
 
 
 def sandbox_exec_argv(
-    command: str, workdir: str, *, writable_roots: Iterable[str] = ()
+    command: str, workdir: str, *, writable_roots: Iterable[str] = (),
+    protected_roots: Iterable[str] = (),
 ) -> list[str]:
     """构造 sandbox-exec argv（仅 darwin；调用方 Popen shell=False 执行）."""
-    profile = sandbox_exec_profile(macos_writable_roots(workdir, extra=writable_roots))
+    profile = sandbox_exec_profile(
+        macos_writable_roots(workdir, extra=writable_roots),
+        protected_roots=protected_roots,
+    )
     return [_SANDBOX_EXEC, "-p", profile, "/bin/bash", "-lc", command]
 
 
@@ -473,6 +615,7 @@ def sandbox_argv(
     image: str = _DEFAULT_IMAGE,
     writable_roots: Sequence[str] = (),
     extra_file_binds: Sequence[tuple[str, str, str]] | None = None,
+    protected_roots: Sequence[str] = (),
 ) -> tuple[list[str] | None, str]:
     """按 EXEC_SANDBOX 返回 (argv, note)。
 
@@ -506,8 +649,25 @@ def sandbox_argv(
                     "请安装可用后端（Linux: bubblewrap；任意平台: 启动 docker daemon；"
                     "macOS: /usr/bin/sandbox-exec），或显式设 EXEC_SANDBOX=none。"
                 )
-            return (None, _sandbox_exec_nested_note())
+            note = _sandbox_exec_nested_note()
+            if protected_roots:
+                note += "（警告：auto 降级 none；审计账本未受沙箱写隔离）"
+            return (None, note)
         mode = backend
+    if mode == "none":
+        return (
+            None,
+            "（警告：EXEC_SANDBOX=none；审计账本未受沙箱写隔离）"
+            if protected_roots else "",
+        )
+    protected = _prepare_protected_roots(protected_roots)
+    for host, sbx, _access in file_binds:
+        if any(
+            _inside(os.path.realpath(candidate), root)
+            for root in protected
+            for candidate in (host, sbx)
+        ):
+            raise RuntimeError("host-grant overlaps protected audit (fail-closed)")
     if mode == "bwrap":
         if shutil.which("bwrap") is None:
             raise RuntimeError(
@@ -517,8 +677,14 @@ def sandbox_argv(
             )
         binds_note = _file_binds_note(file_binds)
         return (
-            bwrap_argv(command, workdir, extra_file_binds=file_binds),
-            _note_with_dropped_roots(_BWRAP_NOTE + binds_note, writable_roots),
+            bwrap_argv(
+                command, workdir, extra_file_binds=file_binds,
+                protected_roots=protected,
+            ),
+            _note_with_dropped_roots(
+                _BWRAP_NOTE + binds_note + (_AUDIT_PROTECTED_NOTE if protected else ""),
+                writable_roots,
+            ),
         )
     if mode == "docker":
         if file_binds:
@@ -533,7 +699,13 @@ def sandbox_argv(
                 f"（镜像可用 EXEC_SANDBOX_IMAGE 指定，默认 {_DEFAULT_IMAGE}）"
                 "或设 EXEC_SANDBOX=none。"
             )
-        return (docker_argv(command, workdir, image=image), _note_with_dropped_roots(_DOCKER_NOTE, writable_roots))
+        return (
+            docker_argv(command, workdir, image=image, protected_roots=protected),
+            _note_with_dropped_roots(
+                _DOCKER_NOTE + (_AUDIT_PROTECTED_NOTE if protected else ""),
+                writable_roots,
+            ),
+        )
     if mode == "sandbox-exec":
         if not _probe_sandbox_exec():
             raise RuntimeError(
@@ -548,8 +720,10 @@ def sandbox_argv(
                 command,
                 workdir,
                 writable_roots=[*writable_roots, *grant_roots],
+                protected_roots=protected,
             ),
-            _SANDBOX_EXEC_NOTE + _file_binds_note(file_binds),
+            _SANDBOX_EXEC_NOTE + _file_binds_note(file_binds)
+            + (_AUDIT_PROTECTED_NOTE if protected else ""),
         )
     return (None, "")
 

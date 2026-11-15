@@ -123,7 +123,13 @@ def test_checkpoint_tool_reports_terminal_goal_as_failure(tmp_path):
     host = SimpleNamespace(audit_dir=tmp_path)
     ctx = SimpleNamespace(session_id="s1")
 
-    result = run_checkpoint_goal(ctx, host, {"goal_id": goal.id, "what": "不应写入"})
+    from llm_loop.core.run_context import current_session_id as _sid
+
+    token = _sid.set("s1")
+    try:
+        result = run_checkpoint_goal(ctx, host, {"goal_id": goal.id, "what": "不应写入"})
+    finally:
+        _sid.reset(token)
 
     assert result.status.value == "failure"
     assert "不存在或非 active" in result.content

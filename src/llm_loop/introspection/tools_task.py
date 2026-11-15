@@ -336,8 +336,7 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
         body += f" | evidence: {len(task.evidence_refs)} refs"
     if task.evidence_verification_status == "verified":
         body += " | evidence_verification=verified"
-    # 归属放行标注必须随成功回执可见（owner_unknown / session_unverified 都是 fail-open 放行，
-    # 只落审计、不在回执留痕会让调用方误以为写入是按 owner 校验过的）
+    # 归属拒绝不写账本；若未来有可信委派附注，成功回执也须显式呈现。
     if _perm_note:
         extra.append(f"注意: {_perm_note}")
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join([body] + extra), "", name)

@@ -18,10 +18,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id as _sid
 from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.task_store import TaskStore
 from llm_loop.introspection.tools_goal import run_update_goal
+
+
+@pytest.fixture(autouse=True)
+def _trusted_goal_session():
+    """These unit tests exercise downstream gates under an authenticated owner."""
+    token = _sid.set("s-gate")
+    yield
+    _sid.reset(token)
 
 
 class _FakeVerifier:

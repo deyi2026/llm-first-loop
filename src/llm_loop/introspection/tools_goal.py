@@ -76,20 +76,18 @@ CHECKPOINT_GOAL_TOOL_DEF: dict = {
             "evidence": {"type": "string", "description": "权威证据（Evidence，工具回执/文件路径/状态）"},
             "path": {"type": "string", "description": "影响路径或外部状态（Path）"},
             "next": {"type": "string", "description": "确切下一步（Next）"},
-            "reason": {"type": "string", "description": "跨会话授权理由（cross_session=true 时必填）"},
+            "reason": {"type": "string", "description": "跨会话申请理由（仅审计，不构成授权）"},
             "cross_session": {
                 "type": "boolean",
                 "description": (
-                    "显式跨会话授权（DESIGN-20261101 §4.3，可选，默认 false）。goal 归属其他会话时"
-                    "唯一写入口：必须同时给非空 reason 与 evidence_refs，否则仍拒绝"
-                    "（reason_code=cross_session_write_denied）。"
-                    "何时不用: 常规单会话推进（可省略）。"
+                    "跨会话写入意图（可选）。本版本不会因 cross_session/reason/evidence_refs"
+                    " 由模型自报而授权；请由 Goal owner 会话写入，或等待受管委派实现。"
                 ),
             },
             "evidence_refs": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "跨会话授权依据（cross_session=true 时必填，evidence:// 引用）",
+                "description": "关联证据引用（非授权证明，不能单独取得跨会话写权限）",
             },
         },
         "required": ["goal_id", "what"],
@@ -140,10 +138,8 @@ UPDATE_GOAL_TOOL_DEF: dict = {
             "cross_session": {
                 "type": "boolean",
                 "description": (
-                    "显式跨会话授权（DESIGN-20261101 §4.3，可选）。goal 归属其他会话时，"
-                    "必须 cross_session=true + 非空 reason + 非空 evidence_refs 才放行"
-                    "（reason_code=cross_session_authorized），否则拒绝"
-                    "（reason_code=cross_session_write_denied）。"
+                    "跨会话写入意图（可选）。模型自报的 reason/evidence_refs 不是"
+                    "可信授权；其他会话不能直接修改 Goal，请由 owner 会话处理。"
                 ),
             },
             "evidence_refs": {
@@ -391,20 +387,24 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(ctx, str(host.audit_dir) if host.audit_dir else None)
     if store is None:
         return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "create_goal")
-    explicit_sid = str(args.get("session_id", "") or "").strip()
-    if explicit_sid:
-        sid = explicit_sid
-    else:
-        from llm_loop.introspection.tools_status import bound_session_id
+    from llm_loop.introspection.tools_status import bound_session_id
 
-        sid = bound_session_id()
-        if not sid:
-            return ToolResult(
-                ToolResultStatus.FAILURE,
-                "[会话归属不可用] 当前执行没有可证明的 session binding；未创建 Goal。",
-                "",
-                "create_goal",
-            )
+    sid = bound_session_id()
+    if not sid:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            "[会话归属不可用] 当前执行没有可证明的 session binding；未创建 Goal。",
+            "",
+            "create_goal",
+        )
+    explicit_sid = str(args.get("session_id", "") or "").strip()
+    if explicit_sid and explicit_sid != sid:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            "[会话归属拒绝] session_id 与运行时可信绑定不一致；未创建 Goal。",
+            "",
+            "create_goal",
+        )
     g = store.create(
         objective,
         session_id=sid,

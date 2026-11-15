@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id as _sid
 from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.task_evidence import (
     TaskEvidenceVerificationError,
@@ -208,7 +209,7 @@ def test_verifier_unavailable_blocks_only_done_records_that_claim_refs(tmp_path:
 
 def test_task_update_off_mode_reports_unavailable_without_exposing_ref(tmp_path: Path):
     audit = tmp_path / "audit"
-    goal = GoalStore(audit).create("P1 production tool path")
+    goal = GoalStore(audit).create("P1 production tool path", session_id="sid-owner")
     store = TaskStore(audit)
     task = store.create(goal.id, "claim ref", acceptance=["done"])
     store.update(goal.id, task.task_id, status="in_progress")
@@ -218,16 +219,20 @@ def test_task_update_off_mode_reports_unavailable_without_exposing_ref(tmp_path:
         ctx=SimpleNamespace(task_evidence_verifier=None),
     )
 
-    result = run_task_update(
-        None,
-        host,
-        {
-            "goal_id": goal.id,
-            "task_id": task.task_id,
-            "status": "done",
-            "evidence_refs": [claimed_ref],
-        },
-    )
+    token = _sid.set("sid-owner")
+    try:
+        result = run_task_update(
+            None,
+            host,
+            {
+                "goal_id": goal.id,
+                "task_id": task.task_id,
+                "status": "done",
+                "evidence_refs": [claimed_ref],
+            },
+        )
+    finally:
+        _sid.reset(token)
 
     assert result.status == ToolResultStatus.FAILURE
     assert "verification_unavailable" in result.content
