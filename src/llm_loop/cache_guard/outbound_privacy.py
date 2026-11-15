@@ -6,6 +6,8 @@ exact-byte Evidence hydration; it is solely the safe view sent to the model.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from typing import Any
 
 from llm_loop.cache_guard.guard import CacheGuardBlockedError, _check_privacy
@@ -19,6 +21,7 @@ _PROTECTED_FIELDS = frozenset(
     }
 )
 _DENIAL = "cache_guard 拦截: 出站隐私投影无法安全脱敏（未发送 Provider）"
+logger = logging.getLogger(__name__)
 
 
 def redact_provider_request(
@@ -84,3 +87,18 @@ def redact_provider_request(
     except Exception:
         # Never expose original values or fail open on redaction errors.
         raise CacheGuardBlockedError(_DENIAL) from None
+
+
+def project_guard_request(
+    messages: list[dict], tools: list[dict], guard_context: Any,
+) -> tuple[list[dict], list[dict], Any]:
+    """Keep cache_guard's system snapshot aligned with the actual safe wire."""
+    original_system = str(getattr(guard_context, "system_text", "") or "")
+    safe_messages, safe_tools, safe_system, count = redact_provider_request(
+        messages, tools, original_system
+    )
+    if safe_system != original_system:
+        guard_context = replace(guard_context, system_text=safe_system)
+    if count:
+        logger.info("provider outbound privacy redactions=%d", count)
+    return safe_messages, safe_tools, guard_context

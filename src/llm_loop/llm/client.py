@@ -23,7 +23,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -33,6 +33,7 @@ import httpx
 from llm_loop.cache_guard.guard import (
     PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
 )
+from llm_loop.cache_guard.outbound_privacy import project_guard_request
 from llm_loop.cognitive.cache_tags import (  # M4.3 认知缓存标记（研究线）
     apply_cognitive_cache_tags,
     tagging_enabled_for,
@@ -54,7 +55,6 @@ from llm_loop.llm.errors import (
     LLMStreamProviderError,
     LLMTimeoutError,
 )
-from llm_loop.llm.outbound_privacy import redact_provider_request
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
 from llm_loop.runtime.causality import effective_generation_contract
 from llm_loop.timekeeping import system_local_now
@@ -1775,8 +1775,7 @@ class LLMClient:
         # an exact provider+model+generation-contract match; visible assistant state
         # remains ordinary history when that hidden transport scope does not match.
         messages = self._project_provider_replay(messages, model=actual_model)
-        # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
-        # 局部快照，后续整个流（含终态 telemetry）都不再读取共享 per-request 字段。
+        # 每请求 guard 快照：显式优先；legacy fallback 不读取共享 per-request 状态。
         _guard_ctx = guard_context or GuardRequestContext(
             session_id=self.guard_session_id or "__global__",
             system_text=(
@@ -1793,15 +1792,7 @@ class LLMClient:
             provider=self.provider,
             model=actual_model,
         )
-        # The durable Session/Evidence remain original; only a copy-on-write
-        # privacy-safe view reaches cache_guard and the Provider transport.
-        messages, tools, safe_system, _redacted = redact_provider_request(
-            messages, tools, str(_guard_ctx.system_text or "")
-        )
-        if safe_system != (_guard_ctx.system_text or ""):
-            _guard_ctx = replace(_guard_ctx, system_text=safe_system)
-        if _redacted:
-            logger.info("provider outbound privacy redactions=%d", _redacted)
+        messages, tools, _guard_ctx = project_guard_request(messages, tools, _guard_ctx)
         # cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
         self._guard_start_ts = 0
         if self.guard_enabled:

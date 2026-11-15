@@ -8,8 +8,8 @@ from unittest import mock
 import pytest
 
 from llm_loop.cache_guard.guard import CacheGuardBlockedError
+from llm_loop.cache_guard.outbound_privacy import redact_provider_request
 from llm_loop.llm.client import GuardRequestContext, LLMClient
-from llm_loop.llm.outbound_privacy import redact_provider_request
 
 SECRET = "SYNTHETIC_LFL_ENV_CREDENTIAL_" + "q" * 32
 
@@ -121,7 +121,7 @@ def test_signed_replay_failure_never_calls_provider(monkeypatch, tmp_path):
 
 
 def test_redactor_failure_is_hard_block_even_when_guard_disabled(monkeypatch, tmp_path):
-    import llm_loop.llm.outbound_privacy as privacy
+    import llm_loop.cache_guard.outbound_privacy as privacy
 
     def fail(_text):
         raise RuntimeError("synthetic failure")

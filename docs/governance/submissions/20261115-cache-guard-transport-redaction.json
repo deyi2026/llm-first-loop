@@ -7,7 +7,7 @@
       "component_id": "provider-outbound-privacy-projection",
       "paths": [
         "src/llm_loop/llm/client.py",
-        "src/llm_loop/llm/outbound_privacy.py"
+        "src/llm_loop/cache_guard/outbound_privacy.py"
       ],
       "control_machinery": true,
       "owning_subsystem": "Existing LLMClient final Provider request boundary and cache_guard rule E",
