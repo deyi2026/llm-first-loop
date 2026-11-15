@@ -997,8 +997,7 @@ def build_engine(
         reasoning_efforts=(llm_params or {}).get("reasoning_efforts"),
         reasoning_default_effort=(llm_params or {}).get("reasoning_default_effort"),
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
-        thinking_supported=thinking_supported,
-        reasoning_capable=reasoning_capable,
+        thinking_supported=thinking_supported, reasoning_capable=reasoning_capable,
         reasoning_control=reasoning_control,
         provider=resolved_provider_id,
         send_tool_choice=bool((llm_params or {}).get("send_tool_choice", True)),
