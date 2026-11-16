@@ -4406,4 +4406,3 @@ def test_q09_wrong_fingerprint_still_rejected() -> None:
     sha = "d" * 64
     wrong = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nFINGERPRINT: {'e' * 16}\n"
     assert rha._qualifying_pass_p2(wrong, sha) is None
-
