@@ -44,7 +44,7 @@ class FakeChildRunner:
         assert kwargs["review_isolated"] is True
         if self.refusals:
             return {"accepted": False, "detail": self.refusals.pop(0)}
-        return {"accepted": True, "child_id": "child-review-1", "state": "running"}
+        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": kwargs["model"]}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
         if self.state != "completed" or parent_id != self.parent:

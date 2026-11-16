@@ -2647,7 +2647,7 @@ def _configured_reviewer_models(raw: str) -> tuple[tuple[str, ...], str]:
     if not raw.strip():
         return _REVIEWER_MODELS, ""
     parts = [part.strip() for part in raw.split(",")]
-    if (len(parts) > 4 or not all(parts) or len(set(parts)) != len(parts)
+    if (len(parts) > 3 or not all(parts) or len(set(parts)) != len(parts)
             or any(not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", part)
                    or len(part) > 160 for part in parts)):
         return (), "reviewer_models_invalid"
@@ -3580,6 +3580,8 @@ class HostReviewAdmission:
         self._reviewer_models, self._reviewer_model_error = _configured_reviewer_models(
             reviewer_models_raw
         )
+        if self._reviewer_model_error:
+            self._reviewer_models = _REVIEWER_MODELS  # nonempty invariant; start still denies
         self._runner: Any | None = None
         self._event_store: Any | None = None  # production receipt must be durable
         self._browser_capture: Callable[[], dict[str, Any]] | None = None
@@ -4436,10 +4438,11 @@ class HostReviewAdmission:
                 str(started.get("detail") or "reviewer_refused"), child_id=child_id,
             )
             return None
-        if started.get("model", model) != model:
+        if started.get("model") != model:
             self._terminate_reviewer(runner, str(started["child_id"]))
             self._audit_reviewer_unavailable(
-                parent, row.kind, "reviewer_model_mismatch", "resolved model differs",
+                parent, row.kind, "reviewer_model_mismatch",
+                f"new_child_id={started['child_id']}: runner model missing or differs",
                 child_id=child_id,
             )
             return None
@@ -4554,34 +4557,34 @@ class HostReviewAdmission:
         diffs, and comparing bytes to a char budget would mix units.
         """
         task_chars = len(task)
-        model_budget: int | None = None
         probe = cast(
             "Callable[..., int | None] | None",
             getattr(self._runner, "child_input_budget_chars", None),
         )
+        budgets: list[int] = []
         if probe is not None:
-            try:
-                registry_budget = probe(self._reviewer_models[0])
-            except Exception:  # noqa: BLE001 — a failing probe must never widen admission
-                registry_budget = None
-            if isinstance(registry_budget, int) and registry_budget >= 0:
-                task_ratio = _wire_chars_per_token(
-                    [{"content": task}], _REVIEWER_REGISTRY_CHARS_PER_TOKEN
-                )
-                try:
-                    model_budget = probe(self._reviewer_models[0], chars_per_token=task_ratio)
-                except TypeError:
-                    # Older runner without the ratio parameter: the registry
-                    # budget already measured above is the conservative one.
-                    model_budget = registry_budget
-                except Exception:  # noqa: BLE001 — never widen admission
-                    model_budget = None
-        effective_cap = _REVIEWER_STATIC_MATERIAL_CAP_BYTES
-        if isinstance(model_budget, int) and model_budget >= 0:
-            effective_cap = min(
-                _REVIEWER_STATIC_MATERIAL_CAP_BYTES,
-                int(model_budget * _REVIEWER_WIRE_HEADROOM),
+            task_ratio = _wire_chars_per_token(
+                [{"content": task}], _REVIEWER_REGISTRY_CHARS_PER_TOKEN
             )
+            for model in self._reviewer_models:
+                try:
+                    registry_budget = probe(model)
+                except Exception:  # noqa: BLE001 — failed probe never widens a known cap
+                    registry_budget = None
+                if not isinstance(registry_budget, int) or registry_budget < 0:
+                    continue
+                try:
+                    candidate = probe(model, chars_per_token=task_ratio)
+                except TypeError:
+                    candidate = registry_budget  # older runner probe API
+                except Exception:  # noqa: BLE001 — never widen a known cap
+                    candidate = None
+                if isinstance(candidate, int) and candidate >= 0:
+                    budgets.append(candidate)
+        model_budget = min(budgets) if budgets else None
+        effective_cap = _REVIEWER_STATIC_MATERIAL_CAP_BYTES
+        if model_budget is not None:
+            effective_cap = min(effective_cap, int(model_budget * _REVIEWER_WIRE_HEADROOM))
         return task_chars, model_budget, effective_cap
 
     @staticmethod
@@ -4691,8 +4694,12 @@ class HostReviewAdmission:
                         acceptance=["explicit P0/P1/P2, target scope, actual SHA and independent verdict"],
                     )
                     if started.get("accepted") and started.get("child_id"):
-                        if started.get("model", model) != model:
+                        if started.get("model") != model:
                             self._terminate_reviewer(runner, str(started["child_id"]))
+                            self._audit_reviewer_unavailable(
+                                parent, kind, "reviewer_model_mismatch",
+                                "runner model missing or differs", child_id=str(started["child_id"]),
+                            )
                             return {"accepted": False, "reason": "reviewer_model_mismatch"}
                         child = str(started["child_id"])
                         break

@@ -118,3 +118,68 @@ def test_factory_attaches_host_configured_reviewer_chain() -> None:
         )
     finally:
         HostReviewAdmission.set_authority(previous)
+
+
+def test_missing_resolved_model_is_denied_even_if_child_started(tmp_path) -> None:  # noqa: ANN001
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
+
+    class MissingModelRunner(RecordingRunner):
+        def start(self, task: str, **kwargs):  # noqa: ANN001, ANN201
+            result = super().start(task, **kwargs)
+            result.pop("model", None)
+            return result
+
+    runner = MissingModelRunner()
+    host.attach_runner(runner)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "reviewer_model_mismatch"
+    assert host._records == {}
+
+
+def test_invalid_model_config_preserves_nonempty_internal_invariant() -> None:
+    host = HostReviewAdmission(reviewer_models_raw="bad/model,,other/model")
+    assert host._reviewer_model_error == "reviewer_models_invalid"
+    assert host._reviewer_models  # public start still fails closed
+
+
+def test_preflight_budget_covers_smallest_configured_fallback() -> None:
+    host = HostReviewAdmission(reviewer_models_raw="glm/glm-5.3,deepseek/deepseek-v4-flash")
+
+    class BudgetRunner(RecordingRunner):
+        def child_input_budget_chars(self, model_ref, *, chars_per_token=None):  # noqa: ANN001, ANN201, ARG002
+            return 120_000 if model_ref.startswith("glm/") else 2_000
+
+    host.attach_runner(BudgetRunner())
+    chars, model_budget, cap = host._input_budget("x" * 3_000)
+    assert chars == 3_000
+    assert model_budget == 2_000
+    assert cap == 1_960  # fail before an oversized fallback could be launched
+
+
+def test_async_retry_switches_model_and_updates_frozen_record(tmp_path) -> None:  # noqa: ANN001
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(
+        reviewer_models_raw="glm/glm-5.3,deepseek/deepseek-v4-flash"
+    )
+
+    class SequenceRunner(RecordingRunner):
+        def start(self, task: str, **kwargs):  # noqa: ANN001, ANN201
+            result = super().start(task, **kwargs)
+            if result.get("accepted"):
+                result["child_id"] = f"child-{len(self.models)}"
+            return result
+
+    runner = SequenceRunner()
+    host.attach_runner(runner)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    assert receipt["accepted"] is True
+    child_id = receipt["child_id"]
+    retry = host._respawn_reviewer("parent", child_id, "reviewer_rate_limited", 240)
+    assert retry is not None
+    assert retry["qualification"] == "pending"
+    assert retry["auto_retry"]["model"] == "deepseek/deepseek-v4-flash"
+    assert runner.models == ["glm/glm-5.3", "deepseek/deepseek-v4-flash"]
+    assert host._records[child_id].reviewer_model == "deepseek/deepseek-v4-flash"
+    assert host._records[child_id].live_child_id == "child-2"
