@@ -277,6 +277,7 @@ def parse_provider_error_code(body: str) -> str | None:
 # （先例: _GLM_OVERFLOW_PROVIDERS），避免劫持其他 provider 同码异义错误。
 _GLM_FAMILY_PROVIDERS = ("glm", "glm-api", "zhipu")
 _GLM_RATE_LIMIT_CODES = ("1302",)          # 速率限制: 瞬时，等待可恢复
+_GLM_PERIOD_QUOTA_CODES = ("1310",)        # 周/月配额窗口耗尽: 窗口重置前同模型不可恢复
 _GLM_MODEL_PERMISSION_CODES = ("1311",)    # 当前订阅未开放所选模型权限（针对所选模型）
 _GLM_ACCOUNT_BILLING_CODES = ("1113",)     # 账户欠费: 账户级，本周期不可恢复
 
@@ -392,6 +393,16 @@ def classify_llm_error(exc: LLMError) -> LLMErrorSemantics:
             "rate_limit", f"限流（GLM {code}）", provider_code=code,
             same_identity_retry=True, same_account_other_models=True,
             independent_provider=True,
+        )
+    if glm_family and code in _GLM_PERIOD_QUOTA_CODES:
+        # 1310 是周/月配额窗口: 同模型重试要等窗口重置才可能恢复，按瞬时限流处理
+        # 会引导无用的同身份重试（d91 实测 9 次重试全部撞同一窗口）。
+        # 同账户其他模型有各自独立窗口，仍可降级试一次，故不完全等于账户级欠费。
+        return LLMErrorSemantics(
+            "period_quota",
+            f"配额窗口耗尽（GLM {code}，周/月上限，窗口重置前不可恢复）",
+            provider_code=code, same_identity_retry=False,
+            same_account_other_models=True, independent_provider=True,
         )
     if glm_family and code in _GLM_MODEL_PERMISSION_CODES:
         # 1311 针对所选模型: 同身份重试无意义，但订阅内其他模型/其他 provider 可能可用
