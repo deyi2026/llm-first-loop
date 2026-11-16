@@ -467,12 +467,17 @@ class LaneStore:
         worktree: str,
         goal_id: str,
         paths: list[str] | None = None,
+        contract_changes: list[str] | None = None,
     ) -> dict:
         """开门前纯读预检：零写账本、零建目录、不抛约束错。
 
-        只回答两个「说了也不拦」的问题，与 create() 的硬拦（branch/worktree/goal
+        只回答三个「说了也不拦」的问题，与 create() 的硬拦（branch/worktree/goal
         1:1，见 _assert_unique）**互不替代**：
         - overlap_warning: 声明的 paths 与在途 lane 交叉（终态 lane 不参与）；
+        - contract_same_key_warning: 与其他在途 lane 的 contract_changes 同键
+          （M4-A，DESIGN-20261116 §6）。纯提示、零阻断、零审批：同键 ≠ 设计
+          冲突（语义由模型/人判）；不读 approved_by/自报理由——授权判定只走
+          用户显式指令，本预检不实现任何授权逻辑；
         - goal_unknown: goal_id 未在 goals.jsonl 出现（账本可能被轮转/裁剪，
           缺席 ≠ 从未存在，故默认只告警；lane_require_goal=true 时由调用方硬拒）。
 
@@ -480,6 +485,7 @@ class LaneStore:
         算一遍等于把硬拦降级成告警，会松动既有裁决。
         """
         mine = _normalize_paths(paths)
+        contract_keys = _normalize_paths(contract_changes)
         checked: list[str] = []
         overlaps: list[dict] = []
         for row in self.list():  # 默认隐藏终态：只与在途 lane 比
@@ -504,9 +510,41 @@ class LaneStore:
             "goal_id": goal_text,
             "declared_paths": mine,
             "overlap_warning": overlaps,
+            "contract_same_key_warning": self.contract_same_key_hint(mine=contract_keys),
             "goal_unknown": bool(goal_text) and not self._goal_known(goal_text),
             "checked_against": checked,
         }
+
+    def contract_same_key_hint(
+        self, *, mine: list[str] | None = None, exclude_lane_id: str = ""
+    ) -> list[dict]:
+        "与在途 lane 的 contract_changes 同键提示（M4-A/DESIGN-20261116 §6）: 纯提示、"
+        "零阻断、零审批；同键 ≠ 设计冲突（语义由模型/人判）；不读 approved_by/自报"
+        "理由——授权判定只走用户显式指令，本方法不实现任何授权逻辑。"
+        # 边界: 对方须在途（list() 默认隐藏终态）且非自身（exclude_lane_id）；
+        # mine 为空 / 对方 contract_changes 空或缺失 → 空列表，不报错；
+        # 键按 _normalize_paths 规范化后精确相等；输出按 (key, lane_id) 排序，
+        # 逐项含 key + 对方 lane_id/goal_id（确定性输出）。
+        wanted = set(_normalize_paths(mine))
+        if not wanted:
+            return []
+        exclude = str(exclude_lane_id or "")
+        hits: list[dict] = []
+        for row in self.list():
+            lane_id = str(row.get("lane_id") or "")
+            if not lane_id or lane_id == exclude:
+                continue
+            for key in sorted({str(k) for k in row.get("contract_changes") or []}):
+                if key in wanted:
+                    hits.append(
+                        {
+                            "key": key,
+                            "lane_id": lane_id,
+                            "goal_id": str(row.get("goal_id") or ""),
+                        }
+                    )
+        hits.sort(key=lambda h: (str(h.get("key") or ""), str(h.get("lane_id") or "")))
+        return hits
 
     def _goal_known(self, goal_id: str) -> bool:
         """goal_id 是否在 goals.jsonl 出现过（只读；单行坏跳过，账本不可读按已知处理）。

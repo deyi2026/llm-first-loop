@@ -213,6 +213,21 @@ def _render_precheck_notes(precheck: dict) -> str:
             f"goal 告警: {precheck.get('goal_id')} 不在 goals.jsonl"
             "（可能是探针或账本已轮转；lane_require_goal=true 时会硬拒）"
         )
+    # M4-A（DESIGN-20261116 §6）: contract_changes 同键声明提示——纯提示、零阻断、
+    # 零审批；同键 ≠ 设计冲突（语义由模型/人判）；不读 approved_by/自报理由。
+    same_keys = precheck.get("contract_same_key_warning") or []
+    if same_keys:
+        parts = []
+        for h in same_keys[:8]:
+            key = str(h.get("key") or "")
+            lane = str(h.get("lane_id") or "")
+            goal = str(h.get("goal_id") or "")
+            parts.append(f"{key} ← {lane}(goal={goal})")
+        lines.append(
+            "contract 同键声明提示（非冲突结论）: "
+            + "; ".join(parts)
+            + "（同键≠设计冲突，语义由模型/人判；纯提示，不阻断、不审批）"
+        )
     err = precheck.get("error")
     if err:
         lines.append(f"预检不可用: {err}（已按无告警继续登记）")
@@ -280,6 +295,7 @@ def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
             worktree=worktree,
             goal_id=goal_id,
             paths=args.get("paths") or [],
+            contract_changes=args.get("contract_changes") or [],
         )
     except Exception as exc:  # noqa: BLE001 — 预检是附加信息，失败降级为提示
         precheck = {"error": f"{type(exc).__name__}: {exc}"}

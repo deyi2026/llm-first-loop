@@ -1,0 +1,122 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-multiagent-coordination-batch1-pr42",
+  "summary": "Batch 1 implements M1 read-only merge-queue classification, M3 read-only Goal closure/stall projections, and M4-A advisory same-contract-key hints. No new write authority, no strict Lane admission, no auto-approval or deployment. Exact PR base 4f1628ed8110323e88ad5292025f88d337738383.",
+  "components": [
+    {
+      "component_id": "coordination-queue-and-goal-projections",
+      "paths": [
+        "src/llm_loop/introspection/goal_coordination.py",
+        "tests/unit/test_goal_coordination_closure_view.py",
+        "tests/unit/test_merge_queue_failure_class.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Goal coordination read model, merge-queue failure classification, and safe next-command presentation",
+      "disposition": "ADMIT read-only projection extensions on existing Goal/Task/Lane/merge-queue stores; preserve legacy fields, expose actionable/terminal/unknown and source completeness, never claim completion on incomplete evidence",
+      "evidence": [
+        "M1 uses existing merge_queue.jsonl and lanes.jsonl, preserves legacy buckets and adds actionable/terminal/unknown classification; damaged or absent source is marked degraded, safe_to_execute=false.",
+        "M3 reuses existing goal_gates.complete_gate and activity timestamps to display closure/stalled candidates without changing Goal status or writing to audit ledgers.",
+        "Independent GLM-5.3 Reviewer subagent_42c913b1d8ba PASS P0=0/P1=0 on e162e1c3d; after behavior-preserving architecture-guard refactor subagent_4ce87256c1c9 completed PASS P0=0/P1=0 for c30178a7c with G1-G8 evidence closure."
+      ],
+      "verification_level": "Focused negative tests for malformed/missing source, terminal history, active-only closure, truncated lists and degraded safe commands; arch guard 52 PASS, targeted 454 PASS, independent targeted 328 PASS, original full ci_gate.sh CLEAN exit 0 on c30178a7c (WebUI 600, pytest 15366/162 skipped/3 xfailed); remote exact-SHA CI required after this manifest-only commit.",
+      "model_evidence_veto_recovery_exit": "Independent reviewer may veto if classification permits unsafe action, closure writes state, or degraded source is hidden. Fail closed: retain read-only legacy output or revert isolated branch, correct the defect, re-freeze, re-review and re-run complete gate before PR merge.",
+      "rollback_route": "Revert the PR merge (or do not merge); no data migration, no auto Goal closure, no live service restart or state writes introduced by these projections.",
+      "declaration_id": "batch1-read-projection"
+    },
+    {
+      "component_id": "lane-contract-advisory",
+      "paths": [
+        "src/llm_loop/introspection/lane.py",
+        "src/llm_loop/introspection/tools_lane.py",
+        "src/llm_loop/introspection/tools_merge_queue.py",
+        "tests/unit/test_lane_contract_hint_batch1.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "LaneStore admission precheck, lane_open presentation, merge queue submission read-only advisory",
+      "disposition": "ADMIT deterministic M4-A same-contract-key hints only. Same key is not semantic conflict, does not block or authorize any operation. Do not introduce M2-A enforce_cross_goal or M4-B claim registry in this PR.",
+      "evidence": [
+        "LaneStore.contract_same_key_hint reads in-flight lanes only, excludes self, matches normalized contract keys and sorts deterministically; no new ledger, lock, approval field, or write authority.",
+        "run_lane_open and run_lane_queue_submit attach hints to existing result branches, including duplicate and preflight paths, with no changes to existing queue admission verdicts.",
+        "tests/unit/test_lane_contract_hint_batch1.py covers no-match, active vs terminal, self exclusion, deterministic ordering, duplicate/preflight/final result branches and advisory-only behavior; independent GLM-5.3 PASS for exact source c30178a7c."
+      ],
+      "verification_level": "Focused M4-A positive/negative tests and existing Lane/merge-queue regressions; original full R9 CLEAN on c30178a7c; no new security enforcement claim; GitHub PR checks must pass on manifest commit SHA.",
+      "model_evidence_veto_recovery_exit": "If hints change admission, cause new writes, claim user approval, or falsely classify same key as conflict, block merge; revert the isolated change and re-run review/R9 after correction. Hints alone never grant permissions.",
+      "rollback_route": "Revert this PR or disable advisory UI usage; no persistent schema change, no contract-claim store, no service-side deployment required.",
+      "declaration_id": "batch1-contract-hint"
+    },
+    {
+      "component_id": "design-and-issue-evidence",
+      "paths": [
+        "docs/design/DESIGN-20261116-multiagent-coordination-closure-v1.md",
+        "docs/queues/BUG-BLOCKER-QUEUE-20261116.md",
+        "docs/queues/OPT-QUEUE-20261116.md",
+        "docs/governance/submissions/20261116-multiagent-coordination-batch1-pr42.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Design documentation, bug/optimization queues and A.5 submission declaration",
+      "disposition": "ADMIT traceable documentation and truthful A.5 declarations; no executable runtime control or policy override in these files.",
+      "evidence": [
+        "Design v1.1-v1.3 records adversarial counterexamples, phased M0/M1/M2/M3/M4 decisions and no-go conditions.",
+        "BUG-15 records first R9 function-length ratchet failure on e162e1c3d and refactor ecac7aecf without test/baseline changes; OPT-10 records earlier arch guard preflight.",
+        "This manifest explicitly partitions all PR changed paths, including itself, and declares both coordination components as control machinery for G1-G4 semantic review."
+      ],
+      "verification_level": "A.5 exact changed-path coverage, schema validation, independent semantic review, no modifications to guard/test baseline; original full R9 on code candidate and new manifest-only SHA before merge.",
+      "model_evidence_veto_recovery_exit": "Any incorrect evidence, missing path, unsupported PASS or misleading safety claim blocks merge; fix declaration in isolated branch and re-run A.5 and full gates.",
+      "rollback_route": "Revert the documentation commit or the entire PR; no runtime state impact."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "batch1-read-projection",
+      "g1": {
+        "necessity": "Operators and main agents cannot distinguish historical terminal queue failures from current actionable blockers when legacy buckets mix them, and Goal completion candidates are not visible without manual cross-ledger investigation. Read-only projections address the visibility gap without granting action authority."
+      },
+      "g2": {
+        "authority_owner": "Existing GoalStore/TaskStore, LaneStore, merge-queue ledger and goal_gates.complete_gate retain authoritative state and final decisions; goal_coordination.py is a derived read model only.",
+        "relationship": "reuse",
+        "non_duplication": "No new state machine, ledger, approval channel, or Goal completion endpoint; legacy keys remain available and all new fields are explicitly non-authoritative."
+      },
+      "g3": {
+        "model_evidence": [
+          "Reviewer subagent_42c913b1d8ba original PASS P0/P1=0; reviewer subagent_4ce87256c1c9 fresh exact-SHA c30178a7c PASS P0/P1=0, G1-G8 closed.",
+          "BUG-11/12/13/14 and BUG-15 negative-test evidence in docs/queues; original R9 c30178a7c CLEAN exit 0; M1 source-corrupt and M3 active-only tests."
+        ],
+        "recovery_or_reason": "If source is absent, malformed, truncated, or unreadable, show unknown/degraded and safe_to_execute=false; never synthesize authorization or mark a Goal complete; rollback via revert."
+      },
+      "g4": {
+        "rollback": "Revert PR commit(s) to restore previous projections and legacy view; no migration or durable state changes.",
+        "verification": [
+          "Independent reviewer PASS P0=0/P1=0 for code candidate c30178a7c; recheck final manifest-only SHA.",
+          "Original scripts/ci_gate.sh CLEAN exit 0 for c30178a7c and rerun on final SHA.",
+          "Remote PR CI exact head SHA, A.5 path coverage and privacy gate, then merge/push CI."
+        ]
+      }
+    },
+    {
+      "declaration_id": "batch1-contract-hint",
+      "g1": {
+        "necessity": "Parallel Lane work can independently declare the same external contract key, and silent overlap makes review coordination harder. A deterministic advisory warning helps human/model review without inventing an incompatibility verdict."
+      },
+      "g2": {
+        "authority_owner": "Existing LaneStore and merge-queue stores own admission and queue state; explicit user approvals and existing gates remain the only authority. This change adds read-only hints only.",
+        "relationship": "reuse",
+        "non_duplication": "No M4-B contract_claims registry, no new approval role, no strict cross-Goal write lock or bypass; same key does not imply conflict and never blocks by itself."
+      },
+      "g3": {
+        "model_evidence": [
+          "Reviewer subagent_4ce87256c1c9 PASS P0/P1=0 on c30178a7c; same-key hint limited to in-flight lanes and deterministic sorted output.",
+          "tests/unit/test_lane_contract_hint_batch1.py positive/negative branches, no-approval and no-block behavior; original complete R9 CLEAN on c30178a7c."
+        ],
+        "recovery_or_reason": "If hint generation fails, existing lane/queue operation continues with explicitly advisory or omitted hint; no new write authority. A genuine authorization or side-effect regression is a merge blocker and requires revert/fix."
+      },
+      "g4": {
+        "rollback": "Revert M4-A hint implementation; existing LaneStore ledger and queue data are unaffected.",
+        "verification": [
+          "Test active/terminal/self/empty/same-key and deterministic ordering.",
+          "Test run_lane_open and queue submit duplicate/preflight/final response shape preservation.",
+          "Independent review, original R9 CLEAN on final SHA, GitHub exact-SHA PR CI and post-merge push CI."
+        ]
+      }
+    }
+  ]
+}

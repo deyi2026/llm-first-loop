@@ -201,6 +201,37 @@ MERGE_QUEUE_TOOL_DEFS: list[dict] = [
 ]
 
 
+def _contract_same_key_hint_note(lanes: Any, lane: dict, lane_id: str) -> tuple[list, str]:
+    """M4-A（DESIGN-20261116 §6）: contract_changes 同键提示（hint + 渲染说明行）。
+
+    纯提示、零阻断、零审批，不改任何既有判定；同键 ≠ 设计冲突（语义由模型/人
+    判）；不读 approved_by/自报理由（本提示无任何授权语义）。计算失败只降级为
+    无提示（不得影响入队主流程）。
+    """
+    hint: list = []
+    try:
+        hint = lanes.contract_same_key_hint(
+            mine=[str(k) for k in lane.get("contract_changes") or []],
+            exclude_lane_id=lane_id,
+        )
+    except Exception:  # noqa: BLE001 — 提示失败不得影响入队主流程
+        hint = []
+    if not hint:
+        return hint, ""
+    rendered = []
+    for h in hint[:8]:
+        key = str(h.get("key") or "")
+        other = str(h.get("lane_id") or "")
+        goal = str(h.get("goal_id") or "")
+        rendered.append(f"{key} ← {other}(goal={goal})")
+    note = (
+        "contract 同键声明提示（非冲突结论）: "
+        + "; ".join(rendered)
+        + "（同键≠设计冲突，语义由模型/人判；纯提示，不阻断、不审批）"
+    )
+    return hint, note
+
+
 def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     tool = "lane_queue_submit"
     lane_id = str(args.get("lane_id") or "").strip()
@@ -220,6 +251,10 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
         return _fail(
             f"lane 不存在: {lane_id}（未登记不得进入合并队列）", tool, "lane_not_found"
         )
+    # M4-A（DESIGN-20261116 §6）: contract_changes 同键提示——纯提示、零阻断、
+    # 零审批，不改任何既有判定；同键 ≠ 设计冲突（语义由模型/人判）；不读
+    # approved_by/自报理由（本提示无任何授权语义）。计算失败只降级为无提示。
+    same_key_hint, same_key_note = _contract_same_key_hint_note(lanes, lane, lane_id)
     payload = {
         "lane_id": lane_id,
         "branch": str(args.get("branch") or lane.get("branch") or ""),
@@ -245,8 +280,12 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
         except Exception:  # noqa: BLE001
             existing = None
         if existing is not None:
+            dup_payload: dict[str, Any] = {"entry": existing, "note": "已在队列中, 未重复登记"}
+            if same_key_hint:
+                dup_payload["contract_same_key_hint"] = same_key_hint
+                dup_payload["contract_same_key_note"] = same_key_note
             return _ok(
-                {"entry": existing, "note": "已在队列中, 未重复登记"},
+                dup_payload,
                 tool,
                 f"[已在队列] lane={lane_id} status={existing.get('status')}",
             )
@@ -256,8 +295,15 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
 
     staged = store.request_preflight(lane_id, expected_version=entry["version"])
     if not staged.get("ok"):
+        staged_payload: dict[str, Any] = {
+            "entry": staged.get("entry"),
+            "holder": staged.get("holder"),
+        }
+        if same_key_hint:
+            staged_payload["contract_same_key_hint"] = same_key_hint
+            staged_payload["contract_same_key_note"] = same_key_note
         return _ok(
-            {"entry": staged.get("entry"), "holder": staged.get("holder")},
+            staged_payload,
             tool,
             f"[已排队, 机检未开始] {staged.get('reason_code')}",
         )
@@ -276,8 +322,12 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
             "生产代码只读不写、无签发者。补 verify_ref 或反复 requeue 都不会变绿；"
             "该 lane 已落 failed 终态，先解决签发链路再重新登记。"
         )
+    final_payload: dict[str, Any] = {"enqueued": entry, "preflight": result}
+    if same_key_hint:
+        final_payload["contract_same_key_hint"] = same_key_hint
+        final_payload["contract_same_key_note"] = same_key_note
     return _ok(
-        {"enqueued": entry, "preflight": result},
+        final_payload,
         tool,
         f"[机检 {result.get('verdict')}] lane={lane_id} status={result.get('status')}"
         f" reason={','.join(codes) or 'none'}{note}",
