@@ -2,6 +2,8 @@
 
 > **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.54 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
 
+> **Source vs. published release (verified 2026-11-16):** `0.6.54` is the current source/build version, **not a published stable release**. The latest published GitHub Release is still [v0.6.50](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.50). `v0.6.54` remains a Draft pending the macOS arm64 release artifact and finalization checks. Install only from the live [latest published Release](https://github.com/deyi2026/llm-first-loop/releases/latest), never from a Draft.
+
 **Mobile Web V2:** Tap the `◂` arrow at the right screen edge to open the right panel; tap `▸` to close it. Use `☰` at the top left for session navigation. See the [mobile sidebar guide](docs/web-mobile-navigation.md).
 
 The LLM is the core, and every action revolves around it. Architecture core = **message in → understand → act → answer honestly → remember**.

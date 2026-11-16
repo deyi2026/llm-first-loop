@@ -2,6 +2,8 @@
 
 此文描述 Linux 用户级稳定发行、macOS 候选与源码/uv wheel 安装。可下载的稳定版本以 GitHub 已公开发布且包含 wheel 和 `SHA256SUMS` 的 Release 为准；Draft/Prerelease 不可安装。已有源码安装继续使用原入口。当前不承诺独立桌面客户端、自动更新、包仓库上架或 Windows 运行支持。macOS Apple Silicon `.pkg` 是否完成签名、公证并可供普通用户安装，以同版本 GitHub 公开稳定 Release 的实际资产和验收结果为准；发布前的本地候选不得分发或绕过 Gatekeeper。
 
+**发行快照（2026-11-16）**：GitHub 最新正式 Release 为 [v0.6.50](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.50)，`v0.6.54` 仍为 Draft（macOS arm64 安装包待补齐）。当前源码声明 `0.6.54` 不意味着普通用户可以从稳定版入口安装它。请以 [实时最新正式 Release](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准。
+
 ## Linux 用户级安装器（稳定发行）
 
 Linux 安装器采用用户级安装，不要求 `sudo`，不创建 systemd 服务，也不改写 shell 启动文件。
