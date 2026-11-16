@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One local integration writer per Git common directory.
 
-Only the explicitly named, clean, non-main integration worktree can be changed.
+Only a clean, non-main integration worktree at the supplied exact HEAD is changed.
 This does not protect arbitrary shell writes or implement an atomic remote
 main CAS. A failed cherry-pick preserves the dirty worktree for reconciliation.
 """
@@ -21,7 +21,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_LOCK_NAME = "lfl-integration-writer.lock"
 
 
 class IntegrationHoldError(Exception):
@@ -61,16 +60,17 @@ def common_dir(worktree: Path) -> Path:
 def integration_lock(worktree: Path) -> Iterator[Path]:
     try:
         directory = common_dir(worktree)
-        path = directory / _LOCK_NAME
-        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(path, flags, 0o600)
+        # Lock the stable Git directory inode, not a removable lock file.
+        # Unlinking/recreating a lock file must never create a second writer.
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(directory, flags)
     except (OSError, ValueError, IntegrationHoldError) as exc:
         if isinstance(exc, IntegrationHoldError):
             raise
         raise IntegrationHoldError("integration_lock_unavailable") from exc
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        if not stat.S_ISDIR(info.st_mode):
             raise IntegrationHoldError("integration_lock_unavailable")
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -78,7 +78,7 @@ def integration_lock(worktree: Path) -> Iterator[Path]:
             raise IntegrationHoldError("integration_writer_busy") from exc
         except OSError as exc:
             raise IntegrationHoldError("integration_lock_unavailable") from exc
-        yield path
+        yield directory
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)

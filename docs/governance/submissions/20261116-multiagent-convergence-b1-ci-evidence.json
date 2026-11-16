@@ -19,13 +19,13 @@
       "disposition": "ADMIT isolated B1 code and negative tests only. Host never merges or pushes; no production activation, no branch protection changes and no automatic remote main CAS.",
       "evidence": [
         "B1-1 CI evidence job and initial tests were developed in LFL Web with glm/glm-5.3-flash; B1-2 Host/lock code and negative tests were authored by the main developer.",
-        "Independent DeepSeek-v4-Flash Reviewer of f976ad56f01bc4b76c5ad0c5c80eff4dc0787ba7 returned REVISE P0=1/P1=2: default check-runs latest and unpinned run.workflow_id/path; three-blob trust set omitted scanner/installer/project; HMAC same-domain self-signing. None of this review is a PASS for the new candidate.",
+        "Independent DeepSeek-v4-Flash Reviewer of f976ad56f01bc4b76c5ad0c5c80eff4dc0787ba7 returned REVISE P0=1/P1=2; follow-up Reviewer of e08d5712e421ee41ab3f81476278af8e0c76f113 returned PASS P0=0/P1=0/P2=10. Subsequent trust-boundary fixes require a new exact-SHA review.",
         "The revised Host requires check-runs filter=all, exact context/app_id, run workflow_id/path from approved policy, tested merge check runs and parent SHAs, remote main/PR final recheck, branch protection, Actions artifact, and main/candidate equality for twelve trusted gate/dependency blobs (including Host verifier and integration lock).",
         "Host snapshot verification uses only a public Ed25519 key; the signing private key and authoritative Lane/Queue/Reviewer/R9 issuer must remain outside the verifier and are not yet wired into production.",
-        "Local integration tool uses OS flock under real git-common-dir, rejects concurrent writers, refuses main and dirty trees and preserves conflicts; no remote ref CAS is claimed.",
+        "Local integration tool flocks the stable real git-common-dir inode (not an unlinkable lock file), rejects concurrent writers, refuses main and dirty trees and preserves conflicts; no remote ref CAS is claimed.",
         "Remote GitHub main protection API returned 404 Branch not protected; approved required-ci-checks.json absent at main. Host eligibility is BLOCKED until separately authorized bootstrap and protected policy installation."
       ],
-      "verification_level": "Focused B1 CI/Host/flock tests and static/A.5 checks rerun on revised candidate; prior independent Reviewer REVISE P0=1/P1=2, new independent code Reviewer and original full R9 still pending.",
+      "verification_level": "Focused CI/Host/flock and architecture tests 138 passed after latest minimal fixes; Reviewer of e08d5712 PASS but a new exact-SHA independent review, full original R9 and remote CI remain pending.",
       "model_evidence_veto_recovery_exit": "Any 403/404, absent trusted policy/public key, invalid Ed25519 snapshot signature, stale Lane/Queue version, failed reviewer/R9, wrong run.workflow_id/path, duplicate context, skipped/RED check, untrusted gate dependency blob, or lock contention must HOLD without merge side effect.",
       "rollback_route": "Revert isolated B1 PR or disable the CI evidence job; no durable migration or production changes. Dirty integration worktrees are retained for owner reconciliation.",
       "declaration_id": "b1-ci-evidence"
@@ -60,8 +60,8 @@
       },
       "g3": {
         "model_evidence": [
-          "Independent DeepSeek-v4-Flash Reviewer of prior f976ad56 returned REVISE P0=1/P1=2, with specific same-name fake workflow, scanner self-bypass and same-key snapshot attacks; code and negative tests were revised, not yet re-reviewed.",
-          "Synthetic tests cover duplicate check-run names, wrong workflow_id/path, twelve main/candidate trusted blobs, independent Ed25519 public-key verification, branch protection absence, main advance, PR run provenance and two-process flock.",
+          "Independent DeepSeek-v4-Flash Reviewer of f976ad56 returned REVISE P0=1/P1=2; Reviewer of e08d5712 returned PASS P0=0/P1=0/P2=10. The subsequent minimal trust-boundary fixes are not covered by that PASS.",
+          "Synthetic tests cover duplicate check-run names, wrong workflow_id/path, twelve main/candidate trusted blobs, extra policy workflow candidate tampering, exact signed repo/PR/run and Lane status, independent Ed25519 public-key verification, branch protection absence, PR merge identity, API redirect refusal, and two-process directory-inode flock despite legacy lock-file unlink.",
           "No live Host eligibility PASS is claimed: remote main protection 404, trusted policy and independent snapshot issuer not installed."
         ],
         "recovery_or_reason": "If required context provenance is ambiguous or gate/policy blob differs from protected main, return HOLD; require separate bootstrap. Reject self-signed snapshot or missing public key. Preserve dirty integration tree for operator reconciliation."

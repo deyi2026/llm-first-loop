@@ -14,7 +14,7 @@ from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from premerge_host import _GATE_PATHS, HostHoldError, _blob_sha, evaluate_host
+from premerge_host import _GATE_PATHS, HostHoldError, _blob_sha, _trusted_policy, evaluate_host
 
 MAIN = "a" * 40
 CANDIDATE = "b" * 40
@@ -44,8 +44,9 @@ def sign(payload: dict) -> dict:
 def snapshot() -> dict:
     return sign({
         "checked_at": NOW - 2, "main_sha": MAIN, "candidate_sha": CANDIDATE,
+        "repo": "o/r", "pr_number": PR_NUMBER, "run_id": RUN_ID,
         "lane": {"lane_id": "lane-1", "version": 4, "head_sha": CANDIDATE,
-                 "base_main_sha": MAIN, "verify_ref": "verify-1"},
+                 "base_main_sha": MAIN, "verify_ref": "verify-1", "status": "merging"},
         "queue": {"queue_id": "queue-1", "version": 2, "lane_id": "lane-1",
                   "status": "ready_for_confirm",
                   "last_preflight_main_sha": MAIN, "slot_held": True},
@@ -195,12 +196,12 @@ def fixture() -> tuple[FakeGitHub, dict]:
     return FakeGitHub(), snapshot()
 
 
-def evaluate(fixture: tuple[FakeGitHub, dict]) -> dict:
+def evaluate(fixture: tuple[FakeGitHub, dict], *, final_now: float = NOW) -> dict:
     client, envelope = fixture
     return evaluate_host(
         client, repo="o/r", pr_number=PR_NUMBER, main=MAIN,
         candidate=CANDIDATE, run_id=RUN_ID, envelope=envelope,
-        snapshot_public_key=TEST_PUBLIC, now=NOW,
+        snapshot_public_key=TEST_PUBLIC, now=NOW, final_now=final_now,
     )
 
 
@@ -493,13 +494,29 @@ def test_p2_http_error_classification(monkeypatch, path, code, reason):
 
     from premerge_host import GitHubReadOnly
 
-    def deny(request, timeout):
-        raise urllib.error.HTTPError(request.full_url, code, "denied", {}, None)
+    class DenyOpener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(request.full_url, code, "denied", {}, None)
 
-    monkeypatch.setattr(urllib.request, "urlopen", deny)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: DenyOpener())
     client = GitHubReadOnly("o/r", "x" * 30)
     with pytest.raises(HostHoldError, match=reason):
         client.get(path)
+
+
+def test_api_redirect_cannot_forward_host_authorization():
+    import urllib.request
+
+    from premerge_host import _NoRedirect
+
+    request = urllib.request.Request(
+        "https://api.github.com/repos/o/r/branches/main",
+        headers={"Authorization": "Bearer test-secret"},
+    )
+    assert _NoRedirect().redirect_request(
+        request, None, 302, "redirect", {"Location": "https://evil.invalid/"},
+        "https://evil.invalid/",
+    ) is None
 
 
 def test_p2_check_run_turns_red_during_final_recheck_holds(fixture):
@@ -519,3 +536,53 @@ def test_p2_check_run_turns_red_during_final_recheck_holds(fixture):
 
     client.get = flip_after_first_read
     holds(fixture, "premerge_race_detected")
+
+
+def test_candidate_cannot_modify_additional_policy_workflow(fixture):
+    """Policy-controlled workflows must be pinned even outside _GATE_PATHS."""
+    client = fixture[0]
+    extra = ".github/workflows/privacy-scan.yml"
+    trusted = b"on: [push, pull_request]\n"
+    client.blobs[extra, MAIN] = trusted
+    client.blobs[extra, CANDIDATE] = b"on: [pull_request]\n"
+    policy = json.loads(client.blobs[POLICY, MAIN])
+    policy["checks"].append({
+        "context": "privacy-gate", "app_id": APP_ID, "purpose": "privacy",
+        "event_scope": "push_and_pr", "workflow_path": extra,
+        "workflow_blob_sha": _blob_sha(trusted), "workflow_id": 999,
+    })
+    raw = json.dumps(policy).encode()
+    client.blobs[POLICY, MAIN] = raw
+    client.blobs[POLICY, CANDIDATE] = raw
+    required = [{"context": item["context"], "app_id": item["app_id"]}
+                for item in policy["checks"]]
+    with pytest.raises(HostHoldError, match="gate_version_untrusted"):
+        _trusted_policy(client, PREFIX, MAIN, CANDIDATE, required)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("repo", "another/repo"), ("pr_number", PR_NUMBER + 1),
+    ("run_id", RUN_ID + 1),
+])
+def test_signed_snapshot_must_bind_exact_request(fixture, field, value):
+    payload = fixture[1]["payload"]
+    payload[field] = value
+    fixture[1].update(sign(payload))
+    holds(fixture, "host_snapshot_identity_changed")
+
+
+def test_abandoned_lane_cannot_reuse_signed_merge_snapshot(fixture):
+    payload = fixture[1]["payload"]
+    payload["lane"]["status"] = "abandoned"
+    fixture[1].update(sign(payload))
+    holds(fixture, "lane_snapshot_incomplete")
+
+
+def test_draft_pr_cannot_be_eligible(fixture):
+    fixture[0].data[f"{PREFIX}/pulls/{PR_NUMBER}"]["draft"] = True
+    holds(fixture, "pr_identity_changed")
+
+
+def test_snapshot_expires_during_host_recheck(fixture):
+    with pytest.raises(HostHoldError, match="host_snapshot_stale"):
+        evaluate(fixture, final_now=NOW + 91)

@@ -140,6 +140,21 @@ def test_pull_request_missing_head_and_base_fails() -> None:
     assert any(r.startswith("identity_incomplete") for r in receipt["reasons"])
 
 
+def test_pull_request_missing_merge_sha_fails_closed() -> None:
+    rc, receipt, _ = _run_gate(*_pr_args(_needs_json(), merge=None))
+    assert rc != 0 and receipt["verdict"] == "fail"
+    assert any(r.startswith("identity_incomplete") for r in receipt["reasons"])
+
+
+def test_invalid_sha_and_run_id_cannot_claim_pass() -> None:
+    rc, receipt, _ = _run_gate(*_pr_args(_needs_json(), merge="not-a-sha"))
+    assert rc != 0 and receipt["verdict"] == "fail"
+    args = _push_args(_needs_json())
+    args[args.index("--run-id") + 1] = "0"
+    rc, receipt, _ = _run_gate(*args)
+    assert rc != 0 and "invalid_run_id" in receipt["reasons"]
+
+
 def test_push_missing_head_sha_fails() -> None:
     args = ["--event", "push", "--run-id", str(RUN_ID), "--needs-json", _needs_json()]
     rc, receipt, _ = _run_gate(*args)
@@ -206,6 +221,16 @@ def test_need_flags_cli_form_passes() -> None:
     assert rc == 0, receipt
     assert receipt["verdict"] == "pass"
     assert receipt["same_run"] is True
+
+
+def test_duplicate_need_flags_do_not_overwrite_failed_job() -> None:
+    args = ["--event", "push", "--run-id", str(RUN_ID), "--head-sha", SHA_HEAD]
+    for job in SIBLINGS:
+        args += ["--need", f"{job}=success@{RUN_ID}"]
+    args += ["--need", f"test=failure@{RUN_ID}"]
+    rc, receipt, _ = _run_gate(*args)
+    assert rc != 0 and receipt["verdict"] == "error"
+    assert "duplicate_need:test" in receipt["reasons"]
 
 
 def test_gate_blob_binding_reads_only_fixed_paths(tmp_path: Path) -> None:

@@ -65,6 +65,13 @@ def _blob_sha(data: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward an operator Authorization header to a redirect target."""
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
 class GitHubReadOnly:
     def __init__(self, repo: str, token: str):
         _require(bool(_REPO.fullmatch(repo)), "repo_invalid")
@@ -86,7 +93,7 @@ class GitHubReadOnly:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.build_opener(_NoRedirect()).open(req, timeout=12) as response:
                 raw = response.read(_MAX_ARTIFACT + 1)
         except urllib.error.HTTPError as exc:
             relative = path.removeprefix("repos/" + self.repo + "/")
@@ -144,11 +151,7 @@ class GitHubReadOnly:
             },
         )
 
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, request, fp, code, msg, headers, newurl):
-                return None
-
-        opener = urllib.request.build_opener(NoRedirect())
+        opener = urllib.request.build_opener(_NoRedirect())
         try:
             opener.open(req, timeout=12)
             raise HostHoldError("artifact_redirect_missing")
@@ -229,16 +232,23 @@ def _verified_snapshot(envelope: dict, public_key_pem: str, now: float) -> dict:
              "host_snapshot_stale")
     return payload
 
-def _check_local(snapshot: dict, main: str, candidate: str) -> None:
+def _check_local(snapshot: dict, main: str, candidate: str, *,
+                 repo: str, pr_number: int, run_id: int) -> None:
     _require(snapshot.get("main_sha") == main and snapshot.get("candidate_sha") == candidate,
              "host_snapshot_identity_changed")
+    _require(
+        snapshot.get("repo") == repo and snapshot.get("pr_number") == pr_number
+        and snapshot.get("run_id") == run_id,
+        "host_snapshot_identity_changed",
+    )
     lane = snapshot.get("lane") or {}
     queue = snapshot.get("queue") or {}
     review = snapshot.get("review") or {}
     r9 = snapshot.get("r9") or {}
     integration = snapshot.get("integration") or {}
     _require(
-        bool(lane.get("lane_id")) and isinstance(lane.get("version"), int)
+        lane.get("status") == "merging"
+        and bool(lane.get("lane_id")) and isinstance(lane.get("version"), int)
         and lane.get("version") > 0 and lane.get("head_sha") == candidate
         and lane.get("base_main_sha") == main and bool(lane.get("verify_ref")),
         "lane_snapshot_incomplete",
@@ -400,6 +410,9 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
         purposes.add(purpose)
         main_workflow_sha, workflow = client.blob(path, main)
         _require(main_workflow_sha == expected_blob, "policy_workflow_untrusted")
+        candidate_workflow_sha, _ = client.blob(path, candidate)
+        _require(candidate_workflow_sha == expected_blob,
+                 "gate_version_untrusted", unavailable=False)
         events = _workflow_events(workflow)
         _require("pull_request" in events, "policy_event_scope_untrusted")
         _require(("push" in events) == (scope == "push_and_pr"),
@@ -434,13 +447,15 @@ def _verify_gate_blobs(client: Any, main: str, candidate: str) -> dict[str, str]
 
 def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
                   candidate: str, run_id: int, envelope: dict,
-                  snapshot_public_key: str, now: float) -> dict:
+                  snapshot_public_key: str, now: float,
+                  final_now: float | None = None) -> dict:
     """No Git writes. All external facts are read through the injected client."""
     _require(bool(_REPO.fullmatch(repo)) and pr_number > 0 and run_id > 0,
              "host_arguments_invalid")
     _require(_sha(main) and _sha(candidate), "host_sha_invalid")
     snapshot = _verified_snapshot(envelope, snapshot_public_key, now)
-    _check_local(snapshot, main, candidate)
+    _check_local(snapshot, main, candidate, repo=repo,
+                 pr_number=pr_number, run_id=run_id)
     prefix = f"repos/{repo}"
     branch = client.get(f"{prefix}/branches/main")
     actual_main = ((branch.get("commit") or {}).get("sha"))
@@ -450,7 +465,8 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     pr_base = ((pr.get("base") or {}).get("sha"))
     tested_merge = pr.get("merge_commit_sha")
     _require(
-        pr.get("state") == "open" and (pr.get("base") or {}).get("ref") == "main"
+        pr.get("state") == "open" and pr.get("draft") is not True
+        and (pr.get("base") or {}).get("ref") == "main"
         and pr_head == candidate and pr_base == main and _sha(tested_merge),
         "pr_identity_changed",
     )
@@ -550,10 +566,15 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         and (final_pr.get("head") or {}).get("sha") == candidate
         and (final_pr.get("base") or {}).get("sha") == main
         and final_pr.get("merge_commit_sha") == tested_merge
-        and final_pr.get("state") == "open"
+        and final_pr.get("state") == "open" and final_pr.get("draft") is not True
         and final_protection == protection
         and final_rulesets == rulesets,
         "premerge_race_detected",
+    )
+    _require(
+        0 <= (time.time() if final_now is None else final_now)
+        - snapshot["checked_at"] <= 90,
+        "host_snapshot_stale",
     )
     # This is a read-side recheck, NOT an atomic main ref CAS.
     return {

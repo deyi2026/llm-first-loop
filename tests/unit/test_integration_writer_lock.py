@@ -48,7 +48,7 @@ def test_aliases_resolve_same_common_lock(repo: tuple[Path, Path], tmp_path: Pat
     c, result3 = run(root, "--mode", "probe")
     assert a == b == c == 0
     assert result["lock_path"] == result2["lock_path"] == result3["lock_path"]
-    assert result["lock_path"] == str((root / ".git" / "lfl-integration-writer.lock").resolve())
+    assert result["lock_path"] == str((root / ".git").resolve())
 
 
 def test_two_processes_second_writer_rejected(repo: tuple[Path, Path]):
@@ -80,6 +80,26 @@ def test_wrong_head_and_dirty_are_fail_closed(repo: tuple[Path, Path]):
     code, result = run(linked, "--mode", "apply-commits",
                        "--expected-head", head, "--commit", head)
     assert code == 3 and result["reason"] == "integration_dirty"
+
+
+def test_legacy_lock_file_unlink_cannot_create_second_writer(repo: tuple[Path, Path]):
+    root, linked = repo
+    p = subprocess.Popen(
+        [sys.executable, str(SCRIPT), "--mode", "probe",
+         "--worktree", str(linked), "--hold-seconds", "2"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        assert p.stdout is not None
+        assert json.loads(p.stdout.readline())["decision"] == "lock_held"
+        legacy = root / ".git" / "lfl-integration-writer.lock"
+        legacy.touch()
+        legacy.unlink()
+        legacy.touch()
+        code, result = run(linked, "--mode", "probe")
+        assert code == 3 and result["reason"] == "integration_writer_busy"
+    finally:
+        p.wait(timeout=10)
 
 
 def test_main_write_forbidden(repo: tuple[Path, Path]):

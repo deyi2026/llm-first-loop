@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any
 
@@ -32,6 +33,7 @@ REQUIRED_JOBS = (
 )
 
 KNOWN_EVENTS = ("push", "pull_request")
+_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -83,6 +85,9 @@ def _parse_needs(args: argparse.Namespace,
             if not sep or not job or not result:
                 reasons.append(f"malformed_need:{item}")
                 return None
+            if job in needs:
+                reasons.append(f"duplicate_need:{job}")
+                return None
             needs[job] = {"result": result}
             if run_id is not None:
                 needs[job]["run_id"] = run_id
@@ -96,6 +101,8 @@ def run_gate(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
     reasons: list[str] = []
     identity: dict[str, Any] = {}
     event = args.event
+    if args.run_id <= 0:
+        reasons.append("invalid_run_id")
     if event not in KNOWN_EVENTS:
         reasons.append(f"unknown_event:{event}")
         receipt = {
@@ -112,8 +119,8 @@ def run_gate(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
         for v in (args.pr_head_sha, args.pr_base_sha, args.pr_merge_sha)
     )
     if event == "push":
-        if not args.head_sha:
-            reasons.append("identity_incomplete:push-head-sha-missing")
+        if not args.head_sha or not _SHA.fullmatch(args.head_sha):
+            reasons.append("identity_incomplete:push-head-sha-invalid")
         else:
             identity["push_head_sha"] = args.head_sha
         if pr_flags_used:
@@ -127,8 +134,11 @@ def run_gate(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
             identity["pr_base_sha"] = args.pr_base_sha
         if args.pr_merge_sha:
             identity["pr_merge_sha"] = args.pr_merge_sha
-        if not args.pr_head_sha or not args.pr_base_sha:
-            reasons.append("identity_incomplete:pr-head-or-base-missing")
+        if not all(
+            isinstance(sha, str) and _SHA.fullmatch(sha)
+            for sha in (args.pr_head_sha, args.pr_base_sha, args.pr_merge_sha)
+        ):
+            reasons.append("identity_incomplete:pr-sha-missing-or-invalid")
 
     if any(r.startswith("identity_conflict") for r in reasons):
         receipt = {
