@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-queue-truth-sync",
+  "summary": "Docs-only truth sync for the BUG/blocker and OPT queues: record BUG-14 evidence plus the no-ledger-mutation boundary, state BUG-16 as already fixed by PR#48 (73e5053c3) with its real version-strip contract, mark OPT-11 done against the shipped four-segment projection, and register LCLOSE-1 lane closure facts plus the docs-only release receipt convention. No runtime code, service config, or audit-ledger mutation.",
+  "components": [
+    {
+      "component_id": "queue-docs-truth-sync",
+      "paths": [
+        "docs/governance/submissions/20261116-queue-truth-sync.json",
+        "docs/queues/BUG-BLOCKER-QUEUE-20261116.md",
+        "docs/queues/OPT-QUEUE-20261116.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing docs/queues ledgers and docs/governance submissions; runtime aggregation lives in lane_board.py and is not touched here.",
+      "disposition": "REUSE existing queue documents and the existing A.5 manifest mechanism; correct stale status/prose only. No new gate, ledger, approval path, or runtime behaviour.",
+      "evidence": [
+        "Baseline origin/main=40ba2d91710916d5d21331e1faa97487b6477bf0 whose parent 73e5053c3 is PR#48; versions.* contract read from origin/main:src/llm_loop/introspection/lane_board.py.",
+        "PR#42 merge 96098972f and PR#48 CI runs 43864352787/43865490003 all success; generation 426 reports four services alive at 40ba2d9.",
+        "Production lanes.jsonl read-only audit: 86 rows, 85 unique lane ids, duplicate lane-selftest-guard (active v1 / closed v2); backup data/backups/lanes-20261116T153712.jsonl sha256=06aa90ed..., unchanged by this change."
+      ],
+      "verification_level": "Docs-only: privacy scan, A.5 presence/coverage gate, independent read-only Reviewer, repository full R9 on this exact tree, and GitHub CI on the exact head SHA. No service restart is implied.",
+      "model_evidence_veto_recovery_exit": "If any gate fails or a claim here is contradicted by the current tree, stop and report rather than narrowing the gate or rewording a failure into a pass.",
+      "rollback_route": "Revert this single docs commit; no runtime state, deployment generation, or audit ledger row changes, so revert is complete and side-effect free."
+    }
+  ],
+  "declarations": []
+}
