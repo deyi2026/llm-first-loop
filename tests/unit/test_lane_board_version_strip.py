@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -551,3 +552,73 @@ def test_receipt_short_sha_cannot_become_live(tmp_path: Path) -> None:
     assert board["deployment"]["sync_state"] != "exact"
     assert board["deployment"]["in_sync"] is False
     assert "restart_receipt_bad_sha" in board["degraded"]
+
+
+# ---------------- R4：desired/live 强契约（40 位、小写归一）与 manifest 事实化 ----------------
+
+
+def _receipt(tmp_path: Path, sha: str) -> None:
+    (tmp_path / "restart-receipt.json").write_text(
+        json.dumps(
+            {
+                "ts": "2026-11-16T15:23:31+08:00",
+                "action": "web",
+                "git_head_full": sha,
+                "authoritative": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_short_desired_sha_is_invalid_not_a_false_mismatch(tmp_path: Path) -> None:
+    """service_control 只接受 40 位 git_head：短 desired 必须 unknown，不是 mismatch。"""
+    live = "a" * 40
+    _desired_file(tmp_path, "a" * 12)  # 前缀；旧实现当成"合法但不等"→ 假 mismatch
+    _receipt(tmp_path, live)
+
+    board = build_board(tmp_path / "audit", main_head=live)
+
+    assert board["versions"]["desired"]["sha"] == ""
+    assert board["versions"]["desired"]["source"] == "unknown"
+    assert board["deployment"]["desired_matches_live"] is None
+    # live 侧权威门不放宽：head 与权威回执同 sha 仍是 exact。
+    assert board["deployment"]["sync_state"] == "exact"
+    assert "desired_deployment_invalid" in board["degraded"]
+
+
+def test_uppercase_shas_normalize_before_comparison(tmp_path: Path) -> None:
+    upper = "A" * 40
+    _desired_file(tmp_path, upper)
+    _receipt(tmp_path, upper)
+
+    board = build_board(tmp_path / "audit", main_head=upper.lower())
+
+    assert board["versions"]["desired"]["sha"] == upper.lower()
+    assert board["versions"]["live"]["sha"] == upper.lower()
+    assert board["deployment"]["desired_matches_live"] is True
+    assert board["deployment"]["sync_state"] == "exact"
+
+
+def test_manifest_records_no_stale_pass_counts() -> None:
+    """治理证据必须可重跑：不得写入随 SHA 过期的 PASS 计数或旧门禁状态。"""
+    manifest_path = (
+        Path(__file__).resolve().parents[2]
+        / "docs/governance/submissions/20261116-w1-board-version-strip.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    component = manifest["components"][0]
+    declaration = manifest["declarations"][0]
+    joined = "\n".join(
+        [
+            component["verification_level"],
+            *declaration["g3"]["model_evidence"],
+            *declaration["g4"]["verification"],
+        ]
+    )
+
+    assert not re.search(r"\b\d+ PASS\b", joined)
+    assert "Reviewer round 1" not in joined
+    # 稳定可重跑命令必须在场，替换掉一次性的 PASS 快照。
+    assert "tests/unit/test_lane_board_version_strip.py" in joined
+    assert "scripts/check_architecture_submission.py" in joined

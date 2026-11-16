@@ -28,7 +28,7 @@
         "Live timestamp gate (R2 P2-1): when the restart receipt is absent and only historical deployments rows exist, versions.live.recorded_at is empty together with sha empty and source=unknown, so a historical timestamp cannot be read as the live record.",
         "tests/unit/test_lane_board_version_strip.py now covers detached worktree vs origin/main, origin/main absent, explicit main_head compatibility and baseline, desired/live projection, desired missing, non-UTF-8 desired bytes, non-string git_head, superseded duplicate, same-version conflict, three-row non-boolean owner conflict, invalid version, unreadable ledger, historical deploy rows not live, and the HTTP route projection."
       ],
-      "verification_level": "Focused tests/unit/test_lane_board_version_strip.py 18 PASS (each new case RED before its fix; R2 added 4: non-UTF-8 desired bytes, non-string git_head, three-row non-boolean owner, explicit main_head baseline; live.recorded_at is asserted inside the historical-rows test). Adjacent tests/unit/test_lane_board.py + test_coordination_routes.py + test_arch_guards.py + test_coordination_status.py 78 PASS. ruff check PASS on both changed source files and the test file; ruff format shows no diff in the test file, and lane_board.py keeps exactly one pre-existing hunk (lanes_available) that is byte-identical to origin/main and is left unformatted on purpose. pyright 0 errors on lane_board.py. A.5 validator PASS on the branch diff against base b7aef87b (--base/--head, which is the correct scope once the branch carries more than one commit). Independent Reviewer round 1 returned REVISE (P0=0/P1=1/P2=3); this R2 candidate fixes those findings and has NOT been re-reviewed yet; original full R9 still not run.",
+      "verification_level": "Re-runnable, never a stored snapshot: pytest tests/unit/test_lane_board_version_strip.py (focused); pytest tests/unit/test_lane_board.py tests/unit/test_coordination_routes.py tests/unit/test_arch_guards.py tests/unit/test_coordination_status.py (adjacent); ruff check plus ruff format --check on the changed files; pyright src/llm_loop/introspection/lane_board.py; python scripts/check_architecture_submission.py --base <pr-base> --head <candidate> for schema and exact changed-path coverage. lane_board.py keeps one pre-existing format hunk (lanes_available) that is byte-identical to origin/main. Review and R9 outcomes are gate state owned by the Goal checkpoint and the PR, so this manifest does not duplicate them.",
       "model_evidence_veto_recovery_exit": "Veto if the Board still infers main from a worktree checkout, if any version segment is fabricated when its source is absent, if a historical deployment row is promoted to the live identity, if same-version lane conflicts are presented as resolved, or if lane aggregation gains any write/close authority. Recovery: keep the pre-change read-only projection, revert this branch, fix, re-freeze and re-run the full gate chain.",
       "rollback_route": "Revert this branch/commit: the Board returns to the previous fields (main_head from worktree probe, first-row lane listing). No migration, no ledger rewrite, no service restart required.",
       "declaration_id": "w1-board-version-strip"
@@ -43,9 +43,9 @@
       "disposition": "ADMIT the declaration file itself, which carries no executable runtime control; it only partitions and explains the changed paths above.",
       "evidence": [
         "This manifest partitions every changed path of the branch exactly once, including itself, against base origin/main b7aef87b.",
-        "scripts/check_architecture_submission.py --staged PASS (schema plus exact path coverage) is recorded on the committed tree."
+        "scripts/check_architecture_submission.py --base <pr-base> --head <candidate> asserts schema plus exact changed-path coverage on the committed tree."
       ],
-      "verification_level": "A.5 schema and changed-path coverage validator PASS; no control logic in this file.",
+      "verification_level": "No control logic in this file; re-run scripts/check_architecture_submission.py --base <pr-base> --head <candidate> for schema and exact changed-path coverage.",
       "model_evidence_veto_recovery_exit": "If any changed path is missing or the declaration overstates verification, block merge and correct this file in the same isolated branch.",
       "rollback_route": "Revert the declaration commit together with the PR; no runtime impact."
     }
@@ -64,21 +64,21 @@
       "g3": {
         "model_evidence": [
           "Production reproduction recorded for both defects (main_head=3e0202b5b vs origin/main=b7aef87b; inflight 14 vs version-resolved 13).",
-          "R2 Review round (independent, Host-configured) returned REVISE with P0=0/P1=1/P2=3; those R2 findings are fixed tests-first: non-UTF-8 desired bytes degrade fail-closed (P1), non-string git_head is never rendered as a SHA (P1), the live segment no longer borrows a historical timestamp (P2-1), behind_main uses the reported main_head baseline or None (P2-2), and the manifest evidence text names tests that actually exist (P2-3).",
-          "R3 round: the Host Reviewer's P1 on this file (\"_read_latest_deployment does not catch JSONDecodeError\") was adjudicated a demonstrable false positive - the per-line handler already exists - and is now pinned by test_malformed_deployment_json_line_does_not_crash instead of by adding a redundant except. The three real P2 gaps are fixed: test_lower_version_conflict_does_not_veto_higher_version plus test_top_version_conflict_still_fails_closed (P2-1), test_non_positive_or_bool_version_fails_closed over 0/-1/True (P2-2), test_receipt_short_sha_cannot_become_live (P2-3).",
+          "Reviewer-reported defects are pinned as tests, not as summaries: non-UTF-8 desired bytes degrade fail-closed, non-string git_head is never rendered as a SHA, the live segment never borrows a historical timestamp, behind_main uses the reported main_head baseline or None, and the manifest evidence names tests that actually exist.",
+          "The Host Reviewer's P1 (\"_read_latest_deployment does not catch JSONDecodeError\") was adjudicated a demonstrable false positive - the per-line handler already exists - and is pinned by test_malformed_deployment_json_line_does_not_crash rather than by adding a redundant except. The three real P2 gaps are pinned by test_lower_version_conflict_does_not_veto_higher_version, test_top_version_conflict_still_fails_closed, test_non_positive_or_bool_version_fails_closed and test_receipt_short_sha_cannot_become_live.",
           "Earlier round still holds: historical deployment rows no longer feed the live identity, same-version owner conflicts stay fail-closed in degraded, and version lanes missing from the Board list are no longer silently skipped.",
-          "Focused 25 PASS (each R3 fix preceded by a failing test); adjacent Board + coordination-route + arch-guard + coordination-status 78 PASS; ruff check clean; pyright 0 errors on the changed source file; A.5 validator PASS on the branch diff (--base b7aef87b --head HEAD).",
-          "Re-review and complete R9 are explicitly NOT claimed on this SHA either; the R3 candidate stops before that gate and a fresh independent Reviewer is scheduled by the coordinator."
+          "Verification is re-run, not quoted: components[0].verification_level carries the focused, adjacent, lint, type-check and A.5 validator commands. This round adds the service_control 40-char lowercase contract: a short desired SHA degrades to unknown instead of a false mismatch, and uppercase desired/live SHAs normalize before comparison (test_short_desired_sha_is_invalid_not_a_false_mismatch, test_uppercase_shas_normalize_before_comparison).",
+          "Review and R9 state is deliberately absent from this manifest: it is owned by the Goal checkpoint and the PR, and test_manifest_records_no_stale_pass_counts pins that no PASS count is ever stored here."
         ],
         "recovery_or_reason": "Every source is optional: if git probing fails, origin/main is absent, or the desired/live records are missing or malformed, the field is empty with source=unknown plus a degraded reason; the Board never substitutes a different SHA. If aggregation sees an invalid or conflicting version, that lane is excluded from counts and surfaced in degraded."
       },
       "g4": {
         "rollback": "Revert the branch; the Board falls back to its previous fields and the ledger is untouched.",
         "verification": [
-          "Focused 18 PASS; adjacent Board + coordination-route + arch-guard + coordination-status 78 PASS.",
-          "Ruff check PASS on changed files; pyright 0 errors on lane_board.py; ruff format leaves only the pre-existing origin/main hunk in lane_board.py.",
-          "A.5 validator PASS with --base b7aef87b --head <branch head>: exact changed-path coverage including this manifest.",
-          "Pending gates: independent Reviewer PASS (P0/P1=0) on the R3 SHA, complete R9 exit 0, remote exact-SHA CI, then controlled merge."
+          "Focused and adjacent suites are re-run from the commands in components[0].verification_level; no counts or PASS snapshots are stored here.",
+          "Ruff check plus ruff format --check on the changed files; pyright on src/llm_loop/introspection/lane_board.py; lane_board.py keeps only the pre-existing origin/main format hunk.",
+          "scripts/check_architecture_submission.py --base <pr-base> --head <candidate> asserts schema plus exact changed-path coverage including this manifest.",
+          "Gate order outside this file: independent Reviewer PASS (P0/P1=0) on the frozen SHA, complete R9 exit 0, remote exact-SHA CI, controlled merge. Their results live in the Goal checkpoint, never here."
         ]
       }
     }

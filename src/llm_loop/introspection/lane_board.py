@@ -18,22 +18,23 @@ from typing import Any
 from llm_loop.introspection.lane import TERMINAL_STATUSES, LaneStore
 from llm_loop.timekeeping import system_local_now
 
-# 版本段的合法形状：7..40 位十六进制。全量 sha 是 40，短 sha 也接受（比较用前缀）。
-_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
-# 权威回执里的 git_head_full 必须真的是"full"（P2-3）；短 sha 不能进 live 段。
-_FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+# service_control 的强契约（runtime/service_control.py）: git_head 必须是
+# `re.fullmatch(r"[0-9a-f]{40}")`。Board 只能接受同形状的完整 SHA——短 sha
+# 或任意长度十六进制都不是"服务实际记录的 identity"（R4 P2-b）。
+_SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
-def _sha_like(value: Any) -> str:
-    """只把「本身就是 SHA 形状的字符串」当版本值。
+def _sha40(value: Any) -> str:
+    """把「40 位十六进制字符串」规范成小写 SHA；其余一律返回空串 = 无值。
 
     ``True`` / ``123`` / 列表经 ``str()`` 会变成 ``"True"`` / ``"123"``，那是伪造
-    版本段（P1）。非字符串一律返回空串 = 无值，由调用方降级成 unknown。
+    版本段（P1）。大小写是同一 identity 的写法差异，归一成小写后比较（R4 P2-b）；
+    长度不足 40 或含非十六进制字符则不是 service_control 会写下的值 → unknown。
     """
     if not isinstance(value, str):
         return ""
     text = value.strip()
-    return text if _SHA_RE.match(text) else ""
+    return text.lower() if _SHA40_RE.match(text) else ""
 
 
 def _probe_git(workspace_root: str, *args: str) -> tuple[str, str]:
@@ -129,7 +130,7 @@ def _read_desired_deployment(data_root: Path) -> tuple[dict, str]:
     # 半个 UTF-8 字符必须降级成 unknown，不能炸穿 build_board / 路由（P1）。
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return {}, f"desired_deployment_unreadable:{type(exc).__name__}"
-    if not isinstance(doc, dict) or not _sha_like(doc.get("git_head")):
+    if not isinstance(doc, dict) or not _sha40(doc.get("git_head")):
         return {}, "desired_deployment_invalid"
     return doc, ""
 
@@ -138,8 +139,9 @@ def _desired_strip(doc: dict) -> dict[str, Any]:
     generation = doc.get("generation")
     if not isinstance(generation, int) or isinstance(generation, bool):
         generation = None
-    # 防御第二道：即便调用方传进来未经校验的 doc，也只输出 SHA 形状的值。
-    sha = _sha_like(doc.get("git_head"))
+    # 防御第二道：即便调用方传进来未经校验的 doc，也只输出 40 位小写 SHA；
+    # 短 sha / 大小写混杂在这里统一收敛，比较口径与 service_control 契约一致。
+    sha = _sha40(doc.get("git_head"))
     return {
         "generation": generation,
         "sha": sha,
@@ -294,10 +296,11 @@ def _read_authoritative_receipt(data_root: Path) -> tuple[dict, str]:
     # 非 authoritative 的回执（例如子代理手工跑脚本留下）不能冒充部署事实。
     if raw.get("authoritative") is not True:
         return {}, "restart_receipt_not_authoritative"
-    sha = str(raw.get("git_head_full") or "").strip()
+    sha = _sha40(raw.get("git_head_full"))
     if not sha:
-        return {}, "restart_receipt_no_sha"
-    if not _FULL_SHA_RE.match(sha):
+        # 区分"没给"与"给了但不是 40 位十六进制"：两种都不得进 live 段。
+        if not str(raw.get("git_head_full") or "").strip():
+            return {}, "restart_receipt_no_sha"
         # P2-3：权威回执必须给全 40 位 sha。短/残缺 sha 一旦进 live 段，
         # prefix 比较就能把 exact 判出来（假绿）；来源本身已声明 authoritative，
         # 形状不符只能是坏回执 → 退成 unknown，绝不降格接受。
