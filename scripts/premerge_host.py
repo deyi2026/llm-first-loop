@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import hmac
 import io
 import json
 import os
@@ -32,6 +31,13 @@ _GATE_PATHS = (
     "scripts/premerge_gate.py",
     "scripts/ci_gate.sh",
     ".github/workflows/ci.yml",
+    "scripts/git_security_scan.sh",
+    "scripts/verify_linux_installer.py",
+    "pyproject.toml",
+    "scripts/check_static_diagnostics.py",
+    "scripts/check_test_env_pins.py",
+    "scripts/check_architecture_submission.py",
+    ".github/workflows/architecture-review.yml",
 )
 _POLICY_PATH = "docs/governance/required-ci-checks.json"
 _MAX_ARTIFACT = 1024 * 1024
@@ -80,6 +86,21 @@ class GitHubReadOnly:
         try:
             with urllib.request.urlopen(req, timeout=12) as response:
                 raw = response.read(_MAX_ARTIFACT + 1)
+        except urllib.error.HTTPError as exc:
+            relative = path.removeprefix("repos/" + self.repo + "/")
+            if exc.code == 403:
+                reason = "host_credential_scope_missing"
+            elif exc.code == 404 and relative.startswith(
+                "branches/main/protection/"
+            ):
+                reason = "protection_not_installed"
+            elif exc.code == 404 and relative.startswith(
+                "contents/docs/governance/required-ci-checks.json"
+            ):
+                reason = "policy_missing"
+            else:
+                reason = "github_api_unavailable"
+            raise HostHoldError(reason) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise HostHoldError("github_api_unavailable") from exc
         _require(len(raw) <= _MAX_ARTIFACT, "github_response_oversize")
@@ -167,20 +188,44 @@ def _decode_artifact_zip(content: bytes) -> dict:
     return value
 
 
-def _verified_snapshot(envelope: dict, key: str, now: float) -> dict:
+def _verified_snapshot(envelope: dict, public_key_pem: str, now: float) -> dict:
+    """Verify an independent Host issuer signature using PUBLIC key only.
+
+    The signing private key must live in a separate trusted issuer process.
+    This verifier never receives, imports, or accepts a signing private key.
+    """
     _require(isinstance(envelope, dict), "host_snapshot_missing")
     payload = envelope.get("payload")
-    mac = envelope.get("hmac_sha256")
-    _require(isinstance(payload, dict) and isinstance(mac, str), "host_snapshot_unsigned")
-    _require(isinstance(key, str) and len(key) >= 32, "host_snapshot_key_unavailable")
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    expected = hmac.new(key.encode(), canonical, hashlib.sha256).hexdigest()
-    _require(hmac.compare_digest(expected, mac), "host_snapshot_signature_invalid")
+    signature = envelope.get("signature_ed25519")
+    key_id = envelope.get("key_id")
+    _require(isinstance(payload, dict) and isinstance(signature, str),
+             "host_snapshot_unsigned")
+    _require(isinstance(public_key_pem, str) and public_key_pem.strip(),
+             "host_snapshot_public_key_unavailable")
+    _require(
+        isinstance(key_id, str) and key_id ==
+        hashlib.sha256(public_key_pem.encode()).hexdigest()[:16],
+        "host_snapshot_key_id_mismatch",
+    )
+    try:
+        from Crypto.PublicKey import ECC
+        from Crypto.Signature import eddsa
+
+        key = ECC.import_key(public_key_pem)
+        _require(key.curve == "Ed25519" and not key.has_private(),
+                 "host_snapshot_public_key_invalid")
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        raw_signature = base64.b64decode(signature, validate=True)
+        _require(len(raw_signature) == 64, "host_snapshot_signature_invalid")
+        eddsa.new(key, "rfc8032").verify(canonical, raw_signature)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HostHoldError("host_snapshot_signature_invalid") from exc
     stamp = payload.get("checked_at")
     _require(isinstance(stamp, (int, float)) and 0 <= now - stamp <= 90,
              "host_snapshot_stale")
     return payload
-
 
 def _check_local(snapshot: dict, main: str, candidate: str) -> None:
     _require(snapshot.get("main_sha") == main and snapshot.get("candidate_sha") == candidate,
@@ -225,7 +270,7 @@ def _check_local(snapshot: dict, main: str, candidate: str) -> None:
 
 
 def _checks(client: Any, repo_path: str, sha: str) -> list[dict]:
-    value = client.get(f"{repo_path}/commits/{sha}/check-runs?per_page=100")
+    value = client.get(f"{repo_path}/commits/{sha}/check-runs?per_page=100&filter=all")
     runs = value.get("check_runs")
     _require(isinstance(runs, list) and value.get("total_count") == len(runs),
              "check_runs_incomplete")
@@ -238,7 +283,7 @@ def _lookup(runs: list[dict], context: str, app_id: int, sha: str) -> dict | Non
         if r.get("name") == context and (r.get("app") or {}).get("id") == app_id
         and r.get("head_sha") == sha
     ]
-    _require(len(matches) <= 1, "check_context_ambiguous")
+    _require(len(matches) <= 1, "check_context_ambiguous", unavailable=False)
     return matches[0] if matches else None
 
 
@@ -249,7 +294,9 @@ def _passed(run: dict | None) -> bool:
 def _check_run_origin(client: Any, repo: str, check: dict, *,
                       event: str, main: str, candidate: str,
                       tested_merge: str, pr_number: int,
-                      expected_run_id: int | None = None) -> None:
+                      expected_run_id: int | None = None,
+                      expected_workflow_path: str = "",
+                      expected_workflow_id: int = 0) -> None:
     details = check.get("details_url")
     _require(isinstance(details, str), "check_run_origin_unverifiable")
     parsed = urllib.parse.urlsplit(details)
@@ -267,6 +314,13 @@ def _check_run_origin(client: Any, repo: str, check: dict, *,
     if expected_run_id is not None:
         _require(actual_run_id == expected_run_id, "managed_run_identity_mismatch")
     run = client.get(f"repos/{repo}/actions/runs/{actual_run_id}")
+    run_path = run.get("path")
+    _require(
+        isinstance(run_path, str)
+        and run_path.split("@", 1)[0] == expected_workflow_path
+        and run.get("workflow_id") == expected_workflow_id,
+        "check_run_workflow_mismatch", unavailable=False,
+    )
     _require(
         run.get("id") == actual_run_id and run.get("event") == event
         and run.get("status") == "completed" and run.get("conclusion") == "success",
@@ -327,13 +381,15 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
         context, app_id = item.get("context"), item.get("app_id")
         scope, purpose = item.get("event_scope"), item.get("purpose")
         path, expected_blob = item.get("workflow_path"), item.get("workflow_blob_sha")
+        workflow_id = item.get("workflow_id")
         _require(
             isinstance(context, str) and bool(context.strip())
             and type(app_id) is int and app_id > 0
             and scope in ("push_and_pr", "pr_only")
             and isinstance(purpose, str) and bool(purpose)
             and isinstance(path, str) and path.startswith(".github/workflows/")
-            and _sha(expected_blob),
+            and _sha(expected_blob)
+            and type(workflow_id) is int and workflow_id > 0,
             "policy_invalid",
         )
         key = (context, app_id)
@@ -376,12 +432,12 @@ def _verify_gate_blobs(client: Any, main: str, candidate: str) -> dict[str, str]
 
 def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
                   candidate: str, run_id: int, envelope: dict,
-                  snapshot_key: str, now: float) -> dict:
+                  snapshot_public_key: str, now: float) -> dict:
     """No Git writes. All external facts are read through the injected client."""
     _require(bool(_REPO.fullmatch(repo)) and pr_number > 0 and run_id > 0,
              "host_arguments_invalid")
     _require(_sha(main) and _sha(candidate), "host_sha_invalid")
-    snapshot = _verified_snapshot(envelope, snapshot_key, now)
+    snapshot = _verified_snapshot(envelope, snapshot_public_key, now)
     _check_local(snapshot, main, candidate)
     prefix = f"repos/{repo}"
     branch = client.get(f"{prefix}/branches/main")
@@ -396,6 +452,14 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         and pr_head == candidate and pr_base == main and _sha(tested_merge),
         "pr_identity_changed",
     )
+    merge_commit = client.get(f"{prefix}/commits/{tested_merge}")
+    parents = merge_commit.get("parents")
+    _require(
+        merge_commit.get("sha") == tested_merge and isinstance(parents, list)
+        and len(parents) == 2 and (parents[0] or {}).get("sha") == main
+        and (parents[1] or {}).get("sha") == candidate,
+        "tested_merge_parents_mismatch", unavailable=False,
+    )
     protection = client.get(f"{prefix}/branches/main/protection/required_status_checks")
     _require(protection.get("strict") is True, "base_guard_unavailable")
     remote_required = protection.get("checks")
@@ -407,7 +471,6 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     blobs = _verify_gate_blobs(client, main, candidate)
     main_runs = _checks(client, prefix, main)
     pr_runs = _checks(client, prefix, tested_merge)
-    head_runs = _checks(client, prefix, candidate)
     for item in pinned:
         context, app_id = item["context"], item["app_id"]
         if item["event_scope"] == "push_and_pr":
@@ -417,17 +480,18 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
             _check_run_origin(
                 client, repo, main_check, event="push", main=main,
                 candidate=candidate, tested_merge=tested_merge, pr_number=pr_number,
+                expected_workflow_path=item["workflow_path"],
+                expected_workflow_id=item["workflow_id"],
             )
         merged = _lookup(pr_runs, context, app_id, tested_merge)
-        headed = _lookup(head_runs, context, app_id, candidate)
-        _require(_passed(merged) or _passed(headed),
-                 "pr_required_checks_incomplete", unavailable=False)
-        selected = merged if _passed(merged) else headed
-        assert selected is not None
+        _require(_passed(merged), "pr_required_checks_incomplete", unavailable=False)
+        assert merged is not None
         _check_run_origin(
-            client, repo, selected, event="pull_request", main=main,
+            client, repo, merged, event="pull_request", main=main,
             candidate=candidate, tested_merge=tested_merge, pr_number=pr_number,
             expected_run_id=run_id if item["purpose"] == "managed_evidence" else None,
+            expected_workflow_path=item["workflow_path"],
+            expected_workflow_id=item["workflow_id"],
         )
     run = client.get(f"{prefix}/actions/runs/{run_id}")
     associated = run.get("pull_requests")
@@ -473,8 +537,14 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         f"{prefix}/branches/main/protection/required_status_checks"
     )
     final_rulesets = client.get(f"{prefix}/rulesets?includes_parents=true")
+    final_main_runs = _checks(client, prefix, main)
+    final_pr_runs = _checks(client, prefix, tested_merge)
+    final_run = client.get(f"{prefix}/actions/runs/{run_id}")
+    final_artifacts = client.get(f"{prefix}/actions/runs/{run_id}/artifacts?per_page=100")
     _require(
-        (final_main.get("commit") or {}).get("sha") == main
+        final_main_runs == main_runs and final_pr_runs == pr_runs
+        and final_run == run and final_artifacts == artifacts
+        and (final_main.get("commit") or {}).get("sha") == main
         and (final_pr.get("head") or {}).get("sha") == candidate
         and (final_pr.get("base") or {}).get("sha") == main
         and final_pr.get("merge_commit_sha") == tested_merge
@@ -489,7 +559,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         "read_only": True, "remote_main_sha": main, "candidate_sha": candidate,
         "pr_number": pr_number, "github_run_id": run_id,
         "tested_merge_sha": tested_merge, "required_checked": len(pinned),
-        "trusted_gate_blobs": blobs, "host_snapshot_verified": True,
+        "trusted_gate_blobs": blobs, "host_snapshot_signature_verified": True,
         "branch_protection_verified": True, "remote_main_cas": False,
         "git_writes": False, "deployment": False,
     }
@@ -511,12 +581,13 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             raise HostHoldError("host_snapshot_unavailable") from exc
         token = os.environ.get("LFL_PREMERGE_HOST_GITHUB_TOKEN", "")
-        key = os.environ.get("LFL_PREMERGE_HOST_SNAPSHOT_KEY", "")
+        public_key = os.environ.get("LFL_PREMERGE_HOST_SNAPSHOT_PUBKEY", "")
         client = GitHubReadOnly(args.repo, token)
         result = evaluate_host(
             client, repo=args.repo, pr_number=args.pr,
             main=args.expected_main_sha, candidate=args.expected_candidate_sha,
-            run_id=args.run_id, envelope=envelope, snapshot_key=key, now=time.time(),
+            run_id=args.run_id, envelope=envelope,
+            snapshot_public_key=public_key, now=time.time(),
         )
         code = 0
     except HostHoldError as exc:

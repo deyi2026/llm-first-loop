@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "premerge_gate.py"
 
 RUN_ID = 424242
@@ -210,10 +211,9 @@ def test_need_flags_cli_form_passes() -> None:
 def test_gate_blob_binding_reads_only_fixed_paths(tmp_path: Path) -> None:
     import hashlib
 
-    files = (
-        "scripts/premerge_gate.py", "scripts/ci_gate.sh",
-        ".github/workflows/ci.yml",
-    )
+    from premerge_host import _GATE_PATHS
+
+    files = _GATE_PATHS
     for name in files:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,10 +252,9 @@ def test_gate_blob_binding_missing_path_fails_closed(tmp_path: Path) -> None:
 
 
 def test_gate_blob_binding_symlink_fails_closed(tmp_path: Path) -> None:
-    files = (
-        "scripts/premerge_gate.py", "scripts/ci_gate.sh",
-        ".github/workflows/ci.yml",
-    )
+    from premerge_host import _GATE_PATHS
+
+    files = _GATE_PATHS
     for name in files:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)

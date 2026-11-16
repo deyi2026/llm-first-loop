@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "integration_writer_lock.py"
 
 
@@ -123,3 +124,16 @@ def test_invalid_path_and_commit_do_not_write(repo: tuple[Path, Path], tmp_path:
     code, result = run(linked, "--mode", "apply-commits",
                        "--expected-head", "not-a-sha", "--commit", "bad")
     assert code == 3 and result["reason"] == "invalid_exact_sha"
+
+
+def test_p2_git_probe_timeout_becomes_hold(monkeypatch, tmp_path: Path):
+    import subprocess
+
+    import integration_writer_lock as module
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("git", 20)
+
+    monkeypatch.setattr(module.subprocess, "run", timeout)
+    with pytest.raises(module.IntegrationHoldError, match="git_probe_unavailable"):
+        module._git(tmp_path, "rev-parse", "HEAD")

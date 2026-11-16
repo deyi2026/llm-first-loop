@@ -31,10 +31,13 @@ class IntegrationHoldError(Exception):
 
 
 def _git(worktree: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(worktree), *args],
-        capture_output=True, text=True, check=False, timeout=20,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(worktree), *args],
+            capture_output=True, text=True, check=False, timeout=20,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise IntegrationHoldError("git_probe_unavailable") from exc
     if result.returncode:
         raise IntegrationHoldError("git_probe_failed")
     return result.stdout.strip()
@@ -100,10 +103,13 @@ def apply_commits(worktree: Path, expected_head: str, commits: list[str]) -> dic
         for sha in commits:
             if _git(root, "cat-file", "-t", sha) != "commit":
                 raise IntegrationHoldError("source_not_commit")
-            result = subprocess.run(
-                ["git", "-C", str(root), "cherry-pick", sha],
-                capture_output=True, text=True, check=False, timeout=90,
-            )
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(root), "cherry-pick", sha],
+                    capture_output=True, text=True, check=False, timeout=90,
+                )
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                raise IntegrationHoldError("cherry_pick_needs_reconciliation") from exc
             if result.returncode:
                 # Never abort or reset automatically: retain evidence and conflicts.
                 raise IntegrationHoldError("cherry_pick_needs_reconciliation")

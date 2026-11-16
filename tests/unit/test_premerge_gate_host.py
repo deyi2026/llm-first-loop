@@ -1,44 +1,45 @@
 """Host gate T07/T21-T25: authoritative sources, identity, and trust failures."""
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
-import hmac
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from Crypto.PublicKey import ECC
+from Crypto.Signature import eddsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from premerge_host import HostHoldError, _blob_sha, evaluate_host
+from premerge_host import _GATE_PATHS, HostHoldError, _blob_sha, evaluate_host
 
 MAIN = "a" * 40
 CANDIDATE = "b" * 40
 MERGE = "c" * 40
-TOKEN = "x" * 48
+TEST_PRIVATE = ECC.generate(curve="Ed25519")
+TEST_PUBLIC = TEST_PRIVATE.public_key().export_key(format="PEM")
 NOW = 1000.0
 PREFIX = "repos/o/r"
 RUN_ID = 12345
 PR_NUMBER = 42
 APP_ID = 15368
-GATE_PATHS = (
-    "scripts/premerge_gate.py",
-    "scripts/ci_gate.sh",
-    ".github/workflows/ci.yml",
-)
+GATE_PATHS = _GATE_PATHS
 POLICY = "docs/governance/required-ci-checks.json"
 
 
 def sign(payload: dict) -> dict:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                           ensure_ascii=False).encode()
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    signature = eddsa.new(TEST_PRIVATE, "rfc8032").sign(canonical)
     return {
         "payload": payload,
-        "hmac_sha256": hmac.new(TOKEN.encode(), canonical, hashlib.sha256).hexdigest(),
+        "key_id": hashlib.sha256(TEST_PUBLIC.encode()).hexdigest()[:16],
+        "signature_ed25519": base64.b64encode(signature).decode(),
     }
-
 
 def snapshot() -> dict:
     return sign({
@@ -90,13 +91,20 @@ class FakeGitHub:
         checks = [
             {"context": context, "app_id": APP_ID, "purpose": purpose,
              "event_scope": scope, "workflow_path": path,
-             "workflow_blob_sha": _blob_sha(workflows[path])}
+             "workflow_blob_sha": _blob_sha(workflows[path]),
+             "workflow_id": 1002 if scope == "pr_only" else 1001}
             for context, purpose, path, scope in names
         ]
         policy = json.dumps({"schema": "lfl.required_checks.v1", "checks": checks}).encode()
         for path, data in {
             "scripts/premerge_gate.py": b"gate-code\n",
             "scripts/ci_gate.sh": b"gate-shell\n",
+            "scripts/git_security_scan.sh": b"scan-shell\n",
+            "scripts/verify_linux_installer.py": b"installer-py\n",
+            "pyproject.toml": b"project-toml\n",
+            "scripts/check_static_diagnostics.py": b"static-py\n",
+            "scripts/check_test_env_pins.py": b"env-pin-py\n",
+            "scripts/check_architecture_submission.py": b"a5-py\n",
             **workflows,
             POLICY: policy,
         }.items():
@@ -111,42 +119,48 @@ class FakeGitHub:
                 "state": "open", "base": {"ref": "main", "sha": MAIN},
                 "head": {"sha": CANDIDATE}, "merge_commit_sha": MERGE,
             },
+            f"{PREFIX}/commits/{MERGE}": {
+                "sha": MERGE, "parents": [{"sha": MAIN}, {"sha": CANDIDATE}],
+            },
             f"{PREFIX}/branches/main/protection/required_status_checks": {
                 "strict": True, "checks": [
                     {"context": c["context"], "app_id": c["app_id"]} for c in checks
                 ],
             },
             f"{PREFIX}/rulesets?includes_parents=true": [],
-            f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100": {
+            f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100&filter=all": {
                 "total_count": 3, "check_runs": [
                     runcheck(c["context"], MAIN, run_id=2000) for c in checks
                     if c["event_scope"] == "push_and_pr"
                 ],
             },
-            f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100": {
+            f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all": {
                 "total_count": 4, "check_runs": [
                     runcheck(c["context"], MERGE,
                              run_id=33333 if c["event_scope"] == "pr_only" else RUN_ID)
                     for c in checks
                 ],
             },
-            f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100": {
+            f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all": {
                 "total_count": 0, "check_runs": [],
             },
             f"{PREFIX}/actions/runs/2000": {
                 "id": 2000, "event": "push", "status": "completed",
                 "conclusion": "success", "head_sha": MAIN,
+                "workflow_id": 1001, "path": ".github/workflows/ci.yml@main",
                 "pull_requests": [],
             },
             f"{PREFIX}/actions/runs/33333": {
                 "id": 33333, "event": "pull_request", "status": "completed",
                 "conclusion": "success", "head_sha": CANDIDATE,
+                "workflow_id": 1002, "path": ".github/workflows/architecture-review.yml@refs/pull/42/merge",
                 "pull_requests": [{"number": PR_NUMBER, "head": {"sha": CANDIDATE},
                                    "base": {"sha": MAIN}}],
             },
             f"{PREFIX}/actions/runs/{RUN_ID}": {
                 "id": RUN_ID, "event": "pull_request", "status": "completed",
                 "conclusion": "success", "head_sha": CANDIDATE,
+                "workflow_id": 1001, "path": ".github/workflows/ci.yml@refs/pull/42/merge",
                 "pull_requests": [{"number": PR_NUMBER, "head": {"sha": CANDIDATE},
                                    "base": {"sha": MAIN}}],
             },
@@ -184,7 +198,7 @@ def evaluate(fixture: tuple[FakeGitHub, dict]) -> dict:
     return evaluate_host(
         client, repo="o/r", pr_number=PR_NUMBER, main=MAIN,
         candidate=CANDIDATE, run_id=RUN_ID, envelope=envelope,
-        snapshot_key=TOKEN, now=NOW,
+        snapshot_public_key=TEST_PUBLIC, now=NOW,
     )
 
 
@@ -219,7 +233,7 @@ def test_t25_candidate_policy_cannot_self_approve(fixture):
 
 
 def test_t21_main_test_red_even_if_security_green(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100"]["check_runs"][0]["conclusion"] = "failure"
+    fixture[0].data[f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100&filter=all"]["check_runs"][0]["conclusion"] = "failure"
     holds(fixture, "main_ci_red")
 
 
@@ -247,7 +261,7 @@ def test_t21_missing_managed_required_pin_holds(fixture):
 
 
 def test_t25_pr_only_architecture_pending_holds(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100"]["check_runs"][3]["status"] = "in_progress"
+    fixture[0].data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"]["check_runs"][3]["status"] = "in_progress"
     holds(fixture, "pr_required_checks_incomplete")
 
 
@@ -272,14 +286,14 @@ def test_t25_pr_required_check_wrong_event_holds(fixture):
 
 
 def test_t23_required_check_origin_url_untrusted_holds(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100"]["check_runs"][0]["details_url"] = (
+    fixture[0].data[f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100&filter=all"]["check_runs"][0]["details_url"] = (
         "https://evil.example/actions/runs/2000"
     )
     holds(fixture, "check_run_origin_unverifiable")
 
 
 def test_t24_managed_check_run_other_run_id_holds(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100"]["check_runs"][2]["details_url"] = (
+    fixture[0].data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"]["check_runs"][2]["details_url"] = (
         "https://github.com/o/r/actions/runs/33333/job/77"
     )
     holds(fixture, "managed_run_identity_mismatch")
@@ -353,7 +367,7 @@ def test_t07_host_snapshot_stale_holds(fixture):
 
 
 def test_t25_main_check_run_pagination_holds(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100"]["total_count"] = 120
+    fixture[0].data[f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100&filter=all"]["total_count"] = 120
     holds(fixture, "check_runs_incomplete")
 
 
@@ -363,10 +377,10 @@ def test_t25_host_api_403_holds(fixture):
 
 
 def test_t25_no_snapshot_secret_holds(fixture):
-    with pytest.raises(HostHoldError, match="host_snapshot_key_unavailable"):
+    with pytest.raises(HostHoldError, match="host_snapshot_public_key_unavailable"):
         evaluate_host(fixture[0], repo="o/r", pr_number=PR_NUMBER, main=MAIN,
                       candidate=CANDIDATE, run_id=RUN_ID, envelope=fixture[1],
-                      snapshot_key="", now=NOW)
+                      snapshot_public_key="", now=NOW)
 
 
 def test_cli_host_missing_credentials_returns_hold_without_git_writes(tmp_path: Path):
@@ -383,3 +397,122 @@ def test_cli_host_missing_credentials_returns_hold_without_git_writes(tmp_path: 
     assert proc.returncode == 3
     assert json.loads(proc.stdout)["decision"] == "HOLD"
     assert json.loads(proc.stdout)["reason"] == "host_credential_unavailable"
+
+
+def test_p0_same_context_fake_workflow_cannot_override_red_check(fixture):
+    client = fixture[0]
+    key = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+    client.data[key]["check_runs"][0]["conclusion"] = "failure"
+    client.data[key]["check_runs"].append(
+        runcheck("CI / test", MERGE, run_id=44444)
+    )
+    client.data[key]["total_count"] = 5
+    holds(fixture, "check_context_ambiguous")
+
+
+def test_p0_single_fake_workflow_same_context_rejected_by_run_path(fixture):
+    client = fixture[0]
+    client.data[f"{PREFIX}/actions/runs/{RUN_ID}"]["path"] = (
+        ".github/workflows/zz.yml@refs/pull/42/merge"
+    )
+    holds(fixture, "check_run_workflow_mismatch")
+
+
+def test_p0_same_context_wrong_workflow_id_rejected(fixture):
+    client = fixture[0]
+    client.data[f"{PREFIX}/actions/runs/33333"]["workflow_id"] = 9999
+    holds(fixture, "check_run_workflow_mismatch")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["scripts/git_security_scan.sh", "scripts/verify_linux_installer.py",
+     "pyproject.toml", "scripts/check_architecture_submission.py",
+     "scripts/check_static_diagnostics.py", "scripts/check_test_env_pins.py"],
+)
+def test_p1_candidate_gate_dependency_self_upgrade_rejected(fixture, path):
+    fixture[0].blobs[path, CANDIDATE] = b"exit 0\n"
+    holds(fixture, "gate_version_untrusted")
+
+
+def test_p2_head_only_green_does_not_override_tested_merge_red(fixture):
+    client = fixture[0]
+    key = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+    client.data[key]["check_runs"][0]["conclusion"] = "failure"
+    client.data[f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"] = {
+        "total_count": 1,
+        "check_runs": [runcheck("CI / test", CANDIDATE)],
+    }
+    holds(fixture, "pr_required_checks_incomplete")
+
+
+def test_p2_tested_merge_wrong_parents_holds(fixture):
+    fixture[0].data[f"{PREFIX}/commits/{MERGE}"]["parents"][0]["sha"] = "d" * 40
+    holds(fixture, "tested_merge_parents_mismatch")
+
+
+def test_p1_snapshot_signed_by_other_private_key_rejected(fixture):
+    other = ECC.generate(curve="Ed25519")
+    canonical = json.dumps(
+        fixture[1]["payload"], sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    fixture[1]["signature_ed25519"] = base64.b64encode(
+        eddsa.new(other, "rfc8032").sign(canonical)
+    ).decode()
+    holds(fixture, "host_snapshot_signature_invalid")
+
+
+def test_p1_verifier_rejects_private_key_instead_of_public(fixture):
+    private_pem = TEST_PRIVATE.export_key(format="PEM")
+    fixture[1]["key_id"] = hashlib.sha256(private_pem.encode()).hexdigest()[:16]
+    with pytest.raises(HostHoldError, match="host_snapshot_public_key_invalid"):
+        evaluate_host(
+            fixture[0], repo="o/r", pr_number=PR_NUMBER, main=MAIN,
+            candidate=CANDIDATE, run_id=RUN_ID, envelope=fixture[1],
+            snapshot_public_key=private_pem, now=NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "code", "reason"),
+    [
+        ("branches/main/protection/required_status_checks", 404, "protection_not_installed"),
+        (f"{PREFIX}/branches/main/protection/required_status_checks", 404,
+         "protection_not_installed"),
+        ("contents/docs/governance/required-ci-checks.json?ref=" + MAIN, 404, "policy_missing"),
+        ("branches/main/protection/required_status_checks", 403, "host_credential_scope_missing"),
+    ],
+)
+def test_p2_http_error_classification(monkeypatch, path, code, reason):
+    import urllib.error
+    import urllib.request
+
+    from premerge_host import GitHubReadOnly
+
+    def deny(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, code, "denied", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", deny)
+    client = GitHubReadOnly("o/r", "x" * 30)
+    with pytest.raises(HostHoldError, match=reason):
+        client.get(path)
+
+
+def test_p2_check_run_turns_red_during_final_recheck_holds(fixture):
+    client = fixture[0]
+    original_get = client.get
+    calls = 0
+    target = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+
+    def flip_after_first_read(path: str):
+        nonlocal calls
+        value = original_get(path)
+        if path == target:
+            calls += 1
+            if calls == 2:
+                value["check_runs"][0]["conclusion"] = "failure"
+        return value
+
+    client.get = flip_after_first_read
+    holds(fixture, "premerge_race_detected")
