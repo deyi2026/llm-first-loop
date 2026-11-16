@@ -46,7 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--needs-json", default=None,
                    help="JSON object {job: {result, run_id?}} for the four siblings")
     p.add_argument("--bind-repo-blobs", action="store_true",
-                   help="read-only SHA1 Git blob binding of three gate paths")
+                   help="read-only SHA1 Git blob binding of trusted gate paths")
     p.add_argument("--need", action="append", default=[],
                    help="repeatable: job=result[@run_id], e.g. test=success@424242")
     return p

@@ -98,6 +98,8 @@ class FakeGitHub:
         policy = json.dumps({"schema": "lfl.required_checks.v1", "checks": checks}).encode()
         for path, data in {
             "scripts/premerge_gate.py": b"gate-code\n",
+            "scripts/premerge_host.py": b"host-verifier\n",
+            "scripts/integration_writer_lock.py": b"integration-lock\n",
             "scripts/ci_gate.sh": b"gate-shell\n",
             "scripts/git_security_scan.sh": b"scan-shell\n",
             "scripts/verify_linux_installer.py": b"installer-py\n",
@@ -426,7 +428,8 @@ def test_p0_same_context_wrong_workflow_id_rejected(fixture):
 
 @pytest.mark.parametrize(
     "path",
-    ["scripts/git_security_scan.sh", "scripts/verify_linux_installer.py",
+    ["scripts/premerge_host.py", "scripts/integration_writer_lock.py",
+     "scripts/git_security_scan.sh", "scripts/verify_linux_installer.py",
      "pyproject.toml", "scripts/check_architecture_submission.py",
      "scripts/check_static_diagnostics.py", "scripts/check_test_env_pins.py"],
 )

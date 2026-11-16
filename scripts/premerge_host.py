@@ -29,6 +29,8 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GATE_PATHS = (
     "scripts/premerge_gate.py",
+    "scripts/premerge_host.py",
+    "scripts/integration_writer_lock.py",
     "scripts/ci_gate.sh",
     ".github/workflows/ci.yml",
     "scripts/git_security_scan.sh",
