@@ -2999,7 +2999,7 @@ async def escalation_review(request: Request) -> Response:
     # loopback 免认证部署下 web:loopback 对本类**不满足**人类授权要求
     # （本机任何进程都可直连回环，loopback 不能自批）；必须持有有效浏览器
     # 登录会话（web_session 通道）。灾难命令类审批语义不变。
-    if rec.get("request_kind") == "host_grant" and channel != "web_session":
+    if rec.get("request_kind") in ("host_grant", "verify_receipt") and channel != "web_session":
         _audit(
             "rejected_human_auth_required",
             decided_by=decided_by,
@@ -3104,16 +3104,35 @@ async def escalation_review(request: Request) -> Response:
                 status_code=503,
             )
 
-    rec, reason = store.decide(
-        payload.id,
-        payload.decision,
-        decided_by=decided_by,
-        channel=channel,
-        note=payload.note,
-        ttl_minutes=payload.ttl_minutes,
-        expected_sha256=expected,
-        host_grant_id=host_grant_id,
-    )
+    issue_verify = None
+    if rec.get("request_kind") == "verify_receipt" and payload.decision == "approved":
+        authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
+        if authority is None or getattr(authority, "audit_dir", None) != (base / "audit").resolve():
+            _audit("host_verify_unavailable", decided_by=decided_by, channel=channel)
+            return JSONResponse({"error": "host_verify_unavailable"}, status_code=503)
+        issue_verify = authority.issue
+    try:
+        rec, reason = store.decide(
+            payload.id,
+            payload.decision,
+            decided_by=decided_by,
+            channel=channel,
+            note=payload.note,
+            ttl_minutes=payload.ttl_minutes,
+            expected_sha256=expected,
+            host_grant_id=host_grant_id,
+            issue_verify=issue_verify,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        # No approved decision is persisted if the Host verifier fails.
+        # The audit directory remains forbidden to sandbox host-grants.
+        logger.warning("Host verify receipt issue rejected: %s", exc)
+        _audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
+               command_sha256=command_sha256, detail=str(exc)[:200])
+        return JSONResponse(
+            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            status_code=409,
+        )
     if rec is None:
         if host_grant_id and grant_store is not None:
             # decide 失败（冲突/状态漂移）→ 撤销孤儿 grant，杜绝批准外泄漏

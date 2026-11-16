@@ -1,0 +1,115 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261117-host-verify-issuer-and-login-feedback",
+  "summary": "修复审计账本 host-grant 硬拒后的 verify_ref 无签发入口与 Web 未登录审批无反馈。新入口只允许进程内 Host 冻结独立只读 Reviewer、真实浏览器登录审批后由 Host 写入精确审计凭证；普通 host-grant 保护保持不变。",
+  "components": [
+    {
+      "component_id": "host-verify-receipt-issuer",
+      "paths": [
+        "skills/merge-review-gate/SKILL.md",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/introspection/host_verify_issuer.py",
+        "src/llm_loop/introspection/merge_queue.py",
+        "src/llm_loop/introspection/tools_merge_queue.py",
+        "src/llm_loop/tools/builtin/escalation.py",
+        "src/llm_loop/tools/escalation.py",
+        "src/llm_loop/web/routes.py",
+        "tests/unit/test_host_verify_issuer.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host 独立 Reviewer / EscalationStore 人类批准 / MergeQueue verify_receipts 受保护账本",
+      "disposition": "ADMIT 专用 Host 签发：merge_review_start 只读 review_isolated 子进程；verify_receipt_request 只提交 MAC 签名 pending；已登录 web_session 才能批准，Host 在决定锁内重验 lane、main、head、进程内 PASS/P0/P1=0，追加 owner-only O_NOFOLLOW 审计行；Agent 不获得 data/audit 通用写权。保留原 host-grant 硬拒和 RULE-AI-28。",
+      "evidence": [
+        "用户真实故障：ESC-20261117-81076842 虽经 web_session approved，但 execute_command 被受管审计账本保护与精确命令不一致双重拒绝，verify_ref 缺失。",
+        "本分支单测 test_host_verify_issuer 覆盖浏览器未登录 403、登录签发、无 Host callback、独立 Reviewer REVISE/P0/P1、base 漂移、symlink/hardlink、重复审批等正负场景。",
+        "与既有 merge_queue、host_grant、escalation、arch_guards 测试同跑 167 passed；Ruff/pyright 定向通过。"
+      ],
+      "verification_level": "定向正负测试已通过；本候选的完整 R9、独立 Reviewer、GitHub PR CI 和受管部署属于后续发布门禁，未通过前不得声称生效。",
+      "model_evidence_veto_recovery_exit": "若任何路径允许 AI 自报 PASS、跨会话复用 Reviewer、使用普通 host-grant 写审计账本、无浏览器会话签发、base/head 漂移后仍签发，立即 VETO 并保持旧 fail-closed；不以手工 JSONL 补凭证。",
+      "rollback_route": "revert 本分支；新工具与 Web 专用分支消失，旧 audit 写保护仍有效，未签发的 lane 保持 HOLD。已合法签发的旧行按既有 ttl/base 规则失效，无 schema 迁移。",
+      "declaration_id": "host-verify-issuer"
+    },
+    {
+      "component_id": "approval-login-feedback",
+      "paths": [
+        "webui/src/components/sidebar/EscalationCenter.tsx",
+        "webui/src/components/sidebar/EscalationCenter.test.tsx"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Web V2 EscalationWatcher / EscalationPanel 审批可见性",
+      "disposition": "ADMIT 最小前端修复：403 human_auth_required/human_channel_required 不再显示晦涩代码或静默；明确审批未生效，提供 same-origin /login?next= 原会话链接，待审项不消失；verify_receipt 类显示 Host 签发而非通用令牌。",
+      "evidence": [
+        "用户点击确认后服务端审计多次 rejected_human_channel_required，前端未突出登录要求；显式浏览器登录后 web_session approved。",
+        "WebUI 全量 Vitest 602 passed（含 EscalationCenter.test.tsx 16 passed），覆盖两种 403 登录提示和原有展示-审批哈希绑定。",
+        "npm --prefix webui run typecheck 通过。"
+      ],
+      "verification_level": "前端定向测试和 TypeScript typecheck 已通过；真实浏览器上线验收需受管发布后执行。",
+      "model_evidence_veto_recovery_exit": "若登录链接可跳转站外、未登录错误被误报为成功、待审被错误清空或审批哈希绑定退化，则拒绝该 UI 改动并恢复原实现；服务端拒绝逻辑不放宽。",
+      "rollback_route": "revert 前端两文件即可恢复原提示；不影响服务端登录门禁、已有会话 Cookie 或审计账本。",
+      "declaration_id": "approval-login-feedback"
+    },
+    {
+      "component_id": "architecture-submission",
+      "paths": [
+        "docs/governance/submissions/20261117-host-verify-issuer-and-login-feedback.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 精确 changed-path 架构申报",
+      "disposition": "ADMIT 仅新增精确覆盖本候选全部变更的申报清单，不改变运行时。",
+      "evidence": [
+        "scripts/check_architecture_submission.py 的 exact coverage 校验应覆盖本分支相对 main 的 13 个路径。"
+      ],
+      "verification_level": "A.5 结构与路径精确覆盖由 checker 对冻结 SHA 机检。",
+      "model_evidence_veto_recovery_exit": "若清单与实际 changed paths 不一致，修正清单并重新检查，不跳过 A.5。",
+      "rollback_route": "随本分支 revert，无外部副作用。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-verify-issuer",
+      "g1": {
+        "necessity": "现有 verify_receipts 账本被 sandbox/host-grant 硬保护，旧签发 CLI 无合法 Agent 执行入口；绿色 Reviewer/R9/CI 仍无法获得 verify_ref，导致 lane 永久卡在 verify_required。"
+      },
+      "g2": {
+        "authority_owner": "EscalationStore 仍是 MAC 签名 pending/人工决定唯一源；HostVerifyAuthority 只在同进程拥有独立 Reviewer 终态证明；MergeQueue 既有 issue_verify_receipt 与 load_receipts 是唯一凭证格式与消费端。",
+        "relationship": "new_authority",
+        "non_duplication": "新增的只是 Host 专用签发授权入口，复用 SubAgentRunner.review_terminal_current、EscalationStore、LaneStore、MergeQueue；不修改通用 host-grant、审计读者或合并状态机。"
+      },
+      "g3": {
+        "model_evidence": [
+          "真实失败回执是 audit 受保护账本的 fail-closed 与申请命令不匹配，证明重复 host-grant 无法收口。",
+          "Host 新入口以进程内 review_isolated 终态、结构化 PASS/P0/P1、SHA/branch/worktree 同源为准；外部文本或磁盘回执不能自签。",
+          "相关回归与架构守卫合计 167 passed；symlink/hardlink、旧基线、REVISE、未登录等负向均拒绝。"
+        ],
+        "recovery_or_reason": "Host 审查句柄丢失、服务重启、证据过期、main/head 漂移、无浏览器会话或写盘失败均保留 pending/HOLD，重新审查并申请，不回退到 host-grant。"
+      },
+      "g4": {
+        "rollback": "revert 本分支；已有凭证继续按既有 TTL/base 判定，新增 Host 工具关闭，安全闸保持旧行为。",
+        "verification": ["独立 Reviewer P0/P1=0 → 原版完整 R9 exit 0 → GitHub PR/CI → main 受控合并 → 受管部署与 Web 真实登录/签发冒烟；任何一步未完成都不能宣称生产生效。"]
+      }
+    },
+    {
+      "declaration_id": "approval-login-feedback",
+      "g1": {
+        "necessity": "真实用户在审批面板点击确认无反应，服务端日志证实 HTTP 403 未认证拒绝，界面未明确给出登录操作，导致重复点击。"
+      },
+      "g2": {
+        "authority_owner": "Web /api/v1/escalation/review 的 web_session 身份校验仍是唯一审批授权源；React 只负责可见反馈和本站登录导航。",
+        "relationship": "reuse",
+        "non_duplication": "复用现有 /login 显式浏览器登录入口和已有 403 错误码，不新增身份存储、cookie 或客户端授权判定。"
+      },
+      "g3": {
+        "model_evidence": [
+          "审计记录显示未认证点击多次 rejected_human_channel_required，登录后 07:10:14+08 由 web_session 决定 approved。",
+          "前端两种 403 测试覆盖登录提示、same-origin 链接、待审保留；WebUI 全量 602/602 PASS。"
+        ],
+        "recovery_or_reason": "浏览器会话未配置或过期时仍拒绝审批，用户可访问 /login，服务端不接受 loopback 未登录或 Bearer 自批。"
+      },
+      "g4": {
+        "rollback": "revert 两个 WebUI 文件；后端安全门禁不变。",
+        "verification": ["前端 Vitest + tsc + 真实浏览器未登录→登录→审批回归，检查提示与请求状态一致。"]
+      }
+    }
+  ]
+}

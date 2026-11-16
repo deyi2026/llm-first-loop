@@ -2959,6 +2959,23 @@ def build_engine(
     # True child lifecycle/terminal is the sole review qualification authority.
     _host_review.attach_runner(subagent_runner)
     registry.register(ReviewAdmissionTool(_host_review))
+    # Dedicated Host-owned merge verify issuance. Never grant the agent a
+    # generic sandbox write to data/audit/verify_receipts.jsonl.
+    from llm_loop.introspection.host_verify_issuer import (
+        HostVerifyAuthority,
+        MergeReviewStartTool,
+        VerifyReceiptRequestTool,
+    )
+
+    _host_verify = HostVerifyAuthority(
+        audit_dir=settings.audit_dir,
+        repo_root=settings._extra.get("runtime_root") or "",
+        runner=subagent_runner,
+        escalation_store=_escalation_store,
+    )
+    engine.host_verify_authority = _host_verify
+    registry.register(MergeReviewStartTool(_host_verify))
+    registry.register(VerifyReceiptRequestTool(_host_verify))
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面与 coordination_status 的 running 段都在这个装配点接线。
