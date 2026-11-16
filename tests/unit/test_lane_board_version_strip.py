@@ -705,3 +705,89 @@ def test_manifest_has_no_review_round_narrative() -> None:
     # R5（写命令安全）/R9（完整门禁）是域内术语，不属轮次叙述，故只锁 R2/R3/R4。
     found = re.findall(r"round[- ]?[12]\b|\bR[234]\b|adjudicat\w*|REVISE|Host Reviewer", text)
     assert not found, f"manifest 残留轮次叙述: {sorted(set(found))}"
+
+
+# ---------------- R6：main 身份先验证再测量 + 探针/legacy 边界 ----------------
+
+
+def test_behind_main_is_only_measured_against_a_reported_main(tmp_path: Path) -> None:
+    """不变量：behind_main 有数值 ⇒ main.head 非空且就是那条被报告的 main。"""
+    repo, old, new = _repo_with_origin_main(tmp_path)
+
+    for bogus in ("HEAD", "main", "origin/main", "not-a-sha"):
+        board = build_board(tmp_path / "audit", workspace_root=str(repo), main_head=bogus)
+        versions = board["versions"]
+        assert versions["main"]["head"] == ""
+        assert versions["main"]["source"] == "unknown"
+        assert versions["worktree"]["behind_main"] is None, f"{bogus} 不得参与 behind 计算"
+        assert "main_head_invalid" in board["degraded"]
+
+    # 合法显式基准：归一后可测量，且 behind 相对它而不是 origin/main。
+    board = build_board(tmp_path / "audit", workspace_root=str(repo), main_head=new.upper())
+    versions = board["versions"]
+    assert versions["main"]["head"] == new
+    assert versions["worktree"]["behind_main"] == 1
+
+
+def test_git_probe_forces_utf8_decoding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """探针必须固定 UTF-8：否则非 UTF-8 locale 会把坏字节投成乱码而不是 unknown。"""
+    repo, _old, _new = _repo_with_origin_main(tmp_path)
+    real_run = subprocess.run
+    seen: list[dict] = []
+
+    def spy(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(kwargs)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    build_board(tmp_path / "audit", workspace_root=str(repo))
+
+    assert seen
+    for kwargs in seen:
+        assert kwargs.get("encoding") == "utf-8", kwargs
+        assert kwargs.get("errors") in (None, "strict"), kwargs
+
+
+def test_legacy_deployed_sha_stays_verbatim_not_a_version_identity(tmp_path: Path) -> None:
+    """真实契约：deployed_sha 是 legacy 显示字段（可为短 sha），版本身份只在 versions.*。"""
+    short = "b4b4b4b4b4b4"  # 12 位：与 test_coordination_routes 的真实消费方一致
+    repo, _old, _new = _repo_with_origin_main(tmp_path)
+    audit = tmp_path / "audit"
+    (audit / "deployments").mkdir(parents=True)
+    (audit / "deployments" / "d.jsonl").write_text(
+        json.dumps({"ts": "2026-11-01T00:00:00+08:00", "target_sha": short}) + "\n",
+        encoding="utf-8",
+    )
+
+    # head 可核验（worktree checkout），但 legacy 行不足以证明「实际在跑」。
+    board = build_board(audit, workspace_root=str(repo))
+
+    assert board["deployment"]["deployed_sha"] == short, "legacy 字段不得被改写"
+    assert board["deployment"]["deployed_authoritative"] is False
+    assert board["versions"]["live"]["sha"] == "", "版本身份只接受 40 位十六进制"
+    assert board["deployment"]["sync_state"] == "unverified"
+
+
+def test_origin_main_pointing_at_non_commit_is_unknown(tmp_path: Path) -> None:
+    """origin/main 必须能 peel 成 commit；指向 blob 的坏 ref 不得被当成 main。"""
+    repo, _old, _new = _repo_with_origin_main(tmp_path)
+    blob = _git(repo, "hash-object", "-w", "a.txt")
+    _git(repo, "update-ref", "refs/remotes/origin/main", blob)
+
+    board = build_board(tmp_path / "audit", workspace_root=str(repo))
+
+    assert board["versions"]["main"]["head"] == ""
+    assert board["versions"]["main"]["source"] == "unknown"
+    assert "origin_main_unavailable" in board["degraded"]
+    assert board["main_head"] == ""
+
+
+def test_explicit_main_head_with_nul_is_rejected_without_raising(tmp_path: Path) -> None:
+    """含 NUL 的显式值必须先被校验拒绝，不能进 subprocess 抛 ValueError 炸穿。"""
+    repo, _old, _new = _repo_with_origin_main(tmp_path)
+    board = build_board(tmp_path / "audit", workspace_root=str(repo), main_head="a" * 39 + "\x00")
+
+    assert board["versions"]["main"]["head"] == ""
+    assert board["versions"]["main"]["source"] == "unknown"
+    assert "main_head_invalid" in board["degraded"]
+    assert board["main_head"] == ""

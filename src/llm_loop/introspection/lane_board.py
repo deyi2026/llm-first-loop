@@ -46,6 +46,9 @@ def _probe_git(workspace_root: str, *args: str) -> tuple[str, str]:
             ["git", "-C", workspace_root, *args],
             capture_output=True,
             text=True,
+            # 固定 UTF-8：text=True 默认用 locale 编码，非 UTF-8 locale 下坏字节可能
+            # 被解成乱码而不是抛错，乱码就会被当成"可核验的值"投影出去（R6 P2-1）。
+            encoding="utf-8",
             timeout=5,
             check=False,
         )
@@ -77,45 +80,46 @@ def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) ->
         degraded.append("worktree_ref_unknown")
     detached = bool(head) and ref_worktree == "HEAD"
 
-    behind: int | None = None
-    if head:
-        if main_head:
-            # 显式基准：behind 必须相对所报 main，否则两个字段说的不是同一个 ref
-            # （P2-2）。本地解析不到该提交就 None，绝不退回 HEAD..origin/main 混算。
-            resolved, _ = _probe_git(
-                workspace_root, "rev-parse", "--verify", f"{main_head}^{{commit}}"
-            )
-            base_ref = main_head if resolved else ""
-        else:
-            base_ref = "origin/main"
-        if base_ref:
-            raw, err = _probe_git(workspace_root, "rev-list", "--count", f"HEAD..{base_ref}")
-            if not err and raw.isdigit():
-                behind = int(raw)
-
+    # 先定 main 身份，再测量 behind——顺序本身是契约：任何未通过校验的值都
+    # 不得参与 behind 计算，否则会出现 main.head="" 而 behind 有数值的自相矛盾
+    # （R6 P1: main_head="HEAD"/"main"/"origin/main" 曾被当成 behind 基准）。
     if main_head:
         # 显式值必须与 service_control 的 identity 同形状（小写 40 位十六进制）：
         # 大写只是同一 sha 的写法差异，归一小写；其余值不可核验 → 置空降级，
         # 绝不把调用方字符串原样投影成 main_head，也绝不换成别的 sha。
+        # 校验先于任何 subprocess：含 NUL 的显式值若进 argv 会抛 ValueError（P2-4）。
         normalized = _sha40(main_head)
         if normalized:
             verified, source, ref = normalized, "explicit", ""
-        elif _sha40(main_head.upper()):
-            verified, source, ref = main_head.upper(), "explicit", ""
+            # behind 基准必须能解析成本地 commit；解析不到就 None，不退回 origin/main。
+            resolved, _ = _probe_git(
+                workspace_root, "rev-parse", "--verify", f"{normalized}^{{commit}}"
+            )
+            base_sha = _sha40(resolved)
         else:
             verified, source, ref = "", "unknown", ""
+            base_sha = ""
             degraded.append("main_head_invalid")
             degraded.append("main_head_unknown")
     else:
-        verified, err = _probe_git(workspace_root, "rev-parse", "--verify", "origin/main")
-        if err or not verified:
+        # 必须 peel 成 commit：坏 ref 指向 blob/tree 时裸 rev-parse 会返回该对象 sha，
+        # 那会被当成 main（R6 P2-3）。
+        resolved, err = _probe_git(workspace_root, "rev-parse", "--verify", "origin/main^{commit}")
+        base_sha = "" if err else _sha40(resolved)
+        if base_sha:
+            verified, source, ref = base_sha, "local_tracking", "origin/main"
+            # origin/main 只是本地 remote-tracking ref：没联网就是没核验远端，
+            # 不能把它说成"远端已验证"（P2）。新鲜度必须显式 unknown。
+        else:
             verified, source, ref = "", "unknown", ""
             degraded.append("origin_main_unavailable")
             degraded.append("main_head_unknown")
-        else:
-            # origin/main 只是本地 remote-tracking ref：没联网就是没核验远端，
-            # 不能把它说成"远端已验证"（P2）。新鲜度必须显式 unknown。
-            source, ref = "local_tracking", "origin/main"
+
+    behind: int | None = None
+    if head and base_sha:
+        raw, err = _probe_git(workspace_root, "rev-list", "--count", f"HEAD..{base_sha}")
+        if not err and raw.isdigit():
+            behind = int(raw)
     return {
         "worktree": {
             "head": head,
@@ -517,6 +521,10 @@ def build_board(
             degraded.append(hist_reason)
     # legacy 兼容：deployed_sha 仍可来自历史行（字段不删），但"实际在跑"只有
     # 权威回执能证明（P1-A）。历史行与 desired 恰好同 sha 也不构成 in_sync 证据。
+    # 契约边界（R6 P2-2）：deployed_sha 是**legacy 原样投影的显示字段**（历史行可写
+    # 短 sha，例如 test_coordination_routes 断言的 12 位），不是版本 identity；因此
+    # 这里不套 _sha40——强转会破坏既有消费方。版本身份只由 versions.{main,desired,
+    # live}.sha 提供，三者一律 40 位小写十六进制。
     deployed_sha = str(dep_row.get("target_sha") or "")
     live_sha = deployed_sha if live_authoritative else ""
 
