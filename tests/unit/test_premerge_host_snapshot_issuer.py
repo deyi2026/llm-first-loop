@@ -23,6 +23,7 @@ from premerge_host_snapshot_issuer import (
     remote_state,
     secure_bytes,
     sign_payload,
+    write_all,
 )
 
 MAIN = "a" * 40
@@ -78,6 +79,23 @@ def test_public_authority_file_refuses_world_writable(tmp_path):
         public_bytes(file, os.geteuid())
     file.chmod(0o644)
     assert read_rows(file, os.geteuid()) == [{}]
+
+
+def test_write_all_handles_short_writes_and_rejects_zero_progress(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    original_write = os.write
+    try:
+        monkeypatch.setattr("premerge_host_snapshot_issuer.os.write",
+                            lambda fd, data: original_write(fd, bytes(data)[:2]))
+        write_all(write_fd, b"abcdefg")
+        assert os.read(read_fd, 7) == b"abcdefg"
+        monkeypatch.setattr("premerge_host_snapshot_issuer.os.write",
+                            lambda fd, data: 0)
+        with pytest.raises(IssuerHoldError, match="issuer_write_incomplete"):
+            write_all(write_fd, b"x")
+    finally:
+        os.close(write_fd)
+        os.close(read_fd)
 
 
 def receipts():
@@ -144,6 +162,32 @@ def test_real_queue_merging_and_exclusive_slot_is_required(tmp_path):
     with pytest.raises(IssuerHoldError, match="merge_slot_not_exclusive"):
         local_state(LANE, MAIN, CANDIDATE, audit_dir=audit,
                     owner=os.geteuid(), board=board)
+
+
+@pytest.mark.parametrize("degraded", [True, ["audit_state_incomplete"],
+                                       {"reason": "missing"}, None, 0, ""])
+def test_board_degraded_fails_closed(tmp_path, degraded):
+    audit, _, _, board, _ = state_fixture(tmp_path)
+    board["degraded"] = degraded
+    with pytest.raises(IssuerHoldError, match="board_main_untrusted"):
+        local_state(LANE, MAIN, CANDIDATE, audit_dir=audit,
+                    owner=os.geteuid(), board=board)
+
+
+def test_board_missing_degraded_fails_closed(tmp_path):
+    audit, _, _, board, _ = state_fixture(tmp_path)
+    del board["degraded"]
+    with pytest.raises(IssuerHoldError, match="board_main_untrusted"):
+        local_state(LANE, MAIN, CANDIDATE, audit_dir=audit,
+                    owner=os.geteuid(), board=board)
+
+
+def test_board_empty_degraded_list_is_healthy(tmp_path):
+    audit, _, _, board, _ = state_fixture(tmp_path)
+    board["degraded"] = []
+    lane, queue = local_state(LANE, MAIN, CANDIDATE, audit_dir=audit,
+                              owner=os.geteuid(), board=board)
+    assert lane["status"] == queue["status"] == "merging"
 
 
 def test_lane_board_version_drift_and_preflight_failure_hold(tmp_path):

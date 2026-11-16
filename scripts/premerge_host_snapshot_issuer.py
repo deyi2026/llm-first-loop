@@ -41,6 +41,15 @@ def require(condition: bool, reason: str) -> None:
         raise IssuerHoldError(reason)
 
 
+def write_all(fd: int, data: bytes) -> None:
+    """Reject incomplete writes rather than publishing a truncated receipt/key."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        require(written > 0, "issuer_write_incomplete")
+        view = view[written:]
+
+
 def crypto() -> tuple[Any, Any]:
     # The deployed interpreter uses -I -S. Only the root-owned frozen runtime
     # site is added; never import executable code from the mutable worktree.
@@ -140,8 +149,11 @@ def local_state(lane_id: str, main: str, candidate: str, *,
             and audit_st.st_mode & 0o022 == 0, "audit_dir_untrusted")
     board = board if board is not None else fetch_json(
         "http://127.0.0.1:8903/api/v1/coordination/board")
-    require(board.get("main_head") == main and board.get("degraded") is not True,
-            "board_main_untrusted")
+    degraded = board.get("degraded")
+    # The live coordination board reports a list, not a boolean. A nonempty
+    # list, missing field, or unexpected type must fail closed.
+    healthy = degraded is False or (type(degraded) is list and not degraded)
+    require(board.get("main_head") == main and healthy, "board_main_untrusted")
     lane_rows = read_rows(audit_dir / "lanes.jsonl", owner)
     queue_rows = read_rows(audit_dir / "merge_queue.jsonl", owner)
     lane = next((x for x in reversed(lane_rows) if x.get("lane_id") == lane_id), None)
@@ -248,7 +260,7 @@ def keygen(private_dir: Path, *, expected_uid: int = _ISSUER_UID) -> dict:
     fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
                  getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        os.write(fd, private.export_key(format="PEM").encode())
+        write_all(fd, private.export_key(format="PEM").encode())
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -256,7 +268,7 @@ def keygen(private_dir: Path, *, expected_uid: int = _ISSUER_UID) -> dict:
     pub_file = private_dir / "host-ed25519.pub.pem"
     fd = os.open(pub_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.write(fd, public.encode())
+        write_all(fd, public.encode())
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -330,7 +342,7 @@ def issue(*, pr: int, run_id: int, lane_id: str, worktree: Path,
     fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
                  getattr(os, "O_NOFOLLOW", 0), 0o640)
     try:
-        os.write(fd, (json.dumps(envelope, ensure_ascii=False, sort_keys=True) + "\n").encode())
+        write_all(fd, (json.dumps(envelope, ensure_ascii=False, sort_keys=True) + "\n").encode())
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -343,7 +355,7 @@ def issue(*, pr: int, run_id: int, lane_id: str, worktree: Path,
                            os.O_WRONLY | os.O_CREAT | os.O_APPEND |
                            getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
-            os.write(audit_fd, (json.dumps(audit, sort_keys=True) + "\n").encode())
+            write_all(audit_fd, (json.dumps(audit, sort_keys=True) + "\n").encode())
             os.fsync(audit_fd)
         finally:
             os.close(audit_fd)
