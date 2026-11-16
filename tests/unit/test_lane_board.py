@@ -193,11 +193,16 @@ def test_channel_splits_needs_decision_into_three_counts(tmp_path: Path) -> None
         json.dumps({"id": "h1", "need": "block", "state": "pending"}), "utf-8"
     )
 
+    # 显式 main_head 与 lane 基线都必须是与 service_control 同形状的 40 位十六进制；
+    # 换掉旧 fixture 的 "head1"/"oldsha" 占位符（断言不变）。
+    head_sha = "1" * 40
+    stale_sha = "2" * 40
+
     store = LaneStore(audit)
     merging = store.create(
         branch="fix/merging",
         worktree=str(tmp_path / "wt-m"),
-        base_main_sha="head1",
+        base_main_sha=head_sha,
         goal_id="G1",
         owner_session_id="s1",
     )
@@ -209,12 +214,12 @@ def test_channel_splits_needs_decision_into_three_counts(tmp_path: Path) -> None
     store.create(
         branch="fix/stale",
         worktree=str(tmp_path / "wt-s"),
-        base_main_sha="oldsha",
+        base_main_sha=stale_sha,
         goal_id="G2",
         owner_session_id="s2",
     )
 
-    ch = build_board(audit, main_head="head1")["channel"]
+    ch = build_board(audit, main_head=head_sha)["channel"]
     assert ch["merging_pending"] == 1
     assert ch["baseline_stale"] == 1
     assert ch["blocking_help"] == 1

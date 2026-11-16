@@ -49,7 +49,9 @@ def _probe_git(workspace_root: str, *args: str) -> tuple[str, str]:
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        # git 输出可能含非 UTF-8 字节（分支名/路径）：text=True 的解码失败是
+        # ValueError 子类，不属 OSError，必须在探针层降级而不是炸穿 Board。
         return "", type(exc).__name__
     if proc.returncode != 0:
         first = (proc.stderr.strip().splitlines() or ["git_failed"])[0]
@@ -64,11 +66,16 @@ def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) ->
     head）与 origin/main 可能相差数十个提交，混用会制造假 in_sync=mismatch。
     """
     head, head_err = _probe_git(workspace_root, "rev-parse", "HEAD")
-    ref_worktree, _ = _probe_git(workspace_root, "rev-parse", "--abbrev-ref", "HEAD")
+    ref_worktree, ref_err = _probe_git(workspace_root, "rev-parse", "--abbrev-ref", "HEAD")
     if head_err or not head:
         head = ""
         degraded.append("worktree_head_unknown")
-    detached = bool(head) and (not ref_worktree or ref_worktree == "HEAD")
+    if ref_err:
+        # 分支身份不可核验（探针失败或非 UTF-8 分支名）：ref 置空并降级，
+        # 且不据此断言 detached——未知不等于"处于 detached HEAD"。
+        ref_worktree = ""
+        degraded.append("worktree_ref_unknown")
+    detached = bool(head) and ref_worktree == "HEAD"
 
     behind: int | None = None
     if head:
@@ -87,7 +94,18 @@ def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) ->
                 behind = int(raw)
 
     if main_head:
-        verified, source, ref = main_head, "explicit", ""
+        # 显式值必须与 service_control 的 identity 同形状（小写 40 位十六进制）：
+        # 大写只是同一 sha 的写法差异，归一小写；其余值不可核验 → 置空降级，
+        # 绝不把调用方字符串原样投影成 main_head，也绝不换成别的 sha。
+        normalized = _sha40(main_head)
+        if normalized:
+            verified, source, ref = normalized, "explicit", ""
+        elif _sha40(main_head.upper()):
+            verified, source, ref = main_head.upper(), "explicit", ""
+        else:
+            verified, source, ref = "", "unknown", ""
+            degraded.append("main_head_invalid")
+            degraded.append("main_head_unknown")
     else:
         verified, err = _probe_git(workspace_root, "rev-parse", "--verify", "origin/main")
         if err or not verified:

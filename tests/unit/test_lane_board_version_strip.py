@@ -622,3 +622,86 @@ def test_manifest_records_no_stale_pass_counts() -> None:
     # 稳定可重跑命令必须在场，替换掉一次性的 PASS 快照。
     assert "tests/unit/test_lane_board_version_strip.py" in joined
     assert "scripts/check_architecture_submission.py" in joined
+
+
+# ---------------- R5：Reviewer REVISE 四项的最小补修 ----------------
+
+
+def test_non_utf8_git_output_degrades_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """git 输出含非 UTF-8 字节时，Board 必须降级成 ref unknown，不能炸穿调用方。"""
+    repo, old, _ = _repo_with_origin_main(tmp_path)
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        # 复现 text=True 的真实行为：解码失败直接抛 UnicodeDecodeError。
+        if "--abbrev-ref" in cmd and kwargs.get("text"):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    board = build_board(tmp_path / "audit", workspace_root=str(repo))
+
+    worktree = board["versions"]["worktree"]
+    # HEAD 仍是可核验的 sha；只有分支名这一项变成 unknown。
+    assert worktree["head"] == old
+    assert worktree["ref"] == ""
+    assert worktree["detached"] is False, "ref 不可读时不能断言 detached"
+    assert "worktree_ref_unknown" in board["degraded"]
+    assert board["versions"]["main"]["head"]  # origin/main 探针不受影响
+
+
+def test_explicit_main_head_normalizes_case_and_rejects_non_sha(tmp_path: Path) -> None:
+    """显式 main_head 必须与 service_control 同形状：小写 40 位；否则 fail-closed。"""
+    sha = "a" * 40
+    _desired_file(tmp_path, sha)
+    (tmp_path / "restart-receipt.json").write_text(
+        json.dumps(
+            {
+                "ts": "2026-11-16T15:23:31+08:00",
+                "action": "wecom",
+                "git_head_full": sha,
+                "authoritative": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # 大写 40 位是同一 identity 的写法差异：归一小写后仍应 exact。
+    board = build_board(tmp_path / "audit", main_head=sha.upper())
+    assert board["versions"]["main"]["head"] == sha
+    assert board["versions"]["main"]["source"] == "explicit"
+    assert board["deployment"]["sync_state"] == "exact"
+
+    # 非 40 位十六进制的显式值不是可核验 identity：置空并降级，不原样投影。
+    bad = build_board(tmp_path / "audit", main_head="not-a-sha")
+    assert bad["main_head"] == ""
+    assert bad["versions"]["main"]["head"] == ""
+    assert bad["versions"]["main"]["source"] == "unknown"
+    assert "main_head_invalid" in bad["degraded"]
+
+
+def _manifest_text() -> str:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "docs/governance/submissions/20261116-w1-board-version-strip.json"
+    )
+    return path.read_text(encoding="utf-8")
+
+
+def test_manifest_only_names_fields_the_board_actually_exposes() -> None:
+    """治理证据只能引用真实契约字段；虚报 main.verifiable 属夸大验证面。"""
+    text = _manifest_text()
+    referenced = set(re.findall(r"main\.([a-z_]+)", text))
+    actual = {"head", "source", "ref", "remote_verified", "freshness"}
+    assert referenced <= actual, f"manifest 引用了不存在的 main 字段: {referenced - actual}"
+
+
+def test_manifest_has_no_review_round_narrative() -> None:
+    """轮次结论属于 Goal checkpoint / PR；manifest 只描述可重跑的当前事实。"""
+    text = _manifest_text()
+    # R5（写命令安全）/R9（完整门禁）是域内术语，不属轮次叙述，故只锁 R2/R3/R4。
+    found = re.findall(r"round[- ]?[12]\b|\bR[234]\b|adjudicat\w*|REVISE|Host Reviewer", text)
+    assert not found, f"manifest 残留轮次叙述: {sorted(set(found))}"
