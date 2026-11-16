@@ -1,0 +1,69 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "host-premerge-policy-bootstrap-20261117",
+  "summary": "Pin required GitHub Actions check identities to protected main workflow blobs after the one-time protected bootstrap of the Host gate. No signer key or production credential is stored in this PR.",
+  "components": [
+    {
+      "component_id": "required-ci-policy",
+      "paths": [
+        "docs/governance/required-ci-checks.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host premerge evidence verifier / GitHub protected main",
+      "disposition": "Install a minimal protected-main policy with exact GitHub Actions app, context, workflow path/blob and workflow ID pins for test, security, managed evidence, privacy and A.5.",
+      "evidence": [
+        "PR #51 independent GLM-5.3-Flash Reviewer PASS P0/P1=0; full original R9 exit 0; remote CI 43916121173 success.",
+        "Main branch protection strict and admin-enforced before PR #51 protected merge.",
+        "77 focused Host/CI verifier tests PASS; exact workflow blob hashes checked locally."
+      ],
+      "verification_level": "Policy schema, uniqueness, event scope and workflow blob checks; A.5 and PR CI for this exact change.",
+      "model_evidence_veto_recovery_exit": "Host remains HOLD until policy is in protected main, all required CI checks are green, and independently signed fresh authoritative snapshot exists.",
+      "rollback_route": "Revert this policy PR via protected PR, then deliberately remove the managed-evidence requirement only through authorized branch-protection change; never force push.",
+      "declaration_id": "host-policy-bootstrap"
+    },
+    {
+      "component_id": "architecture-submission",
+      "paths": [
+        "docs/governance/submissions/20261117-host-premerge-policy-bootstrap.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 changed-path governance",
+      "disposition": "Document exact policy and manifest changed-path coverage, bootstrap exception and explicit HOLD until independent issuer is verified.",
+      "evidence": [
+        "A.5 manifest exact path coverage, targeted tests and remote PR CI."
+      ],
+      "verification_level": "Mechanical A.5 and independent Reviewer review.",
+      "model_evidence_veto_recovery_exit": "A.5 presence is not proof of real Host signing or eligibility.",
+      "rollback_route": "Revert with the policy file in the same protected PR."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-policy-bootstrap",
+      "g1": {
+        "necessity": "The Host verifier must compare GitHub branch protection required checks to an independently protected main policy, not to a candidate PR-supplied allowlist."
+      },
+      "g2": {
+        "authority_owner": "GitHub protected main owns policy and workflow blob identity; GitHub API owns check-run identity; separate operator-owned Host signer owns Ed25519 private key and independently verified local receipts.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing CI jobs and Host verifier schema; no new Goal/Lane ledger or self-signed CI policy. Initial PR #51 protected bootstrap is an explicit one-time exception because old main lacked the new verifier."
+      },
+      "g3": {
+        "model_evidence": [
+          "Original PR #51 independent GLM-5.3-Flash read-only Reviewer PASS P0/P1=0; full R9 exit 0; CI run 43916121173 SUCCESS.",
+          "New policy is five exact app/context/workflow pins; local 77 Host/CI verifier tests PASS.",
+          "No Host ELIGIBLE verdict is claimed before separate issuer deployment and a fresh signed authoritative snapshot."
+        ],
+        "recovery_or_reason": "If a check identity, workflow blob, main SHA, PR merge identity or signed local snapshot changes, fail closed with HOLD; do not bypass protected main."
+      },
+      "g4": {
+        "rollback": "Protected revert PR for policy; retain independent audit of first bootstrap and do not delete signing keys without operator-approved rotation.",
+        "verification": [
+          "Validate policy schema, exact SHA and workflow triggers; 77 focused tests PASS.",
+          "Run A.5 exact changed-path coverage, independent GLM-5.3-Flash Reviewer and PR CI on frozen candidate.",
+          "After protected merge, add managed-premerge-evidence to required status checks and verify read-only Host negative/positive paths with truly independent issuer."
+        ]
+      }
+    }
+  ]
+}
