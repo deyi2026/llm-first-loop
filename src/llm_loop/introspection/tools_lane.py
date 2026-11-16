@@ -20,8 +20,12 @@ from llm_loop.core.lane_main_write_guard import STALE_AFTER_S
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.lane import (
     LaneConstraintError,
+    LanePathConflict,
+    LanePathConflictUnknown,
     LaneStore,
+    LaneStoreConfigError,
     LaneStoreCorruptionError,
+    LaneStoreLockUnavailable,
     LaneVersionConflictError,
 )
 
@@ -172,13 +176,52 @@ LANE_TOOL_DEFS = [
 
 
 def _store(host: Any) -> LaneStore | None:
+    """M2-A: 经宿主显式注入的 lane_lock_strict / lane_enforce_cross_goal /
+    lane_repo_root 构造 store（默认全关=历史行为）。INV-1 配置非法时显式抛
+    LaneStoreConfigError，不静默降级为 store_unavailable。生产 enforce 由宿主
+    配置开启——工具层不自行升级模式。"""
     audit_dir = str(host.audit_dir) if getattr(host, "audit_dir", None) else ""
     if not audit_dir:
         return None
     try:
-        return LaneStore(audit_dir)
+        return LaneStore(
+            audit_dir,
+            lock_strict=bool(getattr(host, "lane_lock_strict", False)),
+            enforce_cross_goal=bool(getattr(host, "lane_enforce_cross_goal", False)),
+            repo_root=str(getattr(host, "lane_repo_root", "") or "") or None,
+        )
+    except LaneStoreConfigError:
+        raise
     except OSError:
         return None
+
+
+def _render_write_diagnostics(store: LaneStore) -> str:
+    """M2-A 写后诊断（best-effort，仅最近一次写操作）：跨 Goal warn 提示与
+    event_append_failed 披露（§3.2-6 双事实）。strict 未启用时通常为空。"""
+    lines: list[str] = []
+    report = getattr(store, "last_cross_goal_report", None) or {}
+    for item in (report.get("conflicts") or [])[:5]:
+        tag = "（realpath 辅助，best-effort）" if item.get("best_effort") else ""
+        lines.append(
+            f"\n⚠ 跨 Goal 路径重叠{tag}: lane={item.get('lane_id')} "
+            f"goal={item.get('goal_id')} shared={','.join(item.get('shared') or [])}"
+        )
+    for item in (report.get("unknowns") or [])[:5]:
+        lines.append(
+            f"\n⚠ 冲突面 unknown: lane={item.get('lane_id')} goal={item.get('goal_id')} {item.get('reason')}"
+        )
+    for item in (report.get("same_goal_overlaps") or [])[:5]:
+        lines.append(
+            f"\nℹ 同 Goal 路径重叠（main/sub 合法并行，仅提示）: lane={item.get('lane_id')} "
+            f"shared={','.join(item.get('shared') or [])}"
+        )
+    if getattr(store, "last_event_append_failed", False):
+        lines.append(
+            "\n⚠ event_append_failed: lane 事件写入失败，主账本已提交——两个独立事实"
+            "（§3.2-6），请复核 lane_events.jsonl"
+        )
+    return "".join(lines)
 
 
 def _fail(message: str, tool: str, reason_code: str) -> ToolResult:
@@ -268,7 +311,10 @@ def _inflight_note(store: LaneStore, exclude: str = "") -> str:
 
 
 def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
-    store = _store(host)
+    try:
+        store = _store(host)
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_open", "invalid_config")
     if store is None:
         return _fail("audit_dir 未装配，lane 账本不可用", "lane_open", "store_unavailable")
     branch = str(args.get("branch", "") or "").strip()
@@ -318,6 +364,26 @@ def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
             contract_changes=args.get("contract_changes") or [],
             priority=str(args.get("priority", "normal") or "normal"),
         )
+    except LaneStoreLockUnavailable as exc:
+        return _fail(f"[lock_unavailable] strict 模式锁不可用，未写入: {exc}", "lane_open", "lock_unavailable")
+    except LanePathConflict as exc:
+        shared = "; ".join(
+            f"{c['lane_id']}(goal={c['goal_id']}) shared={','.join(c['shared'])}" for c in exc.conflicts
+        )
+        return _fail(
+            f"[path_conflict] 跨 Goal 路径确证重叠（enforce 硬拒），未写入: {shared}",
+            "lane_open",
+            "path_conflict",
+        )
+    except LanePathConflictUnknown as exc:
+        items = "; ".join(f"{u['lane_id']}(goal={u['goal_id']}): {u['reason']}" for u in exc.unknowns)
+        return _fail(
+            f"[path_conflict_unknown] 冲突面不可判定（enforce fail-closed），未写入: {items}",
+            "lane_open",
+            "path_conflict_unknown",
+        )
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_open", "invalid_config")
     except LaneConstraintError as exc:
         return _fail(str(exc), "lane_open", "constraint_violation")
     except LaneStoreCorruptionError as exc:
@@ -332,6 +398,7 @@ def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
         f"branch={lane.branch} role={lane.lane_role} goal={lane.goal_id}\n"
         f"base_main_sha={lane.base_main_sha or '-'} paths={','.join(lane.paths) or '-'}{base_note}"
         f"{_render_precheck_notes(precheck)}"
+        f"{_render_write_diagnostics(store)}"
         f"{_inflight_note(store, exclude=lane.lane_id)}",
         "",
         "lane_open",
@@ -339,7 +406,10 @@ def run_lane_open(ctx: Any, host: Any, args: dict) -> ToolResult:
 
 
 def run_lane_update(ctx: Any, host: Any, args: dict) -> ToolResult:
-    store = _store(host)
+    try:
+        store = _store(host)
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_update", "invalid_config")
     if store is None:
         return _fail("audit_dir 未装配，lane 账本不可用", "lane_update", "store_unavailable")
     lane_id = str(args.get("lane_id", "") or "").strip()
@@ -370,6 +440,26 @@ def run_lane_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             "",
             "lane_update",
         )
+    except LaneStoreLockUnavailable as exc:
+        return _fail(f"[lock_unavailable] strict 模式锁不可用，未写入: {exc}", "lane_update", "lock_unavailable")
+    except LanePathConflict as exc:
+        shared = "; ".join(
+            f"{c['lane_id']}(goal={c['goal_id']}) shared={','.join(c['shared'])}" for c in exc.conflicts
+        )
+        return _fail(
+            f"[path_conflict] 跨 Goal 路径确证重叠（enforce 硬拒），未写入: {shared}",
+            "lane_update",
+            "path_conflict",
+        )
+    except LanePathConflictUnknown as exc:
+        items = "; ".join(f"{u['lane_id']}(goal={u['goal_id']}): {u['reason']}" for u in exc.unknowns)
+        return _fail(
+            f"[path_conflict_unknown] 冲突面不可判定（enforce fail-closed），未写入: {items}",
+            "lane_update",
+            "path_conflict_unknown",
+        )
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_update", "invalid_config")
     except LaneConstraintError as exc:
         return _fail(str(exc), "lane_update", "constraint_violation")
     except LaneStoreCorruptionError as exc:
@@ -380,7 +470,8 @@ def run_lane_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     return ToolResult(
         ToolResultStatus.SUCCESS,
         f"[lane 已更新] lane_id={entry['lane_id']} version={entry['version']} "
-        f"status={entry['status']} head={str(entry.get('head_sha') or '-')[:12]}",
+        f"status={entry['status']} head={str(entry.get('head_sha') or '-')[:12]}"
+        f"{_render_write_diagnostics(store)}",
         "",
         "lane_update",
     )
@@ -451,7 +542,10 @@ def _close_authorization(store: LaneStore, host: Any, lane_id: str) -> str:
 
 
 def run_lane_close(ctx: Any, host: Any, args: dict) -> ToolResult:
-    store = _store(host)
+    try:
+        store = _store(host)
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_close", "invalid_config")
     if store is None:
         return _fail("audit_dir 未装配，lane 账本不可用", "lane_close", "store_unavailable")
     lane_id = str(args.get("lane_id", "") or "").strip()
@@ -491,6 +585,11 @@ def run_lane_close(ctx: Any, host: Any, args: dict) -> ToolResult:
             "",
             "lane_close",
         )
+    except LaneStoreLockUnavailable as exc:
+        # BUG-09: close 不做重叠检查，但 strict 锁保护仍生效（锁不可用→拒写）。
+        return _fail(f"[lock_unavailable] strict 模式锁不可用，未写入: {exc}", "lane_close", "lock_unavailable")
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_close", "invalid_config")
     except LaneConstraintError as exc:
         return _fail(str(exc), "lane_close", "constraint_violation")
     except LaneStoreCorruptionError as exc:
@@ -501,14 +600,18 @@ def run_lane_close(ctx: Any, host: Any, args: dict) -> ToolResult:
     return ToolResult(
         ToolResultStatus.SUCCESS,
         f"[lane 已收敛] lane_id={entry['lane_id']} status={entry['status']} "
-        f"reason={entry.get('close_reason')} version={entry['version']}",
+        f"reason={entry.get('close_reason')} version={entry['version']}"
+        f"{_render_write_diagnostics(store)}",
         "",
         "lane_close",
     )
 
 
 def run_lane_merge_request(ctx: Any, host: Any, args: dict) -> ToolResult:
-    store = _store(host)
+    try:
+        store = _store(host)
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_merge_request", "invalid_config")
     if store is None:
         return _fail("audit_dir 未装配，lane 账本不可用", "lane_merge_request", "store_unavailable")
     lane_id = str(args.get("lane_id", "") or "").strip()
@@ -605,7 +708,10 @@ def _remove_worktree(worktree: str) -> tuple[bool, str]:
 
 def run_lane_reap(ctx: Any, host: Any, args: dict) -> ToolResult:
     """lane 生命周期收尾（P2）。默认 dry_run=true：零写账本、零动工作树。"""
-    store = _store(host)
+    try:
+        store = _store(host)
+    except LaneStoreConfigError as exc:
+        return _fail(f"[invalid_config] {exc}", "lane_reap", "invalid_config")
     if store is None:
         return _fail("audit_dir 未装配，lane 账本不可用", "lane_reap", "store_unavailable")
     dry_run = bool(args.get("dry_run", True))
