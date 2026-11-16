@@ -183,3 +183,66 @@ def test_async_retry_switches_model_and_updates_frozen_record(tmp_path) -> None:
     assert runner.models == ["glm/glm-5.3", "deepseek/deepseek-v4-flash"]
     assert host._records[child_id].reviewer_model == "deepseek/deepseek-v4-flash"
     assert host._records[child_id].live_child_id == "child-2"
+
+
+def test_async_retry_advances_after_initial_fallback(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=(
+        "glm/glm-5.3,deepseek/deepseek-v4-flash,minimax/MiniMax-M3.1-Flash"
+    ))
+
+    class SequenceRunner(RecordingRunner):
+        def start(self, task: str, **kwargs):  # noqa: ANN001, ANN201
+            result = super().start(task, **kwargs)
+            if result.get("accepted"):
+                result["child_id"] = f"child-{len(self.models)}"
+            return result
+
+    runner = SequenceRunner()
+    runner.refusals = ["429 rate limit"]
+    host.attach_runner(runner)
+    monkeypatch.setattr(rha.time, "sleep", lambda _: None)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    assert receipt["accepted"] is True
+    assert receipt["reviewer_model"] == "deepseek/deepseek-v4-flash"
+    retry = host._respawn_reviewer("parent", receipt["child_id"], "reviewer_timeout", 240)
+    assert retry is not None and retry["qualification"] == "pending"
+    assert runner.models == [
+        "glm/glm-5.3", "deepseek/deepseek-v4-flash", "minimax/MiniMax-M3.1-Flash"
+    ]
+    assert host._records[receipt["child_id"]].reviewer_model == "minimax/MiniMax-M3.1-Flash"
+
+
+def test_real_subagent_runner_attests_configured_model(tmp_path) -> None:  # noqa: ANN001
+    from llm_loop.core.run_context import current_session_id
+    from llm_loop.core.session import SessionStore
+    from llm_loop.event_log.store import EventStore
+    from llm_loop.subagent.runner import SubAgentRunner
+    from llm_loop.tools.registry import ToolRegistry
+    from tests.unit.test_review_host_runner_live import _HostTaskFakeLLM
+
+    repo = _repo(tmp_path)
+    llm = _HostTaskFakeLLM()  # deterministic fake, no provider/network
+    event_store = EventStore(tmp_path / "events", enabled=True)
+    runner = SubAgentRunner(
+        llm=llm, registry=ToolRegistry(),
+        session_store=SessionStore(tmp_path / "sessions", event_store=event_store),
+        max_iterations=1, llm_resolver=lambda label: llm,
+    )
+    host = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
+    host.attach_runner(runner)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    assert receipt["accepted"] is True  # requires real runner's model echo
+    assert receipt["reviewer_model"] == "deepseek/deepseek-v4-flash"
+    token = current_session_id.set("parent")
+    try:
+        for _ in range(100):
+            ok, _, state = runner.result_current(receipt["child_id"], wait_seconds=0.05)
+            assert ok
+            if state["state"] != "running":
+                break
+        else:
+            raise AssertionError("reviewer child did not settle")
+    finally:
+        current_session_id.reset(token)
+    assert host.poll("parent", receipt["child_id"])["qualification"] == "REVISE"

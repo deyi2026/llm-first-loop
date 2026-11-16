@@ -4411,7 +4411,13 @@ class HostReviewAdmission:
                 return None
             reserved = row.attempts + 1
             self._records[child_id] = replace(row, attempts=reserved)
-        model = self._reviewer_models[min(reserved, len(self._reviewer_models) - 1)]
+        # Continue after the model actually selected by the initial spawn,
+        # not after the count of asynchronous retries (the two differ on 429).
+        try:
+            current_index = self._reviewer_models.index(row.reviewer_model)
+        except ValueError:
+            return None  # unknown model identity cannot authorize a new child
+        model = self._reviewer_models[min(current_index + 1, len(self._reviewer_models) - 1)]
         runner = self._runner
         if runner is None:  # 未挂 runner：与 start() 同口径，不 spawn、不记账
             return None
@@ -4486,6 +4492,8 @@ class HostReviewAdmission:
         }):
             return {"accepted": False, "reason": "review_receipt_not_durable"}
         with self._guard:
+            source = self._records.get(cached)
+            reviewed_model = source.reviewer_model if source and source.granted else ""
             self._reclaim_records(parent, kind)
             self._records[reused_id] = _Frozen(
                 kind, parent, target, sha, child_id=reused_id, granted=True,
@@ -4494,7 +4502,7 @@ class HostReviewAdmission:
                 out_scope_digest=out_scope_digest,
                 bound_unreviewed_tracked=(tier_counts or (0, 0))[0],
                 bound_unreviewed_untracked=(tier_counts or (0, 0))[1],
-                cached_pass=True, reused_from=cached,
+                cached_pass=True, reused_from=cached, reviewer_model=reviewed_model,
                 full_test_base=full_test_anchor[0] if kind == "full_test" else "",
                 full_test_first_push_ref=full_test_anchor[1] if kind == "full_test" else "",
             )
