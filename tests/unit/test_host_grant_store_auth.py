@@ -428,8 +428,17 @@ def ctx_e2e(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("bwrap") is None, reason="真实 bwrap 仅 Deepin/Linux 部署可用")
-def test_bwrap_cannot_write_grant_home(gstore, isolated_data_dir, session_ctx, target_file):
-    """bwrap --bind workdir workdir 下，账本目录不可写（防线 B 结构证明）."""
+def test_bwrap_writable_ancestor_bind_allows_write_tool_guard_load_bearing(gstore, isolated_data_dir, session_ctx, target_file):
+    """raw bwrap 对可写祖先 bind 不设防：写入成功，防线在工具层 guard。
+
+    EVO-20261115-34ae7c99(E)（独立审查 P1 修正）：原断言 not probe.exists()
+    与 bwrap 语义相反——writable --bind workdir workdir 下账本祖先可写，
+    echo 必然成功，测试只在 bwrap 无法启动的主机上空洞通过（对防线 B 的
+    虚假结构证明）。改为断言真实结构事实：raw bwrap 不阻止祖先 bind 内
+    写入，因此 execute_command 的 workdir_overlaps_grant_home 工具层
+    拒绝是 load-bearing 防线；bwrap 启动失败或内部写入未成功的环境
+    skip（不作证，绝不空洞通过）。
+    """
     _issue_real(gstore, target_file)
     home = host_grant_store_home()
     workdir = home.parent  # tmp 根：账本祖先——最不利情形
@@ -443,5 +452,18 @@ def test_bwrap_cannot_write_grant_home(gstore, isolated_data_dir, session_ctx, t
         "--", "/bin/sh", "-c",
         f"echo pwn > '{probe}' 2>&1; echo rc=$?",
     ]
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
-    assert not probe.exists(), f"模型经 workdir bind 写入账本: {proc.stdout} {proc.stderr}"
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    except OSError as exc:
+        pytest.skip(f"bwrap unavailable here ({exc!r}): no structural evidence either way")
+    tail = proc.stdout.strip().splitlines()[-1].strip() if proc.stdout.strip() else ""
+    if "rc=0" not in tail:
+        pytest.skip(
+            f"bwrap launched but inner write did not succeed "
+            f"(rc={proc.returncode}, tail={tail!r}): environment cannot testify"
+        )
+    assert probe.exists(), (
+        "raw bwrap with writable ancestor bind unexpectedly blocked the write; "
+        "tool-layer guard premise needs re-review: "
+        f"{proc.stdout} {proc.stderr}"
+    )

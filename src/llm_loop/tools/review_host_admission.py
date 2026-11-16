@@ -3797,7 +3797,11 @@ class HostReviewAdmission:
             push_head = _push_src_commit(repo, refspec)
             push_batch: dict[str, Any] | None = None
             batch_header: list[tuple[str, str]] = []
-            if scope_paths:
+            # EVO-20261115-34ae7c99(D)：批冻结显式限定 kind == "git_push"。
+            # 外层 if kind == "git_push" 分支已保证此处 kind；显式守卫让
+            # 冻结 diff 自证批路径只属于 git_push（full_test+scope_paths
+            # 的收窄审查不受批校验影响），并防未来重构破坏嵌套关系。
+            if kind == "git_push" and scope_paths:
                 # EVO-20261115-34ae7c99(A)（人工批准 2026-11-15，exec_override）：
                 # git_push 分批冻结。闸先冻结全量段落视图并**自己装箱**；声明的
                 # paths 必须精确等于某一整批（防自造批遗漏文件）。批记录不携带
