@@ -66,7 +66,7 @@
    },
    "g3": {
     "model_evidence": [
-     "先红后绿回归测试（tests/unit/test_review_host_admission.py）：同时含 SHA256+FINGERPRINT 双行的 PASS 回执 fixture 修复前判 REVISE、修复后判 PASS",
+     "原 prompt 同时要求 SHA256 与 FINGERPRINT 导致 reviewer 双行输出被 Host fail-closed REVISE（subagent_207c58806e79）；修复仅移除 prompt 前段 SHA256 要求，_qualifying_pass_p2 解析器未改；新增回归（tests/unit/test_review_host_admission.py）证明双行仍拒绝（fail-closed），fingerprint-only 与 legacy sha-only 各自合法 PASS",
      "RULE-AI-35 应拦实测：非 PASS 文本/缺指纹仍被拦，门禁语义未放宽"
     ],
     "recovery_or_reason": "若新格式导致真实 REVISE 被误放行（无证据），恢复旧 prompt 为一行回退路径；语义校验仍由 Host counts/_qualifying_pass_p2 把守"
@@ -133,7 +133,7 @@
     "先红后绿回归 + RULE-AI-35 应拦实测"
    ],
    "verification_level": "targeted regression tests; independent reviewer in unified PR chain",
-   "model_evidence_veto_recovery_exit": "revert; old prompt restored, gate semantics unchanged",
+   "model_evidence_veto_recovery_exit": "revert 后旧 prompt 的双行误提示可能复现（再致格式 REVISE 浪费复审），但安全门仍 fail-closed（解析器未改）；非功能无回归",
    "rollback_route": "git revert Q-09 commits",
    "declaration_id": "D3-Q09-REVIEW-HOST-CONTRACT"
   },
