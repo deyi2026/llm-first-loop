@@ -1,7 +1,10 @@
 # Changelog（公开变更记录）
 
-## v0.6.54 — 可信共享工作状态与多 Agent 协同安全发行（2026-11-15）
+> 此处记录源码与发行候选的变更，**不等于 GitHub 已正式发布版本列表**；实际稳定版以 [GitHub releases/latest](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准。
 
+## v0.6.54 — 可信共享工作状态与多 Agent 协同安全发行（2026-11-15，Draft）
+
+- **发行状态（2026-11-16 核验）**：`v0.6.54` tag、Release Draft 与 Linux wheel/sdist 已存在，但 macOS arm64 正式 `.pkg` 缺失，`Finalize Release` 尚未转正；最新正式 Release 为 `v0.6.50`。本节是候选变更记录，不代表已对外正式发行。
 - 以 GitHub `main` 精确提交 `1b4570429d30ee6075dcb7089bfeb4db5027add2` 为代码基线，包含已合并 PR #34 的本地知识与 Reviewer 门禁修复，以及 PR #35 的可信共享工作状态、Goal 写入权限和审计保护。
 - 本次发行候选只同步包版本、Web SERVICE_VERSION、双语 README、锁文件和发行说明；不新增安全权限、沙盒执行路径或模型行为。
 - Mac 四服务在 gen423 已按精确主线 SHA 受管验收；Deepin 现有 0.6.53 wheel 不得同版本覆盖。0.6.54 需先通过独立 Reviewer、完整 R9、GitHub CI、wheel 成品与 Deepin 旁路验收，实际切换须单独授权。
