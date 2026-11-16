@@ -39,7 +39,7 @@ class FakeChildRunner:
         assert kwargs["inherit"] is False
         assert kwargs["max_rounds"] == 1
         assert kwargs["review_isolated"] is True
-        return {"accepted": True, "child_id": "child-review-1", "state": "running"}
+        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": kwargs["model"]}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
         if self.state != "completed" or parent_id != self.parent:

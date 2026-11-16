@@ -242,9 +242,9 @@ def review_terminal_predicate(child_id: str, *, _authority: Any = None) -> bool:
     return authority.snapshot_child_state(child_id) == "settled"
 
 
-def _configure_review_admission(registry: Any, event_store: Any) -> HostReviewAdmission:
+def _configure_review_admission(registry: Any, event_store: Any, settings: Settings) -> HostReviewAdmission:
     """Attach the existing Host authority without expanding the factory body."""
-    authority = HostReviewAdmission()
+    authority = HostReviewAdmission(reviewer_models_raw=settings.reviewer_models_raw)
     authority.attach_event_store(event_store)
     registry.set_review_admission(authority)
     HostReviewAdmission.set_authority(authority)
@@ -1197,7 +1197,7 @@ def build_engine(
     # only signals currently local handles; normal model final remains unaffected.
     # P0-B Host-owned review gate, in-memory admission only. Reviewer is attached
     # after the real SubAgentRunner has been built below.
-    _host_review = _configure_review_admission(registry, event_store)
+    _host_review = _configure_review_admission(registry, event_store, settings)
 
     _job_registry = JobRegistry.instance()
     _job_registry.configure(

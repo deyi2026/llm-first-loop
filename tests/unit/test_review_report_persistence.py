@@ -26,7 +26,7 @@ class _Runner:
         self.parent = "author-1"
 
     def start(self, task: str, **kwargs):
-        return {"accepted": True, "child_id": "child-review-1", "state": "running"}
+        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": kwargs["model"]}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
         if self.state != "completed" or parent_id != self.parent:
