@@ -9,7 +9,7 @@
     "necessity": "设计 v1.3.1 §R4/C8/F10/F11：evidence:// 锚被当路径 stat 恒报 missing、wheel 布局缺 src 映射假报 missing、同锚不同根结论相反且无根标识——读取侧需要三类锚（path/code/evidence）+ anchor_root_id + resolution_state 三元组，且不得因缺锚自动废卡。"
    },
    "g2": {
-    "authority_owner": "LFL 主开发代理（实现）+ 受管独立 GLM-5.3 Reviewer（审查）；依据 GOAL-20261116-f0858d99 设计文档 v1.3.1 §R4 与用户分阶段授权",
+    "authority_owner": "D1-R4 真值源＝MethodStore 既有 freshness/anchor baseline（只读），事实源为文件系统内容 SHA；开发代理为实现者、独立 GLM Reviewer PASS 为门禁证据，均非运行时授权持有者；依据 GOAL-20261116-f0858d99 设计文档 v1.3.1 §R4 与用户分阶段授权",
     "relationship": "reuse",
     "non_duplication": "复用 MethodStore 既有 _freshness_snapshot 与内容 SHA 基线，仅并行新增只读解析层（_resolve_freshness_anchor/_anchor_code_roots），不新建状态库、不新平台、不动其它模块，legacy 快照与旧 qualification 基线字节级兼容"
    },
@@ -35,7 +35,7 @@
     "necessity": "设计 v1.3.1 §4.4④/C11/V9：刷锚待办若混入 settlement_submit 结算清单会污染待结算计数与幂等键——读取侧 changed/missing/unresolvable 三态触发的复核锚提示必须以 item_kind=freshness_refresh 与知识使用结算项隔离分列。"
    },
    "g2": {
-    "authority_owner": "LFL 主开发代理（实现）+ 受管独立 GLM-5.3 Reviewer（审查）；依据设计 v1.3.1 C11 契约变更表",
+    "authority_owner": "D2-C11 真值源＝现有 MethodStore usage/settlement ledger（使用结算），introspection 派生 freshness_refresh 仅为只读提示且无结算写权限；独立 GLM Reviewer PASS 为门禁证据，非权限所有者；依据设计 v1.3.1 C11 契约变更表",
     "relationship": "reuse",
     "non_duplication": "复用既有 settlement_pending 只读清单与 registry_experience 读侧，只增派生提示与隔离标记，不新建持久层、不加运行时硬门（与设计 §11 写入面约束一致）"
    },
@@ -60,7 +60,7 @@
     "necessity": "Q-09（TASK-f0858d99-016）：review_host_admission 的 reviewer prompt 前段要求 'and a SHA256: <sha> line' 而末段强制 FINGERPRINT-only，_qualifying_pass_p2 又要求二选一——内容 PASS（subagent_207c58806e79 VERDICT:PASS P0=P1=P2=0 指纹匹配）被误判格式 REVISE，浪费窄复审且阻塞资格签发。"
    },
    "g2": {
-    "authority_owner": "LFL 主开发代理（修复实现）+ 受管独立 GLM-5.3 Reviewer（审查）；依据回执 data/review_admission/subagent_207c58806e79-git_push.md 与外部根因定位",
+    "authority_owner": "D3-Q09 真值源＝HostReviewAdmission 受管资格/指纹解析器（唯一 grant 签发方）；GLM Reviewer 仅提供审查意见、不直接签发授权；依据回执 data/review_admission/subagent_207c58806e79-git_push.md 与外部根因定位",
     "relationship": "replace",
     "non_duplication": "统一为单一终判格式规范（FINGERPRINT-only），非新增并行判定路径；不改 _qualifying_pass_p2 的二选一安全语义"
    },
@@ -69,7 +69,7 @@
      "原 prompt 同时要求 SHA256 与 FINGERPRINT 导致 reviewer 双行输出被 Host fail-closed REVISE（subagent_207c58806e79）；修复仅移除 prompt 前段 SHA256 要求，_qualifying_pass_p2 解析器未改；新增回归（tests/unit/test_review_host_admission.py）证明双行仍拒绝（fail-closed），fingerprint-only 与 legacy sha-only 各自合法 PASS",
      "RULE-AI-35 应拦实测：非 PASS 文本/缺指纹仍被拦，门禁语义未放宽"
     ],
-    "recovery_or_reason": "若新格式导致真实 REVISE 被误放行（无证据），恢复旧 prompt 为一行回退路径；语义校验仍由 Host counts/_qualifying_pass_p2 把守"
+    "recovery_or_reason": "若新提示词造成资格误判：fail-closed 暂停资格签发；回退 Q09 提示词改动并明确旧 prompt 双行误提示可能复现（旧 prompt 本身自相矛盾），需修订后重审，不声称安全无回归；解析器 XOR 语义保持不变，语义校验仍由 Host counts/_qualifying_pass_p2 把守"
    },
    "g4": {
     "rollback": "git revert review_host_admission.py+两测试提交",
