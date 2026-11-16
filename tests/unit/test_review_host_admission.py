@@ -44,7 +44,7 @@ class FakeChildRunner:
         assert kwargs["review_isolated"] is True
         if self.refusals:
             return {"accepted": False, "detail": self.refusals.pop(0)}
-        return {"accepted": True, "child_id": "child-review-1", "state": "running"}
+        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": kwargs["model"]}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
         if self.state != "completed" or parent_id != self.parent:
@@ -2584,7 +2584,9 @@ def test_pass_cache_replays_an_identical_review(tmp_path: Path) -> None:
     assert again["accepted"] and again["cached_pass"] is True
     assert again["candidate_sha256"] == issued["candidate_sha256"]
     assert runner.started == before          # no second reviewer was paid for
-    assert host.poll("author-1", again["child_id"])["qualification"] == "PASS"
+    cached_receipt = host.poll("author-1", again["child_id"])
+    assert cached_receipt["qualification"] == "PASS"
+    assert cached_receipt["reviewer_model"] == "glm/glm-5.3"
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
 
 

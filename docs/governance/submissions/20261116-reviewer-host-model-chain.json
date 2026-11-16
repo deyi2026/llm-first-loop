@@ -1,0 +1,62 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-reviewer-host-model-chain",
+  "summary": "Configure existing Host-owned independent Reviewer model chain without hard-coding, preserving fail-closed admission, SHA-bound review and no-tools isolation. User separately authorized the original frozen code SHA 7834bd3 static review and a fresh DeepSeek review for its manifest-only successor; neither is a reusable Host-admission bypass.",
+  "components": [
+    {
+      "component_id": "host-reviewer-model-admission",
+      "paths": [
+        ".env.example",
+        "docs/governance/submissions/20261116-reviewer-host-model-chain.json",
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_review_admission_gitpush_fingerprint.py",
+        "tests/unit/test_review_full_test_derive.py",
+        "tests/unit/test_review_host_admission.py",
+        "tests/unit/test_review_model_config.py",
+        "tests/unit/test_review_report_persistence.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "host-reviewer-existing-authority",
+      "owning_subsystem": "Existing HostReviewAdmission, SubAgentRunner, Settings and factory wiring",
+      "disposition": "REUSE existing Host review admission and model resolver; replace fixed internal preference with operator-only configured chain. No new approval path or reviewer authority.",
+      "evidence": [
+        "Frozen original code SHA 7834bd3bb3b615e315a9ad98c3f121328322da35; 361 focused tests; DeepSeek-v4-flash independent read-only review PASS P0/P1=0, P2=8, not a Host admission PASS.",
+        "Original full R9 CLEAN exit 0 on exact code SHA: Python 15378 passed, 162 skipped, 3 xfailed; WebUI Vitest 600 passed; Ruff and Pyright complete.",
+        "GitHub PR #44 A.5 requires one changed manifest covering exact 9 source/test paths plus manifest; no runtime source change is proposed in this follow-up."
+      ],
+      "verification_level": "Manifest-only successor requires new exact-SHA review/verification and PR CI; never claim original review/R9 automatically applies to a changed tree.",
+      "model_evidence_veto_recovery_exit": "Parent Agent cannot select Reviewer model or sign PASS. Missing/mismatched runner model fails closed; if configured model fails, stop or bounded fallback; independent Reviewer P0/P1 findings block merge and trigger re-review.",
+      "rollback_route": "Revert the manifest-only successor and the 3 original code commits (6e5224a864e261006447ba5ce831b7a97b9c2414, 86d98585258dbc0709e07e939c2f41288b2294bd, 7834bd3bb3b615e315a9ad98c3f121328322da35) via controlled GitHub PR revert; retain previous Host admission/default chain until managed deployment is qualified."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-reviewer-existing-authority",
+      "g1": {
+        "necessity": "Fixed Reviewer model selection is brittle during provider rate-limit or availability incidents. Host-operator configurable preference permits an already registered DeepSeek-v4-flash reviewer when explicitly selected, without granting the parent Agent model-choice or Host-admission bypass authority."
+      },
+      "g2": {
+        "authority_owner": "Existing HostReviewAdmission and SubAgentRunner remain sole independent-review execution and qualification authorities.",
+        "relationship": "reuse",
+        "non_duplication": "No second reviewer gate, policy ledger, model approval service, or parent-selected reviewer model; Settings supplies only operator preference."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent DeepSeek-v4-flash static review PASS P0=0/P1=0 on original frozen code SHA; ordinary model PASS is not Host review_admission PASS.",
+          "361 focused tests and original full R9 CLEAN on frozen code SHA; real SubAgentRunner positive model attestation test plus fake-runner negative tests for missing/mismatched model labels. No claim of a real-runner negative test."
+        ],
+        "recovery_or_reason": "Invalid explicit model list fails closed; missing or mismatched model attestation terminates/rejects child; bounded retries may choose next configured model. Do not silently certify unknown actual provider weights."
+      },
+      "g4": {
+        "rollback": "Revert code and manifest commits under managed release; preserve prior Host default and live service until CAS/idle checks allow switching.",
+        "verification": [
+          "Validate exact 10-path A.5 manifest coverage and independent review on manifest-only successor SHA.",
+          "Run original full R9 on exact successor and require GitHub PR CI and post-merge push CI green.",
+          "Mac managed deployment requires all service idle, desired/live identity and generation CAS, rollback available; no forced restart."
+        ]
+      }
+    }
+  ]
+}
