@@ -45,6 +45,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pr-merge-sha", default=None)
     p.add_argument("--needs-json", default=None,
                    help="JSON object {job: {result, run_id?}} for the four siblings")
+    p.add_argument("--bind-repo-blobs", action="store_true",
+                   help="read-only SHA1 Git blob binding of three gate paths")
     p.add_argument("--need", action="append", default=[],
                    help="repeatable: job=result[@run_id], e.g. test=success@424242")
     return p
@@ -176,11 +178,37 @@ def run_gate(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
         "read_only": True, "branch_protection": {"host_verified": False},
         "reasons": reasons, "exit_code": exit_code,
     }
+    if args.bind_repo_blobs:
+        try:
+            from pathlib import Path
+
+            from premerge_host import _GATE_PATHS, _blob_sha
+
+            blobs = {}
+            for name in _GATE_PATHS:
+                path = Path(name)
+                if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                    raise OSError("gate_path_unavailable")
+                blobs[name] = _blob_sha(path.read_bytes())
+            receipt["gate_blobs"] = blobs
+        except (OSError, ValueError):
+            receipt["reasons"].append("gate_blob_binding_unavailable")
+            receipt["verdict"] = "error"
+            receipt["exit_code"] = 2
+            exit_code = 2
     return exit_code, receipt
 
 
 def main(argv: list[str] | None = None) -> int:
-    exit_code, receipt = run_gate(argv)
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--mode=host" in args or (
+        "--mode" in args and args.index("--mode") + 1 < len(args)
+        and args[args.index("--mode") + 1] == "host"
+    ):
+        from premerge_host import main as host_main
+
+        return host_main(args)
+    exit_code, receipt = run_gate(args)
     json.dump(receipt, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return exit_code

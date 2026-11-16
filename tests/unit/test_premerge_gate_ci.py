@@ -205,3 +205,68 @@ def test_need_flags_cli_form_passes() -> None:
     assert rc == 0, receipt
     assert receipt["verdict"] == "pass"
     assert receipt["same_run"] is True
+
+
+def test_gate_blob_binding_reads_only_fixed_paths(tmp_path: Path) -> None:
+    import hashlib
+
+    files = (
+        "scripts/premerge_gate.py", "scripts/ci_gate.sh",
+        ".github/workflows/ci.yml",
+    )
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+    before = sorted(p.relative_to(tmp_path).as_posix()
+                    for p in tmp_path.rglob("*") if p.is_file())
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--mode", "ci", "--event", "push",
+         "--run-id", str(RUN_ID), "--head-sha", SHA_HEAD,
+         "--needs-json", _needs_json(), "--bind-repo-blobs"],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    receipt = json.loads(proc.stdout)
+    assert proc.returncode == 0 and receipt["verdict"] == "pass"
+    for name in files:
+        data = name.encode()
+        expected = hashlib.sha1(
+            b"blob " + str(len(data)).encode() + b"\0" + data
+        ).hexdigest()
+        assert receipt["gate_blobs"][name] == expected
+    assert sorted(p.relative_to(tmp_path).as_posix()
+                  for p in tmp_path.rglob("*") if p.is_file()) == before
+
+
+def test_gate_blob_binding_missing_path_fails_closed(tmp_path: Path) -> None:
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--mode", "ci", "--event", "push",
+         "--run-id", str(RUN_ID), "--head-sha", SHA_HEAD,
+         "--needs-json", _needs_json(), "--bind-repo-blobs"],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    receipt = json.loads(proc.stdout)
+    assert proc.returncode == 2
+    assert receipt["verdict"] == "error"
+    assert "gate_blob_binding_unavailable" in receipt["reasons"]
+
+
+def test_gate_blob_binding_symlink_fails_closed(tmp_path: Path) -> None:
+    files = (
+        "scripts/premerge_gate.py", "scripts/ci_gate.sh",
+        ".github/workflows/ci.yml",
+    )
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+    (tmp_path / files[0]).unlink()
+    (tmp_path / files[0]).symlink_to(tmp_path / files[1])
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--mode", "ci", "--event", "push",
+         "--run-id", str(RUN_ID), "--head-sha", SHA_HEAD,
+         "--needs-json", _needs_json(), "--bind-repo-blobs"],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    receipt = json.loads(proc.stdout)
+    assert proc.returncode == 2 and receipt["verdict"] == "error"

@@ -211,7 +211,7 @@ jobs:
           python scripts/premerge_gate.py --mode ci \
             --event push --run-id "${{ github.run_id }}" \
             --head-sha "${{ github.sha }}" \
-            --needs-json "$NEEDS_JSON" \
+            --needs-json "$NEEDS_JSON" --bind-repo-blobs \
             | tee premerge-gate-receipt.json
       - name: premerge gate（PR 身份）
         if: github.event_name == 'pull_request'
@@ -224,7 +224,7 @@ jobs:
             --pr-head-sha "${{ github.event.pull_request.head.sha }}" \
             --pr-base-sha "${{ github.event.pull_request.base.sha }}" \
             --pr-merge-sha "${{ github.sha }}" \
-            --needs-json "$NEEDS_JSON" \
+            --needs-json "$NEEDS_JSON" --bind-repo-blobs \
             | tee premerge-gate-receipt.json
       - name: 保存 JSON 回执 artifact
         if: always()

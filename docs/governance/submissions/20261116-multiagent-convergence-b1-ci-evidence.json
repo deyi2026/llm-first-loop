@@ -1,26 +1,32 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261116-multiagent-convergence-b1-ci-evidence",
-  "summary": "B1-1 isolated CI evidence-only gate, fail-closed identity/sibling checks and GitHub workflow job. This is not Host premerge approval or production deployment.",
+  "summary": "B1 isolated CI+Host read-only evidence gates and local single-writer flock; Host needs independent signed LFL snapshot, approved main policy and verified branch protection before merge eligibility.",
   "components": [
     {
       "component_id": "b1-ci-evidence-gate",
       "paths": [
+        ".github/workflows/ci.yml",
         "scripts/premerge_gate.py",
+        "scripts/premerge_host.py",
+        "scripts/integration_writer_lock.py",
         "tests/unit/test_premerge_gate_ci.py",
-        ".github/workflows/ci.yml"
+        "tests/unit/test_premerge_gate_host.py",
+        "tests/unit/test_integration_writer_lock.py"
       ],
       "control_machinery": true,
-      "owning_subsystem": "GitHub Actions CI evidence gate, not the managed Host merge executor",
-      "disposition": "ADMIT isolated B1-1 CI evidence-only implementation; no authority to merge, no branch-protection or trusted-blob claim.",
+      "owning_subsystem": "GitHub Actions CI evidence job, separate read-only Host GitHub API verifier and narrow local integration-writer flock",
+      "disposition": "ADMIT isolated B1 code and negative tests only. Host never merges or pushes; no production activation, no branch protection changes and no automatic remote main CAS.",
       "evidence": [
-        "GLM-5.3-Flash Web Goal GOAL-20261116-9eaced8c produced isolated code candidate 66b63a743.",
-        "13 focused unit tests passed; Ruff and YAML contract passed; git show --check passed.",
-        "The job runs for push and pull_request with four needs and emits a machine-readable JSON artifact; Host verification and live required-check pinning are pending."
+        "B1-1 CI evidence job and 13 initial tests were developed in LFL Web with glm/glm-5.3-flash; later Host/lock code and tests were authored by the coordinating developer.",
+        "Host verifier requires a fresh HMAC-signed local snapshot, GitHub API branch protection, exact context+app_id policy from protected main, push/PR check-run provenance, Actions run and artifact, and gate blob equality against independent main; unknown facts HOLD.",
+        "CI artifact includes read-only Git blob hashes for three gate files; Host cross-checks candidate and trusted main blobs. Gate-changing PRs cannot self-approve and require a separate bootstrap/upgrade process.",
+        "Local integration tool holds an OS flock under real git-common-dir and only cherry-picks exact commits into a clean non-main worktree; it never pushes or deploys.",
+        "Remote GitHub main protection required_status_checks returned 404 Branch not protected and rulesets=[] at implementation time; Host eligibility is therefore BLOCKED until a separately authorized bootstrap and protected policy installation."
       ],
-      "verification_level": "Focused 13 tests and static/YAML checks completed; independent code Reviewer, original full R9, PR/CI and protected main verification are NOT yet completed.",
-      "model_evidence_veto_recovery_exit": "Any skipped/missing/failing sibling, mismatched run/PR identity, tampered gate source, untrusted Host evidence, unknown required-check rules or missing independent review must HOLD. Do not treat CI receipt as merge authorization.",
-      "rollback_route": "Revert this isolated B1-1 commit/PR to remove the new CI job and script; no persistent data migration or production side effects.",
+      "verification_level": "Focused CI/Host/flock tests and Ruff/YAML/A.5 to be verified on final SHA; independent code Reviewer, original full R9, remote PR CI and branch protection are pending.",
+      "model_evidence_veto_recovery_exit": "Any 403/404, missing signed Host snapshot, stale Lane/Queue version, failed reviewer/R9, PR run mismatch, skipped/RED required check, untrusted gate/policy blob, or lock contention must HOLD with no merge side effect.",
+      "rollback_route": "Revert isolated B1 PR or disable the CI evidence job; no durable migration or production changes. Dirty integration worktrees are retained for owner reconciliation.",
       "declaration_id": "b1-ci-evidence"
     },
     {
@@ -32,10 +38,10 @@
       "owning_subsystem": "A.5 changed-path coverage declaration",
       "disposition": "Document exact changed paths and truthful verification status without adding runtime authority.",
       "evidence": [
-        "This declaration includes itself and exactly three B1-1 implementation/test/workflow paths.",
-        "No design document version bump; frozen v1.9 design SHA256=5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea."
+        "A.5 declaration includes itself and exactly seven B1 implementation/test/workflow paths.",
+        "Frozen v1.9 design SHA256=5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea remains unchanged."
       ],
-      "verification_level": "A.5 exact path coverage must pass on final commit SHA; independent Reviewer, R9 and remote CI remain pending.",
+      "verification_level": "A.5 exact changed-path coverage must pass on final SHA; independent Reviewer, original full R9 and remote CI are pending.",
       "model_evidence_veto_recovery_exit": "If coverage or declaration is inaccurate, correct in the isolated branch and re-run A.5; never claim unperformed review/R9/CI as complete.",
       "rollback_route": "Revert the isolated PR; no runtime state impact."
     }
@@ -44,26 +50,27 @@
     {
       "declaration_id": "b1-ci-evidence",
       "g1": {
-        "necessity": "A managed multi-agent integration process needs a CI evidence job that fails closed when required sibling jobs or run identities are missing or unsuccessful; existing CI had no such machine-consumed evidence artifact."
+        "necessity": "B1 needs a machine-consumed CI sibling evidence job, independent Host verification of required GitHub rules/check runs and trusted gate blobs, and a single local integration writer to avoid two simultaneous cherry-picks."
       },
       "g2": {
-        "authority_owner": "GitHub Actions owns CI job results; a future independent Host gate owns remote required-check/branch-protection verification and merge eligibility.",
+        "authority_owner": "GitHub API owns branch protection, check-runs and Actions evidence; existing LFL Lane/Queue/Reviewer/R9 stores remain authoritative. The Host verifies a fresh signed snapshot issued by a separately trusted Host. Git common dir OS flock serializes only the narrow local integration tool.",
         "relationship": "reuse",
-        "non_duplication": "Reuse the existing CI workflow and four sibling jobs; no new Goal/Lane authority, no duplicate ledger, no Host merge permission or branch-protection change."
+        "non_duplication": "Reuse existing CI workflow and four siblings; no new Goal/Lane ledger, no new approval authority, no generic shell executor and no atomic remote main CAS. The signed Host snapshot issuer is not yet wired to the production managed Host."
       },
       "g3": {
         "model_evidence": [
-          "GLM-5.3-Flash generated the code in the isolated worktree and corrected test/CI YAML failures.",
-          "13 synthetic positive/negative CI evidence tests pass; Ruff, YAML contract and diff check pass; no live GitHub required check verification."
+          "CI/Host/flock synthetic positive and negative tests cover forged run IDs, app_id mismatches, PR-only checks, policy self-upgrades, branch protection absence, main advance and two-process lock contention.",
+          "CI artifact Git blob binding and Host second-read main/PR race rejection are exercised in unit tests.",
+          "No live Host eligibility PASS is claimed: remote main branch protection returned 404; independent trusted policy and snapshot issuer are not yet deployed."
         ],
-        "recovery_or_reason": "If event/needs/identity input is incomplete, fail closed with nonzero exit and JSON reasons; CI job failure does not merge or mutate Git. Host mode remains unimplemented and must HOLD."
+        "recovery_or_reason": "Return HOLD for missing/ambiguous evidence, reject same-PR gate changes against trusted main, retain dirty integration tree and require operator-led reconciliation; do not auto-retry side effects."
       },
       "g4": {
-        "rollback": "Revert the isolated CI gate commit/PR; no durable schema change or deployment.",
+        "rollback": "Revert isolated B1 PR to remove CI/Host/local integration tool; no persistent data schema changes or live deployment.",
         "verification": [
-          "Run A.5 changed-path coverage on final SHA and independent code Reviewer PASS P0/P1=0.",
-          "Run original complete R9 exit 0 and remote PR CI for exact SHA before protected main integration.",
-          "Do not activate required branch protection or claim Host merge eligibility until separate authoritative Host verification is implemented."
+          "Run all focused tests, Ruff, A.5 exact path coverage and original full R9 on final frozen candidate.",
+          "Independent Reviewer PASS P0/P1=0, exact SHA PR CI and branch protection/rules policy verification are required before managed main merge.",
+          "Bootstrap of the new required context and signed Host snapshot issuer require independent operator authorization and verified production wiring; no self-approval."
         ]
       }
     }
