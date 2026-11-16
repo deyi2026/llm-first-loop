@@ -1,26 +1,30 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261116-w1-board-version-strip",
-  "summary": "W1 makes the read-only coordination Board stop labelling an arbitrary worktree checkout HEAD as main_head, projects a four-segment version strip (checkout HEAD, verifiable origin/main, desired deployment generation/SHA, live SHA) with explicit unknown when a source cannot be verified, and aggregates append-only lane ledgers by highest lane version so a superseded historical row cannot appear as an in-flight ghost lane. Same-version conflicts keep failing closed into degraded. No new write authority, no admission change, no R5 relaxation, no auto-close, no deployment. Exact PR base b7aef87b014f17f0918914f590bd104a12620534.",
+  "summary": "W1 makes the read-only coordination Board stop labelling an arbitrary worktree checkout HEAD as main_head, projects a four-segment version strip (checkout HEAD, verifiable origin/main, desired deployment generation/SHA, live SHA) with explicit unknown when a source cannot be verified, and aggregates append-only lane ledgers by highest lane version so a superseded historical row cannot appear as an in-flight ghost lane. Same-version conflicts and invalid versions keep failing closed into degraded, a non-boolean owner value is never treated as agreement, and historical deployment rows can no longer masquerade as the live identity. No new write authority, no admission change, no R5 relaxation, no auto-close, no deployment. Exact PR base b7aef87b014f17f0918914f590bd104a12620534.",
   "components": [
     {
       "component_id": "board-version-strip",
       "paths": [
         "src/llm_loop/introspection/lane_board.py",
         "src/llm_loop/web/coordination_routes.py",
-        "tests/unit/test_lane_board_version_strip.py"
+        "tests/unit/test_lane_board_version_strip.py",
+        "tests/unit/test_lane_board.py"
       ],
       "control_machinery": true,
       "owning_subsystem": "Read-only coordination Board aggregation (lane_board.build_board) and its HTTP projection (coordination_routes)",
-      "disposition": "ADMIT read-only projection correction: main_head may only be a verifiable origin/main or an explicit caller-supplied value; worktree checkout HEAD becomes its own field; desired/live identities are read from service_control's own records with explicit unknown on missing/unreadable source; lane aggregation resolves append-only history by highest monotonic version and keeps same-version conflicts fail-closed in degraded.",
+      "disposition": "ADMIT read-only projection correction: main_head may only be a verifiable origin/main or an explicit caller-supplied value; worktree checkout HEAD becomes its own field; desired/live identities are read from service_control's own records with explicit unknown on missing/unreadable source; live identity must come from the authoritative restart receipt, never from a historical deployment row; lane aggregation resolves append-only history by highest monotonic version and keeps same-version or invalid-version conflicts fail-closed in degraded with a non-boolean owner value treated as a conflict.",
       "evidence": [
         "BUG-16 reproduced on production ledger: build_board(workspace_root=main worktree) reported main_head=3e0202b5b (detached PR#44 head, 37 commits behind) while deployed_sha=b7aef87b, producing a false in_sync=mismatch even though live equals origin/main.",
         "BUG-14a reproduced: lanes.jsonl holds lane-selftest-guard active v1 and closed v2; Board showed inflight=14/13 while the version-resolved truth was 13/12 because LaneStore.list() returns rows in file order without interpreting version.",
         "OPT-11: desired identity is read from <data>/runtime/managed_service_deployment.json and live identity from <data>/restart-receipt.json, the same authoritative sources service_control writes; missing/unreadable/invalid sources yield source=unknown plus a degraded reason instead of a substituted SHA.",
-        "tests/unit/test_lane_board_version_strip.py covers detached worktree vs origin/main, origin/main absent, explicit main_head compatibility, desired/live projection, desired missing, superseded duplicate, same-version conflict, invalid version, unreadable ledger and the HTTP route projection."
+        "P1-A negative test: with the restart receipt absent, historical deployments/batch.jsonl pre_deploy rows all carrying one SHA still leave live.source=unknown and main.verifiable=false, so a deploy log cannot stand in for the running identity.",
+        "P1-B negative test: three same-version rows (1 inactive non-boolean owner value, 2 active, 3 closed) drop the lane from inflight and expose a degraded conflict reason instead of resolving last-wins.",
+        "P2: the unreadable-ledger test now plants non-UTF-8 bytes, so it fails on the decode path instead of passing via the missing-file branch; the path-overlap fixture writes its lane ledger into the same audit root the Board reads.",
+        "tests/unit/test_lane_board_version_strip.py covers detached worktree vs origin/main, origin/main absent, explicit main_head compatibility, desired/live projection, desired missing, superseded duplicate, same-version conflict, invalid version, unreadable ledger, non-boolean owner conflict, historical deploy rows not live, and the HTTP route projection."
       ],
-      "verification_level": "Focused negative tests 10 PASS (RED before implementation); adjacent regressions tests/unit/test_lane_board.py + tests/unit/test_coordination_routes.py 20 PASS; tests/unit/test_arch_guards.py 52 PASS; ruff check PASS; pyright 0 errors on both changed source files; no independent Reviewer and no original full R9 yet - those gates remain mandatory after GPT-6 cross-check.",
-      "model_evidence_veto_recovery_exit": "Veto if the Board still infers main from a worktree checkout, if any version segment is fabricated when its source is absent, if same-version lane conflicts are presented as resolved, or if lane aggregation gains any write/close authority. Recovery: keep the pre-change read-only projection, revert this branch, fix, re-freeze and re-run the full gate chain.",
+      "verification_level": "Focused negative tests 14 PASS (RED before each fix); adjacent regressions tests/unit/test_lane_board.py + tests/unit/test_coordination_routes.py + tests/unit/test_arch_guards.py + tests/unit/test_coordination_status.py 92 PASS; ruff check PASS; pyright 0 errors on both changed source files; no independent Reviewer and no original full R9 yet - those gates remain mandatory before merge.",
+      "model_evidence_veto_recovery_exit": "Veto if the Board still infers main from a worktree checkout, if any version segment is fabricated when its source is absent, if a historical deployment row is promoted to the live identity, if same-version lane conflicts are presented as resolved, or if lane aggregation gains any write/close authority. Recovery: keep the pre-change read-only projection, revert this branch, fix, re-freeze and re-run the full gate chain.",
       "rollback_route": "Revert this branch/commit: the Board returns to the previous fields (main_head from worktree probe, first-row lane listing). No migration, no ledger rewrite, no service restart required.",
       "declaration_id": "w1-board-version-strip"
     },
@@ -55,17 +59,18 @@
       "g3": {
         "model_evidence": [
           "Production reproduction recorded for both defects (main_head=3e0202b5b vs origin/main=b7aef87b; inflight 14 vs version-resolved 13).",
-          "Focused tests fail before implementation and pass after; adjacent Board/route tests and architecture guards pass; ruff and pyright clean on changed source files.",
-          "Independent Reviewer and complete R9 are explicitly NOT claimed yet; this candidate stops before GPT-6 cross-check."
+          "Four GPT-6 cross-check findings fixed as negative tests first: historical deployment rows no longer feed the live identity (P1-A), unparseable or non-boolean same-version owner values stay fail-closed in degraded (P1-B), the unreadable-ledger test now reaches the decode path (P2), and version lanes missing from the Board list are no longer silently skipped (P2).",
+          "Focused tests fail before each fix and pass after; adjacent Board/route/guard/coordination tests pass; ruff and pyright clean on changed source files.",
+          "Independent Reviewer and complete R9 are explicitly NOT claimed yet; this candidate stops before that gate."
         ],
         "recovery_or_reason": "Every source is optional: if git probing fails, origin/main is absent, or the desired/live records are missing or malformed, the field is empty with source=unknown plus a degraded reason; the Board never substitutes a different SHA. If aggregation sees an invalid or conflicting version, that lane is excluded from counts and surfaced in degraded."
       },
       "g4": {
         "rollback": "Revert the branch; the Board falls back to its previous fields and the ledger is untouched.",
         "verification": [
-          "Focused 10 PASS, adjacent Board and coordination-route 20 PASS, architecture guards 52 PASS.",
+          "Focused 14 PASS, adjacent Board + coordination-route + arch-guard + coordination-status 92 PASS.",
           "A.5 staged validator PASS with exact changed-path coverage including this manifest.",
-          "Pending gates after GPT-6 cross-check: independent Reviewer PASS (P0/P1=0), original complete R9 exit 0, remote exact-SHA CI, then controlled merge."
+          "Pending gates: independent Reviewer PASS (P0/P1=0), complete R9 exit 0, remote exact-SHA CI, then controlled merge."
         ]
       }
     }

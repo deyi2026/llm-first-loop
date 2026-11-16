@@ -80,7 +80,13 @@ def test_main_head_comes_from_verified_origin_main_not_worktree_head(tmp_path: P
     board = build_board(tmp_path / "audit", workspace_root=str(repo))
 
     assert board["main_head"] == new
-    assert board["versions"]["main"] == {"head": new, "source": "origin_main"}
+    main = board["versions"]["main"]
+    assert main["head"] == new
+    # P2: origin/main 只是本地 remote-tracking ref——不得宣称远端已核验。
+    assert main["source"] == "local_tracking"
+    assert main["ref"] == "origin/main"
+    assert main["remote_verified"] is False
+    assert main["freshness"] == "unknown"
     worktree = board["versions"]["worktree"]
     assert worktree["head"] == old
     assert worktree["detached"] is True
@@ -107,7 +113,9 @@ def test_explicit_main_head_stays_supported(tmp_path: Path) -> None:
     board = build_board(tmp_path / "audit", main_head="b" * 40)
 
     assert board["main_head"] == "b" * 40
-    assert board["versions"]["main"] == {"head": "b" * 40, "source": "explicit"}
+    assert board["versions"]["main"]["head"] == "b" * 40
+    assert board["versions"]["main"]["source"] == "explicit"
+    assert board["versions"]["main"]["remote_verified"] is False
 
 
 # ---------------- OPT-11：desired / live 分段可核验 ----------------
@@ -250,3 +258,114 @@ def test_board_route_projects_versions(tmp_path: Path) -> None:
     assert body["versions"]["main"]["source"] == "unknown"
     assert body["versions"]["worktree"]["head"] == ""
     assert body["main_head"] == ""
+
+
+# ---------------- P1-A：历史 deployments 不得冒充 live ----------------
+
+
+def _legacy_deployment(audit: Path, sha: str) -> None:
+    dep = audit / "deployments"
+    dep.mkdir(parents=True, exist_ok=True)
+    (dep / "old.jsonl").write_text(
+        json.dumps({"ts": "2025-01-01T00:00:00+08:00", "target_sha": sha}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _desired_file(tmp_path: Path, sha: str, generation: int = 425) -> None:
+    (tmp_path / "runtime").mkdir(exist_ok=True)
+    (tmp_path / "runtime" / "managed_service_deployment.json").write_text(
+        json.dumps(
+            {
+                "schema": "managed-service-deployment/v1",
+                "deployment_id": "deploy-1",
+                "generation": generation,
+                "git_head": sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_legacy_deployment_cannot_pose_as_live(tmp_path: Path) -> None:
+    """restart-receipt 缺失时，历史 deployments 行不得被当成"实际在跑"。"""
+    sha = "a" * 40
+    _legacy_deployment(tmp_path / "audit", sha)
+    _desired_file(tmp_path, sha)
+
+    # head 与历史行恰好同 sha——正是最容易被误判成 exact 的场景。
+    board = build_board(tmp_path / "audit", main_head=sha)
+    versions = board["versions"]
+
+    # versions.live 只有权威回执能证明；缺失即 unknown，不拿历史行顶替。
+    assert versions["live"]["sha"] == ""
+    assert versions["live"]["source"] == "unknown"
+    assert versions["live"]["authoritative"] is False
+    # 无法比较，必须是 None，不能因为在库上相等就报 True。
+    assert board["deployment"]["desired_matches_live"] is None
+    # 非权威 fallback 不得显示 verified exact（假绿）。
+    assert board["deployment"]["in_sync"] is False
+    assert board["deployment"]["sync_state"] == "unverified"
+    assert "restart_receipt_missing" in board["degraded"]
+    # legacy 字段兼容保留：历史行仍可读，但带权威标记。
+    assert board["deployment"]["deployed_sha"] == sha
+    assert board["deployment"]["deployed_authoritative"] is False
+
+
+def test_authoritative_receipt_still_reports_exact(tmp_path: Path) -> None:
+    sha = "a" * 40
+    _desired_file(tmp_path, sha)
+    (tmp_path / "restart-receipt.json").write_text(
+        json.dumps(
+            {
+                "ts": "2026-11-16T15:23:31+08:00",
+                "action": "wecom",
+                "git_head_full": sha,
+                "authoritative": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    board = build_board(tmp_path / "audit", main_head=sha)
+
+    assert board["versions"]["live"]["sha"] == sha
+    assert board["deployment"]["desired_matches_live"] is True
+    assert board["deployment"]["sync_state"] == "exact"
+    assert board["deployment"]["in_sync"] is True
+
+
+# ---------------- P1-B：同版本 payload 冲突 fail-closed ----------------
+
+
+def test_same_version_owner_session_conflict_fails_closed(tmp_path: Path) -> None:
+    """同 id/version/status 但 owner 不同：静默取首行会掩盖双写，必须排除+降级。"""
+    audit = tmp_path / "audit"
+    _ledger(
+        audit,
+        [
+            _lane("lane-split", "active", 3, owner_session_id="owner-A"),
+            _lane("lane-split", "active", 3, owner_session_id="owner-B"),
+            _lane("lane-ok", "active", 1),
+        ],
+    )
+
+    board = build_board(audit)
+
+    assert [row["lane_id"] for row in board["lanes"]] == ["lane-ok"]
+    assert board["summary"]["lane_conflicts"] == ["lane-split"]
+    assert "lane_version_conflict:lane-split" in board["degraded"]
+
+
+def test_identical_duplicate_row_is_tolerated(tmp_path: Path) -> None:
+    """同一行被重复 append（完全一致）是可兼容的历史噪声，不算冲突。"""
+    audit = tmp_path / "audit"
+    row = _lane("lane-dup", "active", 1, owner_session_id="owner-A")
+    _ledger(audit, [row, dict(row)])
+
+    board = build_board(audit)
+
+    assert [r["lane_id"] for r in board["lanes"]] == ["lane-dup"]
+    assert board["summary"]["lane_conflicts"] == []
+    assert board["summary"]["duplicate_lane_ids"] == ["lane-dup"]
+    assert not any(d.startswith("lane_version_conflict") for d in board["degraded"])

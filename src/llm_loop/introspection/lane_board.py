@@ -45,11 +45,11 @@ def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) ->
     head）与 origin/main 可能相差数十个提交，混用会制造假 in_sync=mismatch。
     """
     head, head_err = _probe_git(workspace_root, "rev-parse", "HEAD")
-    ref, _ = _probe_git(workspace_root, "rev-parse", "--abbrev-ref", "HEAD")
+    ref_worktree, _ = _probe_git(workspace_root, "rev-parse", "--abbrev-ref", "HEAD")
     if head_err or not head:
         head = ""
         degraded.append("worktree_head_unknown")
-    detached = bool(head) and (not ref or ref == "HEAD")
+    detached = bool(head) and (not ref_worktree or ref_worktree == "HEAD")
 
     behind: int | None = None
     if head:
@@ -58,23 +58,31 @@ def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) ->
             behind = int(raw)
 
     if main_head:
-        verified, source = main_head, "explicit"
+        verified, source, ref = main_head, "explicit", ""
     else:
         verified, err = _probe_git(workspace_root, "rev-parse", "--verify", "origin/main")
         if err or not verified:
-            verified, source = "", "unknown"
+            verified, source, ref = "", "unknown", ""
             degraded.append("origin_main_unavailable")
             degraded.append("main_head_unknown")
         else:
-            source = "origin_main"
+            # origin/main 只是本地 remote-tracking ref：没联网就是没核验远端，
+            # 不能把它说成"远端已验证"（P2）。新鲜度必须显式 unknown。
+            source, ref = "local_tracking", "origin/main"
     return {
         "worktree": {
             "head": head,
-            "ref": "" if detached else ref,
+            "ref": "" if detached else ref_worktree,
             "detached": detached,
             "behind_main": behind,
         },
-        "main": {"head": verified, "source": source},
+        "main": {
+            "head": verified,
+            "source": source,
+            "ref": ref,
+            "remote_verified": False,
+            "freshness": "unknown",
+        },
     }
 
 
@@ -108,6 +116,34 @@ def _desired_strip(doc: dict) -> dict[str, Any]:
     }
 
 
+# 同版本两行的"有意义 payload"：这些字段描述 lane 事实本身，任一不同都说明
+# 账本被两条不同写入分叉（典型：同一 lane 被两个 owner_session 各写一行）。
+# 时间戳/活动时间是易变簿记，不参与比较；完全相同的重复 append 视为幂等重放。
+_TIE_MEANINGFUL_FIELDS = (
+    "goal_id",
+    "branch",
+    "worktree",
+    "status",
+    "base_main_sha",
+    "head_sha",
+    "verify_ref",
+    "paths",
+    "contract_changes",
+    "lane_role",
+    "priority",
+    "owner_session_id",
+)
+
+
+def _payload_fingerprint(row: dict) -> str:
+    return json.dumps(
+        {field: row.get(field) for field in _TIE_MEANINGFUL_FIELDS},
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
 def _lane_versions(
     rows: list[dict], *, include_terminal: bool, degraded: list[str]
 ) -> tuple[list[dict], dict]:
@@ -115,7 +151,8 @@ def _lane_versions(
 
     账本是 append-only：同一 lane 的历史行会同时存在。按文件顺序取首行会把已
     closed lane 的早期 active 行当成在途（ghost lane）。version 单调，故「最高
-    version」是确定性终态；同版本不同 status 才是真冲突 → 不给结论并降级。
+    version」是确定性终态；同版本且有意义 payload 不同才是真冲突（双写/分叉）
+    → 该 lane 不给结论并降级；完全相同的重复行按幂等重放兼容。
     """
     latest: dict[str, dict] = {}
     totals: dict[str, int] = {}
@@ -134,11 +171,13 @@ def _lane_versions(
         prev = latest.get(lane_id)
         if prev is None or version > int(prev.get("version") or 0):
             latest[lane_id] = row
-        elif version == int(prev.get("version") or 0) and str(row.get("status") or "") != str(
-            prev.get("status") or ""
-        ):
-            degraded.append(f"lane_version_conflict:{lane_id}")
-            unresolved.add(lane_id)
+        elif version == int(prev.get("version") or 0):
+            # P1-B：同版本不等于同事实。只比 status 会让"同一 lane 被两个
+            # owner_session 各写一行"静默取首行；任何有意义字段不同都 fail-closed。
+            diverged = _payload_fingerprint(row) != _payload_fingerprint(prev)
+            if diverged:
+                degraded.append(f"lane_version_conflict:{lane_id}")
+                unresolved.add(lane_id)
 
     selected: list[dict] = []
     for lane_id, row in latest.items():
@@ -393,12 +432,16 @@ def build_board(
     # 权威源优先：restart-receipt 记录"当前实际在跑的 sha"；deployments/*.jsonl
     # 是人工历史记录，可能长期停在旧 sha。权威源缺失才回退，且回退原因如实进 degraded。
     dep_row, dep_reason = _read_authoritative_receipt(audit.parent)
+    live_authoritative = not dep_reason
     if dep_reason:
         degraded.append(dep_reason)
         dep_row, hist_reason = _read_latest_deployment(audit / "deployments")
         if hist_reason:
             degraded.append(hist_reason)
+    # legacy 兼容：deployed_sha 仍可来自历史行（字段不删），但"实际在跑"只有
+    # 权威回执能证明（P1-A）。历史行与 desired 恰好同 sha 也不构成 in_sync 证据。
     deployed_sha = str(dep_row.get("target_sha") or "")
+    live_sha = deployed_sha if live_authoritative else ""
 
     desired_row, desired_reason = _read_desired_deployment(audit.parent)
     if desired_reason:
@@ -406,12 +449,13 @@ def build_board(
     desired = _desired_strip(desired_row)
     versions["desired"] = desired
     versions["live"] = {
-        "sha": deployed_sha,
+        "sha": live_sha,
         "recorded_at": str(dep_row.get("ts") or ""),
-        "source": str(dep_row.get("source") or "") if deployed_sha else "unknown",
+        "source": "restart-receipt" if live_authoritative else "unknown",
+        "authoritative": live_authoritative,
     }
     desired_matches_live: bool | None = (
-        desired["sha"] == deployed_sha if desired["sha"] and deployed_sha else None
+        desired["sha"] == live_sha if desired["sha"] and live_sha else None
     )
 
     by_status: dict[str, int] = {}
@@ -424,13 +468,17 @@ def build_board(
     # in_sync 必须精确：部署记录可能是短 sha 或残缺 sha，startswith 会把
     # "head 只是以它开头"误判成"已部署的就是当前 head"（假绿）。三态显式化，
     # 只有 exact 才算同步，prefix_only 单独暴露给 Board 显示。
-    if head and deployed_sha:
-        if head == deployed_sha:
+    if head and live_sha:
+        if head == live_sha:
             sync_state = "exact"
-        elif len(deployed_sha) >= 12 and head.startswith(deployed_sha):
+        elif len(live_sha) >= 12 and head.startswith(live_sha):
             sync_state = "prefix_only"
         else:
             sync_state = "mismatch"
+    elif head and deployed_sha:
+        # 只有历史 deployments 行：可展示但不可信（P1-A）——明确 unverified，
+        # 绝不因为恰好同 sha 就显示 verified exact。
+        sync_state = "unverified"
     else:
         sync_state = "unknown"
 
@@ -440,6 +488,7 @@ def build_board(
         "versions": versions,
         "deployment": {
             "deployed_sha": deployed_sha,
+            "deployed_authoritative": live_authoritative,
             "deployed_at": str(dep_row.get("ts") or ""),
             "deployed_phase": str(dep_row.get("phase") or ""),
             "desired_sha": desired["sha"],
