@@ -1,0 +1,71 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-knowledge-flush-lane-stale-base",
+  "summary": "修复 knowledge_flush 的 lane stale 判定：账本里的相对 worktree 路径改以主仓根（git common-dir 的 .git 父目录）为解析基准。修复前在 linked worktree 内运行时 root/rel 落到不存在的 <worktree>/.worktrees/<name>，git -C 调用触发 OSError → 函数返回 False（判为未失效）→ 4h 空闲且 worktree 干净的 lane 被计入 live blockers，知识入库被持续挡住。改动仅两文件，不改阈值、不新增写权限、不新增闸门。",
+  "components": [
+    {
+      "component_id": "knowledge-flush-lane-stale-base",
+      "paths": [
+        "scripts/knowledge_flush.py",
+        "tests/unit/test_knowledge_flush.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "知识入库 lane 闸门（scripts/knowledge_flush.py 的 _lane_is_stale / _live_other_lanes）",
+      "disposition": "ADMIT 最小修复：新增 _main_worktree_root() 作为相对 worktree 路径的解析基准（rev-parse --path-format=absolute --git-common-dir 的 .git 父目录，口径与 lane_main_write_guard._main_repo_root 一致）；_lane_is_stale 增 keyword-only base 参数，_live_other_lanes 每轮只解析一次基准。_LANE_STALE_AFTER_S=4h、_LANE_TERMINAL 集合与「超时且 worktree 干净」判定条件均未改动。",
+      "evidence": [
+        "负控实测（同树回退 src 到 base）：test_stale_lane_relative_worktree_resolves_from_main_root 断言 False is True 失败；test_flush_in_linked_worktree_not_blocked_by_stale_relative_lane 端到端返回 2 != 0；合计 2 failed 1 passed，证明新增测试确实覆盖该缺陷而非空跑。",
+        "修复后同树：tests/unit/test_knowledge_flush.py 10 passed（含 3 条新回归）；lane/flush 相关 6 个测试文件 163 passed；ruff check 两文件 All checks passed。",
+        "未放宽闸门：test_live_lane_still_blocks_in_linked_worktree 断言 1h 内活跃的相对 lane 在主仓与 linked worktree 内均不被判 stale（仍拦），阈值与条件未变。"
+      ],
+      "verification_level": "候选 SHA bb07ae540 上实跑：单文件 10 passed、6 文件子集 163 passed、ruff 全绿；同 SHA 负控 2 failed 复现原缺陷。全量三件套（pytest 全量/ruff/pyright）本地未运行，交由 PR 上的 CI 执行，本清单不声称已获全量门禁回执。",
+      "model_evidence_veto_recovery_exit": "若审查发现该改动放宽了 lane 闸门（把活跃 lane 判 stale）、或对非 git 目录/无 git 环境引入硬失败，则 veto 本 PR 并回退到 base 9e4defc0e 的保守实现——base 的误判方向是「多拦」而非「放过」，回退不放大风险。",
+      "rollback_route": "revert 该 PR 的合并提交即可；无持久化状态、无 schema/配置项变更、无外部接口变更。回退后行为回到 base 版本（相对路径 lane 在 linked worktree 内重新被误判为 live）。",
+      "declaration_id": "knowledge-flush-lane-stale-base"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261116-knowledge-flush-lane-stale-base.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交清单（docs/governance/submissions/）",
+      "disposition": "ADMIT 仅新增本 PR 的架构清单，精确覆盖 PR 的全部 changed paths，不改变任何运行时行为。",
+      "evidence": [
+        "check_architecture_submission.py --base 9e4defc0e --head <candidate> 校验：exact changed-path coverage、schema 结构、declaration 引用闭合。"
+      ],
+      "verification_level": "结构校验与 changed-path 精确覆盖已由 checker 实跑；G1-G4 的语义成立性由独立审查覆盖，CI 只校验结构 presence/coverage。",
+      "model_evidence_veto_recovery_exit": "若清单漏路径、多路径或声明与事实不符，veto 并在同一分支修正清单后重跑 checker，不得关闭该门禁绕过。",
+      "rollback_route": "随 PR 一起 revert；无运行时影响。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "knowledge-flush-lane-stale-base",
+      "g1": {
+        "necessity": "在 linked worktree 内执行 knowledge_flush 时，账本中的相对 worktree 路径被按当前 worktree 拼接成不存在的目录，git status 调用抛 OSError 被吞成「未失效」，使 4h 空闲且干净的 lane 一律计入 live blockers，知识入库被永久挡住。2026-11-16 实测：flush 被 5 条 lane 挡住，其中 2 条 14h 僵尸 lane 即因此误判为 live。"
+      },
+      "g2": {
+        "authority_owner": "lane 账本（data/audit/lanes.jsonl）与 lane 生命周期工具（lane_open/lane_update/lane_close）是 lane 状态的唯一权威；knowledge_flush 只读账本做保守判定，不写 lane 状态。",
+        "relationship": "reuse",
+        "non_duplication": "不新增 lane 状态机、不新增写入路径、不改变阈值与终态集合；解析基准复用 lane_main_write_guard._main_repo_root 的同一口径（rev-parse --git-common-dir），避免两处对「主仓根」的定义分叉。"
+      },
+      "g3": {
+        "model_evidence": [
+          "负控：base src + 新测试 → 2 failed（False is True；端到端 2 != 0）",
+          "修复后：单文件 10 passed、lane/flush 子集 163 passed、ruff All checks passed",
+          "口径对照：lane_main_write_guard._main_repo_root 使用同一 rev-parse --git-common-dir 取值与 .git 父目录规则"
+        ],
+        "recovery_or_reason": "若 git common dir 解析失败（非 git 目录、git 不可用、rev-parse 非零退出），_main_worktree_root 回退为 root，行为与修复前一致，不因新逻辑引入硬失败。"
+      },
+      "g4": {
+        "rollback": "revert 合并提交；无状态迁移、无配置项、无 schema 变更，回退即回到 base 行为。",
+        "verification": [
+          "checker 精确覆盖（--base 9e4defc0e --head <candidate>）：schema 结构、changed-path exact coverage、declaration 引用闭合",
+          "候选 SHA bb07ae540 实跑：tests/unit/test_knowledge_flush.py 10 passed；lane/flush 相关 6 文件 163 passed；ruff 两文件 All checks passed",
+          "负控：同树把 src 回退到 base 后，新测试 2 failed（False is True；端到端 2 != 0），证明测试非空跑",
+          "全量三件套（pytest 全量/ruff/pyright）由 PR 上的 CI 执行；本地未运行，本清单不声称已获全量门禁回执"
+        ]
+      }
+    }
+  ]
+}
