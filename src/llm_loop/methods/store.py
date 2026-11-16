@@ -1038,6 +1038,73 @@ class MethodStore:
             }
         return None
 
+    def _freshness_legacy_state(
+        self, record: MethodRecord, current: dict[str, str], anchors: dict[str, dict[str, str]],
+        missing: list[str], unresolvable: list[str], baseline: dict[str, str] | None,
+    ) -> dict[str, Any]:
+        """No-anchor-baseline branch of freshness(): unbaselined or legacy-only.
+
+        Pure extraction (Q-05 R9 ratchet, 2026-11-16): state precedence, legacy
+        snapshot semantics and every returned key/value are identical to the
+        inlined code this replaced (P1-B guard preserved verbatim).
+        """
+        if baseline is None:
+            return {
+                "state": "unbaselined",
+                "refs": list(record.freshness_refs),
+                "changed_refs": [],
+                "missing_refs": missing,
+                "unresolvable_refs": unresolvable,
+                "anchors": anchors,
+                "anchor_baseline": None,
+                "anchor_changed_refs": [],
+                "anchor_root_changed_refs": [],
+                "anchor_change_reasons": {},
+                "unbaselined_anchor_refs": list(record.freshness_refs),
+                "current": current,
+                "baseline": None,
+            }
+        # P1-B (legacy-only): a qualification-era content-SHA baseline still
+        # proves real change for anchors that RESOLVE under the legacy root
+        # view; unresolvable or legacy-blind anchors (snapshot value not a
+        # content SHA, e.g. wheel-mapped refs the legacy stat called
+        # "missing") can never reach "current" through the legacy channel.
+        changed: list[str] = []
+        unbaselined_refs: list[str] = []
+        for ref in record.freshness_refs:
+            if anchors[ref]["resolution_state"] != "resolved":
+                continue
+            snapshot_value = current.get(ref, "")
+            if re.fullmatch(r"[0-9a-f]{64}", snapshot_value) is None:
+                unbaselined_refs.append(ref)
+            elif snapshot_value != baseline.get(ref):
+                changed.append(ref)
+        if changed:
+            state = "changed"
+        elif missing:
+            state = "missing"
+        elif unresolvable:
+            state = "unresolvable"
+        elif unbaselined_refs:
+            state = "unbaselined"
+        else:
+            state = "current"
+        return {
+            "state": state,
+            "refs": list(record.freshness_refs),
+            "changed_refs": changed,
+            "missing_refs": missing,
+            "unresolvable_refs": unresolvable,
+            "anchors": anchors,
+            "anchor_baseline": None,
+            "anchor_changed_refs": [],
+            "anchor_root_changed_refs": [],
+            "anchor_change_reasons": {},
+            "unbaselined_anchor_refs": unbaselined_refs,
+            "current": current,
+            "baseline": baseline,
+        }
+
     def freshness(self, method_ref: str) -> dict[str, Any]:
         """Read-side freshness with R4 anchor resolution (v1.3.1 S4.4/C8).
 
@@ -1090,62 +1157,9 @@ class MethodStore:
                 ref for ref in record.freshness_refs if current.get(ref) != baseline.get(ref)
             ]
         if anchor_baseline is None:
-            if baseline is None:
-                return {
-                    "state": "unbaselined",
-                    "refs": list(record.freshness_refs),
-                    "changed_refs": [],
-                    "missing_refs": missing,
-                    "unresolvable_refs": unresolvable,
-                    "anchors": anchors,
-                    "anchor_baseline": None,
-                    "anchor_changed_refs": [],
-                    "anchor_root_changed_refs": [],
-                    "anchor_change_reasons": {},
-                    "unbaselined_anchor_refs": list(record.freshness_refs),
-                    "current": current,
-                    "baseline": None,
-                }
-            # P1-B (legacy-only): a qualification-era content-SHA baseline still
-            # proves real change for anchors that RESOLVE under the legacy root
-            # view; unresolvable or legacy-blind anchors (snapshot value not a
-            # content SHA, e.g. wheel-mapped refs the legacy stat called
-            # "missing") can never reach "current" through the legacy channel.
-            changed: list[str] = []
-            unbaselined_refs: list[str] = []
-            for ref in record.freshness_refs:
-                if anchors[ref]["resolution_state"] != "resolved":
-                    continue
-                snapshot_value = current.get(ref, "")
-                if re.fullmatch(r"[0-9a-f]{64}", snapshot_value) is None:
-                    unbaselined_refs.append(ref)
-                elif snapshot_value != baseline.get(ref):
-                    changed.append(ref)
-            if changed:
-                state = "changed"
-            elif missing:
-                state = "missing"
-            elif unresolvable:
-                state = "unresolvable"
-            elif unbaselined_refs:
-                state = "unbaselined"
-            else:
-                state = "current"
-            return {
-                "state": state,
-                "refs": list(record.freshness_refs),
-                "changed_refs": changed,
-                "missing_refs": missing,
-                "unresolvable_refs": unresolvable,
-                "anchors": anchors,
-                "anchor_baseline": None,
-                "anchor_changed_refs": [],
-                "anchor_root_changed_refs": [],
-                "anchor_change_reasons": {},
-                "unbaselined_anchor_refs": unbaselined_refs,
-                "current": current,
-                "baseline": baseline,
-            }
+            return self._freshness_legacy_state(
+                record, current, anchors, missing, unresolvable, baseline
+            )
         base_anchors = anchor_baseline["anchors"]
         version_ok = anchor_baseline["resolver_version"] == _ANCHOR_RESOLVER_VERSION
         anchor_changed: list[str] = []

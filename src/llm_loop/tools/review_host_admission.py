@@ -1877,6 +1877,43 @@ def _snapshot_identity(
     }))
 
 
+def _push_batch_scope_header(
+    push_batch: dict[str, Any], f_sections: Sequence[Any], plan_id: str
+) -> list[tuple[str, str]]:
+    """Batch self-identity header lines frozen into the review material.
+
+    EVO-20261115-34ae7c99(C)（独立审查 P1 实测）：批工件必须自证"切片身份"。
+    此前 push_batch 只进回执/记录，审查材料头只写 scope/tier——审查者把
+    "32 条切片 + bound_unreviewed=0"读成"声称覆盖全量推送"，每批必然 REVISE
+    （联合协议不可执行）。注记随材料一起冻结进 sha；联合消费按同一路径
+    复算，天然一致。Pure extraction from _target (Q-05 R9 ratchet, 2026-11-16):
+    error code, field order and values are byte-identical to the inlined code.
+    """
+    try:
+        full_path_count = len(
+            {_section_path(label) for label, _ in f_sections}
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"push_batch_header_unfreezable:{exc}"
+        ) from exc
+    batch_path_count = len(set(push_batch["paths"]))
+    return [
+        ("push_batch_joint", "1"),
+        (
+            "push_batch_index",
+            f"{push_batch['index'] + 1}/{push_batch['total']}",
+        ),
+        ("push_batch_plan_id", plan_id[:16]),
+        ("push_range_paths", str(full_path_count)),
+        ("push_batch_paths", str(batch_path_count)),
+        (
+            "push_range_out_of_slice_paths",
+            str(full_path_count - batch_path_count),
+        ),
+    ]
+
+
 def _source_snapshot_sections(
     workdir: str, push_base: str | None = None, push_head: str | None = None,
     first_push_ref: str = "", require_material: str = "",
@@ -3847,34 +3884,7 @@ class HostReviewAdmission:
                     "paths": tuple(str(p) for p in plan[hit]["paths"]),
                     "full_material_chars": len(f_text),
                 }
-                # EVO-20261115-34ae7c99(C)（独立审查 P1 实测）：批工件必须自证
-                # "切片身份"。此前 push_batch 只进回执/记录，审查材料头只写
-                # scope/tier——审查者把"32 条切片 + bound_unreviewed=0"读成
-                # "声称覆盖全量推送"，每批必然 REVISE（联合协议不可执行）。
-                # 注记随材料一起冻结进 sha；联合消费按同一路径复算，天然一致。
-                try:
-                    full_path_count = len(
-                        {_section_path(label) for label, _ in f_sections}
-                    )
-                except ValueError as exc:
-                    raise ValueError(
-                        f"push_batch_header_unfreezable:{exc}"
-                    ) from exc
-                batch_path_count = len(set(push_batch["paths"]))
-                batch_header = [
-                    ("push_batch_joint", "1"),
-                    (
-                        "push_batch_index",
-                        f"{push_batch['index'] + 1}/{push_batch['total']}",
-                    ),
-                    ("push_batch_plan_id", plan_id[:16]),
-                    ("push_range_paths", str(full_path_count)),
-                    ("push_batch_paths", str(batch_path_count)),
-                    (
-                        "push_range_out_of_slice_paths",
-                        str(full_path_count - batch_path_count),
-                    ),
-                ]
+                batch_header = _push_batch_scope_header(push_batch, f_sections, plan_id)
             sha, text, sections, reviewed_fp, pushed_fp = _source_snapshot_sections(
                 true_dir, push_base=push_base, push_head=push_head,
                 first_push_ref=dst_ref if first_push else "",
