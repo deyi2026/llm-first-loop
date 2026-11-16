@@ -11,9 +11,12 @@ from llm_loop.core.scheduler import EVENT_PREDICATE_KINDS
 from llm_loop.factory import review_terminal_predicate
 from llm_loop.tools.review_host_admission import HostReviewAdmission, _Frozen
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 def _authority_with(*rows: _Frozen) -> HostReviewAdmission:
-    authority = HostReviewAdmission()
+    authority = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     for row in rows:
         authority._records[row.child_id] = row  # noqa: SLF001 — 测试装配
     return authority
@@ -55,7 +58,7 @@ def test_no_authority_fails_safe_not_settled():
 def test_current_authority_hook_roundtrip():
     saved = HostReviewAdmission.current()
     try:
-        authority = HostReviewAdmission()
+        authority = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         HostReviewAdmission.set_authority(authority)
         assert HostReviewAdmission.current() is authority
         # snapshot_child_state：未知 child → None（不误判 settled）

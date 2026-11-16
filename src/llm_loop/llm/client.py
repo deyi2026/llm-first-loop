@@ -233,6 +233,10 @@ class LLMResponse:
     # reasoning_content: the latter is normalized for display/telemetry, while
     # this field preserves wire structure for the same provider only.
     provider_replay: dict[str, Any] | None = None
+    # 2026-11-16 外部独立复核 P1-1：Provider 响应体里 self-reported 的 model
+    # （流式 chunk 的 ``model`` 字段）。这是"服务端说它用了哪个模型"的传输事实，
+    # 与请求侧 payload["model"] 无关；缺失时保持空串，绝不用请求值回填。
+    observed_model: str = ""
 
 
 @dataclass
@@ -499,6 +503,8 @@ class _StreamAcc:
     reasoning_tokens: int | None = None
     provider_replay_fields: dict[str, Any] = field(default_factory=dict)
     reasoning_details_text: str = ""
+    # Provider 响应体声明的 model（缺失为空；不克隆请求侧 model）。
+    observed_model: str = ""
 
 
 def _reasoning_details_text(value: Any) -> str:
@@ -640,6 +646,7 @@ def _finish_response(
     client: LLMClient | None = None,
     guard_context: GuardRequestContext | None = None,
     actual_model: str | None = None,
+    observed_model: str = "",
 ) -> LLMResponse:
     raw_calls = agg.finish()
     tool_calls: list[ToolCall] = [
@@ -681,6 +688,7 @@ def _finish_response(
         completion_tokens=acc.completion_tokens,
         prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
         reasoning_tokens=acc.reasoning_tokens,
+        observed_model=str(observed_model or ""),
         provider_replay=(
             client._provider_replay_envelope(
                 acc.provider_replay_fields,
@@ -2221,6 +2229,9 @@ class LLMClient:
                         _m = chunk.get("model")
                         if isinstance(_m, str) and _m:
                             _observed_model = _m
+                            # P1-1：把 provider 自报 model 落到本响应对象上，供 in-process
+                            # 复核模型一致性；与请求侧 payload["model"] 相互独立。
+                            acc.observed_model = _m
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):
                         self._observe_transport_usage(usage, model_id=str(payload["model"]))
@@ -2460,6 +2471,7 @@ class LLMClient:
         return _finish_response(
             acc, agg, self.provider, client=self, guard_context=guard_context,
             actual_model=str(payload["model"]),
+            observed_model=acc.observed_model,
         )
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──

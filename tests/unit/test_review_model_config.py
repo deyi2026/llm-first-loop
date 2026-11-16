@@ -67,6 +67,19 @@ def test_invalid_explicit_model_list_does_not_silently_fallback(tmp_path) -> Non
         assert runner.models == []
 
 
+def test_unconfigured_reviewer_models_denies_start(tmp_path) -> None:  # noqa: ANN001
+    """P0：生产不写死 Reviewer 模型。未配置 ⇒ DENIED 且不 spawn 任何 child。"""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()  # 不传模型：等价于 operator 未配置
+    runner = RecordingRunner()
+    host.attach_runner(runner)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "reviewer_models_unconfigured"
+    assert runner.models == []
+    assert host._records == {}
+
+
 def test_reviewer_models_from_settings_not_global_env(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("LFL_REVIEWER_MODELS", "glm/glm-5.3")
     settings = load_settings({
@@ -138,10 +151,11 @@ def test_missing_resolved_model_is_denied_even_if_child_started(tmp_path) -> Non
     assert host._records == {}
 
 
-def test_invalid_model_config_preserves_nonempty_internal_invariant() -> None:
+def test_invalid_model_config_keeps_empty_chain_and_fails_closed() -> None:
+    """非法配置同样不得回填任何内置模型链（P0：模型身份只来自 operator 配置）。"""
     host = HostReviewAdmission(reviewer_models_raw="bad/model,,other/model")
     assert host._reviewer_model_error == "reviewer_models_invalid"
-    assert host._reviewer_models  # public start still fails closed
+    assert host._reviewer_models == ()
 
 
 def test_preflight_budget_covers_smallest_configured_fallback() -> None:
@@ -219,7 +233,7 @@ def test_real_subagent_runner_attests_configured_model(tmp_path) -> None:  # noq
     from llm_loop.event_log.store import EventStore
     from llm_loop.subagent.runner import SubAgentRunner
     from llm_loop.tools.registry import ToolRegistry
-    from tests.unit.test_review_host_runner_live import _HostTaskFakeLLM
+    from tests.unit.test_review_host_runner_live import _HostTaskFakeLLM, _resolver_for
 
     repo = _repo(tmp_path)
     llm = _HostTaskFakeLLM()  # deterministic fake, no provider/network
@@ -227,7 +241,7 @@ def test_real_subagent_runner_attests_configured_model(tmp_path) -> None:  # noq
     runner = SubAgentRunner(
         llm=llm, registry=ToolRegistry(),
         session_store=SessionStore(tmp_path / "sessions", event_store=event_store),
-        max_iterations=1, llm_resolver=lambda label: llm,
+        max_iterations=1, llm_resolver=_resolver_for(llm),
     )
     host = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
     host.attach_runner(runner)
@@ -246,3 +260,129 @@ def test_real_subagent_runner_attests_configured_model(tmp_path) -> None:  # noq
     finally:
         current_session_id.reset(token)
     assert host.poll("parent", receipt["child_id"])["qualification"] == "REVISE"
+
+
+def test_model_chain_exhaustion_never_repeats_same_model(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """P1-3：列表耗尽后不得 clamp 回末位重试同一 model。"""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw="glm/glm-5.3")
+    runner = RecordingRunner()
+    runner.refusals = [
+        "1311 当前订阅套餐暂未开放该模型权限",
+        "1311 当前订阅套餐暂未开放该模型权限",
+    ]
+    host.attach_runner(runner)
+    monkeypatch.setattr(rha.time, "sleep", lambda _: None)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    assert receipt["accepted"] is False
+    assert receipt["reviewer_failure"] == "reviewer_models_exhausted"
+    assert runner.models == ["glm/glm-5.3"]  # 同一 model 只尝试一次
+    assert host._records == {}
+
+
+def test_async_retry_at_chain_tail_entitlement_fails_closed(tmp_path) -> None:  # noqa: ANN001
+    """P1-3：链尾 + 无权限(1311) ⇒ 直接 fail closed，不得重试同一 model。"""
+    from dataclasses import replace
+
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(
+        reviewer_models_raw="glm/glm-5.3,deepseek/deepseek-v4-flash"
+    )
+    runner = RecordingRunner()
+    host.attach_runner(runner)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    child = receipt["child_id"]
+    host._records[child] = replace(
+        host._records[child], reviewer_model="deepseek/deepseek-v4-flash",
+    )
+    assert host._respawn_reviewer("parent", child, "reviewer_model_entitlement", 600.0) is None
+    assert runner.models == ["glm/glm-5.3"]
+
+
+def test_async_retry_at_chain_tail_rate_limit_retries_same_model(tmp_path) -> None:  # noqa: ANN001
+    """链尾 + 429/超时属瞬时故障：允许同一 model 有界重试一次（P1-3 只管无权限）。"""
+    from dataclasses import replace
+
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(
+        reviewer_models_raw="glm/glm-5.3,deepseek/deepseek-v4-flash"
+    )
+    runner = RecordingRunner()
+    host.attach_runner(runner)
+    receipt = host.start("parent", "full_test", workdir=str(repo), command="pytest -q")
+    child = receipt["child_id"]
+    host._records[child] = replace(
+        host._records[child], reviewer_model="deepseek/deepseek-v4-flash",
+    )
+    retry = host._respawn_reviewer("parent", child, "reviewer_rate_limited", 600.0)
+    assert retry is not None
+    # 链尾重试仍用同一个（最后一个）model，不消耗也不回退列表。
+    assert retry["auto_retry"]["model"] == "deepseek/deepseek-v4-flash"
+    assert runner.models == ["glm/glm-5.3", "deepseek/deepseek-v4-flash"]
+
+
+def test_pass_denied_when_provider_observed_model_missing(tmp_path) -> None:  # noqa: ANN001
+    """P1-1：PASS 文本 + 缺失 provider 自报 model ⇒ DENIED（不能用 label 自证）。"""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
+    runner = FakeChildRunner()
+    runner.observed_model = ""
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    polled = host.poll("author-1", issued["child_id"])
+    assert polled["qualification"] == "DENIED"
+    assert polled["reason"] == "reviewer_model_unattested"
+
+
+def test_pass_denied_on_requested_a_responded_b(tmp_path) -> None:  # noqa: ANN001
+    """P1-1 负向：请求 deepseek、provider 实际回 glm ⇒ DENIED reviewer_model_mismatch。"""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
+    runner = FakeChildRunner()
+    runner.observed_model = "glm/glm-5.3"
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    polled = host.poll("author-1", issued["child_id"])
+    assert polled["qualification"] == "DENIED"
+    assert polled["reason"] == "reviewer_model_mismatch"
+
+
+def test_policy_drift_blocks_mint_and_consume(tmp_path) -> None:  # noqa: ANN001
+    """P1-2：start 冻结 digest；策略漂移后既不能 mint 新资格，也不能消费旧 grant。"""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+
+    # (a) 漂移发生在 mint 之前 ⇒ poll DENIED review_policy_changed
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    child = issued["child_id"]
+    assert host._records[child].policy_digest == host._policy_digest
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    host._policy_digest = "drifted-digest"
+    polled = host.poll("author-1", child)
+    assert polled["qualification"] == "DENIED"
+    assert polled["reason"] == "review_policy_changed"
+
+    # (b) 漂移发生在 grant 之后 ⇒ consume 拒绝旧资格
+    host2 = HostReviewAdmission(reviewer_models_raw="deepseek/deepseek-v4-flash")
+    runner2 = FakeChildRunner()
+    host2.attach_runner(runner2)
+    issued2 = host2.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    child2 = issued2["child_id"]
+    runner2.answer = (
+        f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued2['candidate_sha256']}"
+    )
+    runner2.state = "completed"
+    assert host2.poll("author-1", child2)["qualification"] == "PASS"
+    row = host2._records[child2]
+    assert row.reviewer_observed_model == "deepseek/deepseek-v4-flash"
+    host2._policy_digest = "drifted-digest"
+    denied = host2._consume("author-1", "full_test", row.target, row.sha)
+    assert denied.allowed is False
+    assert "策略" in denied.reason

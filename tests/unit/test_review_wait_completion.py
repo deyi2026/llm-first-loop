@@ -27,6 +27,9 @@ from llm_loop.tools.review_host_admission import (
 )
 from tests.unit.test_review_host_admission import _repo
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 def _start_review(tmp_path: Path, verdict: str = "PASS"):
     repo = _repo(tmp_path)
@@ -35,22 +38,29 @@ def _start_review(tmp_path: Path, verdict: str = "PASS"):
     events = EventStore(tmp_path / "events", enabled=True)
 
     class GatedLLM:
+        # P1-1：provider 侧自报 model；未自报时 Host 必须 DENIED。
+        observed_model = ""
+
         def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
             assert release.wait(5), "test did not release reviewer"
             if verdict == "ERROR":
                 raise RuntimeError("test reviewer failed")
             return LLMResponse(
                 content=f"VERDICT: {verdict}\nP0=0 P1=0 P2=0\nSHA256: {sha}",
-                tool_calls=[], provider="fake",
+                tool_calls=[], provider="fake", observed_model=self.observed_model,
             )
 
     llm = cast(LLMClient, GatedLLM())
+
+    def _resolve(model: str):  # noqa: ANN202
+        llm.observed_model = model
+        return llm
     runner = SubAgentRunner(
         llm=llm, registry=ToolRegistry(),
         session_store=SessionStore(tmp_path / "sessions", event_store=events),
-        max_iterations=1, llm_resolver=lambda model: llm,
+        max_iterations=1, llm_resolver=_resolve,
     )
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     host.attach_event_store(events)
     issued = host.start("owner", "full_test", workdir=str(repo), command="pytest -q")
@@ -143,7 +153,7 @@ def test_wait_checks_parent_stop_without_cancelling_reviewer(tmp_path):
 
 @pytest.mark.parametrize("wait", [-1, 31, float("nan"), float("inf"), True, "bad"])
 def test_status_wait_rejects_invalid_bound(wait):
-    result = ReviewAdmissionTool(HostReviewAdmission()).execute(
+    result = ReviewAdmissionTool(HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)).execute(
         action="status", child_id="unknown", wait_seconds=wait,
     )
     assert result.status.value == "failure"

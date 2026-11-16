@@ -480,6 +480,10 @@ class SubAgentRunner:
         self._delivery_journal = SubAgentDeliveryJournal(self.session_store.event_store)
         self._runner_owner_id = uuid.uuid4().hex
         self._children_guard = threading.Lock()
+        # P1-1（外部独立复核）：把子代理每轮 Provider 响应里自报的 model 记进进程内表，
+        # 供 Host 准入在 mint/consume 时核对"请求 A 实际响应 B"这类错配。只存传输事实，
+        # 不读盘、不克隆请求值；这里刻意与 handle 解耦，避免影响既有 handle 可变字段语义。
+        self._observed_models: dict[str, list[str]] = {}
         # Fleet run-boundary wiring (DESIGN-20260919 step-4): None keeps every
         # fleet behavior off; explicit injection is the opt-in/exit path.
         self._project_coordinator = project_coordinator
@@ -777,6 +781,9 @@ class SubAgentRunner:
             if not victim:
                 return
             self._handles.pop(victim, None)
+            # P2（外部复核 2026-11-16）：observed-model 记账与 handle 同生命周期，
+            # handle 被淘汰即回收，避免长进程内字典随 child 数无界增长。
+            self._observed_models.pop(victim, None)
             with suppress(ValueError):
                 self._handle_order.remove(victim)
 
@@ -2189,6 +2196,21 @@ class SubAgentRunner:
                 and handle.state not in {"running", "accepted"}
             )
 
+    def _record_observed_model(self, child_id: str, resp: object) -> None:
+        """记录一次 Provider 响应自报的 model（空值不落账，绝不回填请求值）。"""
+        observed = str(getattr(resp, "observed_model", "") or "").strip()
+        if not observed:
+            return
+        with self._children_guard:
+            bucket = self._observed_models.setdefault(str(child_id), [])
+            if observed not in bucket:
+                bucket.append(observed)
+
+    def observed_models(self, child_id: str) -> list[str]:
+        """读进程内观测到的 provider model 列表（按首见顺序，去重）。"""
+        with self._children_guard:
+            return list(self._observed_models.get(str(child_id), ()))
+
     def review_terminal_current(self, child_id: str, parent_id: str) -> dict[str, str | bool] | None:
         """P0-B: process-local terminal attestation, never a disk-replayed PASS.
 
@@ -2218,6 +2240,10 @@ class SubAgentRunner:
                 "state": handle.state,
                 "review_isolated": True,
                 "final_answer": handle.result.final_answer,
+                # 直接读表，不调用 observed_models()：后者会再次获取
+                # self._children_guard（threading.Lock 非重入），同线程二次加锁
+                # 即永久阻塞（2026-11-16 外部复核 P1 死锁，真实测试 337s 未返回）。
+                "observed_model": ",".join(self._observed_models.get(handle.child_id, ())),
             }
 
     def result_current(self, child_id: str, wait_seconds: float = 0.0) -> tuple[bool, str, dict]:
@@ -3358,6 +3384,9 @@ class SubAgentRunner:
                     attempt_kind=ProviderAttemptKind.PRIMARY,
                     site_index=0,
                 )
+                # P1-1：把本轮实际 Provider 响应自报的 model 记账（真值源是
+                # response.observed_model，绝不回填请求 label）；缺失则不落账。
+                self._record_observed_model(sess.session_id, resp)
                 if _provider_call_coordinator is not None:
                     _provider_call_coordinator.settle_shadow_call(
                         _provider_call, ProviderCallOutcome.SUCCESS

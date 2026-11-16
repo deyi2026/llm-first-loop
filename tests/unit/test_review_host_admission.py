@@ -25,6 +25,11 @@ from llm_loop.tools.review_host_admission import (
     is_publication_button,
 )
 
+# 测试显式声明的 reviewer 模型链：生产代码不再有内置默认，未配置必须
+# DENIED（见 test_unconfigured_reviewer_models_denies_start）。测试要 spawn
+# reviewer 就必须自己声明模型，不能依赖默认值。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 class FakeChildRunner:
     def __init__(self) -> None:
@@ -34,10 +39,15 @@ class FakeChildRunner:
         self.answer = ""
         self.parent = "author-1"
         self.refusals: list[str] = []  # queued start failures; empty -> success
+        self.model = ""
+        # P1-1：默认让 fake 的 provider 观测 model 与请求 model 一致；
+        # 测试可显式改成其它值/空串来模拟"请求 A 响应 B / 未自报"。
+        self.observed_model: str | None = None
 
     def start(self, task: str, **kwargs):
         self.started += 1
         self.task = task
+        self.model = str(kwargs["model"])
         assert kwargs["required_tools"] == []
         assert kwargs["inherit"] is False
         assert kwargs["max_rounds"] == 1
@@ -53,6 +63,9 @@ class FakeChildRunner:
             "child_id": child_id, "parent_id": parent_id,
             "state": self.state, "generation": "gen-1",
             "review_isolated": True, "final_answer": self.answer,
+            "observed_model": (
+                self.model if self.observed_model is None else self.observed_model
+            ),
         }
 
     def result_current(self, child_id: str, wait_seconds=0):
@@ -197,7 +210,7 @@ def test_no_cross_segment_exemption_or_comment_bypass(
 def test_no_durable_log_or_model_text_can_mint_live_child_attestation(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
@@ -209,7 +222,7 @@ def test_no_durable_log_or_model_text_can_mint_live_child_attestation(tmp_path: 
 
 def test_direct_full_test_denied_before_real_review(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     denial = host.check_shell("author-1", "pytest -q", str(repo))
     assert denial.blocked is True
     assert "未执行" in denial.reason
@@ -219,7 +232,7 @@ def test_direct_full_test_denied_before_real_review(tmp_path: Path) -> None:
 def test_data_payload_hint_in_deny(tmp_path: Path) -> None:
     """EVO-20261102-99717443 建议 2：deny 回执附数据载荷姿势引导."""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     hd = "bash <<'EOF'\ngit push origin main\nEOF"
     decision = host.check_shell("author-1", hd, str(repo))
     assert decision.blocked is True
@@ -232,7 +245,7 @@ def test_data_payload_hint_in_deny(tmp_path: Path) -> None:
 def test_real_child_terminal_current_artifact_exact_one_use(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"] and issued["child_id"] == "child-review-1"
@@ -254,7 +267,7 @@ def test_real_child_terminal_current_artifact_exact_one_use(tmp_path: Path) -> N
 def test_source_drift_and_forged_pass_are_denied(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.state = "completed"
@@ -275,7 +288,7 @@ def test_body_quotes_of_historical_receipts_do_not_break_valid_pass(tmp_path: Pa
     # 行之后的文本）。正文引用不再误伤，结论块内冲突仍 fail-closed。
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.state = "completed"
@@ -295,7 +308,7 @@ def test_body_quotes_of_historical_receipts_do_not_break_valid_pass(tmp_path: Pa
     (tmp_path / "second").mkdir()
     repo2 = _repo(tmp_path / "second")
     runner2 = FakeChildRunner()
-    host2 = HostReviewAdmission()
+    host2 = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host2.attach_runner(runner2)
     issued2 = host2.start("author-1", "full_test", workdir=str(repo2), command="pytest -q")
     runner2.state = "completed"
@@ -312,7 +325,7 @@ def test_quoted_verdict_line_in_body_still_fails_closed(tmp_path: Path) -> None:
     # 仍 fail-closed（reviewer 应转述而非原样引用），不因 e46f2431 放宽。
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.state = "completed"
@@ -331,7 +344,7 @@ def test_bash_dash_c_directory_switch_must_not_review_wrong_repo(tmp_path: Path)
     repo = _repo(tmp_path)
     (tmp_path / "other-workspace").mkdir()
     other = _repo(tmp_path / "other-workspace")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     raw = "bash -c 'cd " + str(other) + " && pytest -q'"
@@ -347,7 +360,7 @@ def test_opaque_full_test_cannot_mint_wrong_artifact_qualification(
     tmp_path: Path, command: str,
 ) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     result = host.start("author-1", "full_test", workdir=str(repo), command=command)
@@ -365,7 +378,7 @@ def test_xargs_indirect_protected_action_never_mints_wrong_target_review(
     tmp_path: Path, command: str,
 ) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     kind = classify_host_shell(command)
@@ -379,7 +392,7 @@ def test_xargs_indirect_protected_action_never_mints_wrong_target_review(
 def test_frozen_source_changes_after_review_cannot_run(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
@@ -393,7 +406,7 @@ def test_push_target_is_bound_and_dry_run_unblocked(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(repo)], check=True)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     target = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert target["accepted"]
@@ -436,7 +449,7 @@ def test_push_range_follows_target_commit_not_head(tmp_path: Path) -> None:
     (repo / "dirty.txt").write_text("dirty working state\n")  # never uploaded
     (repo / "untracked.txt").write_text("untracked note\n")  # never uploaded
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo),
                         command=f"git push origin {target}:main")
@@ -469,7 +482,7 @@ def test_first_push_anchors_on_remote_default_branch(tmp_path: Path) -> None:
     subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
     head = _commit(repo, "feature.py", "value = 7\n", "f1")
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo),
                         command="git push origin feature")
@@ -504,7 +517,7 @@ def test_browser_publication_freezes_page_and_target(tmp_path: Path) -> None:
         ]},
     }
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     host.attach_browser_capture(lambda: state)
     assert is_publication_button({"kind": "button", "attributes": {"name": "Publish", "role": "button"}})
@@ -523,7 +536,7 @@ def test_browser_publication_freezes_page_and_target(tmp_path: Path) -> None:
 
 
 def test_generic_publish_without_article_editor_is_not_automatically_article_gate() -> None:
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     raw = {
         "url": "https://ops.example.org/deploy",
         "dom": {"nodes": [
@@ -538,7 +551,7 @@ def test_generic_publish_without_article_editor_is_not_automatically_article_gat
 def test_untracked_sensitive_file_never_becomes_model_review_material(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / "api-token.env").write_text("API_KEY=private-hypothetical-content\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     result = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -552,7 +565,7 @@ def test_browser_editor_change_invalidates_review(tmp_path: Path) -> None:
         "dom": {"nodes": [{"kind": "textarea", "attributes": {"value": "Version A"}},
                            {"kind": "button", "attributes": {"name": "Publish", "role": "button"}}]},
     }
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host.attach_browser_capture(lambda: raw)
@@ -568,7 +581,7 @@ def test_browser_editor_change_invalidates_review(tmp_path: Path) -> None:
 def test_untracked_password_related_source_file_can_be_reviewed(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / "password_validation.py").write_text("def validate(candidate):\n    return bool(candidate)\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     outcome = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -578,7 +591,7 @@ def test_untracked_password_related_source_file_can_be_reviewed(tmp_path: Path) 
 def test_host_receipt_write_failure_cannot_grant_permission(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
 
     class _UnavailableAudit:
@@ -600,7 +613,7 @@ def test_untracked_no_extension_secret_and_home_auth_files_block_pre_review(tmp_
         (tmp_path / name).mkdir()
         repo = _repo(tmp_path / name)
         (repo / name).write_text("example-private-data-should-stay-local\n")
-        host = HostReviewAdmission()
+        host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         runner = FakeChildRunner()
         host.attach_runner(runner)
         out = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -610,7 +623,7 @@ def test_untracked_no_extension_secret_and_home_auth_files_block_pre_review(tmp_
 
 def test_host_review_record_capacity_exhausts_without_unbounded_memory(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host._max_records = 1
@@ -630,7 +643,7 @@ def test_large_but_bounded_multi_file_artifact_is_reviewable(tmp_path: Path) -> 
     # unchanged: a payload UNDER the ceiling is reviewed complete, a payload
     # OVER it is refused with attribution, and nothing is ever truncated.
     (repo / "many_tests.py").write_text("x = " + repr("a" * 155_000) + "\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -669,7 +682,7 @@ def test_runtime_report_regeneration_keeps_full_test_binding_alive(tmp_path: Pat
     repo = _repo(tmp_path)
     _commit_runtime_report(repo)
     (repo / "reports" / "phase3" / "m0" / "S10.json").write_text("x" * 302_000)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -702,7 +715,7 @@ def test_committed_runtime_monster_diff_is_truncated_not_deadlocked(tmp_path: Pa
     (d / "S10.json").write_text("z" * 302_000)
     subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed report"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -733,7 +746,7 @@ def test_full_test_main_tip_freezes_pending_push_set_not_empty_shell(tmp_path: P
                           capture_output=True, text=True, check=True).stdout.strip()
     _seed_bare_remote(repo, tmp_path, base)  # remote main one commit behind
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert allowed["accepted"], allowed
@@ -751,7 +764,7 @@ def test_full_test_refuses_empty_shell_when_everything_pushed(tmp_path: Path) ->
     head = _commit(repo, "example.py", "x = 2\n", "release candidate")
     _seed_bare_remote(repo, tmp_path, head)  # remote main == local main
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
@@ -766,7 +779,7 @@ def test_full_test_refuses_empty_shell_without_remote(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _commit(repo, "example.py", "x = 2\n", "release candidate")
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
@@ -794,7 +807,7 @@ def test_committed_non_runtime_monster_still_refused(tmp_path: Path) -> None:
         (repo / "src" / f"big_{i}.py").write_text("z" * 220_000)
     subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed source"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -821,7 +834,7 @@ def test_committed_runtime_projection_keeps_the_192kb_ceiling(tmp_path: Path) ->
         p.write_text("z" * 302_000)
     subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "many committed reports"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -840,7 +853,7 @@ def test_small_committed_runtime_diff_stays_verbatim(tmp_path: Path) -> None:
     (d / "S.json").write_text('{"baseline":true}')
     subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "small report"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -864,7 +877,7 @@ def test_committed_runtime_monster_between_400kb_and_1mb_is_projected(tmp_path: 
     (d / "S.json").write_text("z" * 700_000)
     subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big report"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -885,7 +898,7 @@ def test_committed_non_runtime_monster_over_400kb_still_refused(tmp_path: Path) 
     (repo / "src" / "big.py").write_text("z" * 700_000)
     subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed source"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -904,7 +917,7 @@ def test_committed_runtime_monster_over_acquire_cap_still_refused(tmp_path: Path
     (d / "S.json").write_text("z" * 4_500_000)
     subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "huge report"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -941,7 +954,7 @@ def test_untracked_runtime_output_under_reports_is_not_material(tmp_path: Path) 
     d = repo / "reports" / "newrun"
     d.mkdir(parents=True)
     (d / "BIG.json").write_text("w" * 250_000)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -967,7 +980,7 @@ def test_untracked_knowledge_pool_outputs_are_not_material(tmp_path: Path) -> No
         (e / f"EXP-{i}.md").write_text(f"hypothetical-experience-{i}\n")
     (repo / "src").mkdir()
     (repo / "src" / "foo.py").write_text("y = 3\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1001,7 +1014,7 @@ def test_committed_knowledge_pool_diff_stays_fully_reviewed(tmp_path: Path) -> N
     (d / "BIG.json").write_text("z" * 302_000)
     subprocess.run(["git", "-C", str(repo), "add", "experiences", "data"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "committed pool"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1021,7 +1034,7 @@ def test_sensitive_refusal_applies_under_knowledge_pool_prefixes(tmp_path: Path)
     e = repo / "experiences"
     e.mkdir()
     (e / "secret.json").write_text('{"api_token": "hypothetical"}\n')
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1037,7 +1050,7 @@ def test_sensitive_refusal_applies_under_knowledge_pool_prefixes(tmp_path: Path)
     subprocess.run(["git", "-C", str(repo2), "add", "data"], check=True)
     subprocess.run(["git", "-C", str(repo2), "commit", "-qm", "pool baseline"], check=True)
     (d2 / "credentials.json").write_text('{"c": 1}\n')  # tracked dirt under the prefix
-    host2 = HostReviewAdmission()
+    host2 = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner2 = FakeChildRunner()
     host2.attach_runner(runner2)
     blocked2 = host2.start("author-1", "full_test", workdir=str(repo2), command="pytest -q")
@@ -1053,7 +1066,7 @@ def test_uv_wrapper_project_drift_cannot_certify_wrong_tree(
     tmp_path: Path, command: str,
 ) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     result = host.start("author-1", "full_test", workdir=str(repo), command=command)
@@ -1078,7 +1091,7 @@ def test_host_git_snapshot_disables_textconv_and_external_diff(
         return real_run(argv, **kwargs)
 
     monkeypatch.setattr(review_host_admission.subprocess, "run", observe_run)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     result = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert result["accepted"]
@@ -1102,7 +1115,7 @@ def _editor_page(noise_nodes: int = 0, body: str = "这是第一段正文，足�
 def test_article_publish_material_carries_content_not_the_whole_dom() -> None:
     """A real editor page projects far past the review budget; the material must not be the DOM."""
     raw = _editor_page(noise_nodes=600)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host.attach_browser_capture(lambda: raw)
@@ -1117,7 +1130,7 @@ def test_article_publish_material_carries_content_not_the_whole_dom() -> None:
 def test_article_publish_cap_truncates_page_context_instead_of_refusing() -> None:
     """A giant page used to void the whole admission; budget the context, keep the gate."""
     raw = _editor_page(body="文" * 30_000)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host.attach_browser_capture(lambda: raw)
@@ -1146,7 +1159,7 @@ def test_article_publish_cap_backstop_when_content_alone_exceeds_budget(tmp_path
     manuscript = tmp_path / "post.md"
     manuscript.write_text(body + "\n", encoding="utf-8")
     raw = _editor_page(body=body)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     host.attach_browser_capture(lambda: raw)
     issued = host.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
@@ -1162,12 +1175,12 @@ def test_manuscript_threshold_tolerates_line_noise_not_a_fifth_of_the_article(tm
     lines = [f"这是第{str(i).zfill(2)}段正文，每一行都足够长从而参与一致性核对。" for i in range(10)]
     manuscript = tmp_path / "post.md"
     manuscript.write_text("\n\n".join(lines) + "\n", encoding="utf-8")
-    host9 = HostReviewAdmission()
+    host9 = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host9.attach_runner(FakeChildRunner())
     host9.attach_browser_capture(lambda: _editor_page(body="  ".join(lines[:9])))
     ok = host9.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
     assert ok["accepted"], ok.get("reason")
-    host8 = HostReviewAdmission()
+    host8 = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host8.attach_runner(FakeChildRunner())
     host8.attach_browser_capture(lambda: _editor_page(body="  ".join(lines[:8])))
     bad = host8.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
@@ -1179,7 +1192,7 @@ def test_manuscript_threshold_tolerates_line_noise_not_a_fifth_of_the_article(tm
 
 def test_article_publish_binding_ignores_volatile_capture_bookkeeping() -> None:
     raw = _editor_page()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host.attach_browser_capture(lambda: raw)
@@ -1199,7 +1212,7 @@ def test_article_publish_denied_without_an_article_editor() -> None:
     raw = {"url": "https://mp.toutiao.com/publish", "dom": {"available": True, "nodes": [
         {"kind": "button", "attributes": {"tag": "button", "name": "确认发布"}},
     ]}}
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     host.attach_browser_capture(lambda: raw)
     issued = host.start("author-1", "article_publish", target_name="确认发布")
@@ -1219,7 +1232,7 @@ def test_browser_binding_refuses_a_page_the_reviewer_cannot_read() -> None:
 def test_article_publish_manuscript_mismatch_blocks_admission(tmp_path: Path) -> None:
     manuscript = tmp_path / "post.md"
     manuscript.write_text("# 完全不同的稿子\n\n这里讲的是另一件事，和编辑器里显示的正文没有任何重合之处。\n", encoding="utf-8")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     host.attach_browser_capture(lambda: _editor_page())
     issued = host.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
@@ -1234,7 +1247,7 @@ def test_article_publish_manuscript_match_binds_file_and_artifact_fingerprints(t
     raw = _editor_page(body="这是第一段正文，足够长以便进入可见文本。  这是第二段正文，同样足够长以通过一致性核对。")
     figure = tmp_path / "fig-62.png"
     figure.write_bytes(b"\x89PNG\r\n\x1a\nfigure-bytes")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host.attach_browser_capture(lambda: raw)
@@ -1250,7 +1263,7 @@ def test_article_publish_manuscript_match_binds_file_and_artifact_fingerprints(t
 
 
 def test_article_publish_missing_artifact_file_blocks_admission(tmp_path: Path) -> None:
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     host.attach_browser_capture(lambda: _editor_page())
     issued = host.start(
@@ -1305,7 +1318,7 @@ def test_start_retries_rate_limit_then_succeeds(monkeypatch, tmp_path: Path) -> 
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
     runner.refusals = ["HTTP 429 too many requests", "RateLimitError: rate limit reached"]
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -1318,7 +1331,7 @@ def test_start_rate_limit_retries_exhausted_fails_closed(monkeypatch, tmp_path: 
     store = FakeEventStore()
     runner = FakeChildRunner()
     runner.refusals = ["HTTP 429", "HTTP 429", "HTTP 429"]
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_event_store(store)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1335,7 +1348,7 @@ def test_start_auth_error_never_retries(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
     runner.refusals = ["401 unauthorized: invalid_api_key"]
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert not issued["accepted"]
@@ -1348,7 +1361,7 @@ def test_poll_classifies_failed_child_as_reviewer_unavailable(tmp_path: Path) ->
     repo = _repo(tmp_path)
     store = FakeEventStore()
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_event_store(store)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1382,7 +1395,7 @@ def test_start_retries_timeout_then_succeeds(monkeypatch, tmp_path: Path) -> Non
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
     runner.refusals = ["ReadTimeout: request timed out"]
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -1392,7 +1405,7 @@ def test_start_retries_timeout_then_succeeds(monkeypatch, tmp_path: Path) -> Non
 def test_poll_failed_child_without_text_is_generic_unavailable(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"]
@@ -1411,7 +1424,7 @@ def test_poll_failed_child_without_text_is_generic_unavailable(tmp_path: Path) -
 def test_poll_malformed_verdict_returns_review_tail(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"]
@@ -1436,7 +1449,7 @@ def test_compose_review_task_uses_short_host_fingerprint() -> None:
 def test_poll_accepts_short_fingerprint_bound_to_full_candidate_sha(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -1449,7 +1462,7 @@ def test_poll_accepts_short_fingerprint_bound_to_full_candidate_sha(tmp_path: Pa
 def test_poll_rejects_mistyped_short_fingerprint_fail_closed(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -1495,7 +1508,7 @@ def test_dynamic_budget_pre_check_rejects_oversized_task_before_spawn(
     # expected cap moved from 48_000B to 58_800 chars.
     repo = _repo(tmp_path)
     (repo / "mid.py").write_text("y = " + repr("b" * 90_000) + "\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = BudgetProbeRunner(60_000)
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1527,7 +1540,7 @@ def test_chinese_input_budget_refusal_is_classified_and_never_retried(
     assert _classify_reviewer_failure("child refused: depth limit") == "reviewer_unavailable"
     # Via the spawn path: one refusal, zero retries (non-retryable label).
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     runner.refusals = ["模型输入接近实际窗口，但当前子代理没有可调用的 search_archive"]
     host.attach_runner(runner)
@@ -1544,14 +1557,14 @@ def test_unresolved_registry_falls_back_to_static_ceiling(tmp_path: Path) -> Non
     # never a crash. A crashing probe must degrade the same way.
     repo = _repo(tmp_path)
     (repo / "big.py").write_text("z = " + repr("c" * 150_000) + "\n")  # <192KB material
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = BudgetProbeRunner(None)
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert allowed["accepted"] is True
     assert runner.started == 1
 
-    host2 = HostReviewAdmission()
+    host2 = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner2 = BudgetProbeRunner(RuntimeError("registry snapshot gone"))
     host2.attach_runner(runner2)
     allowed2 = host2.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1592,7 +1605,7 @@ def test_push_review_freezes_remote_ahead_commits_and_drift_denies(tmp_path: Pat
     subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ahead two"], check=True)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert issued["accepted"]
@@ -1637,7 +1650,7 @@ def test_push_base_refuses_offline_even_with_tracking_ref(tmp_path: Path, monkey
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(rha.subprocess, "run", offline_ls_remote)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
@@ -1662,7 +1675,7 @@ def test_push_fails_closed_without_any_remote_fact(tmp_path: Path, monkeypatch: 
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(rha.subprocess, "run", offline_ls_remote)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
@@ -1679,7 +1692,7 @@ def test_first_push_of_absent_remote_branch_refused(tmp_path: Path) -> None:
     (repo / "example.py").write_text("x = 3\n")
     subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "first push"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
@@ -1697,7 +1710,7 @@ def test_push_base_rejects_hostile_push_url(tmp_path: Path) -> None:
         check=True,
     )
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert verdict["accepted"] is False
@@ -1741,7 +1754,7 @@ def test_push_base_ssh_remote_pins_system_ssh_and_neutralizes_injected_sshcomman
 
     monkeypatch.setattr(rha.subprocess, "run", capture_ls_remote)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     verdict = host.start("author-ssh-1", "git_push", workdir=str(repo), command="git push origin main")
     assert captured, "ls-remote must be attempted for the ssh push URL"
@@ -1767,7 +1780,7 @@ def test_push_refspec_rejects_deletion_and_force(tmp_path: Path) -> None:
     # forced rewrite; both must be refused at admission time.
     _origin, repo, _base = _bare_origin_and_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     for command in ("git push origin :main", "git push origin +main:main"):
         verdict = host.start("author-1", "git_push", workdir=str(repo), command=command)
@@ -1840,7 +1853,7 @@ def test_dynamic_pre_check_compares_chars_not_bytes(tmp_path: Path) -> None:
     # (the child compares sum(dict_wire_chars(m)) <= budget, i.e. chars).
     repo = _repo(tmp_path)
     (repo / "cjk.py").write_text("注释 = " + repr("中" * 40_000) + "\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = BudgetProbeRunner(120_000)
     host.attach_runner(runner)
     verdict = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1860,7 +1873,7 @@ def test_dynamic_pre_check_compares_chars_not_bytes(tmp_path: Path) -> None:
 def test_untracked_env_example_template_is_admitted(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / ".env.example").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1872,7 +1885,7 @@ def test_untracked_env_example_template_with_real_secret_is_refused(tmp_path: Pa
     repo = _repo(tmp_path)
     fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
     (repo / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1885,7 +1898,7 @@ def test_staged_env_example_template_is_admitted(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / ".env.example").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
     subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1896,7 +1909,7 @@ def test_staged_env_example_template_is_admitted(tmp_path: Path) -> None:
 def test_env_local_is_still_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / ".env.local").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1911,7 +1924,7 @@ def test_committed_env_example_template_is_admitted(tmp_path: Path) -> None:
     (repo / ".env.example").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
     subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "env template"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1926,7 +1939,7 @@ def test_committed_env_example_with_real_secret_is_refused(tmp_path: Path) -> No
     (repo / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
     subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "env template"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1938,7 +1951,7 @@ def test_committed_env_example_with_real_secret_is_refused(tmp_path: Path) -> No
 def test_env_file_itself_is_still_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / ".env").write_text("LFL_API_KEY=abc\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1960,7 +1973,7 @@ def test_committed_large_env_example_with_secret_is_refused(tmp_path: Path) -> N
     (repo / ".env.example").write_text(filler + f"AWS_ACCESS_KEY_ID={fake_key}\n")
     subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "large env template"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -1975,7 +1988,7 @@ def test_runtime_output_env_example_with_secret_is_refused(tmp_path: Path) -> No
     (repo / "reports").mkdir()
     fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
     (repo / "reports" / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2027,7 +2040,7 @@ def test_frozen_header_puts_one_field_per_line(tmp_path: Path) -> None:
     target = _commit(repo, "hdr.py", "x = 2\n", "hdr")
     _seed_bare_remote(repo, tmp_path, base)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo),
                         command=f"git push origin {target}:main")
@@ -2100,7 +2113,7 @@ def test_admission_refuses_to_issue_glued_header(tmp_path: Path, monkeypatch) ->
 
     monkeypatch.setattr(rha, "_frozen_header", legacy_header)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     refused = host.start("author-1", "git_push", workdir=str(repo),
                          command=f"git push origin {target}:main")
@@ -2116,7 +2129,7 @@ def test_full_test_header_uses_merge_base_line(tmp_path: Path) -> None:
     """full_test 路径（无可用 remote 事实）头部用 merge_base 行，同样一行一字段."""
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -2144,7 +2157,7 @@ def test_full_test_refuses_to_issue_glued_header(tmp_path: Path, monkeypatch) ->
 
     monkeypatch.setattr(rha, "_frozen_header", legacy_header)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert not refused["accepted"]
@@ -2213,7 +2226,7 @@ def test_vendored_committed_monster_is_projected_not_refused(tmp_path: Path) -> 
     (d / "big.json").write_text("z" * 700_000)
     subprocess.run(["git", "-C", str(repo), "add", "skills"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "vendored asset"], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2227,7 +2240,7 @@ def test_vendored_untracked_large_file_is_projected_not_refused(tmp_path: Path) 
     d = repo / "skills" / "frontend-design"
     d.mkdir(parents=True)
     (d / "assets.json").write_text("y" * 500_000)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2244,7 +2257,7 @@ def test_vendored_untracked_file_count_may_exceed_the_plain_limit(tmp_path: Path
     d.mkdir(parents=True)
     for i in range(49):
         (d / f"f{i}.md").write_text("x" * 100)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2259,7 +2272,7 @@ def test_vendored_untracked_file_over_hard_cap_is_still_refused(tmp_path: Path) 
     d = repo / "skills" / "ui-ux-pro-max"
     d.mkdir(parents=True)
     (d / "huge.json").write_text("z" * 1_200_000)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2279,7 +2292,7 @@ def test_vendored_projection_entry_budget_is_enforced(
     d.mkdir(parents=True)
     for i in range(2):
         (d / f"big{i}.json").write_text("z" * 200_000)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2293,7 +2306,7 @@ def test_vendored_class_does_not_exempt_sensitive_paths(tmp_path: Path) -> None:
     d = repo / "skills" / "ui-ux-pro-max"
     d.mkdir(parents=True)
     (d / ".env").write_text("SECRET=1\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -2321,7 +2334,7 @@ def test_frozen_header_records_the_vendored_class_and_projection_count() -> None
 def test_expired_unconsumed_record_is_evicted_and_audited(tmp_path: Path) -> None:
     """A stale, never-consumed record is evicted instead of pinning capacity."""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _distinct_child_runner()
     host.attach_runner(runner)
     host._max_records = 1
@@ -2395,7 +2408,7 @@ def _distinct_child_runner() -> FakeChildRunner:
 def test_settled_review_does_not_occupy_admission_capacity(tmp_path: Path) -> None:
     """A terminal verdict that was never executed no longer blocks admissions."""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _distinct_child_runner()
     host.attach_runner(runner)
     host._max_records = 1
@@ -2417,7 +2430,7 @@ def test_settled_review_does_not_occupy_admission_capacity(tmp_path: Path) -> No
 def test_running_review_still_occupies_capacity(tmp_path: Path) -> None:
     """Only an in-flight review holds a slot; the bound is not weakened."""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
     host._max_records = 1
@@ -2431,7 +2444,7 @@ def test_running_review_still_occupies_capacity(tmp_path: Path) -> None:
 def test_consumed_record_is_reclaimed(tmp_path: Path) -> None:
     """A spent grant is dropped instead of being kept forever."""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _distinct_child_runner()
     host.attach_runner(runner)
     host._max_records = 1
@@ -2445,10 +2458,9 @@ def test_consumed_record_is_reclaimed(tmp_path: Path) -> None:
     assert host.poll("author-1", child_id)["qualification"] == "PASS"
     key = next(iter(host._records))
     row = host._records[key]
-    host._records[key] = rha._Frozen(
-        row.kind, row.parent, row.target, row.sha, row.child_id,
-        granted=True, consumed=True, created_at=row.created_at, state=row.state,
-    )
+    # 直接复用原行再标记 consumed：手工重建 _Frozen 会丢掉 policy_digest /
+    # reviewer_observed_model，等于构造一条"不符合当前 mint 契约"的假记录。
+    host._records[key] = rha.replace(row, granted=True, consumed=True)
     second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert second["accepted"] is True
     assert all(not r.consumed for r in host._records.values())
@@ -2457,7 +2469,7 @@ def test_consumed_record_is_reclaimed(tmp_path: Path) -> None:
 def test_sixty_four_stale_records_do_not_deadlock_admission(tmp_path: Path) -> None:
     """The exact failure this EVO describes: 64 stale records used to be fatal."""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _distinct_child_runner()
     host.attach_runner(runner)
     for i in range(host._max_records):
@@ -2491,7 +2503,7 @@ def _dirty_repo(tmp_path: Path) -> Path:
 def test_scope_patch_freezes_only_declared_paths(tmp_path: Path) -> None:
     repo = _dirty_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -2506,7 +2518,7 @@ def test_scope_patch_freezes_only_declared_paths(tmp_path: Path) -> None:
     assert "x = 2" in runner.task          # declared path is reviewed
     assert "y = 2" not in runner.task      # unrelated in-flight work is not
     tree_runner = FakeChildRunner()
-    tree_host = HostReviewAdmission()
+    tree_host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     tree_host.attach_runner(tree_runner)
     tree = tree_host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -2519,7 +2531,7 @@ def test_scope_patch_freezes_only_declared_paths(tmp_path: Path) -> None:
 
 def test_scope_patch_without_paths_degrades_to_tree_and_says_so(tmp_path: Path) -> None:
     repo = _dirty_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -2531,7 +2543,7 @@ def test_scope_patch_without_paths_degrades_to_tree_and_says_so(tmp_path: Path) 
 @pytest.mark.parametrize("bad", ["/etc/passwd", "../outside.py", "~/x.py", ""])
 def test_scope_patch_rejects_escaping_paths(tmp_path: Path, bad: str) -> None:
     repo = _dirty_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -2543,7 +2555,7 @@ def test_scope_patch_rejects_escaping_paths(tmp_path: Path, bad: str) -> None:
 
 def test_scope_invalid_is_refused(tmp_path: Path) -> None:
     repo = _dirty_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -2556,7 +2568,7 @@ def test_scope_invalid_is_refused(tmp_path: Path) -> None:
 def test_declared_sensitive_path_is_still_refused(tmp_path: Path) -> None:
     repo = _dirty_repo(tmp_path)
     (repo / ".env").write_text("API_KEY=abc\n")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -2574,7 +2586,7 @@ def _pass_first_review(host: HostReviewAdmission, runner: FakeChildRunner, sha: 
 def test_pass_cache_replays_an_identical_review(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     _pass_first_review(host, runner, issued["candidate_sha256"])
@@ -2593,13 +2605,13 @@ def test_pass_cache_replays_an_identical_review(tmp_path: Path) -> None:
 def test_pass_cache_does_not_reuse_a_changed_artifact(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     _pass_first_review(host, runner, issued["candidate_sha256"])
     assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
     (repo / "example.py").write_text("x = 3\n")
-    fresh = HostReviewAdmission()
+    fresh = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     fresh.attach_runner(FakeChildRunner())
     again = fresh.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert again["accepted"]
@@ -2630,7 +2642,7 @@ class MultiChildRunner(FakeChildRunner):
 def test_narrow_rereview_carries_delta_and_previous_findings(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = MultiChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.state = "completed"
@@ -2653,7 +2665,7 @@ def test_narrow_rereview_carries_delta_and_previous_findings(tmp_path: Path) -> 
 
 def test_narrow_rereview_rejects_a_foreign_previous_review(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"]
@@ -2679,7 +2691,7 @@ def test_duration_precheck_refuses_before_spending_the_budget(
     repo = _repo(tmp_path)
     (repo / "many_tests.py").write_text("x = " + repr("a" * 155_000) + "\n")
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert refused["accepted"] is False
@@ -2691,14 +2703,14 @@ def test_duration_precheck_refuses_before_spending_the_budget(
 
 def test_start_reports_budget_and_scope_for_every_review(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"]
     budget = issued["review_budget"]
     assert budget["deadline_seconds"] >= rha._REVIEW_TOTAL_DEADLINE_S
     assert budget["estimated_seconds"] >= 0
-    assert budget["models"][0] == rha._REVIEWER_MODEL
+    assert budget["models"][0] == TEST_REVIEWER_MODELS.split(",")[0]
     assert budget["async_retry_max"] == rha._REVIEWER_ASYNC_RETRY_MAX
     assert issued["material_chars"] > 0
 
@@ -2706,7 +2718,7 @@ def test_start_reports_budget_and_scope_for_every_review(tmp_path: Path) -> None
 def test_deadline_exceeded_reports_unavailable_and_frees_capacity(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"]
@@ -2737,7 +2749,7 @@ class TestAttemptLedger:
     ) -> None:
         repo = _repo(tmp_path)
         runner = _distinct_child_runner()
-        host = HostReviewAdmission()
+        host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         host.attach_runner(runner)
         first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
         assert first["accepted"]
@@ -2759,7 +2771,7 @@ class TestAttemptLedger:
     ) -> None:
         repo = _repo(tmp_path)
         runner = MultiChildRunner()
-        host = HostReviewAdmission()
+        host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         host.attach_runner(runner)
         first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
         assert first["accepted"]
@@ -2795,7 +2807,7 @@ class TestAttemptLedger:
         assert "previous_child_id" not in prior2["retry_advice"]
 
     def test_ledger_stays_bounded_at_64_keys_and_5_entries(self) -> None:
-        host = HostReviewAdmission()
+        host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         # 直接驱动写入 helper：80 个不同 key 全走真实剪枝路径（公共路径一次
         # start 只写一个 key，且 80 个并发 start 会先撞 _records 容量语义，
         # 不适合做边界注入；此处锁的是台账自身的有界不变量）。
@@ -2817,7 +2829,7 @@ class TestAttemptLedger:
         assert [e.child_id for e in entries] == [f"child-x{n}" for n in range(1, 6)]
 
     def test_expired_attempt_entries_are_pruned_on_write(self) -> None:
-        host = HostReviewAdmission()
+        host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         host._note_attempt("a", "full_test", "1" * 64, "t1", "UNAVAILABLE", "c1", "d")
         key = rha._attempt_key("a", "full_test", "1" * 64, "t1")
         with host._guard:
@@ -2834,7 +2846,7 @@ class TestAttemptLedger:
     ) -> None:
         repo = _repo(tmp_path)
         runner = _distinct_child_runner()
-        host = HostReviewAdmission()
+        host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
         host.attach_runner(runner)
 
         def boom(*args: object, **kwargs: object) -> None:
@@ -2869,7 +2881,7 @@ def test_patch_scope_pass_is_consumable_by_the_same_scope(tmp_path: Path) -> Non
     """
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
 
     issued = host.start(
@@ -2894,7 +2906,7 @@ def test_scope_narrowing_cannot_hide_a_sensitive_change(tmp_path: Path) -> None:
     """
     repo = _repo(tmp_path)
     (repo / "credentials.json").write_text('{"c": 1}\n')  # 未跟踪、且不在声明范围
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
 
@@ -2929,7 +2941,7 @@ def test_scope_narrowing_cannot_hide_a_tracked_sensitive_change(tmp_path: Path) 
     subprocess.run(["git", "-C", str(repo), "add", "credentials.json"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "add creds"], check=True)
     (repo / "credentials.json").write_text('{"c": 2}\n')  # 已跟踪脏改动，落在 scope 外
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     host.attach_runner(runner)
 
@@ -2956,7 +2968,7 @@ def test_declared_paths_cannot_narrow_a_git_push_review(tmp_path: Path) -> None:
     """
     repo = _repo(tmp_path)
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(repo)], check=True)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     store = FakeEventStore()
     runner = FakeChildRunner()
     host.attach_event_store(store)
@@ -3009,7 +3021,7 @@ def test_patch_pass_is_denied_after_out_of_scope_drift(tmp_path: Path) -> None:
     """[审切片 → 改切片外 → 用切片 PASS 跑整树] → [FAIL]（独立审查 P1-1）。"""
     repo = _sliced_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -3032,7 +3044,7 @@ def test_patch_pass_is_consumable_when_slice_covers_the_whole_delta(tmp_path: Pa
     """切片把全部脏文件都声明了 ⇒ 不存在的"切片外" ⇒ 正常放行。"""
     repo = _sliced_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -3084,7 +3096,7 @@ def _pass_patch(tmp_path: Path, paths: list[str], before=None):
     if before is not None:
         before(repo)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q", paths=paths,
@@ -3134,7 +3146,7 @@ def test_pass_receipt_declares_consumable_scope(tmp_path: Path) -> None:
     """独立建议 S1：PASS 回执要写明授权的是整树、切片之外只是绑定未审。"""
     repo = _sliced_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -3170,7 +3182,7 @@ def test_finding_digest_prefers_severity_over_step_lines() -> None:
 def test_scope_paths_reject_header_injection(tmp_path: Path, bad: str) -> None:
     """声明路径会进冻结 header；控制字符/逗号/等号可以伪造 header 行（P2-2）。"""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     receipt = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q", paths=[bad],
     )
@@ -3180,7 +3192,7 @@ def test_scope_paths_reject_header_injection(tmp_path: Path, bad: str) -> None:
 def test_dot_scope_is_refused_instead_of_silently_meaning_tree(tmp_path: Path) -> None:
     """`paths=["."]` 等于 tree 却会被报成 patch（独立审查 P2-4）。"""
     repo = _repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     receipt = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q", paths=["."],
@@ -3199,7 +3211,7 @@ def test_untracked_code_appearing_after_the_pass_blocks_consumption(
     """
     repo = _sliced_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q",
@@ -3221,7 +3233,7 @@ def test_previous_review_of_another_target_is_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(repo)], check=True)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert first["accepted"], first
@@ -3298,7 +3310,7 @@ def test_tree_scope_declares_no_unreviewed_tier(tmp_path: Path) -> None:
     """tree scope 覆盖整树，就不该再声称有"未审上下文"（否则口径自相矛盾）。"""
     repo = _sliced_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "full_test", workdir=str(repo), command="pytest -q", scope="tree",
@@ -3465,7 +3477,7 @@ def test_pass_cache_key_includes_out_of_scope_digest() -> None:
     不得复用上一张 PASS。这条锁住 _pass_cache 的五元组契约（annotation 与
     _cached_pass/_remember_pass 的读写位置一致）。
     """
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     args = ("parent-1", "git_push", "abc123", "target-1")
     assert host._cached_pass(*args, "digest-A") == ""
     host._remember_pass(*args, "child-1", "digest-A")
@@ -3525,7 +3537,7 @@ def _dirty_push_repo(tmp_path: Path) -> Path:
 def test_pure_commit_keeps_git_push_grant_alive(tmp_path: Path) -> None:
     repo = _dirty_push_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert issued["accepted"], issued
@@ -3545,7 +3557,7 @@ def test_pure_commit_keeps_git_push_grant_alive(tmp_path: Path) -> None:
 def test_content_change_after_commit_is_still_denied(tmp_path: Path) -> None:
     repo = _dirty_push_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert issued["accepted"], issued
@@ -3603,7 +3615,7 @@ def test_chmod_after_review_is_not_tolerated(tmp_path: Path) -> None:
     """内容字节相同但可执行位变了，也必须不算同一产物（独立审查 P2）。"""
     repo = _dirty_push_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert issued["accepted"], issued
@@ -3624,7 +3636,7 @@ def test_push_of_unreviewed_commit_with_restored_worktree_is_denied(
     指纹必须取提交树侧，因此这里必须拒绝。"""
     repo = _dirty_push_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert issued["accepted"], issued
@@ -3643,7 +3655,7 @@ def test_full_test_review_carries_no_content_fingerprint(tmp_path: Path) -> None
     """放宽只针对 git_push：其它 kind 不得因为本改动多出任何放行面。"""
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -3663,7 +3675,7 @@ def test_relaxation_cannot_combine_with_scoped_grant(tmp_path: Path) -> None:
     """
     repo = _dirty_push_repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start(
         "author-1", "git_push", workdir=str(repo), command="git push origin main",
@@ -3745,7 +3757,7 @@ def test_push_batch_joint_coverage_happy_path(tmp_path: Path) -> None:
     放行同时**一次性消费全部批**：同命令再推必须拒（资格无残留）。
     """
     repo = _big_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -3795,7 +3807,7 @@ def test_push_batch_incomplete_set_denies_without_consuming(tmp_path: Path) -> N
     第一批 PASS 就会放行——本测试先红。
     """
     repo = _big_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -3826,7 +3838,7 @@ def test_push_batch_incomplete_set_denies_without_consuming(tmp_path: Path) -> N
 def test_push_batch_drift_invalidates_joint_consume(tmp_path: Path) -> None:
     """[应拦实测] 批集合齐了之后新增未审文件 → 整体拒且不消费；撤销漂移 → 仍可放行。"""
     repo = _big_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -3851,7 +3863,7 @@ def test_push_batch_drift_invalidates_joint_consume(tmp_path: Path) -> None:
 def test_push_batch_paths_must_equal_a_whole_plan_batch(tmp_path: Path) -> None:
     """[应拦实测] 自造批（切一角文件）必须拒（push_batch_not_in_plan），且不 spawn。"""
     repo = _big_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -3875,7 +3887,7 @@ def test_push_batch_row_never_derives_full_test_qualification(tmp_path: Path) ->
     获得全量资格（EVO-20261115-34ae7c99 实施中抓到的洞，先红后修）。
     """
     repo = _big_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     store = FakeEventStore()
     runner = _SeqChildRunner()
     host.attach_event_store(store)
@@ -3927,7 +3939,7 @@ def test_push_batch_over_path_limit_is_startable(tmp_path: Path) -> None:
     受理上限，协议不可执行。批候选的权威校验是整批精确匹配。
     """
     repo = _wide_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -3954,7 +3966,7 @@ def test_push_batch_crafted_over_limit_paths_still_not_in_plan(tmp_path: Path) -
     精确整批匹配才是权威，不得退化为计数放行。
     """
     repo = _wide_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -3994,7 +4006,7 @@ def test_push_batch_mixed_plan_versions_recover_after_re_review(tmp_path: Path) 
     无条件拒绝且补救话术循环（重审也无法清退 v1 行）。
     """
     repo = _wide_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -4031,7 +4043,7 @@ def test_push_batch_mixed_plan_versions_recover_after_re_review(tmp_path: Path) 
 def test_push_batch_all_reviewers_unpassed_denies(tmp_path: Path) -> None:
     """[应拦加固] 全部批已 start 但 reviewer 未过（granted=False）⇒ 拒绝。"""
     repo = _wide_push_repo(tmp_path)
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = _SeqChildRunner()
     host.attach_runner(runner)
     command = "git push origin main"
@@ -4142,7 +4154,7 @@ def test_full_test_frozen_anchor_works_when_remote_temporarily_unavailable(
     """full_test 冻结后不再重新查询远端；临时断网不影响相同本地执行树。"""
     repo, head = _repo_with_origin(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -4165,7 +4177,7 @@ def test_generic_deny_names_the_mismatch_dimension(tmp_path: Path) -> None:
     一句模糊文本——EVO-20261106-141b29b9 实测 deny 无法定位根因。"""
     repo = _repo(tmp_path)
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
@@ -4178,7 +4190,7 @@ def test_generic_deny_names_the_mismatch_dimension(tmp_path: Path) -> None:
     assert "parent" in d.reason.lower(), f"deny 应指名 parent 维度: {d.reason}"
 
     # 无任何待消费资格：deny 指名"无待消费资格"（修复前红）
-    host2 = HostReviewAdmission()
+    host2 = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     d2 = host2.check_shell("author-1", "pytest -q", str(repo))
     assert not d2.allowed
     assert ("no_pending" in d2.reason.lower()) or ("无待消费" in d2.reason), (
@@ -4203,7 +4215,7 @@ def test_full_test_remote_changed_only_allows_frozen_candidate(
     assert moved != head
 
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (head, False))
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
@@ -4256,7 +4268,7 @@ def test_mechanical_preflight_marks_annotation_only_fix(tmp_path: Path) -> None:
     subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "value fix"], check=True)
     runner = MultiChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.state = "completed"
@@ -4282,7 +4294,7 @@ def test_mechanical_preflight_marks_semantic_change_as_full_review(tmp_path: Pat
     subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "value fix"], check=True)
     runner = MultiChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     runner.state = "completed"
@@ -4323,7 +4335,7 @@ def test_full_test_pass_survives_unrelated_remote_main_advance(tmp_path: Path, m
     remote = [(base, True)]
     monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: remote[0])
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -4350,7 +4362,7 @@ def test_full_test_remote_drift_does_not_hide_actual_candidate_changes(
     remote = [(base, True)]
     monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: remote[0])
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued

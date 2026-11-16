@@ -5,6 +5,9 @@ import pytest
 
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 class _FakeRunner:
     def __init__(self, started: dict | None = None) -> None:
@@ -47,7 +50,7 @@ def test_review_rate_limited_returns_structured_retry(monkeypatch):
         def start(self, task=None, **kwargs):
             return {"accepted": False, "detail": "HTTP 429 rate limit exceeded"}
 
-    admission = admission_mod.HostReviewAdmission()
+    admission = admission_mod.HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     admission._runner = _AlwaysLimited()  # 注入 fake runner
     sleeps: list[float] = []
     monkeypatch.setattr(admission_mod.time, "sleep", lambda s: sleeps.append(s))
