@@ -175,9 +175,10 @@ LANE_TOOL_DEFS = [
 ]
 
 
-def _store(host: Any) -> LaneStore | None:
-    """M2-A: 经宿主显式注入的 lane_lock_strict / lane_enforce_cross_goal /
-    lane_repo_root 构造 store（默认全关=历史行为）。INV-1 配置非法时显式抛
+def lane_store_from_host(host: Any) -> LaneStore | None:
+    """M2-A 共享构造（P1-B: 工具入口与 merge queue 同一配置源）：经宿主显式
+    注入的 lane_lock_strict / lane_enforce_cross_goal / lane_repo_root 构造
+    store（默认全关=历史行为）。INV-1/INV-2 配置非法时显式抛
     LaneStoreConfigError，不静默降级为 store_unavailable。生产 enforce 由宿主
     配置开启——工具层不自行升级模式。"""
     audit_dir = str(host.audit_dir) if getattr(host, "audit_dir", None) else ""
@@ -194,6 +195,10 @@ def _store(host: Any) -> LaneStore | None:
         raise
     except OSError:
         return None
+
+
+def _store(host: Any) -> LaneStore | None:
+    return lane_store_from_host(host)
 
 
 def _render_write_diagnostics(store: LaneStore) -> str:

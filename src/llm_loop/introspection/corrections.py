@@ -120,11 +120,20 @@ class CorrectionToolRegistry:
         audit_dir: str | Path | None = None,
         status_provider: ArchitectureStatusProvider | None = None,
         archive_store: Any | None = None,
+        lane_lock_strict: bool = False,
+        lane_enforce_cross_goal: bool = False,
+        lane_repo_root: str | Path | None = None,
     ) -> None:
         self.ctx = ctx
         self._audit_dir = Path(audit_dir) if audit_dir else None
         self._status = status_provider
         self._archive = archive_store
+        # M2-A（DESIGN-20261116 §3.2，P1-A 接线）: LaneStore 严格锁/跨 Goal
+        # 路径检查宿主配置；默认全关=历史 warn 行为。真实启用只能来自宿主
+        # settings（factory 注入），registry 层不自取环境变量、不自行升级。
+        self._lane_lock_strict = bool(lane_lock_strict)
+        self._lane_enforce_cross_goal = bool(lane_enforce_cross_goal)
+        self._lane_repo_root: str | Path | None = lane_repo_root or None
         self._search_records_fn: Callable[..., list[dict]] | None = None
         self._search_docs_fn: Callable[..., list[dict]] | None = None
         self._experience_store: Any | None = None
@@ -164,6 +173,9 @@ class CorrectionToolRegistry:
         "skills_dir": "_skills_dir",  # B3: 插件化 Skill 目录
         "skill_execution_facts": "_skill_execution_facts",
         "extensions_catalog": "_extensions_catalog",  # P1-A: 扩展目录（标准包）
+        "lane_lock_strict": "_lane_lock_strict",  # M2-A: 严格锁（默认 False）
+        "lane_enforce_cross_goal": "_lane_enforce_cross_goal",  # M2-A: 跨 Goal 硬拒
+        "lane_repo_root": "_lane_repo_root",  # M2-A: 路径根绑定基准
     }
 
     @property

@@ -676,6 +676,12 @@ class Settings:
     # 空（默认）= 所有 child 工具面剔除 spawn_subagent（防递归舰队，程序级）；
     # "*" = 全量授予；否则逗号分隔 parent session_id，精确授予该父的 child。
     child_spawn_grant: str = ""
+    # M2-A（DESIGN-20261116 §3.2，P1-A 宿主接线）: LaneStore 严格锁/跨 Goal
+    # 路径检查；默认全关=历史 warn 行为。enforce=true 隐含要求 lock_strict=true
+    # 与有效 repo_root（LaneStore 构造 fail-fast，INV-1/INV-2）。
+    lane_lock_strict: bool = False
+    lane_enforce_cross_goal: bool = False
+    lane_repo_root: str = ""  # 路径根绑定基准（绝对路径；空=不绑定）
     self_eval_enabled: bool = True  # 自我评估能力开关（0 时 self_evaluate 工具不注册）
     self_eval_min_samples: int = 5  # 指标最小样本数（不足 → 如实标注"样本不足"）
     self_eval_span: int = 50  # 评估聚合窗口（近 N 轮/条）
@@ -812,6 +818,9 @@ class Settings:
             "evolve_local_exec": self.evolve_local_exec,
             "evolve_exec_whitelist": self.evolve_exec_whitelist,
             "child_spawn_grant": self.child_spawn_grant,
+            "lane_lock_strict": self.lane_lock_strict,
+            "lane_enforce_cross_goal": self.lane_enforce_cross_goal,
+            "lane_repo_root": self.lane_repo_root,
             "self_eval_enabled": self.self_eval_enabled,
             # Method Learning v1: expose only non-sensitive runtime mode/thresholds, never local paths.
             "method_reflection_mode": self.method_reflection_mode,
@@ -1284,6 +1293,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         evolve_local_exec=env_one(_env_evolve_level, "EVOLVE_LOCAL_EXEC"),
         evolve_exec_whitelist=env_values.get("EVOLVE_EXEC_WHITELIST", "").strip(),
         child_spawn_grant=env_values.get("CHILD_SPAWN_GRANT", "").strip(),
+        # M2-A（P1-A）: LANE_LOCK_STRICT / LANE_ENFORCE_CROSS_GOAL 用 env_bool
+        # 显式解析（false/0/off → False，无 bool("false") 陷阱）。
+        lane_lock_strict=env_bool("LANE_LOCK_STRICT", False),
+        lane_enforce_cross_goal=env_bool("LANE_ENFORCE_CROSS_GOAL", False),
+        lane_repo_root=env_values.get("LANE_REPO_ROOT", "").strip(),
         self_eval_enabled=env_bool("SELF_EVAL_ENABLED", True),
         self_eval_min_samples=env_int("SELF_EVAL_MIN_SAMPLES", 5),
         self_eval_span=env_int("SELF_EVAL_SPAN", 50),

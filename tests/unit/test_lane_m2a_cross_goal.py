@@ -19,6 +19,7 @@ import pytest
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.introspection.lane import (
+    Lane,
     LaneConstraintError,
     LanePathConflict,
     LanePathConflictUnknown,
@@ -45,7 +46,7 @@ def _strict(tmp_path: Path, *, repo_root: Path, enforce: bool = False) -> LaneSt
     )
 
 
-def _create(store: LaneStore, *, goal_id: str, branch: str, paths: list[str]) -> object:
+def _create(store: LaneStore, *, goal_id: str, branch: str, paths: list[str]) -> Lane:
     return store.create(
         branch=branch,
         worktree=f"wt-{branch}",
@@ -464,3 +465,226 @@ def test_tool_layer_warn_diagnostics_rendered(tmp_path: Path) -> None:
     result = _tool_open(host, paths=["docs/a.md"])
     assert result.status is ToolResultStatus.SUCCESS
     assert "跨 Goal 路径重叠" in result.content
+
+
+# ---------------- REVISE（2026-11-16 GPT-6 首轮核验 P1-A/B/C/D + P2）----------------
+
+
+def test_p1c_enforce_without_repo_root_rejected_fail_fast(tmp_path: Path) -> None:
+    """P1-C: enforce=true 且 repo_root 缺失 → 构造即拒。不得存在以字面比较
+    代替根绑定的 enforce 实例（GPT-6 复现: symlink alias 双双放行）。warn 不受影响。"""
+    with pytest.raises(LaneStoreConfigError):
+        LaneStore(tmp_path / "audit-x", lock_strict=True, enforce_cross_goal=True)
+    LaneStore(tmp_path / "audit-warn")  # 默认 warn 无 root 仍可用（历史行为）
+
+
+def test_p1c_symlink_alias_with_root_still_rejected(tmp_path: Path) -> None:
+    """P1-C 复现场景回归: repo 内 alias→docs symlink，G2 走别名声明同文件 →
+    enforce 硬拒（有 repo_root 时 realpath 辅助必须命中）。"""
+    repo = _mkrepo(tmp_path)
+    (repo / "alias").symlink_to(repo / "docs", target_is_directory=True)
+    store = LaneStore(
+        tmp_path / "audit", lock_strict=True, enforce_cross_goal=True, repo_root=repo
+    )
+    _create(store, goal_id="G1", branch="b1", paths=["docs/a.md"])
+    with pytest.raises(LanePathConflict):
+        _create(store, goal_id="G2", branch="b2", paths=["alias/a.md"])
+
+
+def _append_raw_lane_row(audit_dir: Path, row: dict) -> None:
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    with (audit_dir / "lanes.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def test_p1d_legacy_escape_path_unknown_fail_closed(tmp_path: Path) -> None:
+    """P1-D 复现（GPT-6）: 旧默认 store 落的在途 G1 paths=['../outside']
+    （无法根绑定），strict+enforce+repo_root 新建 G2 → unknown fail-closed 拒写。"""
+    repo = _mkrepo(tmp_path)
+    legacy = tmp_path / "audit-legacy"
+    warm = LaneStore(legacy)
+    _create(warm, goal_id="G1", branch="b1", paths=["../outside"])
+    store = LaneStore(
+        legacy, lock_strict=True, enforce_cross_goal=True, repo_root=repo
+    )
+    with pytest.raises(LanePathConflictUnknown):
+        _create(store, goal_id="G2", branch="b2", paths=["docs/a.md"])
+
+
+def test_p1d_legacy_paths_not_a_list_unknown_fail_closed(tmp_path: Path) -> None:
+    """P1-D: 旧账本 paths 非 list（字符串）→ unknown fail-closed。不得把字符串
+    迭代成单字符路径参与比较后放行。"""
+    repo = _mkrepo(tmp_path)
+    audit = tmp_path / "audit-legacy2"
+    _append_raw_lane_row(
+        audit,
+        {
+            "lane_id": "lane-legacy1",
+            "branch": "b1",
+            "worktree": "wt-b1",
+            "base_main_sha": "deadbeef",
+            "goal_id": "G1",
+            "paths": "docs",
+            "status": "open",
+            "version": 1,
+        },
+    )
+    store = LaneStore(
+        audit, lock_strict=True, enforce_cross_goal=True, repo_root=repo
+    )
+    with pytest.raises(LanePathConflictUnknown):
+        _create(store, goal_id="G2", branch="b2", paths=["docs/a.md"])
+
+
+def test_p1d_same_goal_legacy_overlap_still_hint_only(tmp_path: Path) -> None:
+    """P1-D 边界: 同 Goal 合法重叠不连坐——unknown fail-closed 只作用跨 Goal。"""
+    repo = _mkrepo(tmp_path)
+    legacy = tmp_path / "audit-legacy3"
+    warm = LaneStore(legacy)
+    _create(warm, goal_id="G1", branch="b1", paths=["docs/a.md"])
+    store = LaneStore(
+        legacy, lock_strict=True, enforce_cross_goal=True, repo_root=repo
+    )
+    lane = store.create(
+        goal_id="G1",
+        branch="b2",
+        worktree=str(tmp_path / "wt-b2"),
+        base_main_sha="deadbeef",
+        paths=["docs/a.md"],
+        lane_role="sub",
+    )
+    assert lane is not None
+
+
+def test_p2_append_lane_event_returns_real_false(tmp_path: Path) -> None:
+    """P2: 事件文件不可写（目录占位 → OSError）→ append_lane_event 必须返回
+    False，不得忽略 _append_event 的失败回执谎称成功（GPT-6 实测复现）。"""
+    store = LaneStore(tmp_path / "audit")
+    store._event_path.unlink(missing_ok=True)
+    store._event_path.mkdir()
+    assert store.append_lane_event("test_event", k="v") is False
+
+
+def test_p1a_registry_exposes_lane_settings(tmp_path: Path) -> None:
+    """P1-A: CorrectionToolRegistry 接受 lane_* 三参并经 RegistryHost 协议暴露；
+    缺省全关（历史行为零回归）。"""
+    from llm_loop.introspection.corrections import (
+        CorrectionContext,
+        CorrectionToolRegistry,
+    )
+
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx, audit_dir=tmp_path)
+    assert reg.lane_lock_strict is False
+    assert reg.lane_enforce_cross_goal is False
+    assert reg.lane_repo_root in (None, "")
+
+    reg2 = CorrectionToolRegistry(
+        ctx,
+        audit_dir=tmp_path,
+        lane_lock_strict=True,
+        lane_enforce_cross_goal=True,
+        lane_repo_root="/repo-x",
+    )
+    assert reg2.lane_lock_strict is True
+    assert reg2.lane_enforce_cross_goal is True
+    assert reg2.lane_repo_root == "/repo-x"
+
+
+def test_p1a_settings_env_parsing(tmp_path: Path) -> None:
+    """P1-A: settings 三字段 env 解析（false/0 必须为 False，不存在 bool('false')）+ to_dict 可查。"""
+    from llm_loop.config import load_settings
+
+    _required = {
+        "LLM_API_KEY": "test-key",
+        "LLM_BASE_URL": "https://example.invalid/v1",
+    }
+    s_off = load_settings(
+        {
+            **_required,
+            "LANE_LOCK_STRICT": "false",
+            "LANE_ENFORCE_CROSS_GOAL": "0",
+        }
+    )
+    assert s_off.lane_lock_strict is False
+    assert s_off.lane_enforce_cross_goal is False
+    assert s_off.lane_repo_root == ""
+
+    s_on = load_settings(
+        {
+            **_required,
+            "LANE_LOCK_STRICT": "true",
+            "LANE_ENFORCE_CROSS_GOAL": "1",
+            "LANE_REPO_ROOT": "/repo-x",
+        }
+    )
+    assert s_on.lane_lock_strict is True
+    assert s_on.lane_enforce_cross_goal is True
+    assert s_on.lane_repo_root == "/repo-x"
+    as_dict = s_on.to_status_dict()
+    assert as_dict["lane_lock_strict"] is True
+    assert as_dict["lane_enforce_cross_goal"] is True
+    assert as_dict["lane_repo_root"] == "/repo-x"
+
+
+def test_p1a_factory_passes_lane_settings(tmp_path: Path) -> None:
+    """P1-A: 真实 factory 构造路径把 settings 三字段传入 registry（默认全关）。"""
+    import inspect
+
+    import llm_loop.factory as factory_mod
+
+    src = inspect.getsource(factory_mod)
+    assert "lane_lock_strict=" in src and "settings.lane_lock_strict" in src
+    assert "lane_enforce_cross_goal=" in src
+    assert "settings.lane_repo_root" in src
+
+
+def test_p1b_queue_autosweep_strict_lock_unavailable_no_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1-B: strict 宿主（lane_lock_strict=true）下 flock 失败 → queue auto-close
+    fail-closed 不写账本，回执 closed=False 且如实披露；不谎称已关闭。"""
+
+    def _boom(*_a, **_k):
+        raise OSError("no flock")
+
+    audit = tmp_path / "audit"
+    warm = LaneStore(audit)
+    live = _create(warm, goal_id="G1", branch="b1", paths=["docs/a.md"])
+    rows_before = (audit / "lanes.jsonl").read_text(encoding="utf-8")
+
+    monkeypatch.setattr(fcntl, "flock", _boom)  # 此后锁不可用
+    from llm_loop.introspection.tools_merge_queue import _autosweep_lane_after_merge
+
+    host = _ToolHost(audit, lane_lock_strict=True)
+    result = _autosweep_lane_after_merge(
+        host,
+        {
+            "lane_id": live.lane_id,
+            "queue_id": "q1",
+            "merge_commit": "c1",
+        },
+    )
+    assert result.get("closed") is False
+    assert result.get("note")
+    assert (audit / "lanes.jsonl").read_text(encoding="utf-8") == rows_before
+
+
+def test_p1b_queue_lanes_uses_host_lane_settings(tmp_path: Path) -> None:
+    """P1-B/P1-A: merge queue _lanes 与 lane 工具入口同一配置源——宿主
+    lane_* 属性生效（INV-1 非法配置显式抛，不静默降级为默认 warn）。"""
+    from llm_loop.introspection.tools_merge_queue import _lanes
+
+    audit = tmp_path / "audit-q"
+    host_bad = _ToolHost(audit, lane_lock_strict=False, lane_enforce_cross_goal=True)
+    with pytest.raises(LaneStoreConfigError):
+        _lanes(host_bad)
+
+    LaneStore(audit)  # 目录已建不影响
+    host_strict = _ToolHost(
+        audit, lane_lock_strict=True, lane_enforce_cross_goal=True, lane_repo_root=str(tmp_path)
+    )
+    store = _lanes(host_strict)
+    assert store is not None
+    assert store._lock_strict is True
+    assert store._enforce_cross_goal is True

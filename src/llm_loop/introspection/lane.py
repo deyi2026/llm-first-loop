@@ -199,14 +199,24 @@ class LaneStore:
         """
         strict = bool(lock_strict)
         enforce = bool(enforce_cross_goal)
+        root_raw = str(repo_root).strip() if repo_root is not None else ""
         if enforce and not strict:
             raise LaneStoreConfigError(
                 "INV-1 违反: enforce_cross_goal=true 硬依赖 lock_strict=true"
                 "（拒绝启用，不存在锁 warn 化的 enforce 实例）"
             )
+        if enforce and not root_raw:
+            # P1-C（2026-11-16 首轮核验）: 无 repo_root 的 enforce 只剩字面比较，
+            # repo 内 symlink 别名声明同一真实文件可双双放行（GPT-6 实测复现）。
+            # fail-fast 构造即拒，不静默以字面比较代替根绑定；warn 不受影响。
+            raise LaneStoreConfigError(
+                "INV-2 违反: enforce_cross_goal=true 硬依赖有效 repo_root"
+                "（路径根绑定基准；缺失时冲突检查可被 symlink 别名绕过，"
+                "处置: 显式配置 LANE_REPO_ROOT / lane_repo_root）"
+            )
         self._lock_strict = strict
         self._enforce_cross_goal = enforce
-        self._repo_root = Path(repo_root).resolve() if repo_root else None
+        self._repo_root = Path(root_raw).resolve() if root_raw else None
         self._dir = Path(audit_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "lanes.jsonl"
@@ -779,15 +789,35 @@ class LaneStore:
             if exclude_lane_id and lane_id == exclude_lane_id:
                 continue
             their_goal = str(row.get("goal_id") or "")
-            their = _normalize_paths([str(p) for p in row.get("paths") or []])
-            if their_goal != my_goal_id and not their:
-                unknowns.append(
-                    {
-                        "lane_id": lane_id,
-                        "goal_id": their_goal,
-                        "reason": "对方在途 paths 为空/缺失，冲突面不可判定",
-                    }
-                )
+            # P1-D（2026-11-16 首轮核验）: 对方（含旧默认 store 落账）声明面必须
+            # 过严格校验——非 list / 含无法根绑定路径（如 ../outside 越界、绝对
+            # 越出、symlink 逃逸）→ 冲突面不可判定，跨 Goal 按 unknown fail-closed
+            # 拒写；不得用宽松 _normalize_paths 归一后以字面比较放行（GPT-6 复现）。
+            raw_paths = row.get("paths")
+            their_unknown_reason = ""
+            their: list[str] = []
+            if not isinstance(raw_paths, list):
+                their_unknown_reason = "对方 paths 非 list（旧账本/损坏），冲突面不可判定"
+            elif not raw_paths:
+                their_unknown_reason = "对方在途 paths 为空/缺失，冲突面不可判定"
+            else:
+                try:
+                    their = self._normalize_declared_paths(
+                        [str(p) for p in raw_paths]
+                    )
+                except LaneConstraintError:
+                    their_unknown_reason = (
+                        "对方声明路径无法根绑定（旧账本非法/越界路径），冲突面不可判定"
+                    )
+            if their_unknown_reason:
+                if their_goal != my_goal_id:
+                    unknowns.append(
+                        {
+                            "lane_id": lane_id,
+                            "goal_id": their_goal,
+                            "reason": their_unknown_reason,
+                        }
+                    )
                 continue
             hits = overlapping_paths(list(my_paths), their)
             best_effort = False
@@ -900,15 +930,25 @@ class LaneStore:
         return (now_dt - max(parsed)).total_seconds() / 3600.0
 
     def append_lane_event(self, event_type: str, **fields: object) -> bool:
-        """追加一条 lane 事件到 lane_events.jsonl；写失败返回 False（不吞主操作结果）。"""
+        """追加一条 lane 事件到 lane_events.jsonl；写失败返回 False（不吞主操作结果）。
+
+        P2（2026-11-16 首轮核验）: 必须转发 _append_event 的真实布尔回执——
+        事件文件不可写（如被目录占位）时如实返回 False，不得忽略失败谎称成功。
+        严格模式失败同时经 last_event_append_failed 披露（§3.2-6 双事实不变）。
+        """
         event: dict = {"type": str(event_type), "ts": system_local_now().isoformat()}
         event.update(fields)
         try:
-            self._append_event(event)
-            return True
+            ok = bool(self._append_event(event))
         except OSError:
             logger.warning("lane 事件写入失败: %s", event_type, exc_info=True)
             return False
+        if not ok:
+            logger.warning(
+                "lane 事件写入失败（append_lane_event 如实回执 False）: %s", event_type
+            )
+            return False
+        return True
 
     def reap_candidates(
         self,

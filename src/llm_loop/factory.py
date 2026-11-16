@@ -2176,6 +2176,9 @@ def build_engine(
         audit_dir=settings.audit_dir,
         status_provider=status_provider,
         archive_store=archive,  # T22: search_archive
+        lane_lock_strict=settings.lane_lock_strict,
+        lane_enforce_cross_goal=settings.lane_enforce_cross_goal,
+        lane_repo_root=settings.lane_repo_root,  # M2-A（P1-A）: 宿主配置接线
     )
     correction_ctx.retry_executor = lambda name, args: registry.execute(_make_tool_call(name, args))
     # M50（design §5.6）: refresh_config 扩展 — 重载 env 同时重读 data/providers.json，重建注册表
