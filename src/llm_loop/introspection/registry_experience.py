@@ -24,6 +24,7 @@ from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.introspection.settlement import (
     SettlementItem,
     build_pending_settlement,
+    collect_freshness_refresh_items,
     submit_settlement_batch,
 )
 from llm_loop.knowledge_score.runner import spawn_autorun as spawn_knowledge_score_autorun
@@ -794,9 +795,23 @@ def _run_settlement_pending(args: dict, host: RegistryHost) -> ToolResult:
         model_self_reported_no_contact=bool(args.get("self_reported_no_contact")),
         event_logs_dir=channel.event_logs_dir,
     )
+    # M0-C11（DESIGN v1.3.1 §4.4④/C11/V9）：刷锚待办只读派生——独立键挂载，与
+    # items/settled_count/none_columns 完全分列；不可被 settlement_submit 提交
+    # （kind 面仍只有 method/experience/lesson/rule），不计成本/use ledger/K-Rate。
+    refresh_items = collect_freshness_refresh_items(
+        method_store=channel.method_store,
+        session_id=session_id,
+        work_unit_id=str(args.get("work_unit_id") or "").strip(),
+    )
+    if refresh_items:
+        pending = {**pending, "freshness_refresh_items": refresh_items}
     host.audit(
         "settlement_pending",
-        {"work_unit_id": pending["work_unit_id"], "items": len(pending["items"])},
+        {
+            "work_unit_id": pending["work_unit_id"],
+            "items": len(pending["items"]),
+            "freshness_refresh_items": len(refresh_items),
+        },
         "success",
     )
     header = (
@@ -811,9 +826,20 @@ def _run_settlement_pending(args: dict, host: RegistryHost) -> ToolResult:
         f"待结算 {len(pending['items'])}；收尾一次 settlement_submit 批量提交即可"
         "（调用/回合计数随提交回执返回），不要每轮轮询"
     )
+    refresh_note = ""
+    if refresh_items:
+        refresh_note = (
+            f"刷锚待办（item_kind=freshness_refresh，非使用结算、不可提交、不抵扣）: "
+            f"{len(refresh_items)} 项："
+            + ", ".join(str(i["ref"]) for i in refresh_items[:5])
+        )
+    content = header + "\n" + cost_note + "\n"
+    if refresh_note:
+        content += refresh_note + "\n"
+    content += json.dumps(pending, ensure_ascii=False)
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
-        content=header + "\n" + cost_note + "\n" + json.dumps(pending, ensure_ascii=False),
+        content=content,
         tool_call_id="",
         tool_name="settlement_pending",
     )
