@@ -214,6 +214,15 @@ class LaneStore:
                 "（路径根绑定基准；缺失时冲突检查可被 symlink 别名绕过，"
                 "处置: 显式配置 LANE_REPO_ROOT / lane_repo_root）"
             )
+        if enforce:
+            # P1-E: a nonempty but nonexistent/file/relative root defeats realpath
+            # alias detection.  Enforce needs a stable, existing absolute directory.
+            root_path = Path(root_raw)
+            if not root_path.is_absolute() or not root_path.is_dir():
+                raise LaneStoreConfigError(
+                    "INV-2 违反: enforce_cross_goal=true 的 repo_root 必须是"
+                    "已存在的绝对目录（拒绝缺失/文件/相对路径）"
+                )
         self._lock_strict = strict
         self._enforce_cross_goal = enforce
         self._repo_root = Path(root_raw).resolve() if root_raw else None
@@ -800,11 +809,15 @@ class LaneStore:
                 their_unknown_reason = "对方 paths 非 list（旧账本/损坏），冲突面不可判定"
             elif not raw_paths:
                 their_unknown_reason = "对方在途 paths 为空/缺失，冲突面不可判定"
+            elif any(not isinstance(p, str) or not p.strip() for p in raw_paths):
+                # P1-F: never stringify None/number/blank legacy entries into
+                # seemingly disjoint paths; the historical claim is unknown.
+                their_unknown_reason = "对方 paths 含非字符串/空白声明，冲突面不可判定"
             else:
                 try:
-                    their = self._normalize_declared_paths(
-                        [str(p) for p in raw_paths]
-                    )
+                    their = self._normalize_declared_paths(raw_paths)
+                    if not their:
+                        their_unknown_reason = "对方 paths 归一后为空，冲突面不可判定"
                 except LaneConstraintError:
                     their_unknown_reason = (
                         "对方声明路径无法根绑定（旧账本非法/越界路径），冲突面不可判定"

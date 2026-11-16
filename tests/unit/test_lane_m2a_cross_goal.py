@@ -688,3 +688,43 @@ def test_p1b_queue_lanes_uses_host_lane_settings(tmp_path: Path) -> None:
     assert store is not None
     assert store._lock_strict is True
     assert store._enforce_cross_goal is True
+
+# ---------------- GPT-6 second adversarial review: P1-E/P1-F ----------------
+
+@pytest.mark.parametrize("kind", ["missing", "file", "relative"])
+def test_p1e_enforce_requires_existing_absolute_directory_root(tmp_path: Path, kind: str) -> None:
+    """An invalid root cannot silently disable symlink alias detection."""
+    if kind == "missing":
+        root = tmp_path / "not-a-repository"
+    elif kind == "file":
+        root = tmp_path / "ordinary-file"
+        root.write_text("x", encoding="utf-8")
+    else:
+        root = Path("relative-repo-root")
+    with pytest.raises(LaneStoreConfigError):
+        LaneStore(
+            tmp_path / "audit-invalid-root",
+            lock_strict=True,
+            enforce_cross_goal=True,
+            repo_root=root,
+        )
+    assert not (tmp_path / "audit-invalid-root" / "lanes.jsonl").exists()
+
+
+@pytest.mark.parametrize("bad_paths", [[None], [""], ["  "], [123], ["docs/a.md", None]])
+def test_p1f_legacy_nonstring_or_blank_path_unknown_fail_closed(
+    tmp_path: Path, bad_paths: list[object]
+) -> None:
+    """Malformed legacy path elements must not be stringified into false disjoint claims."""
+    repo = _mkrepo(tmp_path)
+    audit = tmp_path / "audit"
+    _create(LaneStore(audit), goal_id="G1", branch="legacy", paths=["placeholder"])
+    ledger = audit / "lanes.jsonl"
+    row = json.loads(ledger.read_text(encoding="utf-8"))
+    row["paths"] = bad_paths
+    ledger.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    before = ledger.read_bytes()
+    store = LaneStore(audit, lock_strict=True, enforce_cross_goal=True, repo_root=repo)
+    with pytest.raises(LanePathConflictUnknown):
+        _create(store, goal_id="G2", branch="new", paths=["docs/a.md"])
+    assert ledger.read_bytes() == before
