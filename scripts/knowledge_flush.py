@@ -169,7 +169,28 @@ _LANE_TERMINAL = frozenset({"merged", "closed", "abandoned"})
 _LANE_STALE_AFTER_S = 4 * 3600.0
 
 
-def _lane_is_stale(row: dict[str, object], root: Path, now: datetime) -> bool:
+def _main_worktree_root(root: Path) -> Path:
+    """主工作树根：lane 相对 worktree 路径的解析基准。
+
+    账本里的 ``worktree`` 可能是相对路径（如 ``.worktrees/<name>``），它相对**主仓根**。
+    linked worktree 内运行时 ``root`` 是当前 worktree 的 toplevel，直接 ``root / rel``
+    会落到 ``<worktree>/.worktrees/<name>``（必然不存在）→ 空闲超时且干净的 lane 全被
+    判成 live，知识入库被永久挡住。取共享 common dir 的父目录（``.git`` 形态）作主仓根，
+    口径与 ``lane_main_write_guard._main_repo_root`` 一致。
+    """
+    try:
+        proc = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    except FlushError:
+        return root
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return root
+    common = Path(proc.stdout.strip())
+    return common.parent if common.name == ".git" else common
+
+
+def _lane_is_stale(
+    row: dict[str, object], root: Path, now: datetime, *, base: Path | None = None
+) -> bool:
     """空闲超时且 worktree 干净 → 按失效回收（命令闸 stale 判定的保守子集）。"""
     raw = str(row.get("last_activity") or row.get("created_at") or "").strip()
     wt = str(row.get("worktree") or "").strip()
@@ -185,7 +206,7 @@ def _lane_is_stale(row: dict[str, object], root: Path, now: datetime) -> bool:
         return False
     path = Path(wt)
     if not path.is_absolute():
-        path = root / path
+        path = (base if base is not None else _main_worktree_root(root)) / path
     try:
         run = subprocess.run(
             ["git", "-C", str(path), "status", "--porcelain"],
@@ -225,6 +246,7 @@ def _live_other_lanes(
         if prev is None or ver >= prev_ver:
             latest[key] = row
     out: list[str] = []
+    base = _main_worktree_root(root)
     for row in latest.values():
         status = str(row.get("status") or "")
         if status in _LANE_TERMINAL:
@@ -232,7 +254,7 @@ def _live_other_lanes(
         owner = str(row.get("owner_session_id") or "")
         if owner and session_id and owner == session_id:
             continue
-        if _lane_is_stale(row, root, now):
+        if _lane_is_stale(row, root, now, base=base):
             continue
         out.append(str(row.get("lane_id") or row.get("branch") or "?"))
     return out
