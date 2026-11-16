@@ -301,6 +301,8 @@ def test_legacy_deployment_cannot_pose_as_live(tmp_path: Path) -> None:
     assert versions["live"]["sha"] == ""
     assert versions["live"]["source"] == "unknown"
     assert versions["live"]["authoritative"] is False
+    # P2-1：live 的时间戳同样只能由权威回执提供，历史行的时间不得借用。
+    assert versions["live"]["recorded_at"] == ""
     # 无法比较，必须是 None，不能因为在库上相等就报 True。
     assert board["deployment"]["desired_matches_live"] is None
     # 非权威 fallback 不得显示 verified exact（假绿）。
@@ -369,3 +371,76 @@ def test_identical_duplicate_row_is_tolerated(tmp_path: Path) -> None:
     assert board["summary"]["lane_conflicts"] == []
     assert board["summary"]["duplicate_lane_ids"] == ["lane-dup"]
     assert not any(d.startswith("lane_version_conflict") for d in board["degraded"])
+
+
+def test_three_same_version_rows_with_non_string_owner_fails_closed(tmp_path: Path) -> None:
+    """三行同 version，其中 owner_session_id 是数字：仍必须判冲突，不得静默取首行。"""
+    audit = tmp_path / "audit"
+    _ledger(
+        audit,
+        [
+            _lane("lane-split3", "active", 2, owner_session_id="owner-A"),
+            _lane("lane-split3", "active", 2, owner_session_id="owner-B"),
+            _lane("lane-split3", "active", 2, owner_session_id=123),
+        ],
+    )
+
+    board = build_board(audit)
+
+    assert all(row["lane_id"] != "lane-split3" for row in board["lanes"])
+    assert board["summary"]["lane_conflicts"] == ["lane-split3"]
+    assert "lane_version_conflict:lane-split3" in board["degraded"]
+
+
+def test_non_string_git_head_is_not_exposed_as_sha(tmp_path: Path) -> None:
+    """desired git_head 是 true/123 时不得被 str() 成 "True"/"123" 冒充 SHA。"""
+    for bad in (True, 123, ["a" * 40], {"sha": "a" * 40}):
+        case = tmp_path / ("case-" + type(bad).__name__ + str(bad)[:3].strip("[]{}"))
+        case.mkdir()
+        (case / "runtime").mkdir()
+        (case / "runtime" / "managed_service_deployment.json").write_text(
+            json.dumps({"deployment_id": "d1", "generation": 7, "git_head": bad}),
+            encoding="utf-8",
+        )
+
+        board = build_board(case / "audit")
+
+        desired = board["versions"]["desired"]
+        assert desired["sha"] == "", f"git_head={bad!r} 不得成为 SHA"
+        assert desired["source"] == "unknown"
+        assert "desired_deployment_invalid" in board["degraded"]
+        assert board["deployment"]["desired_sha"] == ""
+
+
+def test_non_utf8_desired_file_degrades_instead_of_raising(tmp_path: Path) -> None:
+    """真实非 UTF-8 字节：read_text 会抛 UnicodeDecodeError，必须收敛进 degraded。"""
+    (tmp_path / "runtime").mkdir()
+    # 0xff 0xfe 不是合法 UTF-8 序列，且刻意让内容看起来像半截 JSON。
+    (tmp_path / "runtime" / "managed_service_deployment.json").write_bytes(
+        b'{"git_head": "' + b"a" * 40 + b'", "deployment_id": "\xff\xfe"}'
+    )
+
+    board = build_board(tmp_path / "audit")
+
+    desired = board["versions"]["desired"]
+    assert desired["sha"] == ""
+    assert desired["source"] == "unknown"
+    assert any(d.startswith("desired_deployment_unreadable") for d in board["degraded"])
+
+
+def test_explicit_main_head_is_the_behind_baseline(tmp_path: Path) -> None:
+    """显式 main_head 时 behind_main 必须相对该值，不得仍算 HEAD..origin/main。"""
+    repo, old, new = _repo_with_origin_main(tmp_path)
+    # origin/main=new（behind=1）；显式 main_head=old（HEAD 本身，behind=0）。
+    board = build_board(tmp_path / "audit", workspace_root=str(repo), main_head=old)
+
+    assert board["versions"]["main"]["head"] == old
+    assert board["versions"]["main"]["source"] == "explicit"
+    assert board["versions"]["worktree"]["behind_main"] == 0
+
+    # 基准在本地解析不到 → 必须 None，不得借 origin/main 的计数。
+    unknown = build_board(tmp_path / "audit2", workspace_root=str(repo), main_head="f" * 40)
+    assert unknown["versions"]["main"]["head"] == "f" * 40
+    assert unknown["versions"]["worktree"]["behind_main"] is None
+    assert unknown["versions"]["worktree"]["head"] == old
+    assert new != old

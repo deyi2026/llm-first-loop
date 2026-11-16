@@ -10,12 +10,28 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from llm_loop.introspection.lane import TERMINAL_STATUSES, LaneStore
 from llm_loop.timekeeping import system_local_now
+
+# 版本段的合法形状：7..40 位十六进制。全量 sha 是 40，短 sha 也接受（比较用前缀）。
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def _sha_like(value: Any) -> str:
+    """只把「本身就是 SHA 形状的字符串」当版本值。
+
+    ``True`` / ``123`` / 列表经 ``str()`` 会变成 ``"True"`` / ``"123"``，那是伪造
+    版本段（P1）。非字符串一律返回空串 = 无值，由调用方降级成 unknown。
+    """
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    return text if _SHA_RE.match(text) else ""
 
 
 def _probe_git(workspace_root: str, *args: str) -> tuple[str, str]:
@@ -53,9 +69,19 @@ def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) ->
 
     behind: int | None = None
     if head:
-        raw, err = _probe_git(workspace_root, "rev-list", "--count", "HEAD..origin/main")
-        if not err and raw.isdigit():
-            behind = int(raw)
+        if main_head:
+            # 显式基准：behind 必须相对所报 main，否则两个字段说的不是同一个 ref
+            # （P2-2）。本地解析不到该提交就 None，绝不退回 HEAD..origin/main 混算。
+            resolved, _ = _probe_git(
+                workspace_root, "rev-parse", "--verify", f"{main_head}^{{commit}}"
+            )
+            base_ref = main_head if resolved else ""
+        else:
+            base_ref = "origin/main"
+        if base_ref:
+            raw, err = _probe_git(workspace_root, "rev-list", "--count", f"HEAD..{base_ref}")
+            if not err and raw.isdigit():
+                behind = int(raw)
 
     if main_head:
         verified, source, ref = main_head, "explicit", ""
@@ -97,9 +123,11 @@ def _read_desired_deployment(data_root: Path) -> tuple[dict, str]:
         return {}, "desired_deployment_missing"
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    # UnicodeDecodeError 是 ValueError 子类，既不是 OSError 也不是 JSONDecodeError：
+    # 半个 UTF-8 字符必须降级成 unknown，不能炸穿 build_board / 路由（P1）。
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return {}, f"desired_deployment_unreadable:{type(exc).__name__}"
-    if not isinstance(doc, dict) or not str(doc.get("git_head") or "").strip():
+    if not isinstance(doc, dict) or not _sha_like(doc.get("git_head")):
         return {}, "desired_deployment_invalid"
     return doc, ""
 
@@ -108,11 +136,13 @@ def _desired_strip(doc: dict) -> dict[str, Any]:
     generation = doc.get("generation")
     if not isinstance(generation, int) or isinstance(generation, bool):
         generation = None
+    # 防御第二道：即便调用方传进来未经校验的 doc，也只输出 SHA 形状的值。
+    sha = _sha_like(doc.get("git_head"))
     return {
         "generation": generation,
-        "sha": str(doc.get("git_head") or ""),
+        "sha": sha,
         "deployment_id": str(doc.get("deployment_id") or ""),
-        "source": "managed_service_deployment" if doc else "unknown",
+        "source": "managed_service_deployment" if sha else "unknown",
     }
 
 
@@ -216,7 +246,9 @@ def _read_latest_deployment(dep_dir: Path) -> tuple[dict, str]:
                     ts = str(row.get("ts") or "")
                     if ts >= best_ts:
                         best, best_ts = row, ts
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # 非 UTF-8 字节在迭代中被触发时是 UnicodeDecodeError（ValueError 子类）：
+            # 一个坏历史文件不能拖垮整个部署段（与 desired/receipt 同口径）。
             continue
     if not best:
         return {}, "deployments_empty"
@@ -236,7 +268,7 @@ def _read_authoritative_receipt(data_root: Path) -> tuple[dict, str]:
         return {}, "restart_receipt_missing"
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return {}, f"restart_receipt_unreadable:{type(exc).__name__}"
     if not isinstance(raw, dict):
         return {}, "restart_receipt_bad_shape"
@@ -450,7 +482,9 @@ def build_board(
     versions["desired"] = desired
     versions["live"] = {
         "sha": live_sha,
-        "recorded_at": str(dep_row.get("ts") or ""),
+        # P2-1：时间戳同样只能由权威回执证明。历史行的 ts 属于 deployed 历史，
+        # 挂在 live 段会让人把它读成"最近一次实际在跑的记录"。
+        "recorded_at": str(dep_row.get("ts") or "") if live_authoritative else "",
         "source": "restart-receipt" if live_authoritative else "unknown",
         "authoritative": live_authoritative,
     }
