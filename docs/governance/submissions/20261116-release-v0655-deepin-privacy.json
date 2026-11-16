@@ -1,0 +1,108 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-release-v0655-deepin-privacy",
+  "summary": "Combined Deepin 0.6.55 immutable release: reviewed privacy guard repair plus minimal version-identity update, with exact 11-path A.5 coverage and one existing control authority reused.",
+  "components": [
+    {
+      "component_id": "outbound-privacy-guard-parity",
+      "paths": [
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/cache_guard/outbound_privacy.py",
+        "src/llm_loop/security_guard.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "existing-outbound-privacy-authority",
+      "owning_subsystem": "Existing cache_guard outbound privacy enforcement and security_guard transport redaction",
+      "disposition": "Repair the already-existing outbound privacy authority, not a new gate: use one transport-sensitive pattern source for final residual checks, keep protected-field denial fail-closed, detect embedded credentials and expose only nonsecret reason codes.",
+      "evidence": [
+        "Deepin 0.6.54 synthetic and real-session offline projection: historical reasoning_content bare marker blocked by legacy guard but passed after safe pattern alignment; provider_sent=false.",
+        "Existing synthetic tests demonstrate normal content allowed, embedded secrets redacted, protected fields rejected, and redactor failures fail-closed.",
+        "Prior exact privacy patch 79737f19b09ca2f0ee45daf0def1be8c99c660ca received independent DeepSeek-v4-flash Host Reviewer PASS P0/P1/P2=0; combined release candidate requires fresh review."
+      ],
+      "verification_level": "Independent exact combined SHA Reviewer PASS P0/P1=0; original full R9 exit0; remote PR/CI; Deepin wheel artifact SHA and historical offline privacy projection before production activation.",
+      "model_evidence_veto_recovery_exit": "On ambiguous or unredactable structured fields deny Provider send, retain original data locally, log only nonsecret reason codes, and require explicit operator recovery; never silently disable privacy guard.",
+      "rollback_route": "Revert patch before release or roll back immutable Deepin 0.6.55 wheel to 0.6.54 through managed deployment; do not overwrite existing wheel bytes."
+    },
+    {
+      "component_id": "outbound-privacy-regression-tests",
+      "paths": [
+        "tests/unit/test_provider_outbound_secret_redaction.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Outbound privacy unit regression evidence",
+      "disposition": "Add synthetic positive/negative tests for documentation-only private-key markers, reasoning_content history, embedded credentials, protected fields and redactor errors; no production authority.",
+      "evidence": [
+        "RED→GREEN synthetic tests on original privacy fix; 101 focused tests passed after rebase to 9c805982d2."
+      ],
+      "verification_level": "Focused tests plus original full R9; no real Provider calls or secret values.",
+      "model_evidence_veto_recovery_exit": "Test regressions must block release; no bypass of actual privacy gate.",
+      "rollback_route": "Revert tests with corresponding privacy implementation if abandoned."
+    },
+    {
+      "component_id": "v0655-release-identity",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py",
+        "uv.lock"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Public release identity and packaging metadata",
+      "disposition": "Bump version metadata from 0.6.54 to 0.6.55 without touching already-reviewed privacy implementation. Immutable 0.6.54 Deepin wheel must never be overwritten.",
+      "evidence": [
+        "Underlying privacy patch 79737f19b09ca2f0ee45daf0def1be8c99c660ca has independent DeepSeek-v4-flash Reviewer PASS P0=P1=P2=0; full R9/remote CI/merge remain separate gates.",
+        "Existing Deepin deployment is 0.6.54, generation 17; release candidate must be a new immutable version."
+      ],
+      "verification_level": "Exact new SHA Reviewer PASS P0/P1=0, original full R9 exit 0, remote PR CI, wheel metadata/lock/WebUI/SHA, Deepin managed release acceptance before production claim.",
+      "model_evidence_veto_recovery_exit": "Do not publish or restart if candidate identity, R9, remote CI, wheel SHA, or managed deployment gate differs.",
+      "rollback_route": "Leave current Deepin 0.6.54 active until all gates pass; retain previous release for managed rollback."
+    },
+    {
+      "component_id": "a5-release-submission",
+      "paths": [
+        "docs/governance/submissions/20261116-release-v0655-deepin-privacy.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture change declaration",
+      "disposition": "Declare exact combined 11-path privacy guard control repair and version-identity release delta. The privacy authority is reused, not newly introduced; this manifest adds no runtime gate or bypass.",
+      "evidence": [
+        "Prior release submissions use exact path coverage."
+      ],
+      "verification_level": "A.5 checker --staged and --base/--head PASS; independent review/R9/CI still required.",
+      "model_evidence_veto_recovery_exit": "Reject if exact changed-path coverage or release identity consistency fails.",
+      "rollback_route": "Drop version-only commit and keep reviewed privacy patch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-outbound-privacy-authority",
+      "g1": {
+        "necessity": "The Deepin 0.6.54 outbound privacy final guard treated documentation-only a private-key start delimiter text in historical reasoning_content as a real secret, although transport redaction only recognizes complete PEM containers. This deterministic false positive prevented safe continuation of an otherwise redacted session; alignment is necessary without weakening true secret protection."
+      },
+      "g2": {
+        "authority_owner": "Existing cache_guard outbound_privacy.py and guard.py final check with security_guard.redact_secrets_for_transport; no new controller, policy authority, or bypass.",
+        "relationship": "reuse",
+        "non_duplication": "The patch reuses the existing transport redaction patterns as the final residual detection source and preserves protected structural-field and key-name fail-closed checks; it does not add a competing allowlist or alternate Provider path."
+      },
+      "g3": {
+        "model_evidence": [
+          "Synthetic positive/negative privacy projection unit tests (including historical reasoning_content bare marker).",
+          "Deepin 0.6.54 read-only offline 717-message projection: old rule BLOCK, aligned rule ALLOW with 3 redactions, provider not called.",
+          "Host independent DeepSeek-v4-flash Reviewer PASS on original privacy patch 79737f19b; fresh combined SHA still requires its own verdict."
+        ],
+        "recovery_or_reason": "When a real credential appears in ordinary content, redact it before Provider send; when a protected signature/identifier or secret dict key is not safely transformable, deny with a nonsecret reason. On redactor failure deny and do not log raw values; for benign bare markers allow after the same final transport pattern check."
+      },
+      "g4": {
+        "rollback": "Keep current immutable Deepin 0.6.54 wheel and its deployment generation until a separate 0.6.55 artifact passes all gates. Managed rollback restores prior wheel; no user session or evidence migration is part of this change.",
+        "verification": [
+          "Exact combined SHA independent Reviewer PASS P0/P1=0.",
+          "Original complete R9 exit0 and remote CI including A.5 exact changed-path coverage.",
+          "Deepin offline projection of the historical affected session with no Provider call.",
+          "Deepin managed restart three services and verify wheel SHA, generation, health and negative secret-blocking behavior."
+        ]
+      }
+    }
+  ]
+}

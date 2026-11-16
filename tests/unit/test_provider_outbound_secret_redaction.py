@@ -248,3 +248,77 @@ def test_redacted_json_tool_arguments_remain_valid(monkeypatch):
     args = json.loads(safe[0]["tool_calls"][0]["function"]["arguments"])
     assert SECRET not in json.dumps(args)
     assert json.loads(raw[0]["tool_calls"][0]["function"]["arguments"])["nested"]["secret"] == SECRET
+
+
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+def test_documentation_only_private_key_marker_does_not_block(monkeypatch, field):
+    """A late historical marker is not a PEM container or a secret payload."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    marker = "BEGIN " + "PRIVATE KEY"
+    source = [{"role": "user", "content": "safe"} for _ in range(5)]
+    source.append({
+        "role": "assistant", "content": "ordinary",
+        field: "Explain the literal " + marker + " marker in documentation.",
+    })
+    safe, _, _, count = redact_provider_request(source, [], "")
+    assert count == 0
+    assert safe is source
+
+
+@pytest.mark.parametrize(
+    "synthetic",
+    [
+        "sk-" + "Z" * 32,
+        "AKIA" + "Z" * 16,
+        "ghp_" + "Z" * 36,
+    ],
+)
+def test_embedded_legacy_guard_secret_is_redacted_not_blocked(synthetic):
+    """A guard-recognized credential cannot escape redaction via word boundaries."""
+    source = [{"role": "tool", "content": "prefix" + synthetic + "suffix"}]
+    safe, _, _, count = redact_provider_request(source, [], "")
+    assert count > 0
+    assert synthetic not in safe[0]["content"]
+    assert source[0]["content"].endswith("suffix")
+
+
+def test_denial_reason_is_safe_and_actionable(monkeypatch):
+    """Denial categories must be distinguishable without echoing secrets."""
+    monkeypatch.setenv("LLM_API_KEY", SECRET)
+    with pytest.raises(CacheGuardBlockedError) as protected:
+        redact_provider_request([{"role": "assistant", "signature": SECRET}], [], "")
+    assert "reason=protected_field" in str(protected.value)
+    assert SECRET not in str(protected.value)
+    with pytest.raises(CacheGuardBlockedError) as key:
+        redact_provider_request([{"role": "user", SECRET: "ordinary"}], [], "")
+    assert "reason=secret_key" in str(key.value)
+    assert SECRET not in str(key.value)
+
+
+def test_redactor_failure_has_nonsecret_reason(monkeypatch):
+    import llm_loop.cache_guard.outbound_privacy as privacy
+
+    def fail(_text):
+        raise RuntimeError("sensitive diagnostic must not leak")
+
+    monkeypatch.setattr(privacy, "redact_secrets_for_transport", fail)
+    with pytest.raises(CacheGuardBlockedError) as denied:
+        redact_provider_request([{"role": "user", "content": "ordinary"}], [], "")
+    assert "reason=redactor_error" in str(denied.value)
+    assert "sensitive diagnostic" not in str(denied.value)
+
+
+def test_complete_synthetic_pem_is_redacted_while_bare_marker_is_not(monkeypatch):
+    """Real PEM framing remains protected; ordinary marker prose stays usable."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    start = "-----" + "BEGIN " + "PRIVATE KEY" + "-----"
+    end = "-----" + "END " + "PRIVATE KEY" + "-----"
+    pem = start + "\n" + "QUJD" * 24 + "\n" + end
+    msgs = [{"role": "assistant", "content": "ordinary", "reasoning_content": pem}]
+    safe, _, _, count = redact_provider_request(msgs, [], "")
+    assert count > 0
+    assert pem not in safe[0]["reasoning_content"]
+    assert start not in safe[0]["reasoning_content"]
+    assert msgs[0]["reasoning_content"] == pem
+    with pytest.raises(CacheGuardBlockedError, match="reason=protected_field"):
+        redact_provider_request([{"role": "assistant", "signature": pem}], [], "")

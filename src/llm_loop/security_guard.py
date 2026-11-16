@@ -214,8 +214,9 @@ SENSITIVE_ENV_NAMES = frozenset(
 _OUTBOUND_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     _STRONG_CONTENT_PATTERNS
     + (
-        ("api_key_short", re.compile(r"\bsk-[A-Za-z0-9]{16,}")),
-        ("github_token_short", re.compile(r"\bghp_[A-Za-z0-9]{20,}")),
+        ("api_key_short", re.compile(r"sk-[A-Za-z0-9]{16,}")),
+        ("github_token_short", re.compile(r"ghp_[A-Za-z0-9]{20,}")),
+        ("aws_access_key_id_embedded", re.compile(r"AKIA[0-9A-Z]{16}")),
     )
 )
 
