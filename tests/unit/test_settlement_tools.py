@@ -646,8 +646,13 @@ def test_c11_applied_stale_derives_refresh_items(tmp_path):
 
     store, ws = _c11_store(tmp_path)
     (ws / "a.txt").write_bytes(b"v1")
-    changed = _c11_card(store, "c11 changed probe", ["a.txt"], baseline={"a.txt": b"other"})
-    gone = _c11_card(store, "c11 missing probe", ["gone.txt"], baseline={"gone.txt": "x"})
+    (ws / "gone.txt").write_bytes(b"present")
+    changed = _c11_card(store, "c11 changed probe", ["a.txt"])
+    gone = _c11_card(store, "c11 missing probe", ["gone.txt"])
+    # R4 真实基线语义（Q-05 R4×C11 兼容修复）：stale 只能由注记期可信基线之后的
+    # 真实文件变更/真实缺失触发；伪造 qualification 基线不再制造 changed/missing。
+    (ws / "a.txt").write_bytes(b"v2")
+    (ws / "gone.txt").unlink()
     _c11_use(store, changed.method_ref, session="sess-1", wu="TASK-A")
     _c11_use(store, gone.method_ref, session="sess-1", wu="TASK-A")
 
@@ -659,6 +664,31 @@ def test_c11_applied_stale_derives_refresh_items(tmp_path):
     assert by_ref[changed.method_ref]["state"] == "changed"
     assert by_ref[changed.method_ref]["reason"] == ["a.txt"]
     assert by_ref[gone.method_ref]["state"] == "missing"
+
+
+def test_c11_fresh_annotate_yields_no_refresh_until_real_change(tmp_path):
+    """最小反例（Q-05 R4×C11）：刚 annotate 未修改 = current 不派生；真实修改后才派生。"""
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    card = _c11_card(store, "c11 fresh annotate probe", ["a.txt"])
+    _c11_use(store, card.method_ref, session="sess-1", wu="TASK-A")
+
+    assert (
+        collect_freshness_refresh_items(
+            method_store=store, session_id="sess-1", work_unit_id="TASK-A"
+        )
+        == []
+    )  # 注记期基线与当前内容一致：current，绝不派生刷新待办
+
+    (ws / "a.txt").write_bytes(b"v2")  # 真实内容变更后才产生刷新待办
+    items = collect_freshness_refresh_items(
+        method_store=store, session_id="sess-1", work_unit_id="TASK-A"
+    )
+    assert [i["ref"] for i in items] == [card.method_ref]
+    assert items[0]["state"] == "changed"
+    assert items[0]["reason"] == ["a.txt"]
 
 
 def test_c11_skips_current_unbaselined_and_non_applied(tmp_path):
@@ -691,9 +721,10 @@ def test_c11_scope_isolation_and_conservative_attribution(tmp_path):
 
     store, ws = _c11_store(tmp_path)
     (ws / "a.txt").write_bytes(b"v1")
-    other_session = _c11_card(store, "c11 other session", ["a.txt"], baseline={"a.txt": "x"})
-    other_wu = _c11_card(store, "c11 other wu", ["a.txt"], baseline={"a.txt": "x"})
-    no_scope = _c11_card(store, "c11 no attribution", ["a.txt"], baseline={"a.txt": "x"})
+    other_session = _c11_card(store, "c11 other session", ["a.txt"])
+    other_wu = _c11_card(store, "c11 other wu", ["a.txt"])
+    no_scope = _c11_card(store, "c11 no attribution", ["a.txt"])
+    (ws / "a.txt").write_bytes(b"v2")  # 三卡同锚：注记后真实内容变更 → 均 changed
     _c11_use(store, other_session.method_ref, session="sess-OTHER", wu="TASK-OTHER")
     _c11_use(store, other_wu.method_ref, session="", wu="TASK-OTHER")
     _c11_use(store, no_scope.method_ref, session="", wu="")
@@ -715,8 +746,10 @@ def test_c11_dedupes_latest_and_is_bounded(tmp_path):
     store, ws = _c11_store(tmp_path)
     (ws / "a.txt").write_bytes(b"v1")
     (ws / "b.txt").write_bytes(b"v2")
-    one = _c11_card(store, "c11 dedupe one", ["a.txt"], baseline={"a.txt": "x"})
-    two = _c11_card(store, "c11 dedupe two", ["b.txt"], baseline={"b.txt": "x"})
+    one = _c11_card(store, "c11 dedupe one", ["a.txt"])
+    two = _c11_card(store, "c11 dedupe two", ["b.txt"])
+    (ws / "a.txt").write_bytes(b"v1-mutated")  # 注记后真实变更
+    (ws / "b.txt").write_bytes(b"v2-mutated")
     _c11_use(store, one.method_ref, session="sess-1")
     _c11_use(store, one.method_ref, session="sess-1")  # 重复使用：同 ref 只一项
     _c11_use(store, two.method_ref, session="sess-1")
@@ -756,9 +789,10 @@ def test_c11_qa_p1_attribution_requires_every_provided_dimension(tmp_path):
 
     store, ws = _c11_store(tmp_path)
     (ws / "a.txt").write_bytes(b"v1")
-    cross_session = _c11_card(store, "c11 qa cross session", ["a.txt"], baseline={"a.txt": "x"})
-    cross_wu = _c11_card(store, "c11 qa cross wu", ["a.txt"], baseline={"a.txt": "x"})
-    exact_pair = _c11_card(store, "c11 qa exact pair", ["a.txt"], baseline={"a.txt": "x"})
+    cross_session = _c11_card(store, "c11 qa cross session", ["a.txt"])
+    cross_wu = _c11_card(store, "c11 qa cross wu", ["a.txt"])
+    exact_pair = _c11_card(store, "c11 qa exact pair", ["a.txt"])
+    (ws / "a.txt").write_bytes(b"v2")  # 三卡同锚：注记后真实变更 → 均 changed
     _c11_use(store, cross_session.method_ref, session="session-B", wu="TASK-A")
     _c11_use(store, cross_wu.method_ref, session="session-A", wu="TASK-B")
     _c11_use(store, exact_pair.method_ref, session="session-A", wu="TASK-A")
@@ -835,29 +869,17 @@ def test_c11_pending_tool_separates_refresh_from_settlement(tmp_path):
     host = _host(tmp_path)
     channel = host.ctx.settlement
     store = channel.method_store
-    import hashlib as _h
-
     ws = tmp_path / "c11ws"
     ws.mkdir()
-    # 同目录再开一个带 workspace_root 的实例只改内部字段会影响另一实例？
-    # 不会——直接用 channel 的 store：其 workspace_root 为 None，锚全部落
-    # current={}；通过 baseline 错配制造 changed（快照空 vs baseline 值）。
+    (ws / "legacy.txt").write_bytes(b"old")
+    # R4 真实基线语义（Q-05 R4×C11 兼容修复）：接上真实 workspace_root，changed
+    # 由注记后的真实内容变更触发；不再伪造 legacy qualification 基线错配。
+    store._workspace_root = ws.resolve()  # type: ignore[attr-defined]
     record = store.save_candidate(
         name="c11 tool probe", description="c11 tool probe", body=_CONTRACT_BODY
     )
     record = store.annotate_freshness(record.method_ref, ["legacy.txt"])
-    qpath = Path(record.path).parent / "qualification.jsonl"
-    with qpath.open("a", encoding="utf-8") as fh:
-        fh.write(
-            json.dumps(
-                {
-                    "ts": "2026-11-16T07:00:00+08:00",
-                    "verdict": "pass",
-                    "freshness_hashes": {"legacy.txt": _h.sha256(b"old").hexdigest()},
-                }
-            )
-            + "\n"
-        )
+    (ws / "legacy.txt").write_bytes(b"new")
     store.record_use(
         record.method_ref,
         episode_ref="episode:c11-test-1",
