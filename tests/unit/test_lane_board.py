@@ -23,7 +23,9 @@ def _snapshot(root: Path) -> dict[str, str]:
 
 @pytest.fixture()
 def seeded(tmp_path: Path) -> Path:
-    store = LaneStore(tmp_path)
+    # audit 目录独立一层：restart-receipt 必须落在它的父目录（data/ 语义）。
+    audit = tmp_path / "audit"
+    store = LaneStore(audit)
     store.create(
         branch="fix/a",
         worktree="/tmp/wt-a",
@@ -39,8 +41,10 @@ def seeded(tmp_path: Path) -> Path:
         paths=["src/llm_loop/web/routes.py"],
         lane_role="main",
     )
-    dep = tmp_path / "deployments"
-    dep.mkdir()
+    # 权威 live 源与历史部署行分开落盘：restart-receipt 位于 audit 的父目录。
+    # 历史 deployments 行只能"可看"，不足以证明"实际在跑"（P1-A）。
+    dep = audit / "deployments"
+    dep.mkdir(parents=True)
     rows = [
         {"ts": "2026-09-16T06:00:00+00:00", "phase": "pre_deploy", "target_sha": "old" * 10},
         {"ts": "2026-11-05T01:00:00+00:00", "phase": "pre_deploy", "target_sha": "b" * 40},
@@ -48,13 +52,26 @@ def seeded(tmp_path: Path) -> Path:
     (dep / "batch.jsonl").write_text(
         "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
     )
-    return tmp_path
+    # 权威回执：service_control 重启后写入，"现在实际在跑的就是 b*40"。
+    (tmp_path / "restart-receipt.json").write_text(
+        json.dumps(
+            {
+                "ts": "2026-11-05T01:00:00+00:00",
+                "action": "web",
+                "git_head_full": "b" * 40,
+                "authoritative": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return audit
 
 
 def test_board_is_zero_write(seeded: Path) -> None:
-    before = _snapshot(seeded)
+    # 目录快照覆盖 audit（账本）与父目录（restart-receipt）——两处都不许被写。
+    before = _snapshot(seeded.parent)
     build_board(seeded, main_head="b" * 40)
-    after = _snapshot(seeded)
+    after = _snapshot(seeded.parent)
     assert before == after, "Board 必须零写副作用（A6）"
 
 
@@ -176,11 +193,16 @@ def test_channel_splits_needs_decision_into_three_counts(tmp_path: Path) -> None
         json.dumps({"id": "h1", "need": "block", "state": "pending"}), "utf-8"
     )
 
+    # 显式 main_head 与 lane 基线都必须是与 service_control 同形状的 40 位十六进制；
+    # 换掉旧 fixture 的 "head1"/"oldsha" 占位符（断言不变）。
+    head_sha = "1" * 40
+    stale_sha = "2" * 40
+
     store = LaneStore(audit)
     merging = store.create(
         branch="fix/merging",
         worktree=str(tmp_path / "wt-m"),
-        base_main_sha="head1",
+        base_main_sha=head_sha,
         goal_id="G1",
         owner_session_id="s1",
     )
@@ -192,12 +214,12 @@ def test_channel_splits_needs_decision_into_three_counts(tmp_path: Path) -> None
     store.create(
         branch="fix/stale",
         worktree=str(tmp_path / "wt-s"),
-        base_main_sha="oldsha",
+        base_main_sha=stale_sha,
         goal_id="G2",
         owner_session_id="s2",
     )
 
-    ch = build_board(audit, main_head="head1")["channel"]
+    ch = build_board(audit, main_head=head_sha)["channel"]
     assert ch["merging_pending"] == 1
     assert ch["baseline_stale"] == 1
     assert ch["blocking_help"] == 1
