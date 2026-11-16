@@ -1,0 +1,50 @@
+{
+  "schema": "lfl.required_checks.v1",
+  "checks": [
+    {
+      "context": "门禁（pytest + ruff + pyright）",
+      "app_id": 15368,
+      "purpose": "test",
+      "event_scope": "push_and_pr",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_blob_sha": "c6b90c0701ae16f172736fb79f9b8cbdd06f967a",
+      "workflow_id": 381673272
+    },
+    {
+      "context": "安全扫描（敏感/私密/错误文件拦截）",
+      "app_id": 15368,
+      "purpose": "security_scan",
+      "event_scope": "push_and_pr",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_blob_sha": "c6b90c0701ae16f172736fb79f9b8cbdd06f967a",
+      "workflow_id": 381673272
+    },
+    {
+      "context": "managed-premerge-evidence",
+      "app_id": 15368,
+      "purpose": "managed_evidence",
+      "event_scope": "push_and_pr",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_blob_sha": "c6b90c0701ae16f172736fb79f9b8cbdd06f967a",
+      "workflow_id": 381673272
+    },
+    {
+      "context": "privacy-gate",
+      "app_id": 15368,
+      "purpose": "privacy",
+      "event_scope": "push_and_pr",
+      "workflow_path": ".github/workflows/privacy-scan.yml",
+      "workflow_blob_sha": "e3ca616316746f8eaced3f72b6b46bf0f32943f3",
+      "workflow_id": 400696811
+    },
+    {
+      "context": "A.5 架构提交审查（机械 presence/coverage）",
+      "app_id": 15368,
+      "purpose": "architecture",
+      "event_scope": "pr_only",
+      "workflow_path": ".github/workflows/architecture-review.yml",
+      "workflow_blob_sha": "e14fb650194e588b4031dd13914801eedaef19cf",
+      "workflow_id": 381673271
+    }
+  ]
+}
