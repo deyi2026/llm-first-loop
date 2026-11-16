@@ -1,0 +1,176 @@
+{
+ "schema": "lfl.architecture_submission.v0.1",
+ "submission_id": "20261116-q05-knowledge-self-improvement-unified-pr43",
+ "summary": "Q-05 统一集成 PR #43 的架构提交清单：知识自改进闭环 v1.3.1（设计 03f68de45/DPE 375495909/M0-R4 9dc015944 等冻结候选合并于 a0e711d6 链）三条控制机械组件——R4 时效锚真实解析（anchor_kind/anchor_root_id/resolution_state，unresolvable 不误报 missing）、C11 刷锚待办与知识结算隔离（item_kind=freshness_refresh）、Q-09 审查宿主 prompt/解析器契约修复；其余为知识材料（13 张方法卡、设计文档 v1.3.1、DPE 规格 v2、1 条经验卡）与本 manifest。base 96098972f9edc25080d836d08cc9bd7b3c9dd676。",
+ "declarations": [
+  {
+   "declaration_id": "D1-R4-ANCHORS",
+   "g1": {
+    "necessity": "设计 v1.3.1 §R4/C8/F10/F11：evidence:// 锚被当路径 stat 恒报 missing、wheel 布局缺 src 映射假报 missing、同锚不同根结论相反且无根标识——读取侧需要三类锚（path/code/evidence）+ anchor_root_id + resolution_state 三元组，且不得因缺锚自动废卡。"
+   },
+   "g2": {
+    "authority_owner": "LFL 主开发代理（实现）+ 受管独立 GLM-5.3 Reviewer（审查）；依据 GOAL-20261116-f0858d99 设计文档 v1.3.1 §R4 与用户分阶段授权",
+    "relationship": "reuse",
+    "non_duplication": "复用 MethodStore 既有 _freshness_snapshot 与内容 SHA 基线，仅并行新增只读解析层（_resolve_freshness_anchor/_anchor_code_roots），不新建状态库、不新平台、不动其它模块，legacy 快照与旧 qualification 基线字节级兼容"
+   },
+   "g3": {
+    "model_evidence": [
+     "受管审查 Host PASS：review_admission child subagent_c39fba13e56c，qualification=PASS，candidate_sha256=89416c42…匹配冻结 HEAD 9dc015944，实际 glm-5.3/HTTP200 无 flashx fallback，P0=P1=0",
+     "tests/unit/test_method_freshness.py 8 专项：mtime+size 保持的内容改写仍判 changed（真实 SHA 基线）、wheel 布局 unresolvable 不误报 missing、evidence:// 即使存在同形字面文件也不 stat、穿越/越界 symlink/反斜杠拒绝、旧基线兼容且 freshness() 只读不废卡"
+    ],
+    "recovery_or_reason": "若解析层误判，回退到 legacy 快照语义仍然成立（三元组是新增键，缺失即退化为旧行为）；不改变任何处置/生命周期语义"
+   },
+   "g4": {
+    "rollback": "git revert lane/m0-r4-anchors 上 store.py+test 两提交（改动面仅两文件，revert 边界清晰）",
+    "verification": [
+     "定向 pytest 8/8 exit0（root .venv，模块落点已验证为 worktree src）",
+     "Ruff check 两文件 exit0、Pyright targeted exit0",
+     "原版完整 R9 于 a0e711d6 CLEAN exit0（15374 passed/184 skipped/3 xfailed）；新 HEAD 的 R9 需在后续 Run 重跑后方可引用"
+    ]
+   }
+  },
+  {
+   "declaration_id": "D2-C11-REFRESH-SETTLEMENT",
+   "g1": {
+    "necessity": "设计 v1.3.1 §4.4④/C11/V9：刷锚待办若混入 settlement_submit 结算清单会污染待结算计数与幂等键——读取侧 changed/missing/unresolvable 三态触发的复核锚提示必须以 item_kind=freshness_refresh 与知识使用结算项隔离分列。"
+   },
+   "g2": {
+    "authority_owner": "LFL 主开发代理（实现）+ 受管独立 GLM-5.3 Reviewer（审查）；依据设计 v1.3.1 C11 契约变更表",
+    "relationship": "reuse",
+    "non_duplication": "复用既有 settlement_pending 只读清单与 registry_experience 读侧，只增派生提示与隔离标记，不新建持久层、不加运行时硬门（与设计 §11 写入面约束一致）"
+   },
+   "g3": {
+    "model_evidence": [
+     "tests/unit/test_settlement_tools.py 负向/正向用例：refresh 提示不进入 settlement_submit 抵扣、两类计数分列",
+     "随 PR #43 的原版 R9 于 a0e711d6 全量 CLEAN"
+    ],
+    "recovery_or_reason": "提示通道为只读派生，回退即回到无提示状态，不影响结算正确性"
+   },
+   "g4": {
+    "rollback": "git revert 对应提交（registry_experience.py/settlement.py/test_settlement_tools.py 三文件）",
+    "verification": [
+     "定向 pytest exit0（随 15 专项+94 相邻集）",
+     "原版 R9 a0e711d6 CLEAN；新 HEAD R9 待后续 Run 重跑"
+    ]
+   }
+  },
+  {
+   "declaration_id": "D3-Q09-REVIEW-HOST-CONTRACT",
+   "g1": {
+    "necessity": "Q-09（TASK-f0858d99-016）：review_host_admission 的 reviewer prompt 前段要求 'and a SHA256: <sha> line' 而末段强制 FINGERPRINT-only，_qualifying_pass_p2 又要求二选一——内容 PASS（subagent_207c58806e79 VERDICT:PASS P0=P1=P2=0 指纹匹配）被误判格式 REVISE，浪费窄复审且阻塞资格签发。"
+   },
+   "g2": {
+    "authority_owner": "LFL 主开发代理（修复实现）+ 受管独立 GLM-5.3 Reviewer（审查）；依据回执 data/review_admission/subagent_207c58806e79-git_push.md 与外部根因定位",
+    "relationship": "replace",
+    "non_duplication": "统一为单一终判格式规范（FINGERPRINT-only），非新增并行判定路径；不改 _qualifying_pass_p2 的二选一安全语义"
+   },
+   "g3": {
+    "model_evidence": [
+     "先红后绿回归测试（tests/unit/test_review_host_admission.py）：同时含 SHA256+FINGERPRINT 双行的 PASS 回执 fixture 修复前判 REVISE、修复后判 PASS",
+     "RULE-AI-35 应拦实测：非 PASS 文本/缺指纹仍被拦，门禁语义未放宽"
+    ],
+    "recovery_or_reason": "若新格式导致真实 REVISE 被误放行（无证据），恢复旧 prompt 为一行回退路径；语义校验仍由 Host counts/_qualifying_pass_p2 把守"
+   },
+   "g4": {
+    "rollback": "git revert review_host_admission.py+两测试提交",
+    "verification": [
+     "定向 pytest exit0（含新增回归）",
+     "原版 R9 a0e711d6 CLEAN；新 HEAD R9 待后续 Run 重跑"
+    ]
+   }
+  }
+ ],
+ "components": [
+  {
+   "component_id": "C1-R4-ANCHOR-RESOLUTION",
+   "paths": [
+    "src/llm_loop/methods/store.py",
+    "tests/unit/test_method_freshness.py"
+   ],
+   "control_machinery": true,
+   "owning_subsystem": "methods freshness read side (MethodStore)",
+   "disposition": "merged candidate via lane/m0-r4-anchors, Host PASS",
+   "evidence": [
+    "review_admission PASS subagent_c39fba13e56c (89416c42…)",
+    "tests/unit/test_method_freshness.py 8/8"
+   ],
+   "verification_level": "independent reviewer PASS + targeted tests + full R9 on a0e (CLEAN); new-HEAD R9 pending",
+   "model_evidence_veto_recovery_exit": "revert two-file commit; legacy snapshot semantics remain as fallback",
+   "rollback_route": "git revert lane/m0-r4-anchors commits",
+   "declaration_id": "D1-R4-ANCHORS"
+  },
+  {
+   "component_id": "C2-C11-REFRESH-SETTLEMENT-ISOLATION",
+   "paths": [
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/introspection/settlement.py",
+    "tests/unit/test_settlement_tools.py"
+   ],
+   "control_machinery": true,
+   "owning_subsystem": "introspection settlement read side",
+   "disposition": "merged candidate, reviewed in unified chain",
+   "evidence": [
+    "tests/unit/test_settlement_tools.py",
+    "原版 R9 a0e711d6 CLEAN"
+   ],
+   "verification_level": "targeted tests + full R9 on a0e (CLEAN); independent reviewer in unified PR chain",
+   "model_evidence_veto_recovery_exit": "revert three-file commit; settlement correctness unaffected",
+   "rollback_route": "git revert C11 commits",
+   "declaration_id": "D2-C11-REFRESH-SETTLEMENT"
+  },
+  {
+   "component_id": "C3-Q09-REVIEW-HOST-FORMAT",
+   "paths": [
+    "src/llm_loop/tools/review_host_admission.py",
+    "tests/unit/test_review_host_admission.py",
+    "tests/unit/test_host_grant_store_auth.py"
+   ],
+   "control_machinery": true,
+   "owning_subsystem": "tools/review_host_admission",
+   "disposition": "merged candidate (Q-09 minimal fix)",
+   "evidence": [
+    "回执 subagent_207c58806e79（格式 REVISE 根因）",
+    "先红后绿回归 + RULE-AI-35 应拦实测"
+   ],
+   "verification_level": "targeted regression tests; independent reviewer in unified PR chain",
+   "model_evidence_veto_recovery_exit": "revert; old prompt restored, gate semantics unchanged",
+   "rollback_route": "git revert Q-09 commits",
+   "declaration_id": "D3-Q09-REVIEW-HOST-CONTRACT"
+  },
+  {
+   "component_id": "C4-KNOWLEDGE-MATERIALS",
+   "paths": [
+    "data/methods/audit-doc-evidence-inventory-via-sibling-tree-diff-2eb26297b964/METHOD.md",
+    "data/methods/copy-env-bootstrap-from-proven-gate-script-in-worktree-8dc7bcde2d04/METHOD.md",
+    "data/methods/countdown-scheduled-polling-and-channel-alternation-on-duplicate-guard-fe4ada146562/METHOD.md",
+    "data/methods/cross-session-lane-block-verify-liveness-notify-schedule-not-poll-16a6cd5be106/METHOD.md",
+    "data/methods/file-first-retry-after-guard-hard-block-fuse-posture-and-interpreter-311307dc6ea2/METHOD.md",
+    "data/methods/gate-verdict-text-vs-qualification-mismatch-host-field-governs-ee47e8c957f1/METHOD.md",
+    "data/methods/host-revise-vs-receipt-pass-narrow-readjudication-zero-change-dcf90c35ab0d/METHOD.md",
+    "data/methods/passthrough-slash-intent-from-intercept-baseline-then-ownership-freshnes-2b3c4e4076c6/METHOD.md",
+    "data/methods/recheck-artifact-existence-after-gated-push-before-manual-create-724d522517a8/METHOD.md",
+    "data/methods/scoped-read-failure-pivot-to-workspace-shared-surfaces-c3eb1d5ae027/METHOD.md",
+    "data/methods/stop-code-exact-match-triage-before-gate-reissue-d20a54929d91/METHOD.md",
+    "data/methods/translate-external-criteria-to-local-naming-then-probe-live-state-4a8b43abc928/METHOD.md",
+    "data/methods/verify-merged-pr-preservation-by-changeset-intersection-8990ef47cba5/METHOD.md",
+    "docs/DESIGN-20261115-knowledge-self-improvement-loop-v1.md",
+    "evals/methodcard_rsi_v1/dpe/dpe_spec_v2.md",
+    "experiences/EXPERIENCE-20261116-审查统计-实验类文档-自引清单对账之外必须枚举实验目录-本次漏掉-s1b-orth-关键一轮.md",
+    "docs/governance/submissions/20261116-q05-knowledge-self-improvement-unified-pr43.json"
+   ],
+   "control_machinery": false,
+   "owning_subsystem": "knowledge corpus (methods/experiences/docs/evals)",
+   "disposition": "content-only materials, no runtime machinery",
+   "evidence": [
+    "13 张方法卡（知识收割）",
+    "设计文档 v1.3.1（docs lane Host 审查链）",
+    "DPE 规格 v2（dpe lane Host PASS 84e75b3d…）",
+    "经验卡 1 条",
+    "本 manifest"
+   ],
+   "verification_level": "content review via lane reviewers; no code paths",
+   "model_evidence_veto_recovery_exit": "N/A（无控制机械；卡片/文档可独立 revert 或 invalidate）",
+   "rollback_route": "git revert / card invalidate per lifecycle"
+  }
+ ]
+}
