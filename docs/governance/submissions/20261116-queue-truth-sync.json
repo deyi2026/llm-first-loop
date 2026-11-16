@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-queue-truth-sync",
+  "summary": "Docs-only truth sync for the BUG/blocker and OPT queues; three changed paths are the two queue documents plus this A.5 manifest. Record BUG-14 evidence and the boundary that this change writes no audit ledger; state BUG-16 as verified by PR#48 (73e5053c3, independent Reviewer PASS plus full R9 exit 0 plus CI success) with its real version-strip contract; keep BUG-03, BUG-04, BUG-10, BUG-11 and BUG-15 at fixed because no per-batch R9 and Reviewer receipt is retained for PR#42 instead of overstating them as closed; mark OPT-11 done against the shipped four-segment projection; and register LCLOSE-1 lane facts plus the docs-only release receipt convention. No runtime code and no service configuration change, and this change performs no audit-ledger write.",
+  "components": [
+    {
+      "component_id": "queue-docs-truth-sync",
+      "paths": [
+        "docs/governance/submissions/20261116-queue-truth-sync.json",
+        "docs/queues/BUG-BLOCKER-QUEUE-20261116.md",
+        "docs/queues/OPT-QUEUE-20261116.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing docs/queues ledgers and docs/governance submissions; runtime aggregation lives in lane_board.py and is not touched here.",
+      "disposition": "REUSE existing queue documents and the existing A.5 manifest mechanism; correct stale status/prose only. No new gate, ledger, approval path, or runtime behaviour.",
+      "evidence": [
+        "Baseline origin/main=40ba2d91710916d5d21331e1faa97487b6477bf0 whose parent 73e5053c3 is PR#48; versions.* contract read from origin/main:src/llm_loop/introspection/lane_board.py.",
+        "PR#42 merge 96098972f and PR#48 CI runs 43864352787/43865490003 all success; generation 426 reports four services alive at 40ba2d9. No per-batch independent Reviewer or R9 receipt is retained in this repository for PR#42, so the queue rows it delivered are recorded as fixed rather than closed.",
+        "Production lanes.jsonl read-only audit: current ledger 89 rows, duplicate lane-selftest-guard (active v1 / closed v2) still present verbatim; backup data/backups/lanes-20261116T153712.jsonl holds 86 rows with sha256=06aa90ed...; neither file is modified by this change."
+      ],
+      "verification_level": "Docs-only, three changed paths (two queue documents plus this manifest): privacy scan, A.5 presence/coverage gate, independent read-only Reviewer, repository full R9 on this exact tree, and GitHub CI on the exact head SHA. No service restart is implied and no audit-ledger row is written by this change.",
+      "model_evidence_veto_recovery_exit": "If any gate fails or a claim here is contradicted by the current tree, stop and report rather than narrowing the gate or rewording a failure into a pass.",
+      "rollback_route": "Revert this single docs commit; no runtime state, deployment generation, or audit ledger row changes, so revert is complete and side-effect free."
+    }
+  ],
+  "declarations": []
+}
