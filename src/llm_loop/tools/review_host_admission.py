@@ -2640,6 +2640,18 @@ _REVIEWER_RETRYABLE = {"reviewer_rate_limited", "reviewer_timeout"}
 # E4: one wall-clock budget for the WHOLE review (all attempts), so "the
 # reviewer never answered" costs 300s instead of 600s per attempt forever.
 _REVIEWER_MODELS: tuple[str, ...] = (_REVIEWER_MODEL, *_REVIEWER_FALLBACK_MODELS)
+
+
+def _configured_reviewer_models(raw: str) -> tuple[tuple[str, ...], str]:
+    """Operator-only model preference; invalid explicit config disables review (not Web)."""
+    if not raw.strip():
+        return _REVIEWER_MODELS, ""
+    parts = [part.strip() for part in raw.split(",")]
+    if (len(parts) > 4 or not all(parts) or len(set(parts)) != len(parts)
+            or any(not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", part)
+                   or len(part) > 160 for part in parts)):
+        return (), "reviewer_models_invalid"
+    return tuple(parts), ""
 _REVIEW_TOTAL_DEADLINE_S = 300.0
 _REVIEWER_ASYNC_RETRY_MAX = 1          # automatic re-spawns after a dead child
 _REVIEWER_RETRY_MIN_REMAINING_S = 60.0  # do not re-spawn into a nearly-dead budget
@@ -2853,6 +2865,7 @@ def _granted_receipt(frozen: _Frozen) -> dict[str, Any]:
         "qualification": "PASS",
         "candidate_sha256": frozen.sha,
         "artifact_reviewed": True,
+        "reviewer_model": frozen.reviewer_model,
         "consumable_scope": _consumable_scope(frozen),
     }
 
@@ -3563,7 +3576,10 @@ class HostReviewAdmission:
     # 语义：current() 返回最近登记实例（或 None）；测试可置 None 隔离。
     _CURRENT_AUTHORITY: HostReviewAdmission | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, *, reviewer_models_raw: str = "") -> None:
+        self._reviewer_models, self._reviewer_model_error = _configured_reviewer_models(
+            reviewer_models_raw
+        )
         self._runner: Any | None = None
         self._event_store: Any | None = None  # production receipt must be durable
         self._browser_capture: Callable[[], dict[str, Any]] | None = None
@@ -3915,8 +3931,8 @@ class HostReviewAdmission:
         scope: str = "patch", paths: Sequence[str] | None = None,
         previous_child_id: str = "",
     ) -> dict[str, Any]:
-        if not parent or self._runner is None:
-            return {"accepted": False, "reason": "review_host_unavailable"}
+        if not parent or self._runner is None or self._reviewer_model_error:
+            return {"accepted": False, "reason": self._reviewer_model_error or "review_host_unavailable"}
         scope_receipt, scope_paths, denial = _start_preconditions(kind, scope, paths, workdir)
         if denial is not None:
             return denial
@@ -3991,12 +4007,12 @@ class HostReviewAdmission:
             child = str(spawned["child_id"])
             if child in self._records:
                 return {"accepted": False, "reason": "review_child_id_reused"}
-            self._records[child] = self._freeze_record(
+            self._records[child] = replace(self._freeze_record(
                 kind, parent, target, sha, child, scope_receipt=scope_receipt,
                 scope_paths=scope_paths, out_scope=out_scope, tier_counts=tier_counts,
                 review_deadline=review_deadline, previous_row=previous_row,
                 push_extra=push_extra, task_chars=task_chars, workdir=workdir,
-            )
+            ), reviewer_model=str(spawned["model"]))
             self._remember_material(child, task, material)
         return self._attach_prior_attempts(
             self._start_receipt(
@@ -4004,7 +4020,7 @@ class HostReviewAdmission:
                 scope_receipt=scope_receipt, task_chars=task_chars,
                 review_deadline=review_deadline, estimated=estimated,
                 coverage=coverage, push_remote_commit=push_remote_commit,
-                push_extra=push_extra,
+                push_extra=push_extra, reviewer_model=str(spawned["model"]),
             ),
             parent, kind, sha, target,
         )
@@ -4042,7 +4058,7 @@ class HostReviewAdmission:
             bound_unreviewed_untracked=untracked,
             deadline_at=now + review_deadline,
             estimated_s=_review_estimate_seconds(task_chars),
-            reviewer_model=_REVIEWER_MODELS[0],
+            reviewer_model=self._reviewer_models[0],
             previous_sha=previous_row.sha if previous_row is not None else "",
             previous_child_id=previous_row.child_id if previous_row is not None else "",
             content_fingerprint=push_extra.get("content_fingerprint", ""),
@@ -4069,18 +4085,19 @@ class HostReviewAdmission:
         self, *, child: str, sha: str, kind: str, target: str,
         scope_receipt: dict[str, Any], task_chars: int, review_deadline: float,
         estimated: float, coverage: dict[str, Any] | None,
-        push_remote_commit: str, push_extra: dict[str, Any],
+        push_remote_commit: str, push_extra: dict[str, Any], reviewer_model: str,
     ) -> dict[str, Any]:
         """签发回执组装（2026-11-02 自 ``start`` 抽出，行为不变，只为棘轮归零）。"""
         receipt: dict[str, Any] = {
             "accepted": True, "child_id": child, "candidate_sha256": sha,
             "kind": kind, "target": target, "scope": scope_receipt,
             "material_chars": task_chars,
+            "reviewer_model": reviewer_model,
             "review_budget": {
                 "deadline_seconds": round(review_deadline, 1),
                 "estimated_seconds": round(estimated, 1),
                 "over_deadline_estimate": estimated > review_deadline,
-                "models": list(_REVIEWER_MODELS),
+                "models": list(self._reviewer_models),
                 "async_retry_max": _REVIEWER_ASYNC_RETRY_MAX,
             },
         }
@@ -4392,7 +4409,7 @@ class HostReviewAdmission:
                 return None
             reserved = row.attempts + 1
             self._records[child_id] = replace(row, attempts=reserved)
-        model = _REVIEWER_MODELS[min(reserved, len(_REVIEWER_MODELS) - 1)]
+        model = self._reviewer_models[min(reserved, len(self._reviewer_models) - 1)]
         runner = self._runner
         if runner is None:  # 未挂 runner：与 start() 同口径，不 spawn、不记账
             return None
@@ -4417,6 +4434,13 @@ class HostReviewAdmission:
             self._audit_reviewer_unavailable(
                 parent, row.kind, "reviewer_retry_failed",
                 str(started.get("detail") or "reviewer_refused"), child_id=child_id,
+            )
+            return None
+        if started.get("model", model) != model:
+            self._terminate_reviewer(runner, str(started["child_id"]))
+            self._audit_reviewer_unavailable(
+                parent, row.kind, "reviewer_model_mismatch", "resolved model differs",
+                child_id=child_id,
             )
             return None
         new_child = str(started["child_id"])
@@ -4537,7 +4561,7 @@ class HostReviewAdmission:
         )
         if probe is not None:
             try:
-                registry_budget = probe(_REVIEWER_MODELS[0])
+                registry_budget = probe(self._reviewer_models[0])
             except Exception:  # noqa: BLE001 — a failing probe must never widen admission
                 registry_budget = None
             if isinstance(registry_budget, int) and registry_budget >= 0:
@@ -4545,7 +4569,7 @@ class HostReviewAdmission:
                     [{"content": task}], _REVIEWER_REGISTRY_CHARS_PER_TOKEN
                 )
                 try:
-                    model_budget = probe(_REVIEWER_MODELS[0], chars_per_token=task_ratio)
+                    model_budget = probe(self._reviewer_models[0], chars_per_token=task_ratio)
                 except TypeError:
                     # Older runner without the ratio parameter: the registry
                     # budget already measured above is the conservative one.
@@ -4659,13 +4683,17 @@ class HostReviewAdmission:
             slept = 0.0
             for attempt in range(_REVIEWER_RETRY_MAX + 1):
                 last_failure = ""
+                model = self._reviewer_models[min(attempt, len(self._reviewer_models) - 1)]
                 try:
                     started = runner.start(
                         task, inherit=False, depth=0, max_rounds=1,
-                        required_tools=[], model=_REVIEWER_MODELS[0], review_isolated=True,
+                        required_tools=[], model=model, review_isolated=True,
                         acceptance=["explicit P0/P1/P2, target scope, actual SHA and independent verdict"],
                     )
                     if started.get("accepted") and started.get("child_id"):
+                        if started.get("model", model) != model:
+                            self._terminate_reviewer(runner, str(started["child_id"]))
+                            return {"accepted": False, "reason": "reviewer_model_mismatch"}
                         child = str(started["child_id"])
                         break
                     last_failure = str(started.get("detail") or "reviewer_refused")
@@ -4702,7 +4730,7 @@ class HostReviewAdmission:
             current_session_id.reset(tok)
         if not child:
             return {"accepted": False, "reason": "reviewer_refused"}
-        return {"accepted": True, "child_id": child}
+        return {"accepted": True, "child_id": child, "model": model}
 
     def _pending_receipt(
         self, frozen: _Frozen, deadline_at: float, remaining: float
@@ -4710,6 +4738,7 @@ class HostReviewAdmission:
         return {
             "qualification": "pending",
             "reason": "review_still_running",
+            "reviewer_model": frozen.reviewer_model,
             "review_budget": {
                 "deadline_seconds": round(deadline_at - frozen.created_at, 1),
                 "remaining_seconds": round(remaining, 1),
@@ -4822,6 +4851,7 @@ class HostReviewAdmission:
                 "candidate_sha256": frozen.sha, "review_verdict": "PASS",
                 "review_text_sha256": _digest(answer.encode("utf-8")),
                 "review_qualification_verified": True, "p0": 0, "p1": 0, "p2": p2,
+                "reviewer_model": frozen.reviewer_model,
             }
             if not self._audit(parent, "review_admission_qualified", audit_payload):
                 return {"qualification": "DENIED", "reason": "review_receipt_not_durable"}
@@ -5519,7 +5549,7 @@ class ReviewAdmissionTool:
     name = "review_admission"
     description = (
         "RULE-AI-28 Host 硬准入操作：action=start 对当前代码全量测试、git push"
-        "或浏览器文稿发表生成 Host 冻结任务并启动独立 GLM-5.3 Reviewer；"
+        "或浏览器文稿发表生成 Host 冻结任务并启动独立受管 Reviewer（模型由宿主配置）；"
         "action=status 根据真实 child_id 查询终态并由 Host 内存签发一次性资格。"
         "单纯自述PASS、任意JSON、旧审查回执、未经检查的不同目标均无效。"
         "护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前按 RULE-AI-35 "
