@@ -48,7 +48,7 @@ def snapshot() -> dict:
         "lane": {"lane_id": "lane-1", "version": 4, "head_sha": CANDIDATE,
                  "base_main_sha": MAIN, "verify_ref": "verify-1", "status": "merging"},
         "queue": {"queue_id": "queue-1", "version": 2, "lane_id": "lane-1",
-                  "status": "ready_for_confirm",
+                  "status": "merging",
                   "last_preflight_main_sha": MAIN, "slot_held": True},
         "review": {"terminal": True, "verdict": "PASS", "p0": 0, "p1": 0,
                    "candidate_sha": CANDIDATE, "reviewer_model": "independent-reviewer"},
@@ -218,6 +218,27 @@ def test_host_full_authoritative_success(fixture):
     assert result["remote_main_cas"] is False
     assert result["required_checked"] == 4
     assert result["trusted_gate_blobs"]["scripts/ci_gate.sh"]
+
+
+def test_ready_for_confirm_cannot_claim_exclusive_merge_slot(fixture):
+    """The queue releases its slot at ready_for_confirm, before request_merge."""
+    from llm_loop.introspection.merge_queue import SLOT_STATUSES
+
+    assert "ready_for_confirm" not in SLOT_STATUSES
+    assert "merging" in SLOT_STATUSES
+    payload = fixture[1]["payload"]
+    payload["queue"]["status"] = "ready_for_confirm"
+    payload["queue"]["slot_held"] = True  # forged impossible combination
+    fixture[1].update(sign(payload))
+    holds(fixture, "queue_snapshot_incomplete")
+
+
+def test_merging_without_slot_is_not_merge_eligible(fixture):
+    payload = fixture[1]["payload"]
+    payload["queue"]["status"] = "merging"
+    payload["queue"]["slot_held"] = False
+    fixture[1].update(sign(payload))
+    holds(fixture, "queue_snapshot_incomplete")
 
 
 def test_t25_candidate_gate_self_upgrade_cannot_self_approve(fixture):

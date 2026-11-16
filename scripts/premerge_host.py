@@ -256,7 +256,9 @@ def _check_local(snapshot: dict, main: str, candidate: str, *,
     _require(
         bool(queue.get("queue_id")) and isinstance(queue.get("version"), int)
         and queue.get("version") > 0 and queue.get("lane_id") == lane["lane_id"]
-        and queue.get("status") == "ready_for_confirm"
+        # request_merge acquires the exclusive slot when ready_for_confirm
+        # transitions to merging. The former state cannot truthfully hold it.
+        and queue.get("status") == "merging"
         and queue.get("last_preflight_main_sha") == main
         and queue.get("slot_held") is True,
         "queue_snapshot_incomplete",
