@@ -4366,3 +4366,45 @@ def test_full_test_remote_drift_does_not_hide_actual_candidate_changes(
     assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
     (repo / "untracked_payload.py").unlink()
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+# --- Q-09 (2026-11-16): reviewer output contract must not self-contradict ----
+# The early task segment used to demand a "SHA256: <exact candidate SHA>" line
+# while the mandatory tail contract forced FINGERPRINT-only; reviewers obeying
+# both emitted a dual-line conclusion and _qualifying_pass_p2 (fingerprint XOR
+# legacy-sha) fail-closed it as REVISE despite a clean content PASS
+# (subagent_207c58806e79). The prompt now names FINGERPRINT only; the parser
+# keeps accepting legacy sha-only answers from already-running reviewers and
+# still rejects dual-line conclusions.
+
+
+def test_q09_composed_task_never_demands_full_sha256_line() -> None:
+    sha = "a" * 64
+    for kind in ("full_test", "git_push", "article_publish"):
+        task = rha._compose_review_task(kind, "target", sha, "frozen material")
+        assert "SHA256: <exact candidate SHA>" not in task
+        assert "'SHA256:'" not in task
+        assert task.count("FINGERPRINT: <16 lowercase hex copied from HOST_REVIEW_FINGERPRINT>") == 1
+        assert f"HOST_REVIEW_FINGERPRINT: {sha[:16]}" in task
+
+
+def test_q09_dual_sha_and_fingerprint_conclusion_still_rejected() -> None:
+    sha = "b" * 64
+    answer = (
+        "VERDICT: PASS\nP0=0 P1=0 P2=0\n"
+        f"FINGERPRINT: {sha[:16]}\nSHA256: {sha}\n"
+    )
+    assert rha._qualifying_pass_p2(answer, sha) is None
+
+
+def test_q09_fingerprint_only_and_legacy_sha_only_both_qualify() -> None:
+    sha = "c" * 64
+    fp_only = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nFINGERPRINT: {sha[:16]}\n"
+    legacy = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {sha}\n"
+    assert rha._qualifying_pass_p2(fp_only, sha) == 0
+    assert rha._qualifying_pass_p2(legacy, sha) == 0
+
+
+def test_q09_wrong_fingerprint_still_rejected() -> None:
+    sha = "d" * 64
+    wrong = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nFINGERPRINT: {'e' * 16}\n"
+    assert rha._qualifying_pass_p2(wrong, sha) is None
