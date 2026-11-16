@@ -14,24 +14,145 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.lane import TERMINAL_STATUSES, LaneStore
 from llm_loop.timekeeping import system_local_now
 
 
-def _probe_git_head(workspace_root: str) -> str:
+def _probe_git(workspace_root: str, *args: str) -> tuple[str, str]:
+    """只读 git 探针：返回 (输出, 错误)。错误非空 = 不可核验，调用方必须显式 unknown。"""
     if not workspace_root:
-        return ""
+        return "", "no_workspace_root"
     try:
         proc = subprocess.run(
-            ["git", "-C", workspace_root, "rev-parse", "HEAD"],
+            ["git", "-C", workspace_root, *args],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", type(exc).__name__
+    if proc.returncode != 0:
+        first = (proc.stderr.strip().splitlines() or ["git_failed"])[0]
+        return "", first[:80]
+    return proc.stdout.strip(), ""
+
+
+def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) -> dict[str, Any]:
+    """版本条带：checkout HEAD / 可验证 origin/main 各自独立。
+
+    BUG-16: worktree HEAD 绝不冒充 main——detached checkout（例如已合并 PR 的
+    head）与 origin/main 可能相差数十个提交，混用会制造假 in_sync=mismatch。
+    """
+    head, head_err = _probe_git(workspace_root, "rev-parse", "HEAD")
+    ref, _ = _probe_git(workspace_root, "rev-parse", "--abbrev-ref", "HEAD")
+    if head_err or not head:
+        head = ""
+        degraded.append("worktree_head_unknown")
+    detached = bool(head) and (not ref or ref == "HEAD")
+
+    behind: int | None = None
+    if head:
+        raw, err = _probe_git(workspace_root, "rev-list", "--count", "HEAD..origin/main")
+        if not err and raw.isdigit():
+            behind = int(raw)
+
+    if main_head:
+        verified, source = main_head, "explicit"
+    else:
+        verified, err = _probe_git(workspace_root, "rev-parse", "--verify", "origin/main")
+        if err or not verified:
+            verified, source = "", "unknown"
+            degraded.append("origin_main_unavailable")
+            degraded.append("main_head_unknown")
+        else:
+            source = "origin_main"
+    return {
+        "worktree": {
+            "head": head,
+            "ref": "" if detached else ref,
+            "detached": detached,
+            "behind_main": behind,
+        },
+        "main": {"head": verified, "source": source},
+    }
+
+
+def _read_desired_deployment(data_root: Path) -> tuple[dict, str]:
+    """读 service_control 的 desired deployment（generation / git_head）。
+
+    这是「应该跑哪个 sha」的操作员意图，与 restart-receipt 的「实际在跑」分开；
+    两者都不由 Board 推导——缺失即 unknown，不拿 live 或 checkout 顶替。
+    """
+    path = data_root / "runtime" / "managed_service_deployment.json"
+    if not path.is_file():
+        return {}, "desired_deployment_missing"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, f"desired_deployment_unreadable:{type(exc).__name__}"
+    if not isinstance(doc, dict) or not str(doc.get("git_head") or "").strip():
+        return {}, "desired_deployment_invalid"
+    return doc, ""
+
+
+def _desired_strip(doc: dict) -> dict[str, Any]:
+    generation = doc.get("generation")
+    if not isinstance(generation, int) or isinstance(generation, bool):
+        generation = None
+    return {
+        "generation": generation,
+        "sha": str(doc.get("git_head") or ""),
+        "deployment_id": str(doc.get("deployment_id") or ""),
+        "source": "managed_service_deployment" if doc else "unknown",
+    }
+
+
+def _lane_versions(
+    rows: list[dict], *, include_terminal: bool, degraded: list[str]
+) -> tuple[list[dict], dict]:
+    """按 lane_id 最高 version 取终态（BUG-14a）；冲突/坏版本 fail-closed.
+
+    账本是 append-only：同一 lane 的历史行会同时存在。按文件顺序取首行会把已
+    closed lane 的早期 active 行当成在途（ghost lane）。version 单调，故「最高
+    version」是确定性终态；同版本不同 status 才是真冲突 → 不给结论并降级。
+    """
+    latest: dict[str, dict] = {}
+    totals: dict[str, int] = {}
+    unresolved: set[str] = set()
+    for row in rows:
+        lane_id = str(row.get("lane_id") or "").strip()
+        if not lane_id:
+            degraded.append("lane_row_without_id")
+            continue
+        version = row.get("version")
+        if not isinstance(version, int) or isinstance(version, bool):
+            degraded.append(f"lane_version_invalid:{lane_id}")
+            unresolved.add(lane_id)
+            continue
+        totals[lane_id] = totals.get(lane_id, 0) + 1
+        prev = latest.get(lane_id)
+        if prev is None or version > int(prev.get("version") or 0):
+            latest[lane_id] = row
+        elif version == int(prev.get("version") or 0) and str(row.get("status") or "") != str(
+            prev.get("status") or ""
+        ):
+            degraded.append(f"lane_version_conflict:{lane_id}")
+            unresolved.add(lane_id)
+
+    selected: list[dict] = []
+    for lane_id, row in latest.items():
+        if lane_id in unresolved:
+            continue
+        if not include_terminal and str(row.get("status") or "") in TERMINAL_STATUSES:
+            continue
+        selected.append(row)
+    selected.sort(key=lambda e: str(e.get("last_activity") or ""), reverse=True)
+    return selected, {
+        "lane_rows_total": len(rows),
+        "duplicate_lane_ids": sorted(k for k, v in totals.items() if v > 1),
+        "lane_conflicts": sorted(unresolved),
+    }
 
 
 def _read_latest_deployment(dep_dir: Path) -> tuple[dict, str]:
@@ -251,20 +372,23 @@ def build_board(
     audit = Path(audit_dir)
     degraded: list[str] = []
 
-    lanes: list[dict] = []
+    raw_lanes: list[dict] = []
     if not audit.is_dir():
         # A6: 目录不存在时绝不 mkdir（LaneStore.__init__ 会建目录），直接降级。
         degraded.append("audit_missing")
     else:
         try:
             store = LaneStore(audit)
-            lanes = store.list(include_terminal=include_terminal)
+            # 取全量再由本层按版本收敛：store.list() 只按文件顺序返回，不解释 version。
+            raw_lanes = store.list(include_terminal=True)
         except Exception as exc:  # noqa: BLE001 — 读不到要如实降级，不能让 Board 整体 500
             degraded.append(f"lanes_unreadable:{type(exc).__name__}")
+    lanes, lane_meta = _lane_versions(
+        raw_lanes, include_terminal=include_terminal, degraded=degraded
+    )
 
-    head = str(main_head or "").strip() or _probe_git_head(workspace_root)
-    if not head:
-        degraded.append("main_head_unknown")
+    versions = _probe_versions(workspace_root, str(main_head or "").strip(), degraded)
+    head = str(versions["main"]["head"])
 
     # 权威源优先：restart-receipt 记录"当前实际在跑的 sha"；deployments/*.jsonl
     # 是人工历史记录，可能长期停在旧 sha。权威源缺失才回退，且回退原因如实进 degraded。
@@ -275,6 +399,20 @@ def build_board(
         if hist_reason:
             degraded.append(hist_reason)
     deployed_sha = str(dep_row.get("target_sha") or "")
+
+    desired_row, desired_reason = _read_desired_deployment(audit.parent)
+    if desired_reason:
+        degraded.append(desired_reason)
+    desired = _desired_strip(desired_row)
+    versions["desired"] = desired
+    versions["live"] = {
+        "sha": deployed_sha,
+        "recorded_at": str(dep_row.get("ts") or ""),
+        "source": str(dep_row.get("source") or "") if deployed_sha else "unknown",
+    }
+    desired_matches_live: bool | None = (
+        desired["sha"] == deployed_sha if desired["sha"] and deployed_sha else None
+    )
 
     by_status: dict[str, int] = {}
     for row in lanes:
@@ -299,10 +437,14 @@ def build_board(
     return {
         "generated_at": system_local_now().isoformat(),
         "main_head": head,
+        "versions": versions,
         "deployment": {
             "deployed_sha": deployed_sha,
             "deployed_at": str(dep_row.get("ts") or ""),
             "deployed_phase": str(dep_row.get("phase") or ""),
+            "desired_sha": desired["sha"],
+            "desired_generation": desired["generation"],
+            "desired_matches_live": desired_matches_live,
             "in_sync": sync_state == "exact",
             "sync_state": sync_state,
             "source": str(dep_row.get("source") or "audit/deployments"),
@@ -313,6 +455,7 @@ def build_board(
             "inflight": len(lanes),
             "by_status": by_status,
             "overlaps": _path_overlaps(lanes),
+            **lane_meta,
         },
         "degraded": degraded,
     }

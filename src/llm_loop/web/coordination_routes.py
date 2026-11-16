@@ -90,6 +90,7 @@ def coordination_board(request: Request) -> JSONResponse:
         content={
             "generated_at": board.get("generated_at", ""),
             "main_head": board.get("main_head", ""),
+            "versions": board.get("versions", {}),
             "deployment": board.get("deployment", {}),
             "lanes": board.get("lanes", []),
             "overlaps": overlaps,

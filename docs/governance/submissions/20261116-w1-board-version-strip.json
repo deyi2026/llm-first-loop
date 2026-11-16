@@ -1,0 +1,73 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-w1-board-version-strip",
+  "summary": "W1 makes the read-only coordination Board stop labelling an arbitrary worktree checkout HEAD as main_head, projects a four-segment version strip (checkout HEAD, verifiable origin/main, desired deployment generation/SHA, live SHA) with explicit unknown when a source cannot be verified, and aggregates append-only lane ledgers by highest lane version so a superseded historical row cannot appear as an in-flight ghost lane. Same-version conflicts keep failing closed into degraded. No new write authority, no admission change, no R5 relaxation, no auto-close, no deployment. Exact PR base b7aef87b014f17f0918914f590bd104a12620534.",
+  "components": [
+    {
+      "component_id": "board-version-strip",
+      "paths": [
+        "src/llm_loop/introspection/lane_board.py",
+        "src/llm_loop/web/coordination_routes.py",
+        "tests/unit/test_lane_board_version_strip.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Read-only coordination Board aggregation (lane_board.build_board) and its HTTP projection (coordination_routes)",
+      "disposition": "ADMIT read-only projection correction: main_head may only be a verifiable origin/main or an explicit caller-supplied value; worktree checkout HEAD becomes its own field; desired/live identities are read from service_control's own records with explicit unknown on missing/unreadable source; lane aggregation resolves append-only history by highest monotonic version and keeps same-version conflicts fail-closed in degraded.",
+      "evidence": [
+        "BUG-16 reproduced on production ledger: build_board(workspace_root=main worktree) reported main_head=3e0202b5b (detached PR#44 head, 37 commits behind) while deployed_sha=b7aef87b, producing a false in_sync=mismatch even though live equals origin/main.",
+        "BUG-14a reproduced: lanes.jsonl holds lane-selftest-guard active v1 and closed v2; Board showed inflight=14/13 while the version-resolved truth was 13/12 because LaneStore.list() returns rows in file order without interpreting version.",
+        "OPT-11: desired identity is read from <data>/runtime/managed_service_deployment.json and live identity from <data>/restart-receipt.json, the same authoritative sources service_control writes; missing/unreadable/invalid sources yield source=unknown plus a degraded reason instead of a substituted SHA.",
+        "tests/unit/test_lane_board_version_strip.py covers detached worktree vs origin/main, origin/main absent, explicit main_head compatibility, desired/live projection, desired missing, superseded duplicate, same-version conflict, invalid version, unreadable ledger and the HTTP route projection."
+      ],
+      "verification_level": "Focused negative tests 10 PASS (RED before implementation); adjacent regressions tests/unit/test_lane_board.py + tests/unit/test_coordination_routes.py 20 PASS; tests/unit/test_arch_guards.py 52 PASS; ruff check PASS; pyright 0 errors on both changed source files; no independent Reviewer and no original full R9 yet - those gates remain mandatory after GPT-6 cross-check.",
+      "model_evidence_veto_recovery_exit": "Veto if the Board still infers main from a worktree checkout, if any version segment is fabricated when its source is absent, if same-version lane conflicts are presented as resolved, or if lane aggregation gains any write/close authority. Recovery: keep the pre-change read-only projection, revert this branch, fix, re-freeze and re-run the full gate chain.",
+      "rollback_route": "Revert this branch/commit: the Board returns to the previous fields (main_head from worktree probe, first-row lane listing). No migration, no ledger rewrite, no service restart required.",
+      "declaration_id": "w1-board-version-strip"
+    },
+    {
+      "component_id": "a5-declaration",
+      "paths": [
+        "docs/governance/submissions/20261116-w1-board-version-strip.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission declaration",
+      "disposition": "ADMIT the declaration file itself, which carries no executable runtime control; it only partitions and explains the changed paths above.",
+      "evidence": [
+        "This manifest partitions every changed path of the branch exactly once, including itself, against base origin/main b7aef87b.",
+        "scripts/check_architecture_submission.py --staged PASS (schema plus exact path coverage) is recorded on the committed tree."
+      ],
+      "verification_level": "A.5 schema and changed-path coverage validator PASS; no control logic in this file.",
+      "model_evidence_veto_recovery_exit": "If any changed path is missing or the declaration overstates verification, block merge and correct this file in the same isolated branch.",
+      "rollback_route": "Revert the declaration commit together with the PR; no runtime impact."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "w1-board-version-strip",
+      "g1": {
+        "necessity": "The read-only Board is the surface operators and the main agent use to decide whether the running code matches main and how many lanes are actually in flight. Labelling a detached checkout as main produced a false deployment mismatch, and first-row lane listing produced a ghost in-flight lane. Both defects mislead review and closure decisions without any operator mistake, so the projection must be corrected at its source rather than explained away."
+      },
+      "g2": {
+        "authority_owner": "Git itself owns refs and commits; service_control owns desired deployment and restart receipts; LaneStore owns the append-only lane ledger and R5/goal_coordination keep owning closure and command-safety verdicts. This change only reads those sources and projects them.",
+        "relationship": "reuse",
+        "non_duplication": "No second ledger, no cached copy of main, no Board-side deployment state machine, no lane close/approve capability, and no change to R5 source_complete or safe_to_execute semantics. Version aggregation happens per request from the existing ledger."
+      },
+      "g3": {
+        "model_evidence": [
+          "Production reproduction recorded for both defects (main_head=3e0202b5b vs origin/main=b7aef87b; inflight 14 vs version-resolved 13).",
+          "Focused tests fail before implementation and pass after; adjacent Board/route tests and architecture guards pass; ruff and pyright clean on changed source files.",
+          "Independent Reviewer and complete R9 are explicitly NOT claimed yet; this candidate stops before GPT-6 cross-check."
+        ],
+        "recovery_or_reason": "Every source is optional: if git probing fails, origin/main is absent, or the desired/live records are missing or malformed, the field is empty with source=unknown plus a degraded reason; the Board never substitutes a different SHA. If aggregation sees an invalid or conflicting version, that lane is excluded from counts and surfaced in degraded."
+      },
+      "g4": {
+        "rollback": "Revert the branch; the Board falls back to its previous fields and the ledger is untouched.",
+        "verification": [
+          "Focused 10 PASS, adjacent Board and coordination-route 20 PASS, architecture guards 52 PASS.",
+          "A.5 staged validator PASS with exact changed-path coverage including this manifest.",
+          "Pending gates after GPT-6 cross-check: independent Reviewer PASS (P0/P1=0), original complete R9 exit 0, remote exact-SHA CI, then controlled merge."
+        ]
+      }
+    }
+  ]
+}
