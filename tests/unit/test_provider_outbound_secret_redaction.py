@@ -306,3 +306,19 @@ def test_redactor_failure_has_nonsecret_reason(monkeypatch):
         redact_provider_request([{"role": "user", "content": "ordinary"}], [], "")
     assert "reason=redactor_error" in str(denied.value)
     assert "sensitive diagnostic" not in str(denied.value)
+
+
+def test_complete_synthetic_pem_is_redacted_while_bare_marker_is_not(monkeypatch):
+    """Real PEM framing remains protected; ordinary marker prose stays usable."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    start = "-----" + "BEGIN " + "PRIVATE KEY" + "-----"
+    end = "-----" + "END " + "PRIVATE KEY" + "-----"
+    pem = start + "\n" + "QUJD" * 24 + "\n" + end
+    msgs = [{"role": "assistant", "content": "ordinary", "reasoning_content": pem}]
+    safe, _, _, count = redact_provider_request(msgs, [], "")
+    assert count > 0
+    assert pem not in safe[0]["reasoning_content"]
+    assert start not in safe[0]["reasoning_content"]
+    assert msgs[0]["reasoning_content"] == pem
+    with pytest.raises(CacheGuardBlockedError, match="reason=protected_field"):
+        redact_provider_request([{"role": "assistant", "signature": pem}], [], "")

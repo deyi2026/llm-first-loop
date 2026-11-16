@@ -2,6 +2,12 @@
 
 > 此处记录源码与发行候选的变更，**不等于 GitHub 已正式发布版本列表**；实际稳定版以 [GitHub releases/latest](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准。
 
+## v0.6.55 — Deepin 出站隐私守卫误拦截修复候选（2026-11-16，待受管发布）
+
+- 本版承接经独立 DeepSeek-v4-flash Reviewer PASS（P0/P1/P2=0）的出站隐私投影最小修复：统一 cache_guard 终检与脱敏器的敏感模式，修复历史 `reasoning_content` 中仅讨论私钥标记的文本误拦截，补齐嵌入式凭据检测，并对拒绝原因做无明文分类；真实凭据、受保护字段及脱敏异常继续 fail-closed。
+- 0.6.54 wheel 已安装在 Deepin，不能以相同版本覆盖不同字节，因此递增发行包版本、Web SERVICE_VERSION、双语 README 与 uv.lock；本次版本声明不额外修改隐私守卫实现。
+- 版本号仅表示待验收发行候选，不代表 GitHub 正式 Release 已发布。须经完整 R9、远端 PR/CI、main 合并、wheel SHA/安装隔离验收及 Deepin 受管发布回执，方可称生产生效；旧 0.6.54 保留回滚。
+
 ## v0.6.54 — 可信共享工作状态与多 Agent 协同安全发行（2026-11-15，Draft）
 
 - **发行状态（2026-11-16 核验）**：`v0.6.54` tag、Release Draft 与 Linux wheel/sdist 已存在，但 macOS arm64 正式 `.pkg` 缺失，`Finalize Release` 尚未转正；最新正式 Release 为 `v0.6.50`。本节是候选变更记录，不代表已对外正式发行。
