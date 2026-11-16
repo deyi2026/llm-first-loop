@@ -19,11 +19,11 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "Host 独立 Reviewer / EscalationStore 人类批准 / MergeQueue verify_receipts 受保护账本",
-      "disposition": "ADMIT 专用 Host 签发：merge_review_start 只读 review_isolated 子进程；verify_receipt_request 只提交 MAC 签名 pending；已登录 web_session 才能批准，Host 在决定锁内重验 lane、main、head、进程内 PASS/P0/P1=0，追加 owner-only O_NOFOLLOW 审计行；Agent 不获得 data/audit 通用写权。保留原 host-grant 硬拒和 RULE-AI-28。",
+      "disposition": "ADMIT 专用 Host 签发：merge_review_start 冻结真实提交 diff SHA256、只读 review_isolated 子进程；verify_receipt_request 只提交 MAC 签名 pending；已登录 web_session 才能批准，Host 在决定锁内重验 lane、main、head、冻结 diff 与进程内 PASS/P0/P1=0，追加带审批身份与 request_id 的 owner-only O_NOFOLLOW 审计行；Agent 不获得 data/audit 通用写权。保留原 host-grant 硬拒和 RULE-AI-28。",
       "evidence": [
         "用户真实故障：ESC-20261117-81076842 虽经 web_session approved，但 execute_command 被受管审计账本保护与精确命令不一致双重拒绝，verify_ref 缺失。",
         "本分支单测 test_host_verify_issuer 覆盖浏览器未登录 403、登录签发、无 Host callback、独立 Reviewer REVISE/P0/P1、base 漂移、symlink/hardlink、重复审批等正负场景。",
-        "与既有 merge_queue、host_grant、escalation、arch_guards 测试同跑 167 passed；Ruff/pyright 定向通过。"
+        "相关 merge_queue、host_grant、escalation、arch_guards、Host verify 回归同跑 154 passed；额外安全回归 83 passed/4 skipped；Ruff/pyright 定向通过。"
       ],
       "verification_level": "定向正负测试已通过；本候选的完整 R9、独立 Reviewer、GitHub PR CI 和受管部署属于后续发布门禁，未通过前不得声称生效。",
       "model_evidence_veto_recovery_exit": "若任何路径允许 AI 自报 PASS、跨会话复用 Reviewer、使用普通 host-grant 写审计账本、无浏览器会话签发、base/head 漂移后仍签发，立即 VETO 并保持旧 fail-closed；不以手工 JSONL 补凭证。",
@@ -80,7 +80,7 @@
         "model_evidence": [
           "真实失败回执是 audit 受保护账本的 fail-closed 与申请命令不匹配，证明重复 host-grant 无法收口。",
           "Host 新入口以进程内 review_isolated 终态、结构化 PASS/P0/P1、SHA/branch/worktree 同源为准；外部文本或磁盘回执不能自签。",
-          "相关回归与架构守卫合计 167 passed；symlink/hardlink、旧基线、REVISE、未登录等负向均拒绝。"
+          "最新相关回归与架构守卫 154 passed；额外安全回归 83 passed/4 skipped；symlink/hardlink、旧基线、REVISE、未登录等负向均拒绝。"
         ],
         "recovery_or_reason": "Host 审查句柄丢失、服务重启、证据过期、main/head 漂移、无浏览器会话或写盘失败均保留 pending/HOLD，重新审查并申请，不回退到 host-grant。"
       },

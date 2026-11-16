@@ -476,6 +476,9 @@ class EscalationStore:
                 # the request pending and do not grant generic audit writes.
                 verify_receipt_id = ""
                 if decision == "approved" and r.get("request_kind") == "verify_receipt":
+                    if channel != "web_session" or not decided_by.startswith("web:session:"):
+                        reason = "human_auth_required"
+                        return records
                     if issue_verify is None:
                         reason = "verify_receipt_requires_host_issuer"
                         return records

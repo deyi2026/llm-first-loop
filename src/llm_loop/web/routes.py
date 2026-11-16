@@ -2920,6 +2920,40 @@ def escalation_detail(request: Request, id: str = "") -> Response:
     )
 
 
+def _decide_escalation_with_host_verify(
+    request: Request, store: Any, payload: Any, record: dict,
+    decided_by: str, channel: str, expected: str, host_grant_id: str,
+    base: Any, audit: Any, command_sha256: str,
+) -> tuple[dict | None, str] | Response:
+    """Keep protected Host issuance separate from the existing review route."""
+    issue_verify = None
+    if record.get("request_kind") == "verify_receipt" and payload.decision == "approved":
+        authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
+        if authority is None or getattr(authority, "audit_dir", None) != (base / "audit").resolve():
+            audit("host_verify_unavailable", decided_by=decided_by, channel=channel)
+            return JSONResponse({"error": "host_verify_unavailable"}, status_code=503)
+
+        def _issue_verify(row: dict) -> str:
+            return authority.issue(row, approver=decided_by)
+
+        issue_verify = _issue_verify
+    try:
+        return store.decide(
+            payload.id, payload.decision, decided_by=decided_by,
+            channel=channel, note=payload.note, ttl_minutes=payload.ttl_minutes,
+            expected_sha256=expected, host_grant_id=host_grant_id,
+            issue_verify=issue_verify,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("Host verify receipt issue rejected: %s", exc)
+        audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
+              command_sha256=command_sha256, detail=str(exc)[:200])
+        return JSONResponse(
+            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            status_code=409,
+        )
+
+
 @router.post("/api/v1/escalation/review")
 async def escalation_review(request: Request) -> Response:
     """web 提权审批（人工决定端点；批准 = 铸造一次性令牌，拒绝 = 记录理由）.
@@ -3104,35 +3138,13 @@ async def escalation_review(request: Request) -> Response:
                 status_code=503,
             )
 
-    issue_verify = None
-    if rec.get("request_kind") == "verify_receipt" and payload.decision == "approved":
-        authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
-        if authority is None or getattr(authority, "audit_dir", None) != (base / "audit").resolve():
-            _audit("host_verify_unavailable", decided_by=decided_by, channel=channel)
-            return JSONResponse({"error": "host_verify_unavailable"}, status_code=503)
-        issue_verify = authority.issue
-    try:
-        rec, reason = store.decide(
-            payload.id,
-            payload.decision,
-            decided_by=decided_by,
-            channel=channel,
-            note=payload.note,
-            ttl_minutes=payload.ttl_minutes,
-            expected_sha256=expected,
-            host_grant_id=host_grant_id,
-            issue_verify=issue_verify,
-        )
-    except (OSError, ValueError, RuntimeError) as exc:
-        # No approved decision is persisted if the Host verifier fails.
-        # The audit directory remains forbidden to sandbox host-grants.
-        logger.warning("Host verify receipt issue rejected: %s", exc)
-        _audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
-               command_sha256=command_sha256, detail=str(exc)[:200])
-        return JSONResponse(
-            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
-            status_code=409,
-        )
+    outcome = _decide_escalation_with_host_verify(
+        request, store, payload, rec, decided_by, channel, expected,
+        host_grant_id, base, _audit, command_sha256,
+    )
+    if isinstance(outcome, Response):
+        return outcome
+    rec, reason = outcome
     if rec is None:
         if host_grant_id and grant_store is not None:
             # decide 失败（冲突/状态漂移）→ 撤销孤儿 grant，杜绝批准外泄漏

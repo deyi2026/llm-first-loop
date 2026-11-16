@@ -105,7 +105,21 @@ def requested(host):
     assert runner.started["required_tools"] == ["read_file", "search_files"]
     assert "execute_command" not in runner.started["required_tools"]
     assert Path(runner.started["review_workspace"]).name == "lane"
+    assert "frozen_diff_sha256=" in runner.started["task"]
+    assert "+two" in runner.started["task"]
     return authority.request(lane_id=lane_id, child_id=out["child_id"], scope="focused PASS")
+
+
+def human_issue(authority):
+    return lambda row: authority.issue(row, approver="web:session:12345678")
+
+
+def human_decide(store, rec, authority):
+    return store.decide(
+        rec["id"], "approved", decided_by="web:session:12345678",
+        channel="web_session", expected_sha256=rec["command_sha256"],
+        issue_verify=human_issue(authority),
+    )
 
 
 def test_human_approved_host_issues_exact_receipt(host):
@@ -113,10 +127,7 @@ def test_human_approved_host_issues_exact_receipt(host):
     rec = requested(host)
     assert rec["request_kind"] == "verify_receipt"
     assert not (audit / "verify_receipts.jsonl").exists()
-    approved, reason = store.decide(
-        rec["id"], "approved", decided_by="web:session:test", channel="web_session",
-        expected_sha256=rec["command_sha256"], issue_verify=authority.issue,
-    )
+    approved, reason = human_decide(store, rec, authority)
     assert reason == ""
     assert approved["verify_receipt_id"].startswith(lane_id + ":")
     row = load_receipts(audit / "verify_receipts.jsonl")[approved["verify_receipt_id"]]
@@ -124,16 +135,34 @@ def test_human_approved_host_issues_exact_receipt(host):
     assert row["head_sha"] == authority._reviews["subagent-test-review"].head
     assert row["reviewer"] == "glm/glm-5.3-flash"
     assert row["evidence"].startswith("host-review:subagent-test-review:")
-    assert store.decide(rec["id"], "approved", issue_verify=authority.issue)[0] is None
+    assert f"request:{rec['id']}:approver:web:session:12345678" in row["evidence"]
+    assert store.get(rec["id"])["token"] == ""
+    assert human_decide(store, rec, authority)[0] is None
     assert len((audit / "verify_receipts.jsonl").read_text().splitlines()) == 1
 
 
 def test_without_host_callback_cannot_mint_verify_token(host):
     _, _, store, _, _, audit = host
     rec = requested(host)
-    approved, reason = store.decide(rec["id"], "approved")
+    approved, reason = store.decide(
+        rec["id"], "approved", decided_by="web:session:12345678",
+        channel="web_session",
+    )
     assert approved is None and reason == "verify_receipt_requires_host_issuer"
     assert store.get(rec["id"])["status"] == "pending"
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_non_browser_decision_cannot_issue_even_with_host_callback(host):
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    approved, reason = store.decide(
+        rec["id"], "approved", decided_by="web:loopback",
+        channel="loopback_unauthenticated", issue_verify=human_issue(authority),
+    )
+    assert approved is None and reason == "human_auth_required"
+    with pytest.raises(HostVerifyError, match="human_browser_approval_required"):
+        authority.issue(rec, approver="web:loopback")
     assert not (audit / "verify_receipts.jsonl").exists()
 
 
@@ -158,7 +187,7 @@ def test_base_advance_between_request_and_approval_fails_closed(host):
     git(repo, "commit", "-m", "main advanced")
     git(repo, "update-ref", "refs/remotes/origin/main", git(repo, "rev-parse", "main"))
     with pytest.raises(HostVerifyError, match="lane_base_or_head_stale"):
-        store.decide(rec["id"], "approved", issue_verify=authority.issue)
+        human_decide(store, rec, authority)
     assert store.get(rec["id"])["status"] == "pending"
     assert not (audit / "verify_receipts.jsonl").exists()
 
@@ -170,7 +199,7 @@ def test_symlink_receipt_target_rejected(host):
     victim.write_text("do not touch", encoding="utf-8")
     (audit / "verify_receipts.jsonl").symlink_to(victim)
     with pytest.raises(OSError):
-        store.decide(rec["id"], "approved", issue_verify=authority.issue)
+        human_decide(store, rec, authority)
     assert victim.read_text() == "do not touch"
     assert store.get(rec["id"])["status"] == "pending"
 
@@ -182,7 +211,7 @@ def test_hardlink_receipt_target_rejected(host):
     victim.write_text("keep\n", encoding="utf-8")
     os.link(victim, audit / "verify_receipts.jsonl")
     with pytest.raises(PermissionError):
-        store.decide(rec["id"], "approved", issue_verify=authority.issue)
+        human_decide(store, rec, authority)
     assert victim.read_text() == "keep\n"
     assert store.get(rec["id"])["status"] == "pending"
 
@@ -192,7 +221,7 @@ def test_review_changed_after_request_rejected(host):
     rec = requested(host)
     runner.p1 = 1
     with pytest.raises(HostVerifyError, match="review_p0_p1_blocked"):
-        store.decide(rec["id"], "approved", issue_verify=authority.issue)
+        human_decide(store, rec, authority)
     assert store.get(rec["id"])["status"] == "pending"
     assert not (audit / "verify_receipts.jsonl").exists()
 
