@@ -20,6 +20,8 @@ from llm_loop.timekeeping import system_local_now
 
 # 版本段的合法形状：7..40 位十六进制。全量 sha 是 40，短 sha 也接受（比较用前缀）。
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+# 权威回执里的 git_head_full 必须真的是"full"（P2-3）；短 sha 不能进 live 段。
+_FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 def _sha_like(value: Any) -> str:
@@ -183,34 +185,51 @@ def _lane_versions(
     closed lane 的早期 active 行当成在途（ghost lane）。version 单调，故「最高
     version」是确定性终态；同版本且有意义 payload 不同才是真冲突（双写/分叉）
     → 该 lane 不给结论并降级；完全相同的重复行按幂等重放兼容。
+    version 必须是 >=1 的 int：bool 是 int 子类、0/负数不可能是合法版本号（P2-2）。
+    低版本的历史分叉若已被更高版本决出终态，只留证据、不排除终态（P2-1）。
     """
     latest: dict[str, dict] = {}
     totals: dict[str, int] = {}
-    unresolved: set[str] = set()
+    seen_fingerprints: dict[str, dict[int, str]] = {}
+    conflicted: dict[str, set[int]] = {}
+    invalid: set[str] = set()
     for row in rows:
         lane_id = str(row.get("lane_id") or "").strip()
         if not lane_id:
             degraded.append("lane_row_without_id")
             continue
         version = row.get("version")
-        if not isinstance(version, int) or isinstance(version, bool):
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             degraded.append(f"lane_version_invalid:{lane_id}")
-            unresolved.add(lane_id)
+            invalid.add(lane_id)
             continue
         totals[lane_id] = totals.get(lane_id, 0) + 1
-        prev = latest.get(lane_id)
-        if prev is None or version > int(prev.get("version") or 0):
-            latest[lane_id] = row
-        elif version == int(prev.get("version") or 0):
+        fingerprint = _payload_fingerprint(row)
+        per_version = seen_fingerprints.setdefault(lane_id, {})
+        if version in per_version:
             # P1-B：同版本不等于同事实。只比 status 会让"同一 lane 被两个
-            # owner_session 各写一行"静默取首行；任何有意义字段不同都 fail-closed。
-            diverged = _payload_fingerprint(row) != _payload_fingerprint(prev)
-            if diverged:
-                degraded.append(f"lane_version_conflict:{lane_id}")
-                unresolved.add(lane_id)
+            # owner_session 各写一行"静默取首行；任何有意义字段不同都标记分叉。
+            if per_version[version] != fingerprint:
+                conflicted.setdefault(lane_id, set()).add(version)
+        else:
+            per_version[version] = fingerprint
+        prev = latest.get(lane_id)
+        if prev is None or version > int(prev["version"]):
+            latest[lane_id] = {"version": version, "row": row}
+
+    unresolved = set(invalid)
+    for lane_id, versions in conflicted.items():
+        if int(latest[lane_id]["version"]) in versions:
+            # 最高版本自己分叉：终态不确定，该 lane 不给结论。
+            degraded.append(f"lane_version_conflict:{lane_id}")
+            unresolved.add(lane_id)
+        else:
+            # P2-1：低版本的历史分叉已被更高版本决出终态，保留证据但不排除终态。
+            degraded.append(f"lane_version_conflict_history:{lane_id}:v{max(versions)}")
 
     selected: list[dict] = []
-    for lane_id, row in latest.items():
+    for lane_id, entry in latest.items():
+        row = entry["row"]
         if lane_id in unresolved:
             continue
         if not include_terminal and str(row.get("status") or "") in TERMINAL_STATUSES:
@@ -278,6 +297,11 @@ def _read_authoritative_receipt(data_root: Path) -> tuple[dict, str]:
     sha = str(raw.get("git_head_full") or "").strip()
     if not sha:
         return {}, "restart_receipt_no_sha"
+    if not _FULL_SHA_RE.match(sha):
+        # P2-3：权威回执必须给全 40 位 sha。短/残缺 sha 一旦进 live 段，
+        # prefix 比较就能把 exact 判出来（假绿）；来源本身已声明 authoritative，
+        # 形状不符只能是坏回执 → 退成 unknown，绝不降格接受。
+        return {}, "restart_receipt_bad_sha"
     return {
         "target_sha": sha,
         "ts": str(raw.get("ts") or ""),

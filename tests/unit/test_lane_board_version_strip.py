@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -444,3 +445,109 @@ def test_explicit_main_head_is_the_behind_baseline(tmp_path: Path) -> None:
     assert unknown["versions"]["worktree"]["behind_main"] is None
     assert unknown["versions"]["worktree"]["head"] == old
     assert new != old
+
+
+# ---------------- R3 裁决：P1 误报反例 + 3 个真实 P2 ----------------
+
+
+def test_malformed_deployment_json_line_does_not_crash(tmp_path: Path) -> None:
+    """R3 裁决反例：行级坏 JSON 已被逐行跳过，坏行不得让部署段崩溃或整段作废。
+
+    Host Reviewer 曾报 P1「_read_latest_deployment 未捕获 JSONDecodeError」——本条
+    即其反例：坏行在、好行也在时，好行仍必须被采纳。
+    """
+    sha = "c" * 40
+    dep = tmp_path / "audit" / "deployments"
+    dep.mkdir(parents=True)
+    (dep / "mixed.jsonl").write_text(
+        "{not json at all\n"
+        + json.dumps({"ts": "2026-11-16T00:00:00+08:00", "target_sha": sha})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    board = build_board(tmp_path / "audit", main_head="d" * 40)
+
+    assert board["deployment"]["deployed_sha"] == sha
+    assert "deployments_empty" not in board["degraded"]
+
+
+def test_lower_version_conflict_does_not_veto_higher_version(tmp_path: Path) -> None:
+    """P2-1：旧版本冲突不得永久排除最高版本；历史冲突保留 degraded 证据。"""
+    audit = tmp_path / "audit"
+    _ledger(
+        audit,
+        [
+            _lane("lane-x", "active", 1, head_sha="a" * 40),
+            _lane("lane-x", "active", 1, head_sha="b" * 40),  # v1 分叉
+            _lane("lane-x", "active", 2, head_sha="c" * 40),  # v2 干净终态
+        ],
+    )
+
+    board = build_board(audit)
+
+    assert [row["lane_id"] for row in board["lanes"]] == ["lane-x"]
+    assert board["summary"]["lane_conflicts"] == []
+    assert "lane_version_conflict_history:lane-x:v1" in board["degraded"]
+
+
+def test_top_version_conflict_still_fails_closed(tmp_path: Path) -> None:
+    """P2-1 后半：最高版本仍分叉时，该 lane 依旧不给结论（fail-closed）。"""
+    audit = tmp_path / "audit"
+    _ledger(
+        audit,
+        [
+            _lane("lane-y", "active", 1, head_sha="a" * 40),
+            _lane("lane-y", "active", 2, head_sha="b" * 40),
+            _lane("lane-y", "active", 2, head_sha="c" * 40),  # 最高版本分叉
+        ],
+    )
+
+    board = build_board(audit)
+
+    assert board["lanes"] == []
+    assert board["summary"]["lane_conflicts"] == ["lane-y"]
+    assert "lane_version_conflict:lane-y" in board["degraded"]
+
+
+@pytest.mark.parametrize("bad_version", [0, -1, True])
+def test_non_positive_or_bool_version_fails_closed(tmp_path: Path, bad_version: object) -> None:
+    """P2-2：version 必须是 >=1 的 int；bool/0/负数一律 fail-closed。"""
+    audit = tmp_path / "audit"
+    _ledger(
+        audit,
+        [
+            _lane("lane-badver", "active", bad_version),  # type: ignore[arg-type]
+            _lane("lane-ok", "active", 1),
+        ],
+    )
+
+    board = build_board(audit)
+
+    assert [row["lane_id"] for row in board["lanes"]] == ["lane-ok"]
+    assert "lane_version_invalid:lane-badver" in board["degraded"]
+
+
+def test_receipt_short_sha_cannot_become_live(tmp_path: Path) -> None:
+    """P2-3：authoritative=true 时 git_head_full 必须是 40 位十六进制 SHA。"""
+    short = "a" * 12
+    _desired_file(tmp_path, short)
+    (tmp_path / "restart-receipt.json").write_text(
+        json.dumps(
+            {
+                "ts": "2026-11-16T15:23:31+08:00",
+                "action": "web",
+                "git_head_full": short,
+                "authoritative": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    board = build_board(tmp_path / "audit", main_head=short)
+
+    assert board["versions"]["live"]["sha"] == ""
+    assert board["versions"]["live"]["authoritative"] is False
+    assert board["deployment"]["sync_state"] != "exact"
+    assert board["deployment"]["in_sync"] is False
+    assert "restart_receipt_bad_sha" in board["degraded"]
