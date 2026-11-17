@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261117-host-merge-review-large-diff",
-  "summary": "Minimal bounded Host merge-review frozen diff acquisition fix. PR #60 has 220480 Unicode characters / 298702 UTF-8 bytes in its exact diff; the old generic 100000-character cap returned git_state_unavailable. Only frozen diff may use a separate 256000-character cap; all other Git reads retain 100000. No merge, signing or branch-protection bypass.",
+  "summary": "Minimal bounded Host merge-review frozen diff acquisition fix. PR #60 has 220480 Unicode characters / 298702 UTF-8 bytes in its exact diff; the old generic 100000-character cap returned git_state_unavailable. Only frozen diff may use a separate 256000-character cap; all other Git reads retain 100000. No merge, signing or branch-protection bypass. A second Host false-positive is also fixed: literal Git binary marker strings in added source code are no longer mistaken for unprefixed Git binary metadata; actual binary diffs still HOLD.",
   "components": [
     {
       "component_id": "host-merge-review-bounded-diff",
@@ -11,12 +11,13 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "HostVerifyAuthority._lane / Host merge-review gate",
-      "disposition": "Allow frozen git diff up to 256000 Unicode characters with a distinct review_diff_too_large HOLD, while keeping other Git commands at 100000 and preserving the exact diff hash, isolated Reviewer and human-only verify receipt issuance.",
+      "disposition": "Allow frozen git diff up to 256000 Unicode characters with a distinct review_diff_too_large HOLD, while keeping other Git commands at 100000 and preserving the exact diff hash, isolated Reviewer and human-only verify receipt issuance. Match Git binary metadata only at unprefixed metadata lines, not source text containing quoted marker strings.",
       "evidence": [
         "Reproduced original failure: all 8 identity/cleanliness Git reads PASS; only frozen_diff failed git_state_unavailable on PR60.",
         "After fix, exact PR60 frozen diff read PASS (220480 characters under 256000); no production Web restart performed.",
-        "64 targeted tests PASS including large reviewable diff and over-limit HOLD; Ruff PASS; Pyright 0 errors.",
-        "Independent Reviewer, full R9, PR CI, protected merge and deployment remain pending."
+        "66 targeted tests PASS including large reviewable diff and over-limit HOLD; Ruff PASS; Pyright 0 errors.",
+        "Independent Reviewer, full R9, PR CI, protected merge and deployment remain pending.",
+        "Actual Host review for PR #62 initially HOLD due quoted binary-marker strings in source diff; targeted integration tests now prove quoted strings PASS and actual binary Git diffs HOLD before Reviewer dispatch."
       ],
       "verification_level": "Focused regression PASS; integration gates pending.",
       "model_evidence_veto_recovery_exit": "Review remains isolated/read-only; any diff above 256000 characters HOLD with review_diff_too_large; identity, SHA, branch, dirty-worktree and signing gates remain unchanged.",
@@ -53,10 +54,11 @@
       "g3": {
         "model_evidence": [
           "Real PR60 old code reproduced git_state_unavailable solely on frozen diff, while other Git commands passed.",
-          "64 targeted tests PASS; 225000-character synthetic diff starts isolated review, 260000-character synthetic diff HOLD; generic 100000-character cap stays intact.",
-          "Ruff PASS; Pyright 0 errors; exact real PR60 diff acquisition PASS after fix."
+          "66 targeted tests PASS; 225000-character synthetic diff starts isolated review, 260000-character synthetic diff HOLD; generic 100000-character cap stays intact.",
+          "Ruff PASS; Pyright 0 errors; exact real PR60 diff acquisition PASS after fix.",
+          "Real Git integration regression: quoted GIT binary patch / Binary files markers in source are reviewable; actual binary file changes are rejected before dispatch."
         ],
-        "recovery_or_reason": "Any diff above 256000 characters is review_diff_too_large and cannot mint a verify_ref; reviewer failure or non-JSON PASS remains fail-closed."
+        "recovery_or_reason": "Any diff above 256000 characters is review_diff_too_large and cannot mint a verify_ref; reviewer failure or non-JSON PASS remains fail-closed. Git binary patch metadata remains fail-closed; quoted marker strings in text source do not trigger a false HOLD."
       },
       "g4": {
         "rollback": "Revert the Host code/test/manifest via protected GitHub PR; no data migrations or service restart in this patch stage.",

@@ -75,6 +75,15 @@ def _git(
     return p.stdout.strip()
 
 
+def _has_git_binary_diff_marker(diff: str) -> bool:
+    """Recognize Git's unprefixed metadata, not quoted strings in source code."""
+    return any(
+        line == "GIT binary patch"
+        or (line.startswith("Binary files ") and line.endswith(" differ"))
+        for line in diff.splitlines()
+    )
+
+
 def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Reject ambiguous duplicate JSON keys at every object depth."""
     result: dict[str, Any] = {}
@@ -170,7 +179,7 @@ class HostVerifyAuthority:
             output_limit=_FROZEN_DIFF_LIMIT,
             too_large_code="review_diff_too_large",
         )
-        if (not diff or "GIT binary patch" in diff or "Binary files " in diff
+        if (not diff or _has_git_binary_diff_marker(diff)
                 or has_strong_secret(diff)):
             raise HostVerifyError("review_diff_unavailable_or_sensitive")
         return lane, changed, diff

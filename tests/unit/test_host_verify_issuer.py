@@ -446,3 +446,37 @@ def test_host_frozen_diff_has_separate_bounded_large_patch_budget(
             authority.start_review(lane_id)
         assert runner.started == {}
     assert not (audit / "verify_receipts.jsonl").exists()
+
+
+@pytest.mark.parametrize("actual_binary", [False, True])
+def test_host_binary_diff_guard_distinguishes_git_metadata_from_source_text(
+    host, actual_binary,
+):
+    """Source code quoting Git's markers is safe; actual binary diffs HOLD."""
+    authority, runner, _, lane_id, _, audit = host
+    lane = LaneStore(audit).get(lane_id)
+    assert lane is not None
+    worktree = Path(lane["worktree"])
+    if actual_binary:
+        (worktree / "blob.bin").write_bytes(b"\x00\x01\x02")
+        git(worktree, "add", "blob.bin")
+    else:
+        (worktree / "a.txt").write_text(
+            "two\nGIT binary patch\nBinary files a/x and b/x differ\n",
+            encoding="utf-8",
+        )
+        git(worktree, "add", "a.txt")
+    git(worktree, "commit", "-m", "test binary marker handling")
+    head = git(worktree, "rev-parse", "HEAD")
+    LaneStore(audit).update(lane_id, expected_version=2, head_sha=head)
+
+    if actual_binary:
+        with pytest.raises(HostVerifyError, match="review_diff_unavailable_or_sensitive"):
+            authority.start_review(lane_id)
+        assert runner.started == {}
+    else:
+        out = authority.start_review(lane_id)
+        assert out["child_id"] == "subagent-test-review"
+        assert runner.started["review_isolated"] is True
+        assert "+GIT binary patch" in runner.started["task"]
+    assert not (audit / "verify_receipts.jsonl").exists()
