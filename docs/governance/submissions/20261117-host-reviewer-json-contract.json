@@ -65,7 +65,7 @@
       "g3": {
         "model_evidence": [
           "Actual two GLM-5.3-Flash read-only reviewer terminals for PR55 are narrative plus one final fenced JSON PASS, P0/P1=0, bound to exact base/head.",
-          "RED-to-GREEN targeted tests plus ambiguous/mismatched/non-PASS negative controls; full R9 and remote CI required before deployment."
+          "RED-to-GREEN targeted tests plus ambiguous/mismatched/non-PASS and contradictory-prefix negative controls; historical prior-REVISE prose remains accepted. Full new-SHA R9 and remote CI required before deployment."
         ],
         "recovery_or_reason": "Reject all ambiguous output, including multiple blocks, nonterminal content, non-JSON, wrong identity or P0/P1; restart drops process-local review attestation; no fallback to fabricated verify_ref."
       },

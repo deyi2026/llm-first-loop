@@ -65,7 +65,10 @@ def _git(cwd: Path, *args: str) -> str:
     return p.stdout.strip()
 
 
-_CONFLICT_TOKEN = re.compile(r"\b(REVISE\w*|BLOCK\w*|REJECT\w*|FAIL\w*)\b", re.IGNORECASE)
+_CONFLICT_TOKEN = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:(?:verdict|result|结论|裁决)\s*[:：=]\s*)?"
+    r"(?:REVISE\w*|BLOCK\w*|REJECT\w*|FAIL\w*)\b"
+)
 _P_TOKEN = re.compile(r"\bp[01]\b\s*[:=]\s*(\d+)", re.IGNORECASE)
 
 
@@ -73,9 +76,10 @@ def _reject_conflicting_prefix(prefix: str) -> None:
     """Fail closed when prose ahead of the terminal JSON fence contradicts it.
 
     The fenced verdict object is machine-checked below, but leading rationale
-    text is never authority: any embedded JSON/braces, fence markers, explicit
-    REVISE/BLOCK tokens, or nonzero P0/P1 assignments make the answer
-    ambiguous, so the whole answer is rejected.
+    text is never authority: embedded JSON/braces, fence markers, an
+    explicit negative verdict at a line start, or nonzero P0/P1 assignments
+    make the answer ambiguous. Historical mentions of prior REVISE decisions
+    are not current verdicts and must not block a valid terminal JSON.
     """
     if "{" in prefix or "}" in prefix:
         raise HostVerifyError("review_not_structured")

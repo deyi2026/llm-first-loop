@@ -274,6 +274,27 @@ def test_review_accepts_prose_prefix_pass(prefix):
     _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
 
 
+
+@pytest.mark.parametrize("prefix", [
+    "导入链信任：回应了此前 REVISE 中的可信路径问题。\n未发现可成立的 P0/P1 问题。\n",
+    "The previous REVISE findings were fixed. Current review: PASS.\n",
+])
+def test_review_allows_historical_negative_verdict_mentions(prefix):
+    answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
+    _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+@pytest.mark.parametrize("prefix", [
+    "verdict: REVISE\n",
+    "结论：BLOCKED\n",
+    "REJECTED: current candidate has issues.\n",
+])
+def test_review_rejects_explicit_current_negative_verdict(prefix):
+    answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
 @pytest.mark.parametrize("answer", [
     # P1 negative repro 1: prose verdict contradicting the fenced JSON.
     "REVISE: P1=2 high severity defect.\n{fence}json\n{payload}\n{fence}",
