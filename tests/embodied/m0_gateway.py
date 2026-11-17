@@ -85,7 +85,8 @@ class SafeGateway:
 
     @staticmethod
     def can_promote_experience(source: str) -> bool:
-        return source not in {"untrusted_sensor", "untrusted_text"}
+        # Positive trust allowlist: unknown sources are never promoted by default.
+        return source in {"independent_oracle", "verified_simulator", "trusted_operator"}
 
     def submit(
         self,

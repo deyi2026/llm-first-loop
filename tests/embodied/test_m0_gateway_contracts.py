@@ -122,6 +122,8 @@ def test_gateway_untrusted_text_never_grants_permission_or_promotes_experience(
     assert view["untrusted_text"] == text
     assert gateway.can_promote_experience("untrusted_sensor") is False
     assert gateway.can_promote_experience("untrusted_text") is False
+    assert gateway.can_promote_experience("unknown_source") is False
+    assert gateway.can_promote_experience("independent_oracle") is True
     obs = ex.observe()
     with pytest.raises(DeniedError) as err:
         _submit(gateway, obs, 999, key="injected", untrusted_text=text)
