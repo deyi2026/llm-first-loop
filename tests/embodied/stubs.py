@@ -270,6 +270,7 @@ class StubExecutor:
         self.intent_index: dict[str, str] = {}
         self.intent_fp: dict[str, str] = {}
         self.intent_semantic: dict[str, str] = {}
+        self.semantic_index: dict[str, str] = {}  # scene-independent pending-action identity
         self.unknown_holds: dict[str, str] = {}
         self.in_flight: dict[str, dict[str, Any]] = {}
         self.executed_count = 0
@@ -339,6 +340,13 @@ class StubExecutor:
             raise DeniedError("STOP_PENDING_HOLD")
         # 2) UNKNOWN 写权冻结：新 key 与同语义重发均拒（未结案不解除）
         if self.unknown_holds:
+            prior_id = self.semantic_index.get(semantic_fingerprint)
+            if (
+                prior_id is not None
+                and self.ledger[prior_id].intent_key != intent_key
+                and scene_epoch != self.ledger[prior_id].scene_epoch
+            ):
+                raise DeniedError("DUPLICATE_SEMANTIC_INFLIGHT")
             raise DeniedError("WRITE_FROZEN_UNKNOWN")
         # 3) grant 校验
         grant = self.grants.get(grant_version)
@@ -362,6 +370,14 @@ class StubExecutor:
                 entry = self.ledger[prev_action_id]
                 return Receipt(prev_action_id, entry.status, intent_key, entry.evidence_ref)
             raise DeniedError("INTENT_CONFLICT")
+        # New intent keys cannot bypass a still-pending physical action by
+        # changing the scene epoch, retry key or wording. The fingerprint is
+        # intentionally scene-independent and survives crash_restart.
+        prior_id = self.semantic_index.get(semantic_fingerprint)
+        if prior_id is not None and self.ledger[prior_id].status in {
+            "RUNNING", "UNKNOWN", "INTERRUPTED"
+        }:
+            raise DeniedError("DUPLICATE_SEMANTIC_INFLIGHT")
         # 5) 观察新鲜度：ref 必须存在、属于当前 epoch、落在半开区间
         #    [acquired, acquired+TTL) 内（now >= acquired+TTL 即拒，v2.3 §5.2/AT-05）；显式 scene_epoch 一致
         obs = self._obs_by_ref.get(observation_ref)
@@ -395,6 +411,7 @@ class StubExecutor:
         self.intent_index[intent_key] = action_id
         self.intent_fp[intent_key] = params_fp
         self.intent_semantic[intent_key] = semantic_fingerprint
+        self.semantic_index[semantic_fingerprint] = action_id
         self.executed_count += 1
         # 世界效果（经 Oracle 持有的隐藏状态，按 action_id 留逐动作验收依据）
         if skill == "pick":
