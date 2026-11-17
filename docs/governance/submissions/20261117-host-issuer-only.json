@@ -36,6 +36,23 @@
       "rollback_route": "Revert with Host issuer code."
     },
     {
+      "component_id": "serial-signal-test-selection",
+      "paths": [
+        "tests/conftest.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "serial-signal-test-selection",
+      "owning_subsystem": "pytest serial_signal classification and R9 complement",
+      "disposition": "Classify the real PTY SIGTERM terminal-restoration test as serial_signal; keep its original timeout/assertions and execute it in the existing serial complement rather than competing xdist workers.",
+      "evidence": [
+        "Original full R9 failed in xdist on SIGTERM subprocess timeout under CPU contention; serial 15/15 green; parallel same-condition retry still red.",
+        "Verify exact marker selection, focused signal behavior, original complete R9 and remote CI."
+      ],
+      "verification_level": "Marker membership, unchanged real signal assertion, full R9 and remote CI.",
+      "model_evidence_veto_recovery_exit": "No test skip, xfail, relaxed threshold or production signal-code change.",
+      "rollback_route": "Remove exact marker selector if future implementation makes physical signal timing deterministic under xdist."
+    },
+    {
       "component_id": "operator-runbook",
       "paths": [
         "docs/governance/HOST-SNAPSHOT-ISSUER-BOOTSTRAP-20261117.md"
@@ -93,6 +110,31 @@
           "Focused issuer and Host tests; Ruff/Pyright zero new diagnostics; A.5 exact paths.",
           "Independent GLM-5.3-Flash Reviewer, full original R9 and remote CI on frozen candidate.",
           "After protected merge, root-owned install with SHA pin, dedicated UID keygen, permission negative test and one real signed Host eligibility trial."
+        ]
+      }
+    },
+    {
+      "declaration_id": "serial-signal-test-selection",
+      "g1": {
+        "necessity": "A physical SIGTERM PTY restoration test timed out under xdist CPU contention twice despite passing the existing serial signal suite; preserve real signal coverage while avoiding unrelated worker scheduling."
+      },
+      "g2": {
+        "authority_owner": "Existing tests/conftest.py SERIAL_SIGNAL_TESTS and ci_gate.sh serial_signal complement.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse the existing function-granularity marker and unchanged R9 serial complement; no new gate, skip, retry policy or production code."
+      },
+      "g3": {
+        "model_evidence": [
+          "Failing original R9: test_terminal_pty::test_sigterm_during_composer_restores_terminal_modes timed out after SIGTERM under xdist; 15/15 serial test pass; parallel same-condition rerun red.",
+          "The test function and its timeout remain unchanged; only exact collection classification changes."
+        ],
+        "recovery_or_reason": "If serial signal test fails, original R9 must fail closed; never mark known-red or omit coverage."
+      },
+      "g4": {
+        "rollback": "Remove the single selector through a protected PR once deterministic parallel behavior is demonstrated.",
+        "verification": [
+          "Collect-only verifies selected once in serial_signal and excluded from xdist.",
+          "Focused PTY SIGTERM real subprocess behavior and full original R9 exit0; exact SHA independent Reviewer and remote CI."
         ]
       }
     }

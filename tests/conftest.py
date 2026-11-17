@@ -82,6 +82,7 @@ SERIAL_SIGNAL_TESTS = (
     "tests/unit/test_terminal_cli.py::test_cli_sigterm_physically_stops_owned_execute_command",
     "tests/unit/test_terminal_cli.py::test_run_turn_real_signal_cancels_owned_generation_and_reports_process_exit",
     "tests/unit/test_terminal_cli.py::test_sigterm_during_runner_start_is_reported_as_termination_pending",
+    "tests/unit/test_terminal_pty.py::test_sigterm_during_composer_restores_terminal_modes",
 )
 
 # Wall-clock performance assertions run alone so unrelated xdist workers cannot
