@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from llm_loop.feedback.honesty import model_unavailable_text
 from llm_loop.llm.client import LLMClient
 
+from .local_context_window import LocalContextWindowObserver
 from .token_budget import ProjectionDensityTracker, reserve_history_after_tools
 
 if TYPE_CHECKING:
@@ -36,6 +37,8 @@ _CONTEXT_SAFETY_MARGIN = 0.9
 # EVO-20260811-10dc2533 P0: 未注册模型保守默认窗口预算（字符）——本地 Ollama/llama.cpp/mlx
 # 等未配置 context 的模型，用 8K 保守预算替代全局 budget，防小窗口模型超限硬拒绝。
 _UNKNOWN_MODEL_BUDGET_CHARS = 8000
+# Unverified loopback serving capacity must not inherit a potentially stale 256K/1M registry claim.
+_LOCAL_CONTEXT_UNVERIFIED_TOKENS = 32768
 
 
 @dataclass
@@ -69,6 +72,7 @@ class RoutingService:
         except Exception:
             density_store = None
         self._projection_density_tracker = ProjectionDensityTracker(store_path=density_store)
+        self._local_context_observer = LocalContextWindowObserver()
 
     @staticmethod
     def _registry_fingerprint(registry: Any) -> str:
@@ -89,6 +93,11 @@ class RoutingService:
 
     def _begin_run_routing_epoch(self) -> None:
         """Latch dynamic/default registry identity once for a newly admitted run."""
+        # A managed local runtime may have restarted with a smaller n_ctx since
+        # the previous user Run; never reuse that Run's cached slot authority.
+        observer = getattr(self, "_local_context_observer", None)
+        if observer is not None:
+            observer.invalidate()
         bucket = self._host._run_state()
         current = self._pool_registry_snapshot()
         default = self._pool_default_registry_snapshot()
@@ -317,7 +326,21 @@ class RoutingService:
         if spec is None or mid not in spec.models:
             return None
         context = spec.models[mid].context
-        return context if context and context > 0 else None
+        if not context or context <= 0:
+            return None
+        # A local registry is not proof of the *running* llama.cpp KV/slot window.
+        # Never enlarge beyond the registry, even when a larger live window is seen.
+        observer = getattr(self, "_local_context_observer", None)
+        # Only the explicitly managed cognilocal provider has the llama.cpp
+        # /props + /slots contract. Other loopback endpoints (LM Studio,
+        # custom OpenAI servers) keep their existing operator budgets.
+        if observer is not None and pid == "cognilocal":
+            observed = observer.observe(str(getattr(spec, "base_url", "") or ""), mid)
+            if observed.kind == "live" and observed.limit is not None:
+                return min(context, observed.limit)
+            if observed.kind == "unavailable":
+                return min(context, _LOCAL_CONTEXT_UNVERIFIED_TOKENS)
+        return context
 
     # ── 辅助 ──
     def _pool_default_route_or_startup(
