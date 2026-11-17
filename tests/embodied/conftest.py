@@ -3,7 +3,7 @@
 - sys.path 注入：让测试模块可直接 import 同目录 stubs（--import-mode=importlib 下必需）。
 - SideEffectSentinel：测试进程内 fail-closed 哨兵（合同第 6 项的独立拦截面）。
   任何 socket / subprocess / os.system / os.popen 调用都会被记录并抛 AssertionError，
-  与双桩自身 nw/hw 计数器构成双口径零副作用证据。
+  与测试中的静态源码拒绝面构成两种不同检查；不使用永远为零的伪计数器。
 - 本 conftest 仅作用于 tests/embodied/ 目录，不影响仓库其他测试。
 """
 from __future__ import annotations

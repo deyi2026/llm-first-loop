@@ -83,8 +83,68 @@ class LedgerEntry:
     skill: str
     status: str = "RUNNING"
     claimed_success: bool = False
+    claimed_evidence_ref: str | None = None
     oracle_verified: bool = False
     evidence_ref: str | None = None
+    resolved_by: str | None = None
+    resolved_at_ms: float | None = None
+    reconcile_evidence_ref: str | None = None
+
+
+@dataclass(frozen=True, eq=False)
+class ReconcileProof:
+    """One-shot, identity-bound capability issued outside the model-facing executor.
+
+    This is an in-memory contract stub, NOT a production cryptographic attestation.
+    """
+
+    action_id: str
+    intent_key: str
+    resolved_by: str
+    terminal_status: str
+    evidence_ref: str
+
+
+class TrustedReconcileAuthority:
+    """Independent test actor for trusted-ledger/human reconciliation.
+
+    The model-facing executor has no proof-minting API. A separate actor must
+    attest a specific UNKNOWN ledger entry; forged, cross-entry and replayed
+    proof objects are rejected. Production must isolate this actor out of process.
+    """
+
+    def __init__(self) -> None:
+        self._issued: set[ReconcileProof] = set()
+
+    def attest(
+        self,
+        entry: LedgerEntry,
+        *,
+        resolved_by: str,
+        terminal_status: str,
+        evidence_ref: str,
+    ) -> ReconcileProof:
+        if resolved_by not in UNKNOWN_RECONCILE_TRUSTED_SOURCES:
+            raise DeniedError("RECONCILE_SOURCE_NOT_TRUSTED")
+        if entry.status != "UNKNOWN" or terminal_status not in {"SUCCEEDED", "FAILED"}:
+            raise DeniedError("RECONCILE_TERMINAL_EVIDENCE_REQUIRED")
+        if not evidence_ref or not evidence_ref.startswith(f"{resolved_by}:"):
+            raise DeniedError("RECONCILE_EVIDENCE_INVALID")
+        proof = ReconcileProof(
+            entry.action_id, entry.intent_key, resolved_by, terminal_status, evidence_ref
+        )
+        self._issued.add(proof)
+        return proof
+
+    def consume(self, proof: ReconcileProof, entry: LedgerEntry) -> None:
+        if (
+            proof not in self._issued
+            or proof.action_id != entry.action_id
+            or proof.intent_key != entry.intent_key
+            or entry.status != "UNKNOWN"
+        ):
+            raise DeniedError("RECONCILE_PROOF_INVALID")
+        self._issued.remove(proof)
 
 
 class StubOracle:
@@ -191,14 +251,21 @@ class StubExecutor:
     → 5 OBSERVATION_* → 6 技能/参数白名单
     """
 
-    def __init__(self, clock: SimClock, oracle: StubOracle) -> None:
+    def __init__(
+        self,
+        clock: SimClock,
+        oracle: StubOracle,
+        reconcile_authority: TrustedReconcileAuthority | None = None,
+    ) -> None:
         self.clock = clock
         self.oracle = oracle
+        self._reconcile_authority = reconcile_authority
         self._obs_seq = 0
         self._irrelevant_frames = 0
         self._obs_by_ref: dict[str, Observation] = {}
         self.grants: dict[int, dict[str, Any]] = {}
         self._next_grant = 1
+        self._current_grant_version: int | None = None
         self.ledger: dict[str, LedgerEntry] = {}
         self.intent_index: dict[str, str] = {}
         self.intent_fp: dict[str, str] = {}
@@ -206,8 +273,6 @@ class StubExecutor:
         self.unknown_holds: dict[str, str] = {}
         self.in_flight: dict[str, dict[str, Any]] = {}
         self.executed_count = 0
-        self.nw_calls = 0  # 双口径之一：真实执行端才会递增；内存双桩恒为 0
-        self.hw_calls = 0
         # 故障注入
         self.fault_delay_ms: float = 0.0
         self.fault_drop_receipt: bool = False
@@ -222,6 +287,7 @@ class StubExecutor:
         version = self._next_grant
         self._next_grant += 1
         self.grants[version] = {"robot_id": self.oracle.robot_id, "revoked": False}
+        self._current_grant_version = version  # 新授权自动取代未撤销的旧版本
         return version
 
     def revoke_grant(self, version: int) -> None:
@@ -280,6 +346,10 @@ class StubExecutor:
             raise DeniedError("GRANT_UNKNOWN")
         if grant["revoked"]:
             raise DeniedError("GRANT_REVOKED")
+        if grant_version != self._current_grant_version:
+            raise DeniedError("GRANT_STALE")
+        if grant["robot_id"] != self.oracle.robot_id:
+            raise DeniedError("GRANT_ROBOT_MISMATCH")
         # 4) 幂等：同键同参同语义 → 原样返回原 action_id（重放为查询性质，先于观察
         #    新鲜度检查——crash 后观察缓存已清也不阻断账本重放；绝不重复执行）
         prev_action_id = self.intent_index.get(intent_key)
@@ -297,6 +367,8 @@ class StubExecutor:
         obs = self._obs_by_ref.get(observation_ref)
         if obs is None:
             raise DeniedError("OBSERVATION_REF_UNKNOWN")
+        if obs.robot_id != grant["robot_id"]:
+            raise DeniedError("GRANT_ROBOT_MISMATCH")
         if obs.scene_epoch != self.oracle.scene_epoch or scene_epoch != self.oracle.scene_epoch:
             raise DeniedError("OBSERVATION_STALE_SCENE")
         if self.clock.now_ms - obs.acquired_ms >= OBSERVATION_TTL_MS:
@@ -362,12 +434,23 @@ class StubExecutor:
         """编排层在回执丢失/超时后的机械冻结：全局写权 HOLD，直到可信结案。"""
         self.unknown_holds.setdefault(intent_key, reason)
 
-    def reconcile_unknown(self, intent_key: str, *, resolved_by: str, release: bool) -> None:
-        """只有可信账本/人工能结案；其他来源（如模型自称）一律拒绝。"""
-        if resolved_by not in UNKNOWN_RECONCILE_TRUSTED_SOURCES:
-            raise DeniedError("RECONCILE_SOURCE_NOT_TRUSTED")
-        if release:
-            self.unknown_holds.pop(intent_key, None)
+    def reconcile_unknown(self, intent_key: str, *, proof: ReconcileProof, release: bool) -> None:
+        """Only one-shot trusted proof can settle an UNKNOWN and release HOLD_WRITE."""
+        if not release or intent_key not in self.unknown_holds:
+            raise DeniedError("RECONCILE_HOLD_REQUIRED")
+        action_id = self.intent_index.get(intent_key)
+        entry = self.ledger.get(action_id or "")
+        if entry is None or self._reconcile_authority is None:
+            raise DeniedError("RECONCILE_AUTHORITY_REQUIRED")
+        if not isinstance(proof, ReconcileProof):
+            raise DeniedError("RECONCILE_PROOF_INVALID")
+        self._reconcile_authority.consume(proof, entry)
+        entry.status = proof.terminal_status
+        entry.resolved_by = proof.resolved_by
+        entry.resolved_at_ms = self.clock.now_ms
+        entry.reconcile_evidence_ref = proof.evidence_ref
+        entry.evidence_ref = proof.evidence_ref
+        self.unknown_holds.pop(intent_key)
 
     # ---- 崩溃恢复 ----
     def crash_restart(self) -> None:
@@ -380,12 +463,12 @@ class StubExecutor:
 
     # ---- 独立 Oracle 验证通道 ----
     def claim_success(self, action_id: str, *, evidence_ref: str) -> None:
-        """执行端宣称成功（不可信声明通道）：只置 claimed_success，不改 oracle_verified。"""
+        """Untrusted claim is kept separate from independent Oracle/ledger evidence."""
         entry = self.ledger.get(action_id)
         if entry is None:
             raise DeniedError("ACTION_ID_UNKNOWN")
         entry.claimed_success = True
-        entry.evidence_ref = evidence_ref
+        entry.claimed_evidence_ref = evidence_ref
 
     def verify_with_oracle(self, action_id: str) -> str:
         """独立验收（逐动作后置条件）：仅终态动作可验收；Oracle 不满足 →

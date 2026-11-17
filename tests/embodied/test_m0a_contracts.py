@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,11 @@ from stubs import (
     OBSERVATION_TTL_MS,
     STOP_SAMPLE_INTERVAL_MS,
     DeniedError,
+    ReconcileProof,
     SimClock,
     StubExecutor,
     StubOracle,
+    TrustedReconcileAuthority,
 )
 
 
@@ -83,7 +86,9 @@ def test_observation_epoch_ttl(side_effect_sentinel):
 
 # ── 合同 2：UNKNOWN → HOLD_WRITE；新 key/同语义重发拒绝；仅可信结案解除 ──
 def test_unknown_holds_write_and_reconcile(side_effect_sentinel):
-    clock, oracle, ex = _fresh_executor()
+    clock, oracle = SimClock(), StubOracle()
+    authority = TrustedReconcileAuthority()  # trusted actor, separate from model-facing executor
+    ex = StubExecutor(clock, oracle, reconcile_authority=authority)
     grant = ex.issue_grant()
     obs = ex.observe()
 
@@ -105,10 +110,18 @@ def test_unknown_holds_write_and_reconcile(side_effect_sentinel):
     assert ei.value.code == "WRITE_FROZEN_UNKNOWN"
     assert ex.executed_count == 1  # 冻结期零新增动作
 
-    # 非可信来源结案拒绝
+    # 非可信来源与伪造的“human”字符串均不能释放写权
     with pytest.raises(DeniedError) as ei:
-        ex.reconcile_unknown("u1", resolved_by="model_claim", release=True)
+        authority.attest(
+            ex.ledger[receipt.action_id],
+            resolved_by="model_claim", terminal_status="SUCCEEDED", evidence_ref="model_claim:fake",
+        )
     assert ei.value.code == "RECONCILE_SOURCE_NOT_TRUSTED"
+    forged = ReconcileProof(receipt.action_id, "u1", "human", "SUCCEEDED", "human:forged")
+    with pytest.raises(DeniedError) as ei:
+        ex.reconcile_unknown("u1", proof=forged, release=True)
+    assert ei.value.code == "RECONCILE_PROOF_INVALID"
+    assert ex.unknown_holds and ex.executed_count == 1
 
     # 崩溃重启：UNKNOWN 冻结（持久语义）仍在
     ex.crash_restart()
@@ -116,8 +129,21 @@ def test_unknown_holds_write_and_reconcile(side_effect_sentinel):
         _exec(ex, oracle, grant, obs, "u3", "pick-cube-red", "pick", {"target_id": "cube-red"})
     assert ei.value.code == "WRITE_FROZEN_UNKNOWN"
 
-    # 可信账本结案 → 解除 → 恢复可执行（重启后观察缓存已清，重新观察）
-    ex.reconcile_unknown("u1", resolved_by="trusted_ledger", release=True)
+    # 可信账本独立签发一次性证据 → 状态与来源持久入账 → 解除 HOLD_WRITE
+    proof = authority.attest(
+        ex.ledger[receipt.action_id],
+        resolved_by="trusted_ledger", terminal_status="SUCCEEDED",
+        evidence_ref=f"trusted_ledger:{receipt.action_id}:terminal",
+    )
+    ex.reconcile_unknown("u1", proof=proof, release=True)
+    entry = ex.ledger[receipt.action_id]
+    assert entry.status == "SUCCEEDED"
+    assert entry.resolved_by == "trusted_ledger"
+    assert entry.reconcile_evidence_ref == f"trusted_ledger:{receipt.action_id}:terminal"
+    assert entry.resolved_at_ms == clock.now_ms
+    assert not ex.unknown_holds
+    with pytest.raises(DeniedError):  # 一次性证明不可重放
+        ex.reconcile_unknown("u1", proof=proof, release=True)
     ex.fault_drop_receipt = False
     obs2 = ex.observe()
     receipt2 = _exec(ex, oracle, grant, obs2, "u4", "pick-cube-red", "pick", {"target_id": "cube-red"})
@@ -174,6 +200,21 @@ def test_grant_revoke_and_stop_semantics(side_effect_sentinel):
     assert ei.value.code == "GRANT_REVOKED"
     assert ex.executed_count == 0
 
+    # 未撤销的旧 grant 在新 grant 签发后也必须失效（不是只验证 revoked 标志）
+    stale_clock, stale_oracle, stale_ex = _fresh_executor()
+    old_grant = stale_ex.issue_grant()
+    new_grant = stale_ex.issue_grant()
+    stale_obs = stale_ex.observe()
+    with pytest.raises(DeniedError) as ei:
+        _exec(stale_ex, stale_oracle, old_grant, stale_obs, "stale", "pick-red", "pick", {"target_id": "cube-red"})
+    assert ei.value.code == "GRANT_STALE"
+    assert stale_ex.executed_count == 0
+    stale_ex.grants[new_grant]["robot_id"] = "other-robot"
+    with pytest.raises(DeniedError) as ei:
+        _exec(stale_ex, stale_oracle, new_grant, stale_obs, "cross", "pick-red", "pick", {"target_id": "cube-red"})
+    assert ei.value.code == "GRANT_ROBOT_MISMATCH"
+    assert stale_ex.executed_count == 0
+
     grant_v2 = ex.issue_grant()
     receipt = _exec(ex, oracle, grant_v2, obs, "s1", "pick-cube-red", "pick", {"target_id": "cube-red"})
     assert receipt.status == "RUNNING"
@@ -226,6 +267,10 @@ def test_oracle_isolation_and_false_success(side_effect_sentinel):
     assert ex.verify_with_oracle(receipt_true.action_id) == "VERIFIED"
     assert ex.ledger[receipt_true.action_id].oracle_verified is True
     assert oracle.verify() is False  # 夹持≠已放到目标托盘
+    trusted_ref = ex.ledger[receipt_true.action_id].evidence_ref
+    ex.claim_success(receipt_true.action_id, evidence_ref="ev:fake:overwrite")
+    assert ex.ledger[receipt_true.action_id].evidence_ref == trusted_ref
+    assert ex.ledger[receipt_true.action_id].claimed_evidence_ref == "ev:fake:overwrite"
 
     # 后假：执行端自报成功（未知对象，世界零变化）→ 逐动作验收拒绝；先前的 VERIFIED 不传染
     receipt_fake = _exec(ex, oracle, grant, obs, "f2", "pick-cube-ghost", "pick", {"target_id": "cube-ghost"})
@@ -234,6 +279,7 @@ def test_oracle_isolation_and_false_success(side_effect_sentinel):
     assert ex.verify_with_oracle(receipt_fake.action_id) == "EXECUTED_UNVERIFIED"
     entry_fake = ex.ledger[receipt_fake.action_id]
     assert entry_fake.claimed_success is True
+    assert entry_fake.claimed_evidence_ref == "ev:fake:claimed"
     assert entry_fake.oracle_verified is False
     assert ex.get_action_status(receipt_fake.action_id).status != "VERIFIED"
     assert ex.executed_count == 2
@@ -324,7 +370,7 @@ def test_goal_requires_actual_placement_not_held_or_wrong_tray(side_effect_senti
     assert ex.executed_count == 5
 
 
-# ── 合同 6：零真机/零外网副作用（哨兵拦截 + 双桩计数双口径 + 源码静态断言）──
+# ── 合同 6：零真机/零外网副作用（哨兵拦截 + 源码静态断言）──
 def test_no_hardware_or_network_side_effect(side_effect_sentinel):
     # 静态面：双桩源码不得引用任何网络/进程/系统调用入口
     stub_src = (Path(__file__).resolve().parent / "stubs.py").read_text(encoding="utf-8")
@@ -335,6 +381,9 @@ def test_no_hardware_or_network_side_effect(side_effect_sentinel):
     with pytest.raises(AssertionError):
         socket.socket()
     assert side_effect_sentinel.blocked == ["socket.socket"]
+    with pytest.raises(AssertionError):
+        subprocess.run(["not-executed"], check=True)
+    assert side_effect_sentinel.blocked == ["socket.socket", "subprocess.run"]
     side_effect_sentinel.blocked.clear()  # 清除自证计数，只保留业务流程证据
 
     # 动态面：完整闭环（观察→执行→状态→停止确认→Oracle 验收）全部走内存
@@ -349,7 +398,5 @@ def test_no_hardware_or_network_side_effect(side_effect_sentinel):
     assert ex.poll_stop_confirmation() == "STOPPED_CONFIRMED"
     assert ex.verify_with_oracle(receipt.action_id) == "VERIFIED"
 
-    # 双口径零副作用证据
-    assert ex.nw_calls == 0
-    assert ex.hw_calls == 0
+    # 静态源码拒绝面 + 动态哨兵拒绝面；不再用永远为零的伪计数冒充独立证据
     assert side_effect_sentinel.blocked == []
