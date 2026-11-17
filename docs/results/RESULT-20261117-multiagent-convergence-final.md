@@ -26,3 +26,12 @@
 - 发现同一行字面脚本 + 动态脚本混合时的残段漏检，新增 `residual` 负测并修复；浅克隆真实 `file://` clone 负测在 `tests/unit/test_baseline_impact_projection.py::test_shallow_clone_never_claims_complete_baseline` 已存在，Reviewer 当轮未读取。
 - 现有 Gate P2 的 `docs/scripts/` 文本误报属于可用性保守拒绝；不因 P2 放宽到不安全的静默放行。
 - 新代码提交后需独立精确 SHA Reviewer 重新 PASS；旧 SHA 回执仅作为历史。
+
+## 第三次审查的覆盖缺口与最终最小补修
+
+- `1b9ed0a256e0f82851af66e09a109f1a62efd288` 独立 DeepSeek-v4-Flash（工具返回的 `model_used`）审查 `REVISE`，已读面 P0=0/P1=0/P2=4，主要原因是审查工具预算不足以核全 11 路径，且 Reviewer 记录实际超出其约定的 8 次工具预算；**不以该结果宣称 PASS**。
+- P2-1：`project_baseline_impact` 的真实签名已有 `caller_main_head`/`peer_lanes`，B2 单测实际调用 `caller_main_head` 并验证拒绝；无需重写接口。
+- P2-2：对未来未知投影状态不再 `KeyError`，一律降级 `unknown`/`projection_status_invalid`，新增负测。
+- P2-3：CI 引用大小写变体 `Scripts/${TARGET}.py` 同样拒绝，新增负测。
+- P2-4：冻结设计原件 SHA256 已由 Host `shasum -a 256` 只读核验，值仍为 `5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea`；未修改原件。
+- 本阶段不再做没有新事实的文档拷问；仅对最终冻结代码候选进行一次足量独立审查，若不能 PASS，保留 HOLD 与准确阻断。

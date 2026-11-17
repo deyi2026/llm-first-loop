@@ -458,7 +458,7 @@ def _verify_gate_closure(client: Any, main: str) -> None:
     for entrypoint in entrypoints:
         _, source = client.blob(entrypoint, main)
         for line in source.splitlines():
-            if line.lstrip().startswith(b"#") or b"scripts/" not in line:
+            if line.lstrip().startswith(b"#") or b"scripts/" not in line.lower():
                 continue
             matches = list(pattern.finditer(line))
             # A computed script name cannot be proven to be in the pinned

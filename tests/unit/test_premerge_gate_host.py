@@ -703,3 +703,12 @@ def test_v19_p2_mixed_literal_and_dynamic_script_reference_holds(fixture):
     )
     with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
         _verify_gate_closure(client, MAIN)
+
+
+def test_v19_p2_case_variant_dynamic_script_reference_holds(fixture):
+    from premerge_host import _verify_gate_closure
+
+    client = fixture[0]
+    client.blobs["scripts/ci_gate.sh", MAIN] = b'"$PY" "Scripts/${TARGET}.py"\n'
+    with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
+        _verify_gate_closure(client, MAIN)

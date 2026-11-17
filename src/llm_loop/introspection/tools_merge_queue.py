@@ -398,6 +398,14 @@ def _status_impact_projection(host: Any, args: dict, rows: list[dict]) -> dict:
                     "recommended_next_step": "hold",
                 }, "evidence": {"projection_is_authoritative": False}}
         status = projection["impact"]["status"]
+        if status not in groups:
+            # Never create an unrecognized "safe" group from a future or
+            # corrupted projection result; unknown remains non-actionable.
+            status = "unknown"
+            projection["impact"] = {
+                "status": status, "reason_codes": ["projection_status_invalid"],
+                "recommended_next_step": "hold",
+            }
         groups[status].append(lane_id)
         items.append(projection)
     return {

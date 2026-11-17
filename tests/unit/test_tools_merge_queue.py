@@ -147,3 +147,32 @@ def test_status_impact_corrupt_lane_source_fail_closed(monkeypatch, tmp_path: Pa
     assert doc["source_complete"] is False
     assert doc["items"][0]["impact"]["reason_codes"] == ["lane_snapshot_degraded"]
     assert doc["groups"]["unknown"] == ["lane-1"]
+
+
+def test_status_impact_unknown_future_status_fails_closed(monkeypatch, tmp_path: Path) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from llm_loop.introspection import baseline_impact, tools_merge_queue
+
+    class FakeStore:
+        def list(self, *, include_terminal: bool = False) -> list[dict]:
+            return [{"lane_id": "lane-1", "status": "queued"}]
+
+        def slot_holder(self) -> None:
+            return None
+
+        def probe_main_head(self) -> str:
+            return "a" * 40
+
+    host = SimpleNamespace(audit_dir=str(tmp_path), workspace_root=str(tmp_path))
+    (tmp_path / "lanes.jsonl").write_text('{"lane_id":"lane-1"}\n')
+    monkeypatch.setattr(tools_merge_queue, "_store", lambda *_a, **_k: FakeStore())
+    monkeypatch.setattr(baseline_impact, "project_baseline_impact", lambda *_a, **_k: {
+        "lane_id": "lane-1", "impact": {"status": "auto_merge_ready"},
+    })
+    result = run_lane_queue_status(None, host, {"with_impact": True})
+    doc = json.loads(result.content.split("\n", 1)[1])["impact_projection"]
+    assert doc["groups"]["unknown"] == ["lane-1"]
+    assert doc["items"][0]["impact"]["reason_codes"] == ["projection_status_invalid"]
+    assert doc["items"][0]["impact"]["recommended_next_step"] == "hold"
