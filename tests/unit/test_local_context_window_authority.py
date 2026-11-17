@@ -235,3 +235,24 @@ def test_live_window_not_larger_than_max_output_holds_instead_of_one_token():
     )
     assert "不大于最大输出预留" in result.final_answer_override
     assert "未向 Provider 发送" in result.final_answer_override
+
+
+def test_smaller_registry_window_also_holds_before_provider_send():
+    # The live server may offer 128K while the selected model's registry cap
+    # is only 32K.  Output reservation must use min(registry, live), not live.
+    observer, _calls = _observer(_payloads(props_ctx=131072, slot_ctx=131072))
+    routing, _model, _provider = _routing(observer, registered=32768, output=32768)
+    fake = SimpleNamespace(model="qwen3.8-flash-next")
+    registry = routing._host.llm_pool.registry_snapshot()
+    routing._host.llm_pool.get_resolved_client = lambda *_args, **_kwargs: (
+        fake, "cognilocal", "qwen3.8-flash-next"
+    )
+    result = routing._route_model(
+        None,
+        SimpleNamespace(model_override="cognilocal/qwen3.8-flash-next"),
+        registry_snapshot=registry,
+    )
+    assert result.llm_client is fake
+    assert result.final_answer_override is not None
+    assert "有效窗口 32768 tokens" in result.final_answer_override
+    assert "未向 Provider 发送" in result.final_answer_override

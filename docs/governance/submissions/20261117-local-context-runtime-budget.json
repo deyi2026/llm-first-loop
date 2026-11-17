@@ -16,7 +16,7 @@
         "GGUF advertises 262144; live llama-server /props and 4 /slots report 131072 for qwen3.8-flash-next",
         "New regression tests cover live shrink, alias mismatch, slot mismatch, restart, cloud non-probe, explicit route hold and unmanaged local preservation"
       ],
-      "verification_level": "RED module import failed; GREEN 16 focused tests; expanded regression, Ruff, Pyright, original R9 and independent reviewer are separate gates, not yet claimed.",
+      "verification_level": "RED module import failed; GREEN 17 focused tests (including effective-window output reserve); expanded regression, Ruff, Pyright, original R9 and independent reviewer are separate gates, not yet claimed.",
       "model_evidence_veto_recovery_exit": "Reject candidate if reviewer finds unsafe SSRF, false local identity, silent model expansion, network activity for cloud or failure to reserve output. Revert isolated commit; keep old registry-only behavior if required.",
       "rollback_route": "Revert this candidate commit; no state migration, no config mutation, no new Provider API endpoint.",
       "declaration_id": "local-live-context-authority"
@@ -30,7 +30,7 @@
       "owning_subsystem": "pytest local context and budget regression",
       "disposition": "Add isolated no-Provider test cases and a read-only real local probe; no production network generation.",
       "evidence": [
-        "16 focused tests passed",
+        "17 focused tests passed, including registry 32K / live 128K / output 32K pre-send hold",
         "Existing schema-capacity 101-tool 32K regression retained"
       ],
       "verification_level": "Focused tests executed; full R9 remains required.",
@@ -70,7 +70,7 @@
           "Read-only real llama-server observed 131072 with 4 slots; GGUF metadata 262144 is not promoted",
           "No cloud or unmanaged loopback probe; 147 related regression tests passed before the final 1M cloud negative test"
         ],
-        "recovery_or_reason": "When managed runtime facts are absent or inconsistent, reject the real model route before Provider send with an explicit reason. A conservative 32768-token fallback remains for read-only budget introspection. When max output is >= live n_ctx, reject the route instead of sending a one-token prompt. New Run invalidates cached facts."
+        "recovery_or_reason": "When managed runtime facts are absent or inconsistent, reject the real model route before Provider send with an explicit reason. A conservative 32768-token fallback remains for read-only budget introspection. When max output is >= the effective window min(registry context, live n_ctx), reject the route instead of sending a one-token prompt. New Run invalidates cached facts."
       },
       "g4": {
         "rollback": "Revert exact branch commit; no persistent data, provider config, or schema changes.",

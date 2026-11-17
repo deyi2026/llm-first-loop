@@ -282,19 +282,29 @@ class RoutingService:
                     )
                 if _observed.kind == "live" and _observed.limit is not None:
                     _model_spec = _provider.models.get(_mid)
+                    # The registry may be *smaller* than the serving slots.
+                    # Reserve output against the effective window, not just
+                    # the observed slot limit, or a 32K registry + 32K output
+                    # silently collapses the input budget to one token.
+                    _registered_context = getattr(_model_spec, "context", None)
+                    _effective_limit = (
+                        min(_observed.limit, _registered_context)
+                        if type(_registered_context) is int and _registered_context > 0
+                        else _observed.limit
+                    )
                     _max_output = int(
                         getattr(_model_spec, "max_tokens", None)
                         or getattr(_provider, "max_tokens", None)
                         or getattr(self._host.settings, "llm_max_tokens", 0)
                         or 0
                     )
-                    if _max_output >= _observed.limit:
+                    if _max_output >= _effective_limit:
                         return _RouteDecision(
                             llm_client=llm_client,
                             model_used=model_used,
                             chat_model_arg=chat_model_arg,
                             final_answer_override=(
-                                f"本地模型 {model_used} 的实时窗口 {_observed.limit} tokens"
+                                f"本地模型 {model_used} 的有效窗口 {_effective_limit} tokens"
                                 f" 不大于最大输出预留 {_max_output} tokens；本次未向 Provider 发送。"
                                 "请增大受管运行时 n_ctx 或降低该模型 max_tokens。"
                             ),
