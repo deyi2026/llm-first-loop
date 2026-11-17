@@ -104,6 +104,8 @@ class FallbackService:
         - LLMEmptyResponseError（EVO-20261007-519eeb93：client 侧同模型重试后仍空——
           瞬时可用性故障语义与超时/网络同类；strict override 会话仍不降级，用户选择权优先）
         - rate_limit（HTTP 429 / GLM 1302 / 流内限流）
+        - period_quota（GLM 1310 周/月配额窗口: 同一模型须等窗口重置，同账户其他模型
+          有各自独立窗口仍可试一次——d91 实测 1310 曾被当作瞬时限流反复重试）
         - server_error（5xx / 流内服务端错误）
         - model_permission（GLM 1311: 针对所选模型，订阅内其他候选可能可用——
           语义如实分类为权限受限，不再冒称"限流"）

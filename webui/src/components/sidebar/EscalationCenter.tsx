@@ -23,6 +23,7 @@ export interface EscalationRequest {
   command_sha256?: string;
   command_len?: number;
   command_truncated?: boolean;
+  request_kind?: "command" | "host_grant" | "verify_receipt";
   /** FR-03: 跨进程签名失效标记（存储层投影保留）——失效 pending 不入待审队列，
    * 历史视图显示"已失效"。 */
   _sig_unverified?: boolean;
@@ -104,7 +105,7 @@ async function reviewEscalation(
   decision: "approved" | "denied",
   note: string,
   expectedSha256: string
-): Promise<{ ok: boolean; message: string; stale: boolean }> {
+): Promise<{ ok: boolean; message: string; stale: boolean; loginRequired: boolean }> {
   try {
     const r = await fetch("/api/v1/escalation/review", {
       method: "POST",
@@ -114,18 +115,36 @@ async function reviewEscalation(
       body: JSON.stringify({ id, decision, note, expected_sha256: expectedSha256 }),
     });
     const d = await r.json().catch(() => ({}));
-    if (r.ok) return { ok: true, message: decision === "approved" ? "已批准（AI 将收到一次性令牌）" : "已拒绝（AI 将收到拒绝理由）", stale: false };
+    if (r.ok) return { ok: true, message: decision === "approved" ? "已批准（AI 将收到受管审批结果）" : "已拒绝（AI 将收到拒绝理由）", stale: false, loginRequired: false };
     const error = String((d as { error?: string }).error || "");
+    if (r.status === 403 && (error === "human_auth_required" || error === "human_channel_required")) {
+      return {
+        ok: false,
+        message: "审批未生效：当前浏览器没有有效登录会话。请先登录 LFL，再返回本页重新确认。",
+        stale: false,
+        loginRequired: true,
+      };
+    }
     if (r.status === 409 && error.includes("stale_review")) {
-      return { ok: false, message: "⚠️ 待审内容已变化，请重新打开", stale: true };
+      return { ok: false, message: "⚠️ 待审内容已变化，请重新打开", stale: true, loginRequired: false };
     }
     if (r.status === 400 && error.includes("missing_expected_sha256")) {
-      return { ok: false, message: "⚠️ 审批缺少命令哈希绑定，请重新打开详情后再试", stale: false };
+      return { ok: false, message: "⚠️ 审批缺少命令哈希绑定，请重新打开详情后再试", stale: false, loginRequired: false };
     }
-    return { ok: false, message: `⚠️ ${error || `失败(${r.status})`}`, stale: false };
+    return { ok: false, message: `⚠️ ${error || `失败(${r.status})`}`, stale: false, loginRequired: false };
   } catch (err) {
-    return { ok: false, message: `请求失败: ${String(err)}`, stale: false };
+    return { ok: false, message: `请求失败: ${String(err)}`, stale: false, loginRequired: false };
   }
+}
+
+function EscalationLoginPrompt() {
+  // 登录跳转仅使用本站路径；保留当前会话 query，登录后返回原审批位置。
+  const next = window.location.pathname + window.location.search;
+  return (
+    <div className="v2-esc-hash warn v2-esc-login-required" role="alert" data-testid="esc-login-required">
+      此次审批没有生效。<a href={`/login?next=${encodeURIComponent(next)}`} data-testid="esc-login-link">登录 LFL 后重试审批</a>
+    </div>
+  );
 }
 
 function useEscalations(enabled = true) {
@@ -200,7 +219,9 @@ function PendingCard({
   const [viewErr, setViewErr] = useState("");
   const mustReadFull = !!req.command_truncated;
   const viewedFull = !mustReadFull || (viewedSha !== "" && viewedSha === req.command_sha256);
-  const badge = statusBadge(req.status);
+  const badge = req.request_kind === "verify_receipt" && req.status === "approved"
+    ? { text: "Host 已签发", cls: "ok" }
+    : statusBadge(req.status);
   useEffect(() => {
     // 待审命令指纹变化（新一轮列表）→ 查看资格失效，原文与解锁一并重置
     if (viewedSha !== "" && viewedSha !== req.command_sha256) {
@@ -262,6 +283,9 @@ function PendingCard({
       )}
       {viewErr && <div className="v2-esc-hash warn">{viewErr}</div>}
       <div className="v2-esc-just">{req.justification}</div>
+      {req.request_kind === "verify_receipt" && (
+        <div className="v2-esc-hash warn">此操作由已登录浏览器人工批准后由 Host 专用入口签发，不会授予 AI 审计账本写权限。</div>
+      )}
       <textarea
         className="v2-esc-note"
         placeholder="审批备注（拒绝时建议写理由，AI 侧可见）"
@@ -278,7 +302,7 @@ function PendingCard({
           data-testid={`esc-approve-${req.id}`}
           onClick={() => onDecide(req.id, "approved", note, req.command_sha256 || "")}
         >
-          批准
+          {busy ? "处理中…" : "批准"}
         </button>
         <button
           type="button"
@@ -286,7 +310,7 @@ function PendingCard({
           disabled={busy}
           onClick={() => onDecide(req.id, "denied", note, req.command_sha256 || "")}
         >
-          拒绝
+          {busy ? "处理中…" : "拒绝"}
         </button>
       </div>
     </div>
@@ -299,6 +323,7 @@ export function EscalationWatcher() {
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [resultMsg, setResultMsg] = useState("");
+  const [loginRequired, setLoginRequired] = useState(false);
   const prevPendingRef = useRef<Set<string>>(new Set());
   const [newArrival, setNewArrival] = useState(false);
 
@@ -314,6 +339,7 @@ export function EscalationWatcher() {
     if (hasNew) {
       setNewArrival(true);
       setResultMsg("");
+      setLoginRequired(false);
     }
   }, [pending]);
 
@@ -322,8 +348,11 @@ export function EscalationWatcher() {
 
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
     setBusy(true);
+    setResultMsg("正在提交审批，请稍候…");
+    setLoginRequired(false);
     void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
       setResultMsg(res.message);
+      setLoginRequired(res.loginRequired);
       if (res.ok) {
         setMutedIds((prev) => new Set(prev).add(id));
         if (pending.filter((r) => r.id !== id && !mutedIds.has(r.id)).length === 0) setNewArrival(false);
@@ -372,20 +401,23 @@ export function EscalationWatcher() {
             ×
           </button>
         </div>
-        {resultMsg && <div className="v2-evo-action-msg">{resultMsg}</div>}
+        {resultMsg && <div className="v2-evo-action-msg" role="status" data-testid="esc-modal-feedback">{resultMsg}</div>}
+        {loginRequired && <EscalationLoginPrompt />}
         {data?.error && (
           <div className="v2-esc-hash warn" data-testid="esc-store-error">
             ⚠️ {data.error}——待审列表当前不可用，请勿据此判断"无待审"
           </div>
         )}
-        {pending
-          .filter((r) => !mutedIds.has(r.id))
-          .map((r) => (
-            <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
-          ))}
+        <div className="v2-esc-modal-body">
+          {pending
+            .filter((r) => !mutedIds.has(r.id))
+            .map((r) => (
+              <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
+            ))}
+        </div>
         <div className="v2-esc-modal-foot">
-          批准后 AI 会收到一次性令牌（10 分钟内有效，绑定本命令，单次使用）；
-          拒绝后 AI 会收到拒绝理由并停止重试。
+          普通提权批准后 AI 收到一次性令牌；验证凭证类由 Host 专用签发，
+          不提供通用文件写权限。拒绝后 AI 会收到拒绝理由。
         </div>
       </div>
     </div>
@@ -397,10 +429,14 @@ export function EscalationPanel() {
   const { data, reload } = useEscalations(true);
   const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
+  const [loginRequired, setLoginRequired] = useState(false);
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
     setBusy(true);
+    setActionMsg("正在提交审批，请稍候…");
+    setLoginRequired(false);
     void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
       setActionMsg(res.message);
+      setLoginRequired(res.loginRequired);
       if (res.ok || res.stale) reload();
       setBusy(false);
     });
@@ -454,6 +490,7 @@ export function EscalationPanel() {
           {actionMsg}
         </div>
       )}
+      {loginRequired && <EscalationLoginPrompt />}
       <div className="v2-evo-body">
         <div className="v2-esc-sec">待审批 ({pendingCount})</div>
         {/* R2: 只有确认无待审（非错误态且权威计数为 0）才显示空态提示 */}
@@ -474,7 +511,9 @@ export function EscalationPanel() {
           const badge =
             r._sig_unverified && r.status === "pending"
               ? { cls: "denied", text: "已失效" }
-              : statusBadge(r.status);
+              : r.request_kind === "verify_receipt" && r.status === "approved"
+                ? { cls: "ok", text: "Host 已签发" }
+                : statusBadge(r.status);
           return (
             <div key={r.id} className="v2-evo-item">
               <div className="v2-evo-row">

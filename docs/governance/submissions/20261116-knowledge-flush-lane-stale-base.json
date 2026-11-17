@@ -1,0 +1,119 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-knowledge-flush-lane-stale-base",
+  "summary": "修复 knowledge_flush 的 lane stale 判定：账本里的相对 worktree 路径改以主仓根（git common-dir 的 .git 父目录）为解析基准；并附两处配套提交——把 GLM 族错误码语义从 classify_llm_error 原样抽到 _glm_code_semantics（该函数 137→114 行），以及由脚本生成的函数规模基线重登记（抬高 0 条、收紧 4 条），用以消除 main 9e4defc0e 遗留的 CI 红（test_function_lines_ratchet_within_baseline）。阈值口径：knowledge_flush 的 lane 空闲阈值（_LANE_STALE_AFTER_S=4h）与终态集合未改动；函数规模基线只收紧 4 条、抬高 0 条（未放宽该守卫的上限）；不新增写权限、不新增闸门。",
+  "components": [
+    {
+      "component_id": "knowledge-flush-lane-stale-base",
+      "paths": [
+        "scripts/knowledge_flush.py",
+        "tests/unit/test_knowledge_flush.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "知识入库 lane 闸门（scripts/knowledge_flush.py 的 _lane_is_stale / _live_other_lanes）",
+      "disposition": "ADMIT 最小修复：新增 _main_worktree_root() 作为相对 worktree 路径的解析基准（rev-parse --path-format=absolute --git-common-dir 的 .git 父目录，口径与 lane_main_write_guard._main_repo_root 一致）；_lane_is_stale 增 keyword-only base 参数，_live_other_lanes 每轮只解析一次基准。_LANE_STALE_AFTER_S=4h、_LANE_TERMINAL 集合与「超时且 worktree 干净」判定条件均未改动。",
+      "evidence": [
+        "负控实测（同树回退 src 到 base）：test_stale_lane_relative_worktree_resolves_from_main_root 断言 False is True 失败；test_flush_in_linked_worktree_not_blocked_by_stale_relative_lane 端到端返回 2 != 0；合计 2 failed 1 passed，证明新增测试确实覆盖该缺陷而非空跑。",
+        "修复后同树：tests/unit/test_knowledge_flush.py 10 passed（含 3 条新回归）；lane/flush 相关 6 个测试文件 163 passed；ruff check 两文件 All checks passed。",
+        "未放宽闸门：test_live_lane_still_blocks_in_linked_worktree 断言 1h 内活跃的相对 lane 在主仓与 linked worktree 内均不被判 stale（仍拦），阈值与条件未变。"
+      ],
+      "verification_level": "代码候选 bb07ae540（lane 修复两文件）上实跑：单文件 10 passed、6 文件子集 163 passed、ruff 全绿；同 SHA 负控 2 failed 复现原缺陷。本次清单自身的文档修订未改这两文件的代码；其覆盖性由 CI 的 A.5 步骤以 --base 9e4defc0e --head <PR head> 实跑 checker 证明（本文件不内嵌自身提交 SHA：清单内钉自身 SHA 会随 amend/重写失效，属自指）。全量三件套（pytest 全量/ruff/pyright）本地未运行，交由 PR 上的 CI 执行，本清单不声称已获全量门禁回执。",
+      "model_evidence_veto_recovery_exit": "若审查发现该改动放宽了 lane 闸门（把活跃 lane 判 stale）、或对非 git 目录/无 git 环境引入硬失败，则 veto 本 PR 并回退到 base 9e4defc0e 的保守实现——base 的误判方向是「多拦」而非「放过」，回退不放大风险。",
+      "rollback_route": "revert 该 PR 的合并提交即可；无持久化状态、无 schema/配置项变更、无外部接口变更。回退后行为回到 base 版本（相对路径 lane 在 linked worktree 内重新被误判为 live）。",
+      "declaration_id": "knowledge-flush-lane-stale-base"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261116-knowledge-flush-lane-stale-base.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交清单（docs/governance/submissions/）",
+      "disposition": "ADMIT 仅新增本 PR 的架构清单，精确覆盖 PR 的全部 changed paths，不改变任何运行时行为。",
+      "evidence": [
+        "check_architecture_submission.py --base 9e4defc0e --head <candidate> 校验：exact changed-path coverage、schema 结构、declaration 引用闭合。"
+      ],
+      "verification_level": "结构校验与 changed-path 精确覆盖已由 checker 实跑；G1-G4 的语义成立性由独立审查覆盖，CI 只校验结构 presence/coverage。",
+      "model_evidence_veto_recovery_exit": "若清单漏路径、多路径或声明与事实不符，veto 并在同一分支修正清单后重跑 checker，不得关闭该门禁绕过。",
+      "rollback_route": "随 PR 一起 revert；无运行时影响。"
+    },
+    {
+      "component_id": "llm-error-semantics-extraction",
+      "paths": [
+        "src/llm_loop/llm/errors.py",
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "LLM 错误语义分类（src/llm_loop/llm/errors.py 的 classify_llm_error / 新增 _glm_code_semantics）与函数规模守卫基线（tests/guards/function_size_baseline.json）",
+      "disposition": "ADMIT 两步且仅两步：① 纯抽取——四个 GLM 族业务码分支（1302/1310/1311/1113）原样搬到 _glm_code_semantics(code)，classify_llm_error 137→114 行，返回对象/判定顺序/码表边界（仅 GLM 族）与注释事实保持不变；② 由 scripts/regen_function_size_baseline.py 生成基线重登记：抬高 0 条、收紧 4 条（classify_llm_error 127→114、coordination_snapshot 119→113、_resolve_host_grant 192→186、review_host_admission._target 193→170）。动机是 main 9e4defc0e 把该函数写到 137 行未重登记，使函数规模守卫在 main 上即红（CI run 43830112457）；此处选择重构缩小而非抬高棘轮。 说明：另 3 条收紧（coordination_snapshot / _resolve_host_grant / review_host_admission._target）是脚本对历史漂移的同步，与 lane 修复无逻辑耦合；若评审要求单列，可将 56bdc10e7 独立 cherry-pick 到单独 PR，本 PR 仅保留 classify_llm_error 一条。",
+      "evidence": [
+        "main 侧既有红：gh run view 43830112457（main @ 9e4defc0e）= failure；上一 main 提交 b7aef87b = success；本 PR 首次 run（main=9e4defc0e 基线）同测试报「登记 127 → 实测 137（零增长）」失败。",
+        "重构后本地实跑：tests/unit/test_glm_1310_period_quota.py、test_assess_20261008_wp1.py、test_model_fallback.py、test_fallback_integration.py、test_arch_guards.py、test_knowledge_flush.py 共 103 passed；ruff check src/llm_loop/llm/errors.py All checks passed。",
+        "基线重登记为脚本产物：scripts/regen_function_size_baseline.py 输出「按实测抬高 0 条 / 收紧 4 条」，`--check` 幂等通过；未手工改数值。",
+        "前一轮尝试「直接抬高 127→137」被 push 闸独立审查判 REVISE（P1：放宽架构守卫），故改为重构路线并弃用该提交。"
+      ],
+      "verification_level": "代码候选 56bdc10e7 实跑：上述 6 个测试文件 103 passed、ruff 全绿、regen --check 幂等；checker 同口径实跑（--base 9e4defc0e --head 56bdc10e7）= PASS（changed_paths=5 / components=3 / controls=2）。本次清单自身的文档修订未改这两文件的代码；其覆盖性由 CI 的 A.5 步骤以 --base 9e4defc0e --head <PR head> 实跑 checker 证明（本文件不内嵌自身提交 SHA：清单内钉自身 SHA 会随 amend/重写失效，属自指）。全量三件套（pytest 全量/ruff/pyright）交由 PR 上的 CI 执行，本清单不声称已获全量门禁回执。",
+      "model_evidence_veto_recovery_exit": "若审查发现抽取改变了错误语义（返回对象字段、判定顺序、非 GLM 族 provider 被劫持、code 为 None 时的分支）或基线出现任何↑条目，则 veto 本 PR 该部分并回退到 base 9e4defc0e 的实现；回退后 main 的函数规模守卫仍红，须另开专门 PR 处理，不得在本 PR 内抬高棘轮绕过。",
+      "rollback_route": "revert 66aad8ad0 与 56bdc10e7 两个提交：错误语义回到 base 9e4defc0e 的内联实现（行为等价，无残留）；基线回到 base 的登记值 classify_llm_error=127，而该函数实测仍为 137，即 revert 后函数规模守卫会重新变红——这是 base 已有的红，不是本 PR 引入的；此时须另开专门 PR 处理（重构或按流程申请放宽），不得在本 PR 内抬高棘轮绕过。无状态迁移、无配置项、无外部接口变更。",
+      "declaration_id": "llm-error-semantics-extraction"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "knowledge-flush-lane-stale-base",
+      "g1": {
+        "necessity": "在 linked worktree 内执行 knowledge_flush 时，账本中的相对 worktree 路径被按当前 worktree 拼接成不存在的目录，git status 调用抛 OSError 被吞成「未失效」，使 4h 空闲且干净的 lane 一律计入 live blockers，知识入库被永久挡住。2026-11-16 实测：flush 被 5 条 lane 挡住，其中 2 条 14h 僵尸 lane 即因此误判为 live。"
+      },
+      "g2": {
+        "authority_owner": "lane 账本（data/audit/lanes.jsonl）与 lane 生命周期工具（lane_open/lane_update/lane_close）是 lane 状态的唯一权威；knowledge_flush 只读账本做保守判定，不写 lane 状态。",
+        "relationship": "reuse",
+        "non_duplication": "不新增 lane 状态机、不新增写入路径、不改变阈值与终态集合；解析基准复用 lane_main_write_guard._main_repo_root 的同一口径（rev-parse --git-common-dir），避免两处对「主仓根」的定义分叉。"
+      },
+      "g3": {
+        "model_evidence": [
+          "负控：base src + 新测试 → 2 failed（False is True；端到端 2 != 0）",
+          "修复后：单文件 10 passed、lane/flush 子集 163 passed、ruff All checks passed",
+          "口径对照：lane_main_write_guard._main_repo_root 使用同一 rev-parse --git-common-dir 取值与 .git 父目录规则"
+        ],
+        "recovery_or_reason": "若 git common dir 解析失败（非 git 目录、git 不可用、rev-parse 非零退出），_main_worktree_root 回退为 root，行为与修复前一致，不因新逻辑引入硬失败。"
+      },
+      "g4": {
+        "rollback": "revert 合并提交；无状态迁移、无配置项、无 schema 变更，回退即回到 base 行为。",
+        "verification": [
+          "checker 精确覆盖（--base 9e4defc0e --head <candidate>）：schema 结构、changed-path exact coverage、declaration 引用闭合",
+          "候选 SHA bb07ae540 实跑：tests/unit/test_knowledge_flush.py 10 passed；lane/flush 相关 6 文件 163 passed；ruff 两文件 All checks passed",
+          "负控：同树把 src 回退到 base 后，新测试 2 failed（False is True；端到端 2 != 0），证明测试非空跑",
+          "全量三件套（pytest 全量/ruff/pyright）由 PR 上的 CI 执行；本地未运行，本清单不声称已获全量门禁回执"
+        ]
+      }
+    },
+    {
+      "declaration_id": "llm-error-semantics-extraction",
+      "g1": {
+        "necessity": "PR 分支要并入 main 前，main 自身已被 9e4defc0e 弄红：classify_llm_error 增到 137 行未重登记，函数规模守卫在 main 上失败；任何 PR 都无法在绿门下合并。要么抬高棘轮（放宽守卫），要么把函数缩回基线内。后者不削弱守卫，故选重构。"
+      },
+      "g2": {
+        "authority_owner": "LLM 错误语义的权威仍是 classify_llm_error 与其码表常量；函数规模红线的权威是 tests/guards/function_size_baseline.json 与 scripts/regen_function_size_baseline.py。",
+        "relationship": "reuse",
+        "non_duplication": "不新增分类器、不复制码表、不新增阈值；_glm_code_semantics 只被 classify_llm_error 调用一次，抽取前后是同一份逻辑；基线值由既有脚本生成，未手改。"
+      },
+      "g3": {
+        "model_evidence": [
+          "重构前后行为对照：git show 66aad8ad0 -- src/llm_loop/llm/errors.py（四个分支逐字搬迁，classify 侧只剩一次调用 + None 短路）",
+          "测试：test_glm_1310_period_quota / test_assess_20261008_wp1 / test_model_fallback / test_fallback_integration 全绿（103 passed 含 arch guards 与 knowledge_flush）",
+          "基线：regen 脚本输出抬高 0 条、收紧 4 条；--check 幂等"
+        ],
+        "recovery_or_reason": "若抽取引入语义漂移，revert 该提交即回到 base 的 classify_llm_error（此时 main 仍红，另案处理）；不涉及数据迁移或外部契约。"
+      },
+      "g4": {
+        "rollback": "revert 66aad8ad0 + 56bdc10e7：错误语义回到 base 的内联实现，基线回到 base 的 127 登记；因 classify_llm_error 实测仍 137，revert 后 main 的函数规模守卫重新红（base 态已有红），须另案处理；无状态迁移、无配置项、无 schema 变更。",
+        "verification": [
+          "checker 精确覆盖（--base 9e4defc0e --head <PR head>，由 CI A.5 步骤实跑；本地对代码候选 56bdc10e7 同口径 PASS：changed_paths=5 / components=3 / controls=2）",
+          "代码候选 56bdc10e7 本地 103 passed（含 tests/unit/test_arch_guards.py 全部守卫）",
+          "regen --check 幂等；抬高条目 0、收紧 4",
+          "全量三件套由 PR 上的 CI 执行，本地未运行、不声称已获全量门禁回执"
+        ]
+      }
+    }
+  ]
+}

@@ -840,7 +840,7 @@ wheels = [
 
 [[package]]
 name = "llm-first-loop"
-version = "0.6.54"
+version = "0.6.55"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

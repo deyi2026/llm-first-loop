@@ -1,0 +1,79 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-multiagent-convergence-b1-ci-evidence",
+  "summary": "B1 isolated CI evidence, read-only Host premerge checks and local flock; independent Reviewer REVISE on prior f976ad56 P0=1/P1=2 was addressed by workflow provenance pinning, expanded trusted blobs and public-key snapshot verification. New exact-SHA review pending.",
+  "components": [
+    {
+      "component_id": "b1-ci-evidence-gate",
+      "paths": [
+        ".github/workflows/ci.yml",
+        "scripts/premerge_gate.py",
+        "scripts/premerge_host.py",
+        "scripts/integration_writer_lock.py",
+        "tests/unit/test_premerge_gate_ci.py",
+        "tests/unit/test_premerge_gate_host.py",
+        "tests/unit/test_integration_writer_lock.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "GitHub Actions CI evidence job, separate read-only Host GitHub API verifier and narrow local integration-writer flock",
+      "disposition": "ADMIT isolated B1 code and negative tests only. Host never merges or pushes; no production activation, no branch protection changes and no automatic remote main CAS.",
+      "evidence": [
+        "B1-1 CI evidence job and initial tests were developed in LFL Web with glm/glm-5.3-flash; B1-2 Host/lock code and negative tests were authored by the main developer.",
+        "Independent DeepSeek-v4-Flash Reviewer of f976ad56f01bc4b76c5ad0c5c80eff4dc0787ba7 returned REVISE P0=1/P1=2; follow-up Reviewer of e08d5712e421ee41ab3f81476278af8e0c76f113 returned PASS P0=0/P1=0/P2=10. Subsequent trust-boundary fixes require a new exact-SHA review.",
+        "The revised Host requires check-runs filter=all, exact context/app_id, run workflow_id/path from approved policy, tested merge check runs and parent SHAs, remote main/PR final recheck, branch protection, Actions artifact, and main/candidate equality for twelve trusted gate/dependency blobs (including Host verifier and integration lock).",
+        "Host snapshot verification uses only a public Ed25519 key; the signing private key and authoritative Lane/Queue/Reviewer/R9 issuer must remain outside the verifier and are not yet wired into production.",
+        "Local integration tool flocks the stable real git-common-dir inode (not an unlinkable lock file), rejects concurrent writers, refuses main and dirty trees and preserves conflicts; no remote ref CAS is claimed.",
+        "Remote GitHub main protection API returned 404 Branch not protected; approved required-ci-checks.json absent at main. Host eligibility is BLOCKED until separately authorized bootstrap and protected policy installation."
+      ],
+      "verification_level": "Focused CI/Host/flock and architecture tests 138 passed after latest minimal fixes; Reviewer of e08d5712 PASS but a new exact-SHA independent review, full original R9 and remote CI remain pending.",
+      "model_evidence_veto_recovery_exit": "Any 403/404, absent trusted policy/public key, invalid Ed25519 snapshot signature, stale Lane/Queue version, failed reviewer/R9, wrong run.workflow_id/path, duplicate context, skipped/RED check, untrusted gate dependency blob, or lock contention must HOLD without merge side effect.",
+      "rollback_route": "Revert isolated B1 PR or disable the CI evidence job; no durable migration or production changes. Dirty integration worktrees are retained for owner reconciliation.",
+      "declaration_id": "b1-ci-evidence"
+    },
+    {
+      "component_id": "a5-submission",
+      "paths": [
+        "docs/governance/submissions/20261116-multiagent-convergence-b1-ci-evidence.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 changed-path coverage declaration",
+      "disposition": "Document exact changed paths and truthful verification status without adding runtime authority.",
+      "evidence": [
+        "A.5 declaration includes itself and exactly seven B1 implementation/test/workflow paths.",
+        "Frozen v1.9 design SHA256=5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea remains unchanged."
+      ],
+      "verification_level": "A.5 exact changed-path coverage must pass on final SHA; independent Reviewer, original full R9 and remote CI are pending.",
+      "model_evidence_veto_recovery_exit": "If coverage or declaration is inaccurate, correct in the isolated branch and re-run A.5; never claim unperformed review/R9/CI as complete.",
+      "rollback_route": "Revert the isolated PR; no runtime state impact."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "b1-ci-evidence",
+      "g1": {
+        "necessity": "B1 needs a machine-consumed CI sibling evidence job, independent Host verification of required GitHub rules/check runs and trusted gate blobs, and a single local integration writer to avoid two simultaneous cherry-picks."
+      },
+      "g2": {
+        "authority_owner": "GitHub API owns branch rules/check runs and Actions evidence; existing LFL Lane/Queue/Reviewer/R9 stores remain authoritative. A separately trusted Host snapshot issuer holds the Ed25519 signing private key; this verifier has only the public key. Git common dir OS flock serializes the narrow local integration tool.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing CI and four siblings; no new Goal/Lane ledger, no generic shell executor, no remote atomic CAS. Host Ed25519 snapshot issuer is NOT yet wired into production, so this isolated candidate does not qualify for live merge."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent DeepSeek-v4-Flash Reviewer of f976ad56 returned REVISE P0=1/P1=2; Reviewer of e08d5712 returned PASS P0=0/P1=0/P2=10. The subsequent minimal trust-boundary fixes are not covered by that PASS.",
+          "Synthetic tests cover duplicate check-run names, wrong workflow_id/path, twelve main/candidate trusted blobs, extra policy workflow candidate tampering, exact signed repo/PR/run and Lane status, independent Ed25519 public-key verification, branch protection absence, PR merge identity, API redirect refusal, and two-process directory-inode flock despite legacy lock-file unlink.",
+          "No live Host eligibility PASS is claimed: remote main protection 404, trusted policy and independent snapshot issuer not installed."
+        ],
+        "recovery_or_reason": "If required context provenance is ambiguous or gate/policy blob differs from protected main, return HOLD; require separate bootstrap. Reject self-signed snapshot or missing public key. Preserve dirty integration tree for operator reconciliation."
+      },
+      "g4": {
+        "rollback": "Revert isolated B1 PR to remove CI/Host/local integration tool; no persistent data schema changes or live deployment.",
+        "verification": [
+          "Rerun focused tests, Ruff, A.5 exact path coverage on final SHA; independent Reviewer must PASS P0/P1=0 after the P0/P1 fixes.",
+          "Run original complete R9 exit 0 and remote PR CI for the final SHA before any protected main integration.",
+          "Separately authorize and verify required context bootstrap, branch protection, trusted policy and independent snapshot issuer; do not treat this candidate as self-authorized."
+        ]
+      }
+    }
+  ]
+}

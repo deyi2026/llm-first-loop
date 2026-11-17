@@ -599,3 +599,317 @@ def test_submit_tool_self_reported_experience_accepts_prefixed_stable_ref(tmp_pa
     receipt = _payload(result)
     assert receipt["counts"]["committed"] == 1
     assert receipt["receipts"][0]["status"] == "committed"
+
+
+# ── M0-C11 刷锚待办（freshness_refresh）：与使用结算完全分列 ────────────────
+
+
+def _c11_store(tmp_path: Path):
+    """带 workspace_root 的 MethodStore（freshness 需要可解析锚根）."""
+    ws = tmp_path / "c11ws"
+    methods = tmp_path / "c11methods"
+    ws.mkdir(exist_ok=True)
+    methods.mkdir(exist_ok=True)
+    return MethodStore(methods, workspace_root=ws), ws
+
+
+def _c11_card(store: MethodStore, name: str, refs: list[str], *, baseline=None):
+    record = store.save_candidate(name=name, description=f"{name} 描述", body=_CONTRACT_BODY)
+    record = store.annotate_freshness(record.method_ref, refs)
+    if baseline is not None:
+        import hashlib as _h
+
+        qpath = Path(record.path).parent / "qualification.jsonl"
+        real = {
+            k: (_h.sha256(v).hexdigest() if isinstance(v, bytes) else v)
+            for k, v in baseline.items()
+        }
+        with qpath.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {"ts": "2026-11-16T07:00:00+08:00", "verdict": "pass", "freshness_hashes": real}
+                )
+                + "\n"
+            )
+    return record
+
+
+def _c11_use(store: MethodStore, ref: str, *, decision="applied", session="", wu="", ts=""):
+    store.record_use(
+        ref, episode_ref="episode:c11-test-1", decision=decision, session_id=session, work_unit_id=wu,
+        benefit="unknown", note=ts,
+    )
+
+
+def test_c11_applied_stale_derives_refresh_items(tmp_path):
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    (ws / "gone.txt").write_bytes(b"present")
+    changed = _c11_card(store, "c11 changed probe", ["a.txt"])
+    gone = _c11_card(store, "c11 missing probe", ["gone.txt"])
+    # R4 真实基线语义（Q-05 R4×C11 兼容修复）：stale 只能由注记期可信基线之后的
+    # 真实文件变更/真实缺失触发；伪造 qualification 基线不再制造 changed/missing。
+    (ws / "a.txt").write_bytes(b"v2")
+    (ws / "gone.txt").unlink()
+    _c11_use(store, changed.method_ref, session="sess-1", wu="TASK-A")
+    _c11_use(store, gone.method_ref, session="sess-1", wu="TASK-A")
+
+    items = collect_freshness_refresh_items(
+        method_store=store, session_id="sess-1", work_unit_id="TASK-A"
+    )
+    by_ref = {i["ref"]: i for i in items}
+    assert by_ref[changed.method_ref]["item_kind"] == "freshness_refresh"
+    assert by_ref[changed.method_ref]["state"] == "changed"
+    assert by_ref[changed.method_ref]["reason"] == ["a.txt"]
+    assert by_ref[gone.method_ref]["state"] == "missing"
+
+
+def test_c11_fresh_annotate_yields_no_refresh_until_real_change(tmp_path):
+    """最小反例（Q-05 R4×C11）：刚 annotate 未修改 = current 不派生；真实修改后才派生。"""
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    card = _c11_card(store, "c11 fresh annotate probe", ["a.txt"])
+    _c11_use(store, card.method_ref, session="sess-1", wu="TASK-A")
+
+    assert (
+        collect_freshness_refresh_items(
+            method_store=store, session_id="sess-1", work_unit_id="TASK-A"
+        )
+        == []
+    )  # 注记期基线与当前内容一致：current，绝不派生刷新待办
+
+    (ws / "a.txt").write_bytes(b"v2")  # 真实内容变更后才产生刷新待办
+    items = collect_freshness_refresh_items(
+        method_store=store, session_id="sess-1", work_unit_id="TASK-A"
+    )
+    assert [i["ref"] for i in items] == [card.method_ref]
+    assert items[0]["state"] == "changed"
+    assert items[0]["reason"] == ["a.txt"]
+
+
+def test_c11_skips_current_unbaselined_and_non_applied(tmp_path):
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "ok.txt").write_bytes(b"same")
+    import hashlib as _h
+
+    current = _c11_card(
+        store, "c11 current probe", ["ok.txt"], baseline={"ok.txt": _h.sha256(b"same").hexdigest()}
+    )
+    unbaselined = _c11_card(store, "c11 unbaselined probe", ["ok.txt"])
+    rejected = _c11_card(store, "c11 rejected probe", ["ok.txt"], baseline={"ok.txt": "stale"})
+    _c11_use(store, current.method_ref, session="sess-1")
+    _c11_use(store, unbaselined.method_ref, session="sess-1")
+    _c11_use(store, rejected.method_ref, decision="rejected", session="sess-1")
+    _c11_use(store, rejected.method_ref, decision="adapted", session="sess-1")
+
+    items = collect_freshness_refresh_items(method_store=store, session_id="sess-1")
+    refs = {i["ref"] for i in items}
+    assert current.method_ref not in refs
+    assert unbaselined.method_ref not in refs  # current/unbaselined 不派生
+    assert rejected.method_ref not in refs  # rejected/adapted 不派生
+    assert items == []
+
+
+def test_c11_scope_isolation_and_conservative_attribution(tmp_path):
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    other_session = _c11_card(store, "c11 other session", ["a.txt"])
+    other_wu = _c11_card(store, "c11 other wu", ["a.txt"])
+    no_scope = _c11_card(store, "c11 no attribution", ["a.txt"])
+    (ws / "a.txt").write_bytes(b"v2")  # 三卡同锚：注记后真实内容变更 → 均 changed
+    _c11_use(store, other_session.method_ref, session="sess-OTHER", wu="TASK-OTHER")
+    _c11_use(store, other_wu.method_ref, session="", wu="TASK-OTHER")
+    _c11_use(store, no_scope.method_ref, session="", wu="")
+
+    assert (
+        collect_freshness_refresh_items(method_store=store, session_id="sess-1", work_unit_id="TASK-A")
+        == []
+    )
+    # 无归属调用：保守不派生
+    assert collect_freshness_refresh_items(method_store=store) == []
+    # 仅 work_unit 命中也能派生
+    items = collect_freshness_refresh_items(method_store=store, work_unit_id="TASK-OTHER")
+    assert {i["ref"] for i in items} == {other_session.method_ref, other_wu.method_ref}
+
+
+def test_c11_dedupes_latest_and_is_bounded(tmp_path):
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    (ws / "b.txt").write_bytes(b"v2")
+    one = _c11_card(store, "c11 dedupe one", ["a.txt"])
+    two = _c11_card(store, "c11 dedupe two", ["b.txt"])
+    (ws / "a.txt").write_bytes(b"v1-mutated")  # 注记后真实变更
+    (ws / "b.txt").write_bytes(b"v2-mutated")
+    _c11_use(store, one.method_ref, session="sess-1")
+    _c11_use(store, one.method_ref, session="sess-1")  # 重复使用：同 ref 只一项
+    _c11_use(store, two.method_ref, session="sess-1")
+    assert len(collect_freshness_refresh_items(method_store=store, session_id="sess-1")) == 2
+    assert (
+        len(
+            collect_freshness_refresh_items(
+                method_store=store, session_id="sess-1", max_items=1
+            )
+        )
+        == 1
+    )
+
+
+def test_c11_forward_compat_unresolvable_refs(tmp_path):
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    card = _c11_card(store, "c11 forward probe", ["evidence://v1/x"])
+    _c11_use(store, card.method_ref, session="sess-1")
+    original = store.freshness
+
+    def fake_freshness(ref):
+        result = original(ref)
+        result["state"] = "unresolvable"
+        result["unresolvable_refs"] = ["evidence://v1/x"]
+        return result
+
+    store.freshness = fake_freshness  # type: ignore[method-assign]
+    items = collect_freshness_refresh_items(method_store=store, session_id="sess-1")
+    assert items and items[0]["reason"] == ["evidence://v1/x"]
+
+
+def test_c11_qa_p1_attribution_requires_every_provided_dimension(tmp_path):
+    """QA-P1(A) 回归：OR 归属串味——每个提供的维度都须精确匹配。"""
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    cross_session = _c11_card(store, "c11 qa cross session", ["a.txt"])
+    cross_wu = _c11_card(store, "c11 qa cross wu", ["a.txt"])
+    exact_pair = _c11_card(store, "c11 qa exact pair", ["a.txt"])
+    (ws / "a.txt").write_bytes(b"v2")  # 三卡同锚：注记后真实变更 → 均 changed
+    _c11_use(store, cross_session.method_ref, session="session-B", wu="TASK-A")
+    _c11_use(store, cross_wu.method_ref, session="session-A", wu="TASK-B")
+    _c11_use(store, exact_pair.method_ref, session="session-A", wu="TASK-A")
+
+    both = collect_freshness_refresh_items(
+        method_store=store, session_id="session-A", work_unit_id="TASK-A"
+    )
+    assert {i["ref"] for i in both} == {exact_pair.method_ref}  # 借 wu/借 session 串味都被拦
+
+    by_wu = collect_freshness_refresh_items(method_store=store, work_unit_id="TASK-A")
+    assert {i["ref"] for i in by_wu} == {cross_session.method_ref, exact_pair.method_ref}
+
+    by_session = collect_freshness_refresh_items(method_store=store, session_id="session-A")
+    assert {i["ref"] for i in by_session} == {cross_wu.method_ref, exact_pair.method_ref}
+
+
+def test_c11_qa_p1_unbaselined_or_current_with_unresolvable_never_derives(tmp_path):
+    """QA-P1(B) 回归：值启发式旁路——非显式触发态一律不派生。"""
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    card = _c11_card(store, "c11 qa unresolvable bypass", ["evidence://v1/x"])
+    _c11_use(store, card.method_ref, session="sess-1", wu="TASK-A")
+    original = store.freshness
+
+    def _fake(state, current=None, unresolvable=None):
+        def fake(ref):
+            result = original(ref)
+            result["state"] = state
+            if current is not None:
+                result["current"] = dict(current)
+            if unresolvable is not None:
+                result["unresolvable_refs"] = list(unresolvable)
+            return result
+
+        return fake
+
+    # QA 原始反例：unbaselined + 快照值 unsupported → 不派生
+    store.freshness = _fake("unbaselined", current={"a.txt": "unsupported"})  # type: ignore[method-assign]
+    assert collect_freshness_refresh_items(method_store=store, session_id="sess-1") == []
+    # current / unbaselined 带 unresolvable_refs → 不派生（不得猜成 stale）
+    store.freshness = _fake("current", unresolvable=["evidence://v1/x"])  # type: ignore[method-assign]
+    assert collect_freshness_refresh_items(method_store=store, session_id="sess-1") == []
+    store.freshness = _fake("unbaselined", unresolvable=["evidence://v1/x"])  # type: ignore[method-assign]
+    assert collect_freshness_refresh_items(method_store=store, session_id="sess-1") == []
+    # 显式 unresolvable 触发态 → 派生（正向控制）
+    store.freshness = _fake("unresolvable", unresolvable=["evidence://v1/x"])  # type: ignore[method-assign]
+    items = collect_freshness_refresh_items(method_store=store, session_id="sess-1")
+    assert items and items[0]["state"] == "unresolvable"
+    assert items[0]["reason"] == ["evidence://v1/x"]
+
+def test_c11_read_only_zero_side_effects(tmp_path):
+    from llm_loop.introspection.settlement import collect_freshness_refresh_items
+
+    store, ws = _c11_store(tmp_path)
+    (ws / "a.txt").write_bytes(b"v1")
+    card = _c11_card(store, "c11 side effect probe", ["a.txt"], baseline={"a.txt": "x"})
+    _c11_use(store, card.method_ref, session="sess-1")
+    usage_path = store._dir / "usage.jsonl"
+    usage_before = usage_path.read_bytes()
+    card_before = Path(card.path).read_bytes()
+    entries_before = len(store.usage_entries())
+
+    collect_freshness_refresh_items(method_store=store, session_id="sess-1")
+    collect_freshness_refresh_items(method_store=store, session_id="sess-1")
+
+    assert usage_path.read_bytes() == usage_before
+    assert Path(card.path).read_bytes() == card_before
+    assert len(store.usage_entries()) == entries_before
+    assert store.get(card.method_ref) is not None
+
+
+def test_c11_pending_tool_separates_refresh_from_settlement(tmp_path):
+    host = _host(tmp_path)
+    channel = host.ctx.settlement
+    store = channel.method_store
+    ws = tmp_path / "c11ws"
+    ws.mkdir()
+    (ws / "legacy.txt").write_bytes(b"old")
+    # R4 真实基线语义（Q-05 R4×C11 兼容修复）：接上真实 workspace_root，changed
+    # 由注记后的真实内容变更触发；不再伪造 legacy qualification 基线错配。
+    store._workspace_root = ws.resolve()  # type: ignore[attr-defined]
+    record = store.save_candidate(
+        name="c11 tool probe", description="c11 tool probe", body=_CONTRACT_BODY
+    )
+    record = store.annotate_freshness(record.method_ref, ["legacy.txt"])
+    (ws / "legacy.txt").write_bytes(b"new")
+    store.record_use(
+        record.method_ref,
+        episode_ref="episode:c11-test-1",
+        decision="applied",
+        session_id="sess-1",
+        work_unit_id="TASK-A",
+    )
+
+    result = host.execute("settlement_pending", {"work_unit_id": "TASK-A"})
+    assert result.status == ToolResultStatus.SUCCESS
+    pending = _payload(result)
+    refresh = pending.get("freshness_refresh_items") or []
+    assert refresh and refresh[0]["item_kind"] == "freshness_refresh"
+    assert refresh[0]["ref"] == record.method_ref
+    assert refresh[0]["state"] == "changed"
+    # 分列断言：刷新待办绝不混入结算 items / settled_count / none_columns
+    assert all(str(i.get("kind")) != "freshness_refresh" for i in pending["items"])
+    read_keys = pending["settled_count"] + len(pending["items"])
+    assert read_keys == 0  # 本测试未发任何 knowledge_read 事件
+    assert "freshness_refresh" not in pending["none_columns"]
+    assert "刷锚待办" in result.content
+
+
+def test_c11_submit_never_accepts_freshness_refresh_kind(tmp_path):
+    from llm_loop.introspection import settlement as settlement_module
+
+    assert "freshness_refresh" not in settlement_module._KNOWN_KINDS  # kind 面不含刷新待办
+    host = _host(tmp_path)
+    result = host.execute(
+        "settlement_submit",
+        {"items": [{"kind": "freshness_refresh", "ref": "method:x", "decision": "applied"}]},
+    )
+    assert "unknown kind: freshness_refresh" in str(result.content)  # _submit_one:815 确定性拒绝

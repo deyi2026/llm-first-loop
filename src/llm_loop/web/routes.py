@@ -533,7 +533,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.54"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.55"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -2920,6 +2920,40 @@ def escalation_detail(request: Request, id: str = "") -> Response:
     )
 
 
+def _decide_escalation_with_host_verify(
+    request: Request, store: Any, payload: Any, record: dict,
+    decided_by: str, channel: str, expected: str, host_grant_id: str,
+    base: Any, audit: Any, command_sha256: str,
+) -> tuple[dict | None, str] | Response:
+    """Keep protected Host issuance separate from the existing review route."""
+    issue_verify = None
+    if record.get("request_kind") == "verify_receipt" and payload.decision == "approved":
+        authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
+        if authority is None or getattr(authority, "audit_dir", None) != (base / "audit").resolve():
+            audit("host_verify_unavailable", decided_by=decided_by, channel=channel)
+            return JSONResponse({"error": "host_verify_unavailable"}, status_code=503)
+
+        def _issue_verify(row: dict) -> str:
+            return authority.issue(row, approver=decided_by)
+
+        issue_verify = _issue_verify
+    try:
+        return store.decide(
+            payload.id, payload.decision, decided_by=decided_by,
+            channel=channel, note=payload.note, ttl_minutes=payload.ttl_minutes,
+            expected_sha256=expected, host_grant_id=host_grant_id,
+            issue_verify=issue_verify,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("Host verify receipt issue rejected: %s", exc)
+        audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
+              command_sha256=command_sha256, detail=str(exc)[:200])
+        return JSONResponse(
+            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            status_code=409,
+        )
+
+
 @router.post("/api/v1/escalation/review")
 async def escalation_review(request: Request) -> Response:
     """web 提权审批（人工决定端点；批准 = 铸造一次性令牌，拒绝 = 记录理由）.
@@ -2999,7 +3033,7 @@ async def escalation_review(request: Request) -> Response:
     # loopback 免认证部署下 web:loopback 对本类**不满足**人类授权要求
     # （本机任何进程都可直连回环，loopback 不能自批）；必须持有有效浏览器
     # 登录会话（web_session 通道）。灾难命令类审批语义不变。
-    if rec.get("request_kind") == "host_grant" and channel != "web_session":
+    if rec.get("request_kind") in ("host_grant", "verify_receipt") and channel != "web_session":
         _audit(
             "rejected_human_auth_required",
             decided_by=decided_by,
@@ -3104,16 +3138,13 @@ async def escalation_review(request: Request) -> Response:
                 status_code=503,
             )
 
-    rec, reason = store.decide(
-        payload.id,
-        payload.decision,
-        decided_by=decided_by,
-        channel=channel,
-        note=payload.note,
-        ttl_minutes=payload.ttl_minutes,
-        expected_sha256=expected,
-        host_grant_id=host_grant_id,
+    outcome = _decide_escalation_with_host_verify(
+        request, store, payload, rec, decided_by, channel, expected,
+        host_grant_id, base, _audit, command_sha256,
     )
+    if isinstance(outcome, Response):
+        return outcome
+    rec, reason = outcome
     if rec is None:
         if host_grant_id and grant_store is not None:
             # decide 失败（冲突/状态漂移）→ 撤销孤儿 grant，杜绝批准外泄漏

@@ -1,0 +1,30 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-release-status-truth",
+  "summary": "Correct documentation to distinguish source/build 0.6.54 and its Draft from GitHub's latest published v0.6.50; document the macOS arm64 artifact blocker and the existing mechanical Finalize Release workflow. Documentation only; no runtime, release policy or GitHub Release mutation.",
+  "components": [
+    {
+      "component_id": "release-status-doc-truth",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "docs/governance/submissions/20261116-release-status-truth.json",
+        "docs/installation.md",
+        "docs/releasing.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Public release documentation and existing release workflow guidance",
+      "disposition": "Keep 0.6.54 as source/build version, explicitly identify v0.6.50 as the published release at the dated verification snapshot, and describe the existing Draft, macOS artifact and mechanical finalize gate. Do not alter code, tag, platform policy, signing, or deployment.",
+      "evidence": [
+        "2026-11-16 gh release list: v0.6.50 isLatest=true and isDraft=false; v0.6.54 isDraft=true and isLatest=false.",
+        "v0.6.54 Draft release-artifacts-manifest.json records linux_x86_64=ready, linux_aarch64=ready, macos_arm64=pending; no macOS .pkg is among Draft assets.",
+        "GitHub release.yml run 43731490249 succeeded for tag v0.6.54, but finalize-release.yml has no run; source pyproject.toml remains 0.6.54."
+      ],
+      "verification_level": "Documentation diff check and version-consistency tests pass; release_finalize.py --self-check passes 8/8. Exact-SHA independent review, full R9 and GitHub A.5/PR CI remain required before push or merge under project policy.",
+      "model_evidence_veto_recovery_exit": "Do not present v0.6.54 as published while it remains Draft. Do not bypass macOS requirement or mutate tag/Release to make documentation look consistent. Re-check releases/latest before any public availability claim.",
+      "rollback_route": "Revert this documentation-only commit via a reviewed PR; no runtime, GitHub Release, tag or service state is changed."
+    }
+  ],
+  "declarations": []
+}

@@ -1,0 +1,93 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-w1-board-version-strip",
+  "summary": "W1 makes the read-only coordination Board stop labelling an arbitrary worktree checkout HEAD as main_head, projects a version strip (checkout HEAD, verifiable origin/main, desired deployment generation/SHA, live SHA) with explicit unknown when a source cannot be verified, and aggregates the append-only lane ledger by highest lane version so a superseded historical row cannot appear as an in-flight ghost lane. Same-version conflicts and invalid versions keep failing closed into degraded, a non-boolean owner value is never treated as agreement, historical deployment rows can no longer masquerade as the live identity, git probes decode as strict UTF-8 so invalid bytes degrade to unknown instead of raising or being projected as mojibake, and origin/main must peel to a commit before it can be reported as main. Only service_control-shaped 40-hex values may be projected as a version identity in versions.* (normalized to lowercase; the legacy deployment.deployed_sha display field stays verbatim for existing consumers), an explicit main_head is validated before any subprocess (so an embedded NUL is rejected rather than crashing) and normalized or rejected rather than projected raw, and behind_main is measured only against the main_head the Board actually reports. No new write authority, no admission change, no R5 relaxation, no auto-close, no deployment. Exact PR base 9c805982d (rebased from 937c50344 onto current main).",
+  "components": [
+    {
+      "component_id": "board-version-strip",
+      "paths": [
+        "src/llm_loop/introspection/lane_board.py",
+        "src/llm_loop/web/coordination_routes.py",
+        "tests/unit/test_lane_board_version_strip.py",
+        "tests/unit/test_lane_board.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Read-only coordination Board aggregation (lane_board.build_board) and its HTTP projection (coordination_routes)",
+      "disposition": "ADMIT read-only projection correction: main_head may only be a verifiable origin/main or an explicit caller-supplied value; worktree checkout HEAD becomes its own field; desired/live identities are read from service_control's own records with explicit unknown on missing/unreadable source; live identity must come from the authoritative restart receipt, never from a historical deployment row; lane aggregation resolves append-only history by highest monotonic version and keeps same-version or invalid-version conflicts fail-closed in degraded with a non-boolean owner value treated as a conflict.",
+      "evidence": [
+        "BUG-16 reproduced on production ledger: build_board(workspace_root=main worktree) reported main_head=3e0202b5b (detached PR#44 head, 37 commits behind) while deployed_sha=b7aef87b, producing a false in_sync=mismatch even though live equals origin/main.",
+        "BUG-14a reproduced: lanes.jsonl holds lane-selftest-guard active v1 and closed v2; Board showed inflight=14/13 while the version-resolved truth was 13/12 because LaneStore.list() returns rows in file order without interpreting version.",
+        "OPT-11: desired identity is read from <data>/runtime/managed_service_deployment.json and live identity from <data>/restart-receipt.json, the same authoritative sources service_control writes; missing/unreadable/invalid sources yield source=unknown plus a degraded reason instead of a substituted SHA.",
+        "P1-A negative test (test_legacy_deployment_cannot_pose_as_live): with the restart receipt absent, historical deployments/old.jsonl pre_deploy rows carrying one SHA leave versions.live.sha empty (source=unknown) and deployment.sync_state=unverified, so a deploy log cannot stand in for the running identity. That test passes main_head=<sha> deliberately, so versions.main.head is that SHA with main.source=explicit - the assertion is about the live segment, not about main being unknown.",
+        "P1-B negative test: three rows of one lane share version 2 with owner_session_id \"owner-A\", \"owner-B\" and the integer 123; the lane is dropped from inflight and reported as lane_version_conflict:lane-split3 plus summary.lane_conflicts, instead of resolving first-row/last-row wins.",
+        "Decode-path test: the desired deployment record is written as raw non-UTF-8 bytes (0xff 0xfe inside a JSON-looking payload); build_board must degrade with desired_deployment_unreadable:UnicodeDecodeError and desired.source=unknown instead of raising out of the Board or the HTTP route.",
+        "Unreadable-ledger test: the lane ledger holds UTF-8 text that is not valid JSON, so it exercises the json.JSONDecodeError branch - a different path from the non-UTF-8 byte test above; the two are no longer described as one test.",
+        "tests/unit/test_lane_board_version_strip.py covers detached worktree vs origin/main, origin/main absent, explicit main_head compatibility, desired/live projection, desired missing, superseded duplicate, same-version conflict, invalid version, unreadable ledger, non-boolean owner conflict, historical deploy rows not live, and the HTTP route projection.",
+        "Typed git_head gate: JSON true, 123, a list and an object are each rejected; desired.sha stays empty, desired.source=unknown, degraded carries desired_deployment_invalid, and deployment.desired_sha is empty - str() never turns a non-string into a SHA.",
+        "Explicit main_head baseline: with origin/main 1 commit ahead and an explicit main_head equal to the checkout HEAD, versions.worktree.behind_main is 0 (not 1); when the supplied main_head cannot be resolved as a local commit, behind_main is None instead of falling back to HEAD..origin/main.",
+        "Live timestamp gate: when the restart receipt is absent and only historical deployments rows exist, versions.live.recorded_at is empty together with sha empty and source=unknown, so a historical timestamp cannot be read as the live record.",
+        "tests/unit/test_lane_board_version_strip.py now covers detached worktree vs origin/main, origin/main absent, explicit main_head compatibility and baseline, desired/live projection, desired missing, non-UTF-8 desired bytes, non-string git_head, superseded duplicate, same-version conflict, three-row non-boolean owner conflict, invalid version, unreadable ledger, historical deploy rows not live, and the HTTP route projection.",
+        "Git probe decode failure and caller-supplied main_head are pinned by test_non_utf8_git_output_degrades_instead_of_raising and test_explicit_main_head_normalizes_case_and_rejects_non_sha: a non-UTF-8 branch name leaves worktree.ref empty with worktree_ref_unknown and does not assert detached, and an explicit value is normalized to lowercase 40-hex or rejected as main_head_invalid rather than projected raw.",
+        "Main identity precedes measurement (test_behind_main_is_only_measured_against_a_reported_main): explicit values HEAD, main, origin/main and not-a-sha each leave versions.main.head empty with source=unknown and versions.worktree.behind_main None, so behind is never measured against a main the Board does not report; a valid explicit SHA normalizes from uppercase and yields behind_main=1 against that SHA.",
+        "Probe decoding is locale-independent (test_git_probe_forces_utf8_decoding): every git subprocess call carries encoding=utf-8, so a non-UTF-8 locale cannot turn invalid bytes into mojibake that is then projected as a verified value.",
+        "origin/main must peel to a commit (test_origin_main_pointing_at_non_commit_is_unknown): with refs/remotes/origin/main moved to a blob object, versions.main.head is empty, main.source=unknown and degraded carries origin_main_unavailable, instead of the blob SHA being reported as main.",
+        "An explicit main_head containing NUL is rejected before any subprocess (test_explicit_main_head_with_nul_is_rejected_without_raising): build_board returns main.head empty with main_head_invalid and does not raise ValueError out of the Board.",
+        "Legacy field boundary (test_legacy_deployed_sha_stays_verbatim_not_a_version_identity): a historical row carrying the 12-character SHA that test_coordination_routes consumes keeps deployment.deployed_sha verbatim with deployed_authoritative=false, while versions.live.sha stays empty and sync_state=unverified - deployed_sha is a compatibility display value, not a version identity, so it is deliberately not forced to 40 hex."
+      ],
+      "verification_level": "Re-runnable, never a stored snapshot: pytest tests/unit/test_lane_board_version_strip.py (focused); pytest tests/unit/test_lane_board.py tests/unit/test_coordination_routes.py tests/unit/test_arch_guards.py tests/unit/test_coordination_status.py (adjacent); ruff check plus ruff format --check on the changed files; pyright src/llm_loop/introspection/lane_board.py; python scripts/check_architecture_submission.py --base <pr-base> --head <candidate> for schema and exact changed-path coverage. Two pre-existing format hunks are byte-identical to origin/main and are left untouched: lane_board.py (lanes_available) and test_lane_board.py (assert-chain layout). Review and R9 outcomes are gate state owned by the Goal checkpoint and the PR, so this manifest does not duplicate them.",
+      "model_evidence_veto_recovery_exit": "Veto if the Board still infers main from a worktree checkout, if any version segment is fabricated when its source is absent, if a historical deployment row is promoted to the live identity, if same-version lane conflicts are presented as resolved, or if lane aggregation gains any write/close authority. Recovery: keep the pre-change read-only projection, revert this branch, fix, re-freeze and re-run the full gate chain.",
+      "rollback_route": "Revert this branch/commit: the Board returns to the previous fields (main_head from worktree probe, first-row lane listing). No migration, no ledger rewrite, no service restart required.",
+      "declaration_id": "w1-board-version-strip"
+    },
+    {
+      "component_id": "a5-declaration",
+      "paths": [
+        "docs/governance/submissions/20261116-w1-board-version-strip.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission declaration",
+      "disposition": "ADMIT the declaration file itself, which carries no executable runtime control; it only partitions and explains the changed paths above.",
+      "evidence": [
+        "This manifest partitions every changed path of the branch exactly once, including itself, against base origin/main 9c805982d (rebased from 937c50344).",
+        "scripts/check_architecture_submission.py --base <pr-base> --head <candidate> asserts schema plus exact changed-path coverage on the committed tree."
+      ],
+      "verification_level": "No control logic in this file; re-run scripts/check_architecture_submission.py --base <pr-base> --head <candidate> for schema and exact changed-path coverage.",
+      "model_evidence_veto_recovery_exit": "If any changed path is missing or the declaration overstates verification, block merge and correct this file in the same isolated branch.",
+      "rollback_route": "Revert the declaration commit together with the PR; no runtime impact."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "w1-board-version-strip",
+      "g1": {
+        "necessity": "The read-only Board is the surface operators and the main agent use to decide whether the running code matches main and how many lanes are actually in flight. Labelling a detached checkout as main produced a false deployment mismatch, and first-row lane listing produced a ghost in-flight lane. Both defects mislead review and closure decisions without any operator mistake, so the projection must be corrected at its source rather than explained away."
+      },
+      "g2": {
+        "authority_owner": "Git itself owns refs and commits; service_control owns desired deployment and restart receipts; LaneStore owns the append-only lane ledger and R5/goal_coordination keep owning closure and command-safety verdicts. This change only reads those sources and projects them.",
+        "relationship": "reuse",
+        "non_duplication": "No second ledger, no cached copy of main, no Board-side deployment state machine, no lane close/approve capability, and no change to R5 source_complete or safe_to_execute semantics. Version aggregation happens per request from the existing ledger."
+      },
+      "g3": {
+        "model_evidence": [
+          "Production reproduction recorded for both defects (checkout HEAD 3e0202b5b vs verifiable origin/main b7aef87b; Board inflight 14 vs version-resolved 13).",
+          "Edge-case defects are pinned as tests, not as summaries: non-UTF-8 desired bytes degrade fail-closed, non-string git_head is never rendered as a SHA, the live segment never borrows a historical timestamp, behind_main uses the reported main_head baseline or None, and the manifest evidence names tests that actually exist.",
+          "Malformed per-line deployment JSON is already handled inside _read_latest_deployment; the behavior is pinned by test_malformed_deployment_json_line_does_not_crash instead of adding a redundant except. The adjacent gaps are pinned by test_lower_version_conflict_does_not_veto_higher_version, test_top_version_conflict_still_fails_closed, test_non_positive_or_bool_version_fails_closed and test_receipt_short_sha_cannot_become_live.",
+          "Established behavior that must not regress: historical deployment rows no longer feed the live identity, same-version owner conflicts stay fail-closed in degraded, and lanes missing from the Board list are not silently skipped.",
+          "Verification is re-run, not quoted: components[0].verification_level carries the focused, adjacent, lint, type-check and A.5 validator commands. The service_control 40-char lowercase contract is pinned by test_short_desired_sha_is_invalid_not_a_false_mismatch and test_uppercase_shas_normalize_before_comparison.",
+          "Git probe decode failures and caller-supplied main_head are pinned by test_non_utf8_git_output_degrades_instead_of_raising and test_explicit_main_head_normalizes_case_and_rejects_non_sha: a non-UTF-8 branch name leaves worktree.ref empty with worktree_ref_unknown instead of raising, and an explicit value is normalized to lowercase 40-hex or rejected as main_head_invalid rather than projected raw.",
+          "This manifest is itself under test: test_manifest_only_names_fields_the_board_actually_exposes restricts references to fields the contract actually returns, and test_manifest_has_no_review_round_narrative keeps round results out of the evidence file. Review and R9 state is owned by the Goal checkpoint and the PR; test_manifest_records_no_stale_pass_counts pins that no PASS count is ever stored here."
+        ],
+        "recovery_or_reason": "Every source is optional: if git probing fails, origin/main is absent, or the desired/live records are missing or malformed, the field is empty with source=unknown plus a degraded reason; the Board never substitutes a different SHA. If aggregation sees an invalid or conflicting version, that lane is excluded from counts and surfaced in degraded."
+      },
+      "g4": {
+        "rollback": "Revert the branch; the Board falls back to its previous fields and the ledger is untouched.",
+        "verification": [
+          "Focused and adjacent suites are re-run from the commands in components[0].verification_level; no counts or PASS snapshots are stored here.",
+          "Ruff check plus ruff format --check on the changed files; pyright on src/llm_loop/introspection/lane_board.py; lane_board.py keeps only the pre-existing origin/main format hunk.",
+          "scripts/check_architecture_submission.py --base <pr-base> --head <candidate> asserts schema plus exact changed-path coverage including this manifest.",
+          "Gate order outside this file: independent Reviewer PASS (P0/P1=0) on the frozen SHA, complete R9 exit 0, remote exact-SHA CI, controlled merge. Their results live in the Goal checkpoint, never here."
+        ]
+      }
+    }
+  ]
+}

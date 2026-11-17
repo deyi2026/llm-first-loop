@@ -38,7 +38,7 @@ import secrets
 import stat
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -114,7 +114,7 @@ def _effective_status(rec: dict) -> str:
     """
     if rec.get("status") != "approved":
         return str(rec.get("status") or "")
-    if rec.get("request_kind") == "host_grant":
+    if rec.get("request_kind") in ("host_grant", "verify_receipt"):
         # DESIGN-20261114（Deepin P0）: host-grant 类不铸一次性令牌，生命周期由
         # 持久 grant 文件的 expires_at 承担（执行消费侧全维度校验）；
         # approved+无 host_grant_id 的签发中断态由 escalation_wait 显式提示重新申请。
@@ -320,7 +320,7 @@ class EscalationStore:
         与执行侧实际基准不一致，令牌在 consume/consume_for_execution 时必然校验
         失败（fail-closed，放行永远不会发生，只是浪费一轮人工审批）。
         """
-        if kind not in ("command", "host_grant"):
+        if kind not in ("command", "host_grant", "verify_receipt"):
             raise ValueError(f"unknown escalation kind: {kind}")
         sha = hashlib.sha256(command.encode("utf-8")).hexdigest()
         created: dict | None = None
@@ -427,6 +427,7 @@ class EscalationStore:
         expected_sha256: str = "",
         channel: str = "",
         host_grant_id: str = "",
+        issue_verify: Callable[[dict], str] | None = None,
     ) -> tuple[dict | None, str]:
         """人工决定（仅 pending 可决；approved 铸造一次性令牌 + TTL）.
 
@@ -470,13 +471,31 @@ class EscalationStore:
                         "（展示-审批绑定失败，请重新打开详情后再审批）"
                     )
                     return records
+                # verify_receipt is a Host-owned effect, never an escalation
+                # token. Issue under the same pending/CAS lock; failures leave
+                # the request pending and do not grant generic audit writes.
+                verify_receipt_id = ""
+                if decision == "approved" and r.get("request_kind") == "verify_receipt":
+                    if channel != "web_session" or not decided_by.startswith("web:session:"):
+                        reason = "human_auth_required"
+                        return records
+                    if issue_verify is None:
+                        reason = "verify_receipt_requires_host_issuer"
+                        return records
+                    verify_receipt_id = issue_verify(dict(r))
+                    if not verify_receipt_id:
+                        raise ValueError("host verify issuer returned empty receipt_id")
                 r["status"] = decision
                 r["decided_at"] = _now()
                 r["decided_by"] = decided_by
                 r["decision_channel"] = channel
                 r["decision_note"] = note[:1000]
                 if decision == "approved":
-                    if host_grant_id:
+                    if verify_receipt_id:
+                        r["token"] = ""
+                        r["token_expires_at"] = ""
+                        r["verify_receipt_id"] = verify_receipt_id
+                    elif host_grant_id:
                         # host_grant 类：批准即由调用方关联持久 HostCapabilityGrant，
                         # 本记录不铸一次性灾难令牌（token 恒空）。
                         r["token"] = ""

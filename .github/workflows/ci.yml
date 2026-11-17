@@ -190,3 +190,47 @@ jobs:
           echo "ambient vars under gate: $VARS"
           for var in $VARS; do export "${var}=ci-ambient-leak-stub"; done
           uv run --no-sync python -m pytest tests/unit/test_ambient_leak_immunity.py tests/unit/test_workspace_resolution.py tests/unit/test_terminal_cli.py tests/unit/test_runtime_identity_enforce.py tests/unit/test_runtime_manifest.py tests/unit/test_runtime_config_p0.py -q -m "not real_llm and not serial_signal"
+
+  managed-premerge-evidence:
+    name: managed-premerge-evidence
+    # B1-1: 只读证据门禁；push+PR 真实执行（schedule/dispatch 跳过）。
+    # 仅核对本 run 四个 sibling 结果与事件身份一致性，不声称 Host 已验证
+    # branch protection——Host 端/trusted blob 双基线另行实现。
+    if: always() && (github.event_name == 'push' || github.event_name == 'pull_request')
+    needs: [security-scan, test, linux-installer, ambient-env-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: premerge gate（push 身份）
+        if: github.event_name == 'push'
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          python scripts/premerge_gate.py --mode ci \
+            --event push --run-id "${{ github.run_id }}" \
+            --head-sha "${{ github.sha }}" \
+            --needs-json "$NEEDS_JSON" --bind-repo-blobs \
+            | tee premerge-gate-receipt.json
+      - name: premerge gate（PR 身份）
+        if: github.event_name == 'pull_request'
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          python scripts/premerge_gate.py --mode ci \
+            --event pull_request --run-id "${{ github.run_id }}" \
+            --pr-head-sha "${{ github.event.pull_request.head.sha }}" \
+            --pr-base-sha "${{ github.event.pull_request.base.sha }}" \
+            --pr-merge-sha "${{ github.sha }}" \
+            --needs-json "$NEEDS_JSON" --bind-repo-blobs \
+            | tee premerge-gate-receipt.json
+      - name: 保存 JSON 回执 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: premerge-gate-receipt
+          path: premerge-gate-receipt.json
+          if-no-files-found: ignore
+          retention-days: 14
