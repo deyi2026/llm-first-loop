@@ -10,3 +10,12 @@
 - 原 MCP Console Goal：`fbc69455-667a-409c-8456-af428720208c`，**active，不得关闭**。
 
 所有后续实测回执按精确 SHA 增量更新，不用历史 PASS 替代新候选审查。
+
+## 2026-11-17 代码独审与 P2 定向补修
+
+- 独立 DeepSeek-v4-Flash Reviewer 会话 `3d15017d-f0ae-4152-be77-d09deb4ef365` 对候选 `5ee64fca7c7dfedfb6e34baf727552f2e3b6fef7` 完成只读审查，代码级 **PASS P0=0/P1=0/P2=4**；明确旧设计 P1-2 未闭合，故非设计/生产 PASS。Reviewer 没有独立执行本地测试，不能冒称其测试通过。
+- P2-1：`_verify_gate_closure` 对 CI/workflow 内出现 `scripts/` 但不能被字面闭包解析的动态脚本名直接 HOLD；新增负测。
+- P2-3：B3 自述证据数值改善只可输出 `MEASURED_UNVERIFIED` + `provenance_verified=false` + 非零 CLI exit 3，不得由 CI 误判为成功。
+- P2-4：浅克隆/历史不完整的 Host Git baseline 直接 unknown；新增真实 shallow clone 负测。
+- P2-2：执行代码已加载后再校验的固有 TOCTOU 边界仍按附录记录，需由受信任 Host launcher 承担，当前不宣称全域物理防护。
+- 上述 P2 补修改变候选 SHA；旧 `5ee64fca7` 的代码 PASS **不能直接复用为新候选 PASS**。新 SHA 审查、原版完整 R9、远端 CI、合并与发布仍待完成。

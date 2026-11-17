@@ -683,3 +683,12 @@ def test_v19_p1_host_executed_root_sha_and_blob_must_match(tmp_path: Path):
 
     with pytest.raises(HostHoldError, match="gate_execution_blob_untrusted"):
         _verify_host_execution(WrongBlob(), current, execution_root=root)
+
+
+def test_v19_p2_dynamic_script_reference_fails_closed(fixture):
+    from premerge_host import _verify_gate_closure
+
+    client = fixture[0]
+    client.blobs["scripts/ci_gate.sh", MAIN] = b'"$PY" "scripts/${TARGET}.py"\n'
+    with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
+        _verify_gate_closure(client, MAIN)

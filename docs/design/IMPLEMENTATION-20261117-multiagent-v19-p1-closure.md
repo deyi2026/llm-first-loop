@@ -12,7 +12,7 @@
 
 ## 旧 P1-1：有效门禁语义闭包与执行侧身份
 
-- 隔离实现：`scripts/premerge_host.py::_GATE_PATHS` 扩展到 `tests/conftest.py`、`uv.lock`、privacy workflow、额外 CI 脚本；`_verify_gate_closure` 读取受保护 main 的 CI/workflow/shell，发现未钉住的新直接脚本即拒绝；`_verify_host_execution` 要求实际运行目录为干净、精确 `main` checkout，并独立测量运行中的 Host/CI gate 文件 blob 对比 GitHub 可信 main。
+- 隔离实现：`scripts/premerge_host.py::_GATE_PATHS` 扩展到 `tests/conftest.py`、`uv.lock`、privacy workflow、额外 CI 脚本；`_verify_gate_closure` 读取受保护 main 的 CI/workflow/shell，发现未钉住的新直接脚本或动态不可解析的脚本引用即拒绝；`_verify_host_execution` 要求实际运行目录为干净、精确 `main` checkout，并独立测量运行中的 Host/CI gate 文件 blob 对比 GitHub 可信 main。
 - 负测：同 PR 修改辅助脚本/配置、未列入闭包的 CI 脚本、脏/旧执行树、运行脚本 blob 不匹配均拒绝。既有 Host/CI 负测保持通过。
 - 边界：脚本内自检是受信任 Host launcher 的纵深防御，不构成对恶意替换了整个入口的全域物理防护；该代码**尚未经过精确 SHA 独审、完整 R9、PR/CI、受控合并与生产验证**，不得标为上线。
 

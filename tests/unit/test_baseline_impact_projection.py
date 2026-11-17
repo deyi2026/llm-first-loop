@@ -176,3 +176,15 @@ def test_read_only_git_index_and_object_count(setup: tuple) -> None:
         assert impact(repo, lane)["status"] == "current"
     assert hashlib.sha256(index.read_bytes()).digest() == before_index
     assert git(repo, "count-objects", "-v") == before_objects
+
+
+def test_shallow_clone_never_claims_complete_baseline(setup: tuple, tmp_path: Path) -> None:
+    repo, _, _, _ = setup
+    shallow = tmp_path / "shallow"
+    git(repo, "config", "receive.denyCurrentBranch", "ignore")
+    subprocess.run(["git", "clone", "--depth", "1", "--branch", "main",
+                    "file://" + str(repo), str(shallow)],
+                   check=True, capture_output=True)
+    assert git(shallow, "rev-parse", "--is-shallow-repository") == "true"
+    git(shallow, "update-ref", "refs/remotes/origin/main", git(shallow, "rev-parse", "HEAD"))
+    assert probe_main_host(shallow)["source_complete"] is False

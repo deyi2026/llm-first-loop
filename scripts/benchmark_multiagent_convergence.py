@@ -89,23 +89,23 @@ def analyze_trials(records: list[dict]) -> dict[str, Any]:
         run_ids.add(row["run_id"])
         groups[(row["family"], row["mode"])].append(row)
     if errors:
-        return {"status": "NO_GO", "speedup_claim": False,
+        return {"status": "NO_GO", "speedup_claim": False, "provenance_verified": False,
                 "reasons": errors[:30], "trial_count": len(records)}
     missing = [f"{family}/{mode}:{2 - len(groups[(family, mode)])}_more"
                for family in FAMILIES for mode in MODES
                if len(groups[(family, mode)]) < 2]
     if missing:
-        return {"status": "EXPLORATORY", "speedup_claim": False,
+        return {"status": "EXPLORATORY", "speedup_claim": False, "provenance_verified": False,
                 "trial_count": len(records), "missing_cells": missing,
                 "reasons": ["insufficient_repeated_real_trials"]}
     settings = {(r["model_used"], r["hardware_id"], r["budget_tokens"])
                 for r in records}
     if len(settings) != 1:
-        return {"status": "INCOMPARABLE", "speedup_claim": False,
+        return {"status": "INCOMPARABLE", "speedup_claim": False, "provenance_verified": False,
                 "trial_count": len(records), "reasons": ["model_hardware_budget_mismatch"]}
     if any(r[k] is None for r in records
            for k in ("tokens_input", "tokens_output", "cache_hit_tokens")):
-        return {"status": "INCOMPARABLE", "speedup_claim": False,
+        return {"status": "INCOMPARABLE", "speedup_claim": False, "provenance_verified": False,
                 "trial_count": len(records), "reasons": ["token_cache_usage_unmeasured"]}
     comparisons: list[dict] = []
     for family in FAMILIES:
@@ -133,7 +133,7 @@ def analyze_trials(records: list[dict]) -> dict[str, Any]:
     # JSONL references are claims, not independently hydrated/verified receipts.
     # A candidate numeric improvement must NEVER be reported as a proven claim.
     return {"status": "MEASURED_UNVERIFIED" if enough else "NO_SPEEDUP_CLAIM",
-            "speedup_claim": False, "candidate_speedup": enough,
+            "speedup_claim": False, "provenance_verified": False, "candidate_speedup": enough,
             "trial_count": len(records), "comparisons": comparisons,
             "reasons": (["external_evidence_not_independently_verified"] if enough
                         else ["target_not_met_or_cost_increase"])}
@@ -147,12 +147,15 @@ def main(argv: list[str] | None = None) -> int:
         rows = [json.loads(line) for line in args.input.read_text(encoding="utf-8").splitlines()
                 if line.strip()]
     except (OSError, UnicodeDecodeError, ValueError):
-        print(json.dumps({"status": "NO_GO", "speedup_claim": False,
+        print(json.dumps({"status": "NO_GO", "speedup_claim": False, "provenance_verified": False,
                           "reasons": ["input_unavailable"]}))
         return 2
     result = analyze_trials(rows)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["status"] in ("MEASURED_UNVERIFIED", "NO_SPEEDUP_CLAIM", "EXPLORATORY") else 2
+    # Exit 3 means a numeric candidate still lacks independent provenance.
+    if result["status"] == "MEASURED_UNVERIFIED":
+        return 3
+    return 0 if result["status"] in ("NO_SPEEDUP_CLAIM", "EXPLORATORY") else 2
 
 
 if __name__ == "__main__":

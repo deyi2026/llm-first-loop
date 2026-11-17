@@ -157,3 +157,13 @@ def test_bad_numeric_types_and_nan_never_crash_or_claim() -> None:
         result = module.analyze_trials(rows)
         assert result["status"] == "NO_GO", (field, result)
         assert result["speedup_claim"] is False
+
+
+def test_measured_unverified_candidate_cli_exit_is_not_success(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "unverified.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in complete_rows()))
+    assert module.main(["--input", str(path)]) == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "MEASURED_UNVERIFIED"
+    assert result["speedup_claim"] is False
+    assert result["provenance_verified"] is False

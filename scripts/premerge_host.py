@@ -458,9 +458,13 @@ def _verify_gate_closure(client: Any, main: str) -> None:
     for entrypoint in entrypoints:
         _, source = client.blob(entrypoint, main)
         for line in source.splitlines():
-            if line.lstrip().startswith(b"#"):
+            if line.lstrip().startswith(b"#") or b"scripts/" not in line:
                 continue
-            for match in pattern.finditer(line):
+            matches = list(pattern.finditer(line))
+            # A computed script name cannot be proven to be in the pinned
+            # closure.  No silent success when the literal parser misses it.
+            _require(bool(matches), "gate_closure_incomplete", unavailable=False)
+            for match in matches:
                 try:
                     referenced = match.group().decode("ascii")
                 except UnicodeDecodeError as exc:

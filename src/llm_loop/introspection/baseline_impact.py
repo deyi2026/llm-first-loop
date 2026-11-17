@@ -51,9 +51,11 @@ def probe_main_host(repo_root: str | Path) -> dict[str, Any]:
     top, err = _git(root, "rev-parse", "--show-toplevel")
     head, head_err = _git(root, "rev-parse", "--verify", "HEAD^{commit}")
     main, main_err = _git(root, "rev-parse", "--verify", "origin/main^{commit}")
+    shallow, shallow_err = _git(root, "rev-parse", "--is-shallow-repository")
     top_text, head_text, main_text = _decode(top), _decode(head), _decode(main)
     valid = (
-        not (err or head_err or main_err)
+        not (err or head_err or main_err or shallow_err)
+        and _decode(shallow) == "false"
         and top_text is not None and Path(top_text).resolve() == root
         and _sha(head_text) and _sha(main_text)
     )
