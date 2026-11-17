@@ -6,7 +6,6 @@ Every ambiguous Git/path/worktree observation degrades to ``unknown``.
 """
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import time
@@ -21,11 +20,11 @@ _MAX_OUTPUT = 256 * 1024
 
 
 def _git(repo: Path, *args: str) -> tuple[bytes | None, str]:
-    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_CONFIG_NOSYSTEM="1")
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo), "-c", "core.fsmonitor=false", *args],
-            capture_output=True, timeout=3, env=env, check=False,
+            ["git", "--no-optional-locks", "-C", str(repo),
+             "-c", "core.fsmonitor=false", *args],
+            capture_output=True, timeout=3, check=False,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None, "git_probe_unavailable"

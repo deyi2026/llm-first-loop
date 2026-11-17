@@ -188,3 +188,22 @@ def test_shallow_clone_never_claims_complete_baseline(setup: tuple, tmp_path: Pa
     assert git(shallow, "rev-parse", "--is-shallow-repository") == "true"
     git(shallow, "update-ref", "refs/remotes/origin/main", git(shallow, "rev-parse", "HEAD"))
     assert probe_main_host(shallow)["source_complete"] is False
+
+
+def test_git_probe_avoids_bulk_process_environment_read(setup: tuple, monkeypatch) -> None:
+    """R9 env ratchet: git --no-optional-locks, no os.environ bulk copy."""
+    from llm_loop.introspection import baseline_impact
+
+    repo, _, _, _ = setup
+    original_run = subprocess.run
+    observed = []
+
+    def spy(*args, **kwargs):
+        observed.append(args[0])
+        assert "env" not in kwargs
+        assert "--no-optional-locks" in args[0]
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(baseline_impact.subprocess, "run", spy)
+    assert baseline_impact.probe_main_host(repo)["source_complete"] is True
+    assert observed

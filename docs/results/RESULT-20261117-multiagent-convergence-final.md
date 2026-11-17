@@ -35,3 +35,9 @@
 - P2-3：CI 引用大小写变体 `Scripts/${TARGET}.py` 同样拒绝，新增负测。
 - P2-4：冻结设计原件 SHA256 已由 Host `shasum -a 256` 只读核验，值仍为 `5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea`；未修改原件。
 - 本阶段不再做没有新事实的文档拷问；仅对最终冻结代码候选进行一次足量独立审查，若不能 PASS，保留 HOLD 与准确阻断。
+
+## 原版 R9 首轮真实失败与最小修复（不可隐藏）
+
+- 精确候选 `20de453e059735170ea0b774a1b73da9720d46fb` 原版 `bash scripts/ci_gate.sh` 首轮 **exit 1**；日志 `/tmp/lfl-multiagent-20de453e-original-r9-20261117.log`，rc 文件 `/tmp/lfl-multiagent-20de453e-original-r9.rc`。
+- Ruff/Pyright ratchet、WebUI 604、tier0 341 通过；全量 xdist `15685 passed, 1 failed, 162 skipped, 3 xfailed`。唯一失败：`tests/unit/test_runtime_env_access_gate.py::test_direct_environment_access_is_one_way_ratchet`；新签名 `src/llm_loop/introspection/baseline_impact.py|_git|bulk:raw|<all>`，源于 `_git` 复制 `dict(os.environ, ...)`。
+- **不放宽 env 棘轮基线，不改断言**：仅将 `_git` 改为 `git --no-optional-locks`，删除 bulk `os.environ` 读取，保留 Git 只读行为；增加显式负测。修复后的新 SHA 必须独立审查并重新执行一次原版完整 R9，旧失败回执永久保留。
