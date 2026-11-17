@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 import threading
 import uuid
 from collections.abc import Callable, Iterator
@@ -91,6 +92,47 @@ class LaneConstraintError(RuntimeError):
     """违反硬约束（goal 1:1 / branch 唯一 / 终态不可逆 / 非法状态迁移）。"""
 
 
+class LaneStoreLockUnavailable(RuntimeError):  # noqa: N818 — 设计指定名（M2-A §3.2-1）
+    """lock_strict=true 下跨进程锁不可用（fcntl 缺失 / flock OSError / 锁文件不可写）。
+
+    M2-A（DESIGN-20261116 §3.2-1）：create/update/close 三入口一致拒写，
+    任何入口不得降级放行（fail-closed）。warn 模式（默认）维持现状仅告警。
+    """
+
+
+class LaneStoreConfigError(RuntimeError):
+    """LaneStore 构造配置非法（M2-A INV-1）：enforce_cross_goal=true 硬依赖
+    lock_strict=true——该组合在初始化即抛错，不存在「enforce 在、锁 warn 化」
+    的可用实例（§3.2-2 矩阵第 6 行）。"""
+
+
+class LanePathConflict(RuntimeError):  # noqa: N818 — 设计指定名（M2-A §3.2-3）
+    """enforce 模式锁内检出跨 Goal 声明路径**确证**重叠（create/update 引入/扩大占用）。
+
+    M2-A §3.2-3：conflicts 属性逐项含 lane_id/goal_id/shared_paths（realpath
+    辅助命中时 best_effort=True）。close 不抛本异常（BUG-09：close 是释放，
+    不因现有重叠被拒）。无 force 放行参数（P0-2）——处置只有：请求 owner 复核 /
+    缩小自身 paths / 等待对端终态。
+    """
+
+    def __init__(self, message: str, *, conflicts: list[dict] | None = None) -> None:
+        self.conflicts = list(conflicts or [])
+        super().__init__(message)
+
+
+class LanePathConflictUnknown(RuntimeError):  # noqa: N818 — 设计指定名（M2-A §3.2-3）
+    """enforce 模式下冲突面**不可判定**（fail-closed 拒写）——不是确证冲突。
+
+    M2-A §3.2-3：对方在途 lane paths 空/缺失（如 lane-selftest-guard）、本方未
+    声明 paths、或 realpath 判定失败。不得据此放行（不假装知道没有冲突），也
+    不得表述为 overlap（不冒充确证）。处置：补 paths 或 owner 裁决。
+    """
+
+    def __init__(self, message: str, *, unknowns: list[dict] | None = None) -> None:
+        self.unknowns = list(unknowns or [])
+        super().__init__(message)
+
+
 def _normalize_paths(paths: list[str] | tuple[str, ...] | None) -> list[str]:
     """声明路径规范化：去空白、去重、排序；空项丢弃。声明面只做规范化，不做存在性校验。"""
     out: list[str] = []
@@ -134,11 +176,65 @@ class Lane:
 class LaneStore:
     """lanes.jsonl 当前态 + lane_events.jsonl 历史的存储层."""
 
-    def __init__(self, audit_dir: str | Path) -> None:
+    def __init__(
+        self,
+        audit_dir: str | Path,
+        *,
+        lock_strict: bool = False,
+        enforce_cross_goal: bool = False,
+        repo_root: str | Path | None = None,
+    ) -> None:
+        """M2-A（DESIGN-20261116 §3.2-1/§3.2-2）：
+
+        - lock_strict=true: fcntl 缺失 / flock OSError / 锁文件不可用 →
+          create/update/close 一致拒写（LaneStoreLockUnavailable，fail-closed）；
+          默认 false 维持历史 warn 行为（锁失败仅告警放行）。
+        - enforce_cross_goal=true: 锁内跨 Goal 声明路径重叠检查从 warn 升级硬拒
+          （确证→LanePathConflict；不可判定→LanePathConflictUnknown）。INV-1:
+          硬依赖 lock_strict=true，否则构造即抛 LaneStoreConfigError。
+        - repo_root: 路径根绑定基准（strict 检查层归一/越界/symlink 判定用）。
+          边界（§3.2-6）: 仅同主机同 audit_dir 的进程互斥；登记门不是 OS 写入
+          隔离，symlink TOCTOU 只能 best-effort，无跨主机全局锁。
+        旧调用（只传 audit_dir）行为与历史版本完全一致（§3.3 兼容）。
+        """
+        strict = bool(lock_strict)
+        enforce = bool(enforce_cross_goal)
+        root_raw = str(repo_root).strip() if repo_root is not None else ""
+        if enforce and not strict:
+            raise LaneStoreConfigError(
+                "INV-1 违反: enforce_cross_goal=true 硬依赖 lock_strict=true"
+                "（拒绝启用，不存在锁 warn 化的 enforce 实例）"
+            )
+        if enforce and not root_raw:
+            # P1-C（2026-11-16 首轮核验）: 无 repo_root 的 enforce 只剩字面比较，
+            # repo 内 symlink 别名声明同一真实文件可双双放行（GPT-6 实测复现）。
+            # fail-fast 构造即拒，不静默以字面比较代替根绑定；warn 不受影响。
+            raise LaneStoreConfigError(
+                "INV-2 违反: enforce_cross_goal=true 硬依赖有效 repo_root"
+                "（路径根绑定基准；缺失时冲突检查可被 symlink 别名绕过，"
+                "处置: 显式配置 LANE_REPO_ROOT / lane_repo_root）"
+            )
+        if enforce:
+            # P1-E: a nonempty but nonexistent/file/relative root defeats realpath
+            # alias detection.  Enforce needs a stable, existing absolute directory.
+            root_path = Path(root_raw)
+            if not root_path.is_absolute() or not root_path.is_dir():
+                raise LaneStoreConfigError(
+                    "INV-2 违反: enforce_cross_goal=true 的 repo_root 必须是"
+                    "已存在的绝对目录（拒绝缺失/文件/相对路径）"
+                )
+        self._lock_strict = strict
+        self._enforce_cross_goal = enforce
+        self._repo_root = Path(root_raw).resolve() if root_raw else None
         self._dir = Path(audit_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "lanes.jsonl"
         self._event_path = self._dir / "lane_events.jsonl"
+        # 写后诊断（best-effort，仅最近一次写操作；非账本数据，不入 JSONL）：
+        # last_cross_goal_report——strict 锁内检查的 warn 级提示；
+        # last_event_append_failed——主账本已提交而事件写入失败（§3.2-6 双事实）。
+        self.last_cross_goal_report: dict = {}
+        self.last_event_append_failed = False
 
     # ---------------- 写入 ----------------
 
@@ -192,6 +288,15 @@ class LaneStore:
         with self._file_lock():
             rows = self._read_rows()
             self._assert_unique(rows, lane)
+            # M2-A §3.2-3: 锁内原子检查（create 引入占用；close 不检查——BUG-09）。
+            # strict 下检查层归一结果同时作为存储值（repo 根相对 POSIX）；
+            # enforce 下确证跨 Goal 重叠 / 冲突面 unknown → 拒写，账本与事件均不落。
+            check_paths = list(lane.paths)
+            if self._lock_strict:
+                check_paths = self._normalize_declared_paths(lane.paths)
+                self._cross_goal_check(rows, my_goal_id=goal_id, my_paths=check_paths)
+                if check_paths:
+                    lane.paths = check_paths
             rows.append(lane.to_dict())
             self._atomic_rewrite([json.dumps(r, ensure_ascii=False) for r in rows])
             self._append_event(
@@ -247,6 +352,17 @@ class LaneStore:
                             f"（允许: {list(allowed)}）"
                         )
 
+            # M2-A §3.2-3: 仅当本 update 引入/扩大占用（显式带 paths）才做锁内
+            # 检查；不带 paths 的状态推进不重复检查（占用未变）。排除自身旧占用。
+            if self._lock_strict and "paths" in fields:
+                check_paths = self._normalize_declared_paths(fields["paths"])  # type: ignore[arg-type]
+                self._cross_goal_check(
+                    rows,
+                    my_goal_id=str(entry.get("goal_id") or ""),
+                    my_paths=check_paths,
+                    exclude_lane_id=lane_id,
+                )
+                fields = {**fields, "paths": check_paths}
             now = system_local_now().isoformat()
             target_status = str(fields.get("status") or current_status)
             if target_status != current_status:
@@ -289,7 +405,12 @@ class LaneStore:
         status: str = "closed",
         reason: str = "",
     ) -> dict:
-        """终态收敛。merged/closed/abandoned 一律需要非空 reason（可归因）。"""
+        """终态收敛。merged/closed/abandoned 一律需要非空 reason（可归因）。
+
+        M2-A BUG-09: close 是释放占用——不做跨 Goal 重叠检查、不因现有重叠
+        被拒（跨 Goal 硬拒只作用于 create/update 引入/扩大占用）；仍受
+        strict 锁保护（锁不可用时拒写，§3.2-1）。
+        """
         if status not in TERMINAL_STATUSES:
             raise LaneConstraintError(f"close 仅接受终态 {TERMINAL_STATUSES}: {status!r}")
         reason = str(reason or "").strip()
@@ -592,6 +713,185 @@ class LaneStore:
                     f"已有 {row.get('lane_id')}；并行拆分请用 lane_role=sub"
                 )
 
+    # ---------------- M2-A 跨 Goal 路径冲突检查（DESIGN-20261116 §3.2） ----------------
+
+    _MAX_DECLARED_PATH_LEN = 1024
+
+    def _normalize_declared_paths(self, paths: list[str] | tuple[str, ...] | None) -> list[str]:
+        """检查层严格归一（仅 strict/enforce 生效；账本 schema 不变，strict 下
+        存储值取本归一结果——repo 根相对 POSIX，拒绝非法声明而非默默落账）。
+
+        规则（§3.2-4）：
+        - 反斜杠 → POSIX 斜杠；NUL / 超长(>1024) → LaneConstraintError
+        - 绝对路径: repo_root 内 → 归一为 repo 相对；越出或 repo_root 未配置 → 拒
+        - 相对路径 posixpath.normpath 折叠；逃出 repo 根（.. 前缀/等于 ../.）→ 拒
+        - 不存在路径允许（按字面比较）；存在路径做 realpath 越界/symlink 判定：
+          经 symlink 指向 repo_root 外 → 拒（best-effort，不承诺覆盖 TOCTOU 窗口）
+        """
+        root = self._repo_root
+        out: list[str] = []
+        for raw in paths or ():
+            item = str(raw).strip().replace("\\", "/")
+            if not item:
+                continue
+            if "\x00" in item or len(item) > self._MAX_DECLARED_PATH_LEN:
+                raise LaneConstraintError(f"声明路径归一失败（NUL/超长）: {raw!r}")
+            if item.startswith("/"):
+                if root is None:
+                    raise LaneConstraintError(f"绝对路径无法归一（repo_root 未配置）: {raw!r}")
+                try:
+                    rel = Path(item).resolve().relative_to(root)
+                except (OSError, ValueError):
+                    raise LaneConstraintError(f"绝对路径越出 repo_root 或不可解析: {raw!r}") from None
+                norm = rel.as_posix()
+            else:
+                norm = posixpath.normpath(item)
+                if norm in {".", ".."} or norm.startswith("../"):
+                    raise LaneConstraintError(f"声明路径逃出 repo 根或指向根整体: {raw!r}")
+            if root is not None:
+                try:
+                    (root / norm).resolve().relative_to(root)
+                except (OSError, ValueError):
+                    raise LaneConstraintError(
+                        f"路径经 symlink 指向 repo_root 外或不可解析（best-effort 拒绝）: {raw!r}"
+                    ) from None
+            if norm not in out:
+                out.append(norm)
+        return sorted(out)
+
+    def _realpath_or_unknown(self, p: str) -> str | None:
+        """realpath 辅助归一（§3.2-4: 仅检查层辅助比较，不改账本）。解析失败
+        返回 None——该路径冲突面不可判定，由调用方按 unknown 披露，不冒充无冲突。"""
+        if not self._repo_root:
+            return None
+        try:
+            return (self._repo_root / p).resolve().as_posix()
+        except OSError:
+            return None
+
+    def _cross_goal_check(
+        self,
+        rows: list[dict],
+        *,
+        my_goal_id: str,
+        my_paths: list[str],
+        exclude_lane_id: str = "",
+    ) -> dict:
+        """锁内原子跨 Goal 检查（§3.2-3）。调用点: create（引入占用）/ update 带
+        paths（引入或扩大占用）。close 不调用（BUG-09: close 是释放）。
+
+        - 同 Goal 重叠（main/sub/sub 合法并行拆分）→ 仅提示，不拒。
+        - 跨 Goal 确证重叠（字面；realpath 辅助命中标 best_effort=True）→
+          warn 回执 / enforce 硬拒 LanePathConflict（无 bypass 参数，P0-2）。
+        - 对方在途 paths 空/缺失、本方未声明、realpath 不可判定 → unknown：
+          warn 提示；enforce fail-closed 拒写 LanePathConflictUnknown
+          （不冒充确证冲突，也不放行）。
+        warn 级提示存 last_cross_goal_report 供工具层渲染；仅最近一次写。
+        """
+        conflicts: list[dict] = []
+        unknowns: list[dict] = []
+        same_goal: list[dict] = []
+        for row in rows:
+            if str(row.get("status") or "open") in TERMINAL_STATUSES:
+                continue
+            lane_id = str(row.get("lane_id") or "")
+            if exclude_lane_id and lane_id == exclude_lane_id:
+                continue
+            their_goal = str(row.get("goal_id") or "")
+            # P1-D（2026-11-16 首轮核验）: 对方（含旧默认 store 落账）声明面必须
+            # 过严格校验——非 list / 含无法根绑定路径（如 ../outside 越界、绝对
+            # 越出、symlink 逃逸）→ 冲突面不可判定，跨 Goal 按 unknown fail-closed
+            # 拒写；不得用宽松 _normalize_paths 归一后以字面比较放行（GPT-6 复现）。
+            raw_paths = row.get("paths")
+            their_unknown_reason = ""
+            their: list[str] = []
+            if not isinstance(raw_paths, list):
+                their_unknown_reason = "对方 paths 非 list（旧账本/损坏），冲突面不可判定"
+            elif not raw_paths:
+                their_unknown_reason = "对方在途 paths 为空/缺失，冲突面不可判定"
+            elif any(not isinstance(p, str) or not p.strip() for p in raw_paths):
+                # P1-F: never stringify None/number/blank legacy entries into
+                # seemingly disjoint paths; the historical claim is unknown.
+                their_unknown_reason = "对方 paths 含非字符串/空白声明，冲突面不可判定"
+            else:
+                try:
+                    their = self._normalize_declared_paths(raw_paths)
+                    if not their:
+                        their_unknown_reason = "对方 paths 归一后为空，冲突面不可判定"
+                except LaneConstraintError:
+                    their_unknown_reason = (
+                        "对方声明路径无法根绑定（旧账本非法/越界路径），冲突面不可判定"
+                    )
+            if their_unknown_reason:
+                if their_goal != my_goal_id:
+                    unknowns.append(
+                        {
+                            "lane_id": lane_id,
+                            "goal_id": their_goal,
+                            "reason": their_unknown_reason,
+                        }
+                    )
+                continue
+            hits = overlapping_paths(list(my_paths), their)
+            best_effort = False
+            if not hits and self._repo_root is not None:
+                mine_real = [self._realpath_or_unknown(p) for p in my_paths]
+                theirs_real = [self._realpath_or_unknown(p) for p in their]
+                if None in mine_real or None in theirs_real:
+                    if their_goal != my_goal_id:
+                        unknowns.append(
+                            {
+                                "lane_id": lane_id,
+                                "goal_id": their_goal,
+                                "reason": "realpath 解析失败，冲突面不可判定",
+                            }
+                        )
+                else:
+                    soft = overlapping_paths(
+                        [r for r in mine_real if r is not None],
+                        [r for r in theirs_real if r is not None],
+                    )
+                    if soft:
+                        hits = soft
+                        best_effort = True
+            if not hits:
+                continue
+            item = {
+                "lane_id": lane_id,
+                "goal_id": their_goal,
+                "shared": sorted({a for a, _ in hits} | {b for _, b in hits}),
+                "best_effort": best_effort,
+            }
+            if their_goal != my_goal_id:
+                conflicts.append(item)
+            else:
+                same_goal.append(item)
+        report = {
+            "own_paths_empty": not my_paths,
+            "conflicts": conflicts,
+            "unknowns": unknowns,
+            "same_goal_overlaps": same_goal,
+            "enforce": self._enforce_cross_goal,
+        }
+        self.last_cross_goal_report = report
+        if self._enforce_cross_goal:
+            if report["own_paths_empty"]:
+                raise LanePathConflictUnknown(
+                    "本方未声明 paths，冲突面不可判定（enforce fail-closed；处置: 补 paths 或 owner 裁决）",
+                    unknowns=[{"lane_id": "", "goal_id": my_goal_id, "reason": "own paths empty"}],
+                )
+            if conflicts:
+                raise LanePathConflict(
+                    "跨 Goal 声明路径确证重叠（enforce 硬拒；处置: 缩小 paths / 请求 owner 复核 / 等对端终态）",
+                    conflicts=conflicts,
+                )
+            if unknowns:
+                raise LanePathConflictUnknown(
+                    "存在冲突面不可判定的在途 lane（enforce fail-closed；处置: 补 paths 或 owner 裁决）",
+                    unknowns=unknowns,
+                )
+        return report
+
     @staticmethod
     def _find_index(rows: list[dict], lane_id: str) -> int:
         for idx, row in enumerate(rows):
@@ -643,15 +943,25 @@ class LaneStore:
         return (now_dt - max(parsed)).total_seconds() / 3600.0
 
     def append_lane_event(self, event_type: str, **fields: object) -> bool:
-        """追加一条 lane 事件到 lane_events.jsonl；写失败返回 False（不吞主操作结果）。"""
+        """追加一条 lane 事件到 lane_events.jsonl；写失败返回 False（不吞主操作结果）。
+
+        P2（2026-11-16 首轮核验）: 必须转发 _append_event 的真实布尔回执——
+        事件文件不可写（如被目录占位）时如实返回 False，不得忽略失败谎称成功。
+        严格模式失败同时经 last_event_append_failed 披露（§3.2-6 双事实不变）。
+        """
         event: dict = {"type": str(event_type), "ts": system_local_now().isoformat()}
         event.update(fields)
         try:
-            self._append_event(event)
-            return True
+            ok = bool(self._append_event(event))
         except OSError:
             logger.warning("lane 事件写入失败: %s", event_type, exc_info=True)
             return False
+        if not ok:
+            logger.warning(
+                "lane 事件写入失败（append_lane_event 如实回执 False）: %s", event_type
+            )
+            return False
+        return True
 
     def reap_candidates(
         self,
@@ -739,15 +1049,25 @@ class LaneStore:
             "scanned": len(rows),
         }
 
-    def _append_event(self, event: dict) -> None:
-        """只追加历史；写失败只告警不吞主写结果（与 goal.py 的 fail-open 口径一致）。"""
+    def _append_event(self, event: dict) -> bool:
+        """只追加历史；写失败只告警不吞主写结果（与 goal.py 的 fail-open 口径一致）。
+
+        M2-A §3.2-6（事件流独立）: 主账本提交与事件写入是两个独立事实。strict
+        下事件写失败 → 置 last_event_append_failed=True，由工具层回执显式披露
+        event_append_failed；不回滚主账本、不谎称全成功、也不把「事件写失败」
+        伪装成「主账本未提交」。事件锁外独立写（不嵌套持 lanes 锁）。
+        """
         try:
             with self._event_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(event, ensure_ascii=False) + "\n")
                 fh.flush()
                 os.fsync(fh.fileno())
+            return True
         except OSError:
+            if self._lock_strict:
+                self.last_event_append_failed = True
             logger.warning("lane_events 写入失败（主账本已提交）: %s", self._event_path, exc_info=True)
+            return False
 
     def _corruption_error(self, lines: list[int], reason: str) -> LaneStoreCorruptionError:
         shown = ",".join(str(n) for n in lines[:8])
@@ -783,11 +1103,20 @@ class LaneStore:
 
     @contextmanager
     def _file_lock(self) -> Iterator[None]:
-        """lanes.jsonl 跨进程写锁；仅锁获取失败时 fail-open，业务 I/O 异常原样传播。"""
+        """lanes.jsonl 跨进程写锁；仅锁获取失败时 fail-open，业务 I/O 异常原样传播。
+
+        M2-A §3.2-1: lock_strict=true 时锁获取失败改为 fail-closed
+        （LaneStoreLockUnavailable）——fcntl 缺失 / flock OSError / 锁文件
+        不可写三种情况一致拒写，create/update/close 任何入口不降级放行。
+        """
         lock_path = self._path.with_suffix(self._path.suffix + ".lock")
         try:
             import fcntl
         except ImportError:
+            if self._lock_strict:
+                raise LaneStoreLockUnavailable(
+                    f"fcntl 不可用且 lock_strict=true（fail-closed 拒写）: {lock_path}"
+                ) from None
             with _FALLBACK_LOCK:
                 yield
             return
@@ -799,6 +1128,10 @@ class LaneStore:
         except OSError as exc:
             if lock_file is not None:
                 lock_file.close()
+            if self._lock_strict:
+                raise LaneStoreLockUnavailable(
+                    f"lane 存储锁不可用且 lock_strict=true（fail-closed 拒写）: {lock_path}: {exc}"
+                ) from exc
             logger.warning("lane 存储锁不可用（fail-open，并发保护降级）: %s: %s", lock_path, exc)
             yield
             return

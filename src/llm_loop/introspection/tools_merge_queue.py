@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.lane import LaneStore, LaneStoreConfigError
 from llm_loop.introspection.lane_gate import (
     GateConfig,
     S1Evidence,
@@ -26,6 +26,7 @@ from llm_loop.introspection.merge_queue import (
     MergeQueueVersionConflictError,
     build_merge_advice,
 )
+from llm_loop.introspection.tools_lane import lane_store_from_host
 
 _MAX_TEXT = 12000
 
@@ -70,13 +71,12 @@ def _store(
 
 
 def _lanes(host: Any) -> LaneStore | None:
-    audit_dir = _audit_dir(host)
-    if not audit_dir:
-        return None
-    try:
-        return LaneStore(audit_dir)
-    except OSError:
-        return None
+    """P1-B（2026-11-16 首轮核验）: 与 lane 工具入口同一配置源——复用
+    lane_store_from_host（宿主 lane_lock_strict / lane_enforce_cross_goal /
+    lane_repo_root 生效），不再默认 warn 构造。INV-1/INV-2 配置非法时抛
+    LaneStoreConfigError，由调用方转为显式回执（不静默降级、不崩进程）。
+    OSError（audit 目录不可读）仍返回 None=不可用。"""
+    return lane_store_from_host(host)
 
 
 def _fail(message: str, tool: str, reason_code: str) -> ToolResult:
@@ -239,7 +239,11 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     if not lane_id:
         return _fail("lane_id 必填", tool, "missing_param")
     store = _store(host, args.get("repo_root"))
-    lanes = _lanes(host)
+    try:
+        lanes = _lanes(host)
+    except LaneStoreConfigError as exc:
+        # P1-B: 宿主 lane 严格配置非法（INV-1/INV-2）→ 显式失败，不静默降级。
+        return _fail(f"lane store 配置非法: {exc}", tool, "invalid_config")
     if store is None or lanes is None:
         return _fail("audit_dir 未装配或账本不可用", tool, "store_unavailable")
     try:
@@ -411,7 +415,12 @@ def _autosweep_lane_after_merge(host: Any, queue_entry: dict) -> dict:
     lane 账本不可用/找不到 lane/冲突时**不阻断** done 本身，把事实带回执交人工
     lane_close 兜底（拒绝必须基于已证事实，但 done 已是事实，不回滚）。
     """
-    lanes = _lanes(host)
+    try:
+        lanes = _lanes(host)
+    except LaneStoreConfigError as exc:
+        # P1-B: 宿主 strict/enforce 配置非法 → 如实回执不关闭；done 既成事实
+        # 不可回滚，也不静默降级为默认 warn 绕过严格锁（fail-closed 不谎称）。
+        return {"closed": False, "note": f"lane store 配置非法（不降级）: {exc}"}
     if lanes is None:
         return {"closed": False, "note": "lane 账本不可用"}
     lane_id = str((queue_entry or {}).get("lane_id") or "")
