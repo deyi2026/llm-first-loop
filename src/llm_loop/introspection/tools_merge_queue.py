@@ -101,8 +101,9 @@ TOOL_LANE_QUEUE_SUBMIT_DEF: dict[str, Any] = {
         "等人工确认）。失败对策: merge_slot_busy 表示他人正占用, 看 holder 后重试;"
         "机检不过返回 failed 与 reason_codes, 修复后重新 submit。"
         "注意 reason_code=verify_layer_not_enabled 时不要盲目重试: 该码表示层内"
-        "尚无任何凭证——先经 merge-review-gate 审查 PASS 并用 scripts/"
-        "issue_verify_receipt.py --apply 签发（verify_ref={lane_id}:{base_sha 前8}），"
+        "尚无任何凭证——先使用 merge_review_start 启动受管只读审查，"
+        "取得独立 PASS 后调用 verify_receipt_request，经已登录 Web 人工批准"
+        "由 Host 专用签发（verify_ref={lane_id}:{base_sha 前8}）；"
         "再带凭证 submit；无凭证重试只会再消耗一条不可逆的 failed 队列项。"
     ),
     "parameters": {
@@ -319,8 +320,9 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
             f"{layer.get('receipts_path') or 'data/audit/verify_receipts.jsonl'} "
             f"不存在或无任何凭证（file_exists={layer.get('file_exists')}, "
             f"receipt_count={layer.get('receipt_count')}），"
-            "生产代码只读不写、无签发者。补 verify_ref 或反复 requeue 都不会变绿；"
-            "该 lane 已落 failed 终态，先解决签发链路再重新登记。"
+            "Agent 侧不可写受保护审计账本；需走 merge_review_start → "
+            "verify_receipt_request → 已登录浏览器批准 → Host 签发。"
+            "该 lane 已落 failed 终态，先完成签发再重新登记。"
         )
     final_payload: dict[str, Any] = {"enqueued": entry, "preflight": result}
     if same_key_hint:
