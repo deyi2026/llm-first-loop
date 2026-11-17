@@ -18,6 +18,7 @@ from llm_loop.core.run_context import (
 from llm_loop.introspection.host_verify_issuer import (
     HostVerifyAuthority,
     HostVerifyError,
+    _git,
     _parse_review,
 )
 from llm_loop.introspection.lane import LaneStore
@@ -237,12 +238,13 @@ def test_browser_auth_required_then_host_issue(host, build_test_engine, isolated
     monkeypatch.setenv("WEB_HOST", "127.0.0.1")
     engine, _ = build_test_engine([{"content": "ok"}])
     engine.host_verify_authority = authority
-    client = TestClient(build_app(engine=engine), base_url="http://127.0.0.1", client=("127.0.0.1", 51321))
+    app = build_app(engine=engine)
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 51321))
     body = {"id": rec["id"], "decision": "approved", "expected_sha256": rec["command_sha256"]}
     blocked = client.post("/api/v1/escalation/review", json=body)
     assert blocked.status_code == 403 and blocked.json()["error"] == "human_auth_required"
     assert not (audit / "verify_receipts.jsonl").exists()
-    client.cookies.set(SESSION_COOKIE_NAME, client.app.state.web_sessions.create(ttl_seconds=3600))
+    client.cookies.set(SESSION_COOKIE_NAME, app.state.web_sessions.create(ttl_seconds=3600))
     ok = client.post("/api/v1/escalation/review", json=body)
     assert ok.status_code == 200, ok.text
     assert store.get(rec["id"])["status"] == "approved"
@@ -409,3 +411,38 @@ def test_review_rejects_duplicate_json_keys(wrapped):
     answer = f"{FENCE}json\n{payload}\n{FENCE}" if wrapped else payload
     with pytest.raises(HostVerifyError, match="review_not_structured"):
         _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+@pytest.mark.parametrize("file_size,review_allowed", [
+    (225_000, True),
+    (260_000, False),
+])
+def test_host_frozen_diff_has_separate_bounded_large_patch_budget(
+    host, file_size, review_allowed,
+):
+    """Large PRs are reviewable; oversize diffs still HOLD, without receipts."""
+    authority, runner, _, lane_id, _, audit = host
+    lane = LaneStore(audit).get(lane_id)
+    assert lane is not None
+    worktree = Path(lane["worktree"])
+    (worktree / "large.txt").write_text("x" * file_size + "\n", encoding="utf-8")
+    git(worktree, "add", "large.txt")
+    git(worktree, "commit", "-m", "add large review input")
+    head = git(worktree, "rev-parse", "HEAD")
+    LaneStore(audit).update(lane_id, expected_version=2, head_sha=head)
+
+    # The default cap stays strict for all unrelated Git output.
+    with pytest.raises(HostVerifyError, match="git_state_unavailable"):
+        _git(worktree, "show", "HEAD:large.txt")
+
+    if review_allowed:
+        out = authority.start_review(lane_id)
+        assert out["child_id"] == "subagent-test-review"
+        assert len(runner.started["task"]) > 100_000
+        assert runner.started["review_isolated"] is True
+        assert runner.started["required_tools"] == ["read_file", "search_files"]
+    else:
+        with pytest.raises(HostVerifyError, match="review_diff_too_large"):
+            authority.start_review(lane_id)
+        assert runner.started == {}
+    assert not (audit / "verify_receipts.jsonl").exists()
