@@ -319,7 +319,7 @@ def test_operator_issuer_atomic_publish_and_no_overwrite(tmp_path, monkeypatch, 
     output = Path(result["snapshot_path"])
     assert output.is_file() and output.stat().st_mode & 0o007 == 0
     envelope = json.loads(output.read_text())
-    ecc, _ = crypto()
+    ecc, _ = crypto_for_unit_tests
     public = ecc.import_key(secure_bytes(private_dir / "host-ed25519.pem", os.geteuid()))
     assert _verified_snapshot(envelope, public.public_key().export_key(format="PEM"),
                               time.time())["queue"]["status"] == "merging"
