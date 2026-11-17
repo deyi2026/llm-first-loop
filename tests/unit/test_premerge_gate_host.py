@@ -113,6 +113,12 @@ class FakeGitHub:
         }.items():
             self.blobs[path, MAIN] = data
             self.blobs[path, CANDIDATE] = data
+        # Test fixture includes every trust-closure path; individual negative
+        # tests mutate only one candidate blob to verify fail-closed behavior.
+        for path in GATE_PATHS:
+            if (path, MAIN) not in self.blobs:
+                self.blobs[path, MAIN] = path.encode() + b"\n"
+                self.blobs[path, CANDIDATE] = path.encode() + b"\n"
         self.artifact_value["gate_blobs"] = {
             path: _blob_sha(self.blobs[path, MAIN]) for path in GATE_PATHS
         }
@@ -607,3 +613,73 @@ def test_draft_pr_cannot_be_eligible(fixture):
 def test_snapshot_expires_during_host_recheck(fixture):
     with pytest.raises(HostHoldError, match="host_snapshot_stale"):
         evaluate(fixture, final_now=NOW + 91)
+
+
+@pytest.mark.parametrize("path", [
+    "tests/conftest.py", "uv.lock", "scripts/run_eval.py",
+    "scripts/verify_serial_signal_stability.sh",
+    ".github/workflows/privacy-scan.yml",
+])
+def test_v19_p1_candidate_auxiliary_gate_mutation_holds(fixture, path):
+    """The candidate may not neuter a supporting gate script/config."""
+    fixture[0].blobs[path, CANDIDATE] = b"exit 0\n"
+    holds(fixture, "gate_version_untrusted")
+
+
+def test_v19_p1_new_direct_ci_script_outside_closure_holds(fixture):
+    from premerge_host import _verify_gate_closure
+
+    client = fixture[0]
+    client.blobs["scripts/ci_gate.sh", MAIN] = b"python scripts/hidden_skip.py\n"
+    client.blobs["scripts/ci_gate.sh", CANDIDATE] = b"python scripts/hidden_skip.py\n"
+    with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
+        _verify_gate_closure(client, MAIN)
+
+
+def test_v19_p1_host_executed_root_sha_and_blob_must_match(tmp_path: Path):
+    from premerge_host import _verify_host_execution
+
+    root = tmp_path / "clean-main"
+    root.mkdir()
+    subprocess.run(["git", "-C", str(root), "init", "-b", "main"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+                   check=True)
+    for name in ("scripts/premerge_host.py", "scripts/premerge_gate.py"):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# reviewed host code\n")
+    (root / "README.md").write_text("base\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-m", "base"],
+                   check=True, capture_output=True)
+    main = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                   text=True).strip()
+
+    class TrustedClient:
+        def blob(self, name: str, _ref: str) -> tuple[str, bytes]:
+            data = (root / name).read_bytes()
+            return _blob_sha(data), data
+
+    client = TrustedClient()
+    _verify_host_execution(client, main, execution_root=root)
+    (root / "README.md").write_text("dirty\n")
+    with pytest.raises(HostHoldError, match="gate_execution_root_untrusted"):
+        _verify_host_execution(client, main, execution_root=root)
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-m", "advanced"],
+                   check=True, capture_output=True)
+    with pytest.raises(HostHoldError, match="gate_execution_root_untrusted"):
+        _verify_host_execution(client, main, execution_root=root)
+
+    current = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                      text=True).strip()
+
+    class WrongBlob(TrustedClient):
+        def blob(self, name: str, ref: str) -> tuple[str, bytes]:
+            sha, data = super().blob(name, ref)
+            return "0" * 40, data
+
+    with pytest.raises(HostHoldError, match="gate_execution_blob_untrusted"):
+        _verify_host_execution(WrongBlob(), current, execution_root=root)

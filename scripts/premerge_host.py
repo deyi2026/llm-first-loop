@@ -16,6 +16,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -40,6 +41,11 @@ _GATE_PATHS = (
     "scripts/check_test_env_pins.py",
     "scripts/check_architecture_submission.py",
     ".github/workflows/architecture-review.yml",
+    ".github/workflows/privacy-scan.yml",
+    "scripts/run_eval.py",
+    "scripts/verify_serial_signal_stability.sh",
+    "tests/conftest.py",
+    "uv.lock",
 )
 _POLICY_PATH = "docs/governance/required-ci-checks.json"
 _MAX_ARTIFACT = 1024 * 1024
@@ -436,6 +442,67 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
     return pinned
 
 
+def _verify_gate_closure(client: Any, main: str) -> None:
+    """Reject newly referenced CI scripts outside the trusted entrypoint closure.
+
+    The trusted main workflow/shell bytes are checked, never candidate-provided
+    text.  A new direct executable dependency requires an independently
+    reviewed Host policy upgrade before any PR can use it.
+    """
+    entrypoints = (
+        "scripts/ci_gate.sh", ".github/workflows/ci.yml",
+        ".github/workflows/privacy-scan.yml",
+        ".github/workflows/architecture-review.yml",
+    )
+    pattern = re.compile(rb"(?<![A-Za-z0-9_])scripts/[A-Za-z0-9_./-]+\.(?:py|sh)")
+    for entrypoint in entrypoints:
+        _, source = client.blob(entrypoint, main)
+        for line in source.splitlines():
+            if line.lstrip().startswith(b"#"):
+                continue
+            for match in pattern.finditer(line):
+                try:
+                    referenced = match.group().decode("ascii")
+                except UnicodeDecodeError as exc:
+                    raise HostHoldError("gate_closure_incomplete") from exc
+                _require(referenced in _GATE_PATHS, "gate_closure_incomplete",
+                         unavailable=False)
+
+
+def _verify_host_execution(client: Any, main: str, *,
+                           execution_root: Path | None = None) -> None:
+    """Independently bind the CLI's *executed* bytes to protected main.
+
+    This is defense-in-depth for the operator's trusted launcher; a candidate
+    script cannot authorize itself.  Only a clean checkout at exact main is
+    eligible, never a stale checkout or a release directory without Git.
+    """
+    root = (execution_root or Path(__file__).resolve().parents[1]).resolve()
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    def git(*args: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(root), *args], capture_output=True,
+                text=True, timeout=5, check=False, env=env,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise HostHoldError("gate_execution_root_untrusted") from exc
+        _require(proc.returncode == 0, "gate_execution_root_untrusted")
+        return proc.stdout.strip()
+
+    _require(git("rev-parse", "--show-toplevel") == str(root)
+             and git("rev-parse", "HEAD") == main
+             and git("status", "--porcelain=v1") == "",
+             "gate_execution_root_untrusted", unavailable=False)
+    for path in ("scripts/premerge_host.py", "scripts/premerge_gate.py"):
+        local = root / path
+        _require(local.is_file() and not local.is_symlink(),
+                 "gate_execution_blob_untrusted", unavailable=False)
+        trusted_blob, _ = client.blob(path, main)
+        _require(_blob_sha(local.read_bytes()) == trusted_blob,
+                 "gate_execution_blob_untrusted", unavailable=False)
+
+
 def _verify_gate_blobs(client: Any, main: str, candidate: str) -> dict[str, str]:
     hashes = {}
     for path in _GATE_PATHS:
@@ -444,6 +511,7 @@ def _verify_gate_blobs(client: Any, main: str, candidate: str) -> dict[str, str]
         _require(main_hash == candidate_hash, "gate_version_untrusted",
                  unavailable=False)
         hashes[path] = main_hash
+    _verify_gate_closure(client, main)
     return hashes
 
 
@@ -608,6 +676,7 @@ def main(argv: list[str] | None = None) -> int:
         token = os.environ.get("LFL_PREMERGE_HOST_GITHUB_TOKEN", "")
         public_key = os.environ.get("LFL_PREMERGE_HOST_SNAPSHOT_PUBKEY", "")
         client = GitHubReadOnly(args.repo, token)
+        _verify_host_execution(client, args.expected_main_sha)
         result = evaluate_host(
             client, repo=args.repo, pr_number=args.pr,
             main=args.expected_main_sha, candidate=args.expected_candidate_sha,

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -131,6 +132,7 @@ TOOL_LANE_QUEUE_STATUS_DEF: dict[str, Any] = {
         "type": "object",
         "properties": {
             "include_terminal": {"type": "boolean", "description": "含 merged/failed/aborted"},
+            "with_impact": {"type": "boolean", "description": "可选只读 B2 基线影响投影，默认关闭；仅提示不授权"},
             "main_head": {"type": "string", "description": "缺省现场探测"},
             "repo_root": {"type": "string"},
         },
@@ -336,6 +338,78 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     )
 
 
+def _read_impact_lanes(audit_dir: str) -> tuple[list[dict], str]:
+    """Never construct LaneStore here: its constructor calls mkdir."""
+    if not audit_dir:
+        return [], "lane_snapshot_unavailable"
+    try:
+        lines = (Path(audit_dir) / "lanes.jsonl").read_text(encoding="utf-8").splitlines()
+        lanes = [json.loads(line) for line in lines if line.strip()]
+    except (OSError, UnicodeDecodeError, ValueError):
+        return [], "lane_snapshot_degraded"
+    if not all(isinstance(lane, dict) and isinstance(lane.get("lane_id"), str)
+               for lane in lanes):
+        return [], "lane_snapshot_degraded"
+    ids = [lane["lane_id"] for lane in lanes]
+    if len(set(ids)) != len(ids):
+        return [], "lane_snapshot_degraded"
+    return lanes, ""
+
+
+def _status_impact_projection(host: Any, args: dict, rows: list[dict]) -> dict:
+    """Optional Board-style groups; source errors degrade, never issue commands."""
+    from llm_loop.introspection.baseline_impact import project_baseline_impact
+
+    max_rows = 20
+    repo_root = _repo_root(host)
+    requested_repo = args.get("repo_root")
+    trusted = bool(repo_root) and (
+        not requested_repo or Path(str(requested_repo)).expanduser().resolve()
+        == Path(repo_root).expanduser().resolve()
+    )
+    lanes, read_error = _read_impact_lanes(_audit_dir(host))
+    if not trusted:
+        read_error = "main_identity_untrusted"
+    by_id = {lane["lane_id"]: lane for lane in lanes} if not read_error else {}
+    groups: dict[str, list[str]] = {
+        "current": [], "affected": [], "unknown": [],
+        "stale_needs_refresh": [], "carryover_candidate": [],
+    }
+    items: list[dict] = []
+    for row in rows[:max_rows]:
+        lane_id = str(row.get("lane_id") or "")
+        if read_error or lane_id not in by_id:
+            projection = {"lane_id": lane_id, "impact": {
+                "status": "unknown",
+                "reason_codes": [read_error or "lane_snapshot_unavailable"],
+                "recommended_next_step": "hold",
+            }, "evidence": {"projection_is_authoritative": False}}
+        else:
+            try:
+                projection = project_baseline_impact(
+                    repo_root, by_id[lane_id],
+                    caller_main_head=(str(args["main_head"])
+                                      if args.get("main_head") is not None else None),
+                    peer_lanes=lanes,
+                )
+            except (OSError, ValueError, RuntimeError):
+                projection = {"lane_id": lane_id, "impact": {
+                    "status": "unknown", "reason_codes": ["projection_unavailable"],
+                    "recommended_next_step": "hold",
+                }, "evidence": {"projection_is_authoritative": False}}
+        status = projection["impact"]["status"]
+        groups[status].append(lane_id)
+        items.append(projection)
+    return {
+        "schema_version": 1, "source": "host_local_tracking",
+        "projection_is_authoritative": False, "merge_permission": "not_granted",
+        "items": items, "groups": groups,
+        "counts": {key: len(value) for key, value in groups.items()},
+        "total": len(rows), "truncated": len(rows) > max_rows,
+        "source_complete": not bool(read_error),
+    }
+
+
 def run_lane_queue_status(ctx: Any, host: Any, args: dict) -> ToolResult:
     tool = "lane_queue_status"
     # 只读：不建目录、不写账本（create=False 保证零写副作用）
@@ -376,9 +450,13 @@ def run_lane_queue_status(ctx: Any, host: Any, args: dict) -> ToolResult:
         if stale_count
         else ""
     )
+    payload: dict[str, Any] = {
+        "main_head": main_head, "slot_holder": holder, "entries": rows,
+    }
+    if args.get("with_impact") is True:
+        payload["impact_projection"] = _status_impact_projection(host, args, rows)
     return _ok(
-        {"main_head": main_head, "slot_holder": holder, "entries": rows},
-        tool,
+        payload, tool,
         f"[队列 {len(rows)} 项] main={main_head[:12] or '-'} "
         f"slot={holder_lane or '空闲'}" + route_hint,
     )
