@@ -1,0 +1,24 @@
+{
+  "schema": "lfl.embodied.m0-architecture-audit/v1",
+  "observed_at_utc": "2026-11-17T09:27:00Z",
+  "scope": "M0-G1/G2 facts; not a production robotics connector acceptance",
+  "main_ref_at_inspection": "68028f2b0675bb7bcadb74363bf93d4cf58965f0",
+  "m0_g1": {
+    "status": "code_inspected_with_adaptation_required",
+    "tool_registry": "src/llm_loop/tools/registry.py:ToolRegistry.register/get/execute; generic tool registration and execution, not a robot skill safety gate",
+    "task_budget": "src/llm_loop/resources/task_budget_dispatch.py:TaskBudgetExecution; per-Run provider/tool quotas, transport abort and grant binding; not a robot motion budget",
+    "side_effect_registry": "src/llm_loop/core/loop/side_effects.py:SideEffectRegistry; persistent effect audit and stop records, not an authoritative physical action ledger",
+    "tool_execution_journal": "src/llm_loop/core/tool_execution_journal.py:ToolExecutionJournal; tool-side effect journaling, not simulator action_id ownership",
+    "goal_store": "src/llm_loop/introspection/goal.py:GoalStore.create/checkpoint/update/get; durable Goal and checkpoint, not simulator state",
+    "reuse_decision": "Reuse ToolRegistry, TaskBudgetExecution and Goal/Checkpoint orchestration; create a small trusted simulator-side persistent action ledger in M1. Never treat generic audit as robot execution truth."
+  },
+  "m0_g2": {
+    "status": "scope_contracted_no_crash_resume_claim",
+    "candidate_backend": "MuJoCo native physics simulator on macOS arm64; installation and actual simulation capability verification pending M1",
+    "backend_installed_at_inspection": false,
+    "backend_has_persistent_action_id_api": false,
+    "decision": "Physics engine alone cannot supply persistent action_id or post-crash query; M1 may demonstrate physical pick/place and failure recovery within one process, but MUST NOT claim crash-safe physical replay/reconciliation until independent executor ledger and restart tests pass.",
+    "hardware_access": "none",
+    "real_hardware_authorized": false
+  }
+}

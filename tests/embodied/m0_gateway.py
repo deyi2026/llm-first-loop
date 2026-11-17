@@ -102,6 +102,9 @@ class SafeGateway:
         untrusted_text: str = "",
     ) -> Receipt | CapabilityGap:
         del untrusted_text  # data only: cannot change authority, catalog, or parameters
+        trusted_obs = self._executor.trusted_observation(observation.observation_ref)
+        if trusted_obs is None or trusted_obs != observation:
+            raise DeniedError("OBSERVATION_PROVENANCE_INVALID")
         if not self._authority.verify(self._catalog, self._seal):
             raise DeniedError("CATALOG_INVALID")
         if skill not in self._catalog:

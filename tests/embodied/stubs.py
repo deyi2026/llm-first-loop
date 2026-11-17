@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -106,6 +107,9 @@ class ReconcileProof:
     resolved_by: str
     terminal_status: str
     evidence_ref: str
+    scene_epoch: int = -1
+    grant_version: int = -1
+    expires_at_ms: float = -1.0
 
 
 class TrustedReconcileAuthority:
@@ -126,6 +130,8 @@ class TrustedReconcileAuthority:
         resolved_by: str,
         terminal_status: str,
         evidence_ref: str,
+        now_ms: float = 0.0,
+        ttl_ms: float = 1000.0,
     ) -> ReconcileProof:
         if resolved_by not in UNKNOWN_RECONCILE_TRUSTED_SOURCES:
             raise DeniedError("RECONCILE_SOURCE_NOT_TRUSTED")
@@ -133,18 +139,25 @@ class TrustedReconcileAuthority:
             raise DeniedError("RECONCILE_TERMINAL_EVIDENCE_REQUIRED")
         if not evidence_ref or not evidence_ref.startswith(f"{resolved_by}:"):
             raise DeniedError("RECONCILE_EVIDENCE_INVALID")
+        if not math.isfinite(now_ms) or not math.isfinite(ttl_ms) or ttl_ms <= 0:
+            raise DeniedError("RECONCILE_EVIDENCE_INVALID")
         proof = ReconcileProof(
-            entry.action_id, entry.intent_key, resolved_by, terminal_status, evidence_ref
+            entry.action_id, entry.intent_key, resolved_by, terminal_status, evidence_ref,
+            entry.scene_epoch, entry.grant_version, now_ms + ttl_ms,
         )
         self._issued.add(proof)
         return proof
 
-    def consume(self, proof: ReconcileProof, entry: LedgerEntry) -> None:
+    def consume(self, proof: ReconcileProof, entry: LedgerEntry, *, now_ms: float) -> None:
         if (
             proof not in self._issued
             or proof.action_id != entry.action_id
             or proof.intent_key != entry.intent_key
             or entry.status != "UNKNOWN"
+            or proof.scene_epoch != entry.scene_epoch
+            or proof.grant_version != entry.grant_version
+            or not math.isfinite(now_ms)
+            or now_ms >= proof.expires_at_ms
         ):
             raise DeniedError("RECONCILE_PROOF_INVALID")
         self._issued.remove(proof)
@@ -260,6 +273,7 @@ class StubExecutor:
         oracle: StubOracle,
         reconcile_authority: TrustedReconcileAuthority | None = None,
         max_grant_epoch_age_ms: float | None = None,
+        max_actions: int | None = None,
     ) -> None:
         self.clock = clock
         self.oracle = oracle
@@ -275,12 +289,15 @@ class StubExecutor:
         self._grant_freshness_hold = False
         self._clock_untrusted = False
         self._host_connected = True
+        self._max_actions = max_actions
+        self._writer_owner: str | None = None
         self.ledger: dict[str, LedgerEntry] = {}
         self.intent_index: dict[str, str] = {}
         self.intent_fp: dict[str, str] = {}
         self.intent_semantic: dict[str, str] = {}
         self.semantic_index: dict[str, str] = {}  # scene-independent pending-action identity
         self.unknown_holds: dict[str, str] = {}
+        self._reconcile_polls: dict[str, int] = {}
         self.in_flight: dict[str, dict[str, Any]] = {}
         self.executed_count = 0
         # 故障注入
@@ -345,8 +362,26 @@ class StubExecutor:
                 "known_targets": ["cube-red"],
             },
         )
-        self._obs_by_ref[obs.observation_ref] = obs
+        self._obs_by_ref[obs.observation_ref] = deepcopy(obs)
         return obs
+
+    def trusted_observation(self, ref: str) -> Observation | None:
+        """Return the executor-owned snapshot, not the caller's mutable view."""
+        trusted = self._obs_by_ref.get(ref)
+        return deepcopy(trusted) if trusted is not None else None
+
+    def acquire_writer(self, owner: str) -> None:
+        """M0 single-writer reservation; no competing task may dispatch."""
+        if not owner:
+            raise DeniedError("WRITER_OWNER_REQUIRED")
+        if self._writer_owner is not None and self._writer_owner != owner:
+            raise DeniedError("RESOURCE_BUSY")
+        self._writer_owner = owner
+
+    def release_writer(self, owner: str) -> None:
+        if self._writer_owner != owner:
+            raise DeniedError("WRITER_OWNER_MISMATCH")
+        self._writer_owner = None
 
     def bump_irrelevant_frame(self) -> None:
         """无关观察帧变化（噪声/遥测抖动）：不影响 scene_epoch 与既有观察有效性。"""
@@ -368,10 +403,13 @@ class StubExecutor:
         semantic_fingerprint: str,
         skill: str,
         params: dict[str, Any],
+        writer_owner: str | None = None,
     ) -> Receipt:
         # 1) 停止请求后 fail-closed：新动作一律拒绝，直到 STOPPED_CONFIRMED 或人工重置
         if self.stop_requested_at_ms is not None:
             raise DeniedError("STOP_PENDING_HOLD")
+        if self._writer_owner is not None and writer_owner != self._writer_owner:
+            raise DeniedError("RESOURCE_BUSY")
         # 2) UNKNOWN 写权冻结：新 key 与同语义重发均拒（未结案不解除）
         if self.unknown_holds:
             prior_id = self.semantic_index.get(semantic_fingerprint)
@@ -439,6 +477,8 @@ class StubExecutor:
             raise DeniedError("ILLEGAL_LOW_LEVEL_COMMAND")
         if not set(params) <= ALLOWED_PARAM_KEYS:
             raise DeniedError("PARAM_KEY_NOT_ALLOWED")
+        if self._max_actions is not None and self.executed_count >= self._max_actions:
+            raise DeniedError("ACTION_BUDGET_EXHAUSTED")
 
         action_id = f"act-{len(self.ledger) + 1:04d}"
         entry = LedgerEntry(
@@ -494,6 +534,14 @@ class StubExecutor:
         """编排层在回执丢失/超时后的机械冻结：全局写权 HOLD，直到可信结案。"""
         self.unknown_holds.setdefault(intent_key, reason)
 
+    def poll_reconcile_status(self, intent_key: str) -> str:
+        """Bounded read-only reconciliation: after 3 unresolved polls, human review."""
+        if intent_key not in self.unknown_holds:
+            raise DeniedError("RECONCILE_HOLD_REQUIRED")
+        count = self._reconcile_polls.get(intent_key, 0) + 1
+        self._reconcile_polls[intent_key] = count
+        return "HUMAN_REQUIRED" if count >= 3 else "UNKNOWN"
+
     def reconcile_unknown(self, intent_key: str, *, proof: ReconcileProof, release: bool) -> None:
         """Only one-shot trusted proof can settle an UNKNOWN and release HOLD_WRITE."""
         if not release or intent_key not in self.unknown_holds:
@@ -504,13 +552,14 @@ class StubExecutor:
             raise DeniedError("RECONCILE_AUTHORITY_REQUIRED")
         if not isinstance(proof, ReconcileProof):
             raise DeniedError("RECONCILE_PROOF_INVALID")
-        self._reconcile_authority.consume(proof, entry)
+        self._reconcile_authority.consume(proof, entry, now_ms=self.clock.now_ms)
         entry.status = proof.terminal_status
         entry.resolved_by = proof.resolved_by
         entry.resolved_at_ms = self.clock.now_ms
         entry.reconcile_evidence_ref = proof.evidence_ref
         entry.evidence_ref = proof.evidence_ref
         self.unknown_holds.pop(intent_key)
+        self._reconcile_polls.pop(intent_key, None)
 
     # ---- 崩溃恢复 ----
     def crash_restart(self) -> None:
@@ -568,16 +617,22 @@ class StubExecutor:
         return "STOP_REQUESTED"
 
     def poll_stop_confirmation(
-        self, *, motion_mm_s: float = 0.0, pose_delta_mm: float = 0.0
+        self, *, motion_mm_s: float | None = None, pose_delta_mm: float | None = None
     ) -> str:
         """Two independent zero-motion samples are needed to confirm stopping.
 
         Motion, nonfinite readings, missing samples or timeout are fail-closed.
-        The default zero readings preserve M0-A's static-arm contract only.
+        Missing telemetry never means zero motion, even for the static M0 stub.
         """
         if self.stop_requested_at_ms is None:
             raise DeniedError("STOP_NOT_REQUESTED")
         now = self.clock.now_ms
+        if now < self.stop_requested_at_ms:
+            self._stop_window_expired = True
+            self.stop_confirmed_at_ms = None
+            self.stop_evidence_ref = None
+            self._stop_samples.clear()
+            return "STOP_UNCONFIRMED"
         if (
             not self._stop_window_expired
             and now - self.stop_requested_at_ms > STOP_CONFIRM_MAX_WAIT_MS
@@ -586,11 +641,17 @@ class StubExecutor:
             # 确认窗口超期且从未确认：sticky fail-closed（需要人工重新发起/重置）
             self._stop_window_expired = True
         if (
-            not math.isfinite(motion_mm_s) or not math.isfinite(pose_delta_mm)
+            motion_mm_s is None or pose_delta_mm is None
+            or not math.isfinite(motion_mm_s) or not math.isfinite(pose_delta_mm)
             or abs(motion_mm_s) > STOP_VELOCITY_EPS_MM_S
             or abs(pose_delta_mm) > STOP_POSE_EPS_MM
         ):
             self._stop_samples.clear()
+            if self.stop_confirmed_at_ms is not None:
+                # Contradictory later motion invalidates prior stop evidence.
+                self.stop_confirmed_at_ms = None
+                self.stop_evidence_ref = None
+                self._stop_window_expired = True
             return "STOP_UNCONFIRMED"
         if not self._stop_window_expired and (
             not self._stop_samples or now - self._stop_samples[-1] >= STOP_SAMPLE_INTERVAL_MS

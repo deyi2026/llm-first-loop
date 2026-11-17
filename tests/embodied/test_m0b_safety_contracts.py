@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from stubs import DeniedError, SimClock, StubExecutor, StubOracle
+from stubs import (
+    DeniedError,
+    ReconcileProof,
+    SimClock,
+    StubExecutor,
+    StubOracle,
+    TrustedReconcileAuthority,
+)
 
 
 def _run(ex, oracle, grant, obs, *, key, semantic, skill="pick", params=None):
@@ -83,9 +90,9 @@ def test_safety_stop_does_not_require_model_or_bridge(side_effect_sentinel):
     ex = StubExecutor(clock, oracle)
     # No grant, model or bridge is present; the independent stop path still works.
     assert ex.stop(reason="safety-controller") == "STOP_REQUESTED"
-    assert ex.poll_stop_confirmation() == "STOP_UNCONFIRMED"
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOP_UNCONFIRMED"
     clock.advance(50)
-    assert ex.poll_stop_confirmation() == "STOPPED_CONFIRMED"
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOPPED_CONFIRMED"
     assert ex.executed_count == 0
     assert oracle.verify() is False
 
@@ -158,6 +165,10 @@ def test_stop_requires_zero_motion_evidence_not_only_elapsed_time(side_effect_se
     ex = StubExecutor(clock, oracle)
     assert ex.stop(reason="safety-controller") == "STOP_REQUESTED"
     assert ex.stop_boundary_at_ms == ex.stop_requested_at_ms == 0.0
+    assert ex.poll_stop_confirmation() == "STOP_UNCONFIRMED"
+    clock.advance(50)
+    assert ex.poll_stop_confirmation() == "STOP_UNCONFIRMED"
+    assert ex.stop_evidence_ref is None
     assert ex.poll_stop_confirmation(motion_mm_s=5.0) == "STOP_UNCONFIRMED"
     clock.advance(50)
     assert ex.poll_stop_confirmation(pose_delta_mm=2.0) == "STOP_UNCONFIRMED"
@@ -168,8 +179,8 @@ def test_stop_requires_zero_motion_evidence_not_only_elapsed_time(side_effect_se
     assert ex.stop_evidence_ref is None
     clock.advance(50)
     assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOPPED_CONFIRMED"
-    assert ex.stop_confirmed_at_ms == 200.0
-    assert ex.stop_evidence_ref == "ev:stop:200.0:zero_motion"
+    assert ex.stop_confirmed_at_ms == 250.0
+    assert ex.stop_evidence_ref == "ev:stop:250.0:zero_motion"
     assert ex.executed_count == 0
     assert oracle.verify() is False
 
@@ -186,3 +197,49 @@ def test_stop_timeout_stays_unconfirmed_even_if_late_motion_zero(side_effect_sen
     assert ex.stop_confirmed_at_ms is None
     assert ex.stop_evidence_ref is None
     assert ex.executed_count == 0
+
+
+def test_unknown_reconcile_poll_limit_expiry_scope_and_replay(side_effect_sentinel):
+    """AT-07: N=3 escalates; expired/cross-scope/replayed tokens cannot release."""
+    clock, oracle = SimClock(), StubOracle()
+    authority = TrustedReconcileAuthority()
+    ex = StubExecutor(clock, oracle, reconcile_authority=authority)
+    grant, obs = ex.issue_grant(), ex.observe()
+    ex.fault_drop_receipt = True
+    receipt = _run(ex, oracle, grant, obs, key="unknown", semantic="pick-red")
+    assert receipt.status == "UNKNOWN"
+    assert ex.get_action_status(receipt.action_id).status == "UNKNOWN"
+    assert [ex.poll_reconcile_status("unknown") for _ in range(4)] == [
+        "UNKNOWN", "UNKNOWN", "HUMAN_REQUIRED", "HUMAN_REQUIRED",
+    ]
+    entry = ex.ledger[receipt.action_id]
+    expired = authority.attest(
+        entry, resolved_by="trusted_ledger", terminal_status="SUCCEEDED",
+        evidence_ref="trusted_ledger:expired", now_ms=clock.now_ms, ttl_ms=100,
+    )
+    clock.advance(100)
+    with pytest.raises(DeniedError) as err:
+        ex.reconcile_unknown("unknown", proof=expired, release=True)
+    assert err.value.code == "RECONCILE_PROOF_INVALID"
+    assert ex.unknown_holds and ex.executed_count == 1
+    valid = authority.attest(
+        entry, resolved_by="human", terminal_status="SUCCEEDED",
+        evidence_ref="human:operator-confirmed", now_ms=clock.now_ms,
+    )
+    forged_cross_epoch = ReconcileProof(
+        valid.action_id, valid.intent_key, valid.resolved_by, valid.terminal_status,
+        valid.evidence_ref, valid.scene_epoch + 1, valid.grant_version,
+        valid.expires_at_ms,
+    )
+    with pytest.raises(DeniedError) as err:
+        ex.reconcile_unknown("unknown", proof=forged_cross_epoch, release=True)
+    assert err.value.code == "RECONCILE_PROOF_INVALID"
+    with pytest.raises(DeniedError) as err:
+        ex.reconcile_unknown("unknown", proof=valid, release=False)
+    assert err.value.code == "RECONCILE_HOLD_REQUIRED"
+    ex.reconcile_unknown("unknown", proof=valid, release=True)
+    assert ex.ledger[receipt.action_id].resolved_by == "human"
+    assert not ex.unknown_holds
+    with pytest.raises(DeniedError):
+        ex.reconcile_unknown("unknown", proof=valid, release=True)
+    assert ex.executed_count == 1

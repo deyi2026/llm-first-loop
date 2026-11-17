@@ -243,9 +243,9 @@ def test_grant_revoke_and_stop_semantics(side_effect_sentinel):
     clock2, oracle2, ex2 = _fresh_executor()
     ex2.issue_grant()
     assert ex2.stop() == "STOP_REQUESTED"
-    assert ex2.poll_stop_confirmation() == "STOP_UNCONFIRMED"  # 首采样
+    assert ex2.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOP_UNCONFIRMED"  # 首采样
     clock2.advance(STOP_SAMPLE_INTERVAL_MS)
-    assert ex2.poll_stop_confirmation() == "STOPPED_CONFIRMED"
+    assert ex2.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOPPED_CONFIRMED"
     assert ex2.stop_confirmed_at_ms is not None
     assert ex2.stop_requested_at_ms is not None
     assert ex2.stop_confirmed_at_ms >= ex2.stop_requested_at_ms  # 两段时基各自成立
@@ -393,9 +393,9 @@ def test_no_hardware_or_network_side_effect(side_effect_sentinel):
     receipt = _exec(ex, oracle, grant, obs, "z1", "pick-cube-red", "pick", {"target_id": "cube-red"})
     assert ex.get_action_status(receipt.action_id).status == "SUCCEEDED"
     assert ex.stop() == "STOP_REQUESTED"
-    assert ex.poll_stop_confirmation() == "STOP_UNCONFIRMED"
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOP_UNCONFIRMED"
     clock.advance(STOP_SAMPLE_INTERVAL_MS)
-    assert ex.poll_stop_confirmation() == "STOPPED_CONFIRMED"
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOPPED_CONFIRMED"
     assert ex.verify_with_oracle(receipt.action_id) == "VERIFIED"
 
     # 静态源码拒绝面 + 动态哨兵拒绝面；不再用永远为零的伪计数冒充独立证据
