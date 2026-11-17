@@ -31,8 +31,35 @@ CANDIDATE = "b" * 40
 LANE = "lane-test"
 
 
-def test_ed25519_signature_is_accepted_by_real_host_verifier():
-    ecc, _ = crypto()
+@pytest.fixture
+def crypto_for_unit_tests(monkeypatch):
+    """Exercise real Ed25519 without depending on macOS-only installed site.
+
+    Production crypto() still enforces the root-owned site; that security
+    boundary is independently covered by the negative test below.
+    """
+    from Crypto.PublicKey import ECC
+    from Crypto.Signature import eddsa
+
+    monkeypatch.setattr("premerge_host_snapshot_issuer.crypto",
+                        lambda: (ECC, eddsa))
+    return ECC, eddsa
+
+
+def test_crypto_rejects_missing_or_untrusted_runtime(tmp_path, monkeypatch):
+    missing = tmp_path / "missing-site"
+    monkeypatch.setattr("premerge_host_snapshot_issuer._TRUSTED_SITE", str(missing))
+    with pytest.raises(FileNotFoundError):
+        crypto()
+    untrusted = tmp_path / "user-owned-site"
+    untrusted.mkdir()
+    monkeypatch.setattr("premerge_host_snapshot_issuer._TRUSTED_SITE", str(untrusted))
+    with pytest.raises(IssuerHoldError, match="crypto_runtime_untrusted"):
+        crypto()
+
+
+def test_ed25519_signature_is_accepted_by_real_host_verifier(crypto_for_unit_tests):
+    ecc, _ = crypto_for_unit_tests
     key = ecc.generate(curve="Ed25519")
     payload = {"checked_at": time.time(), "main_sha": MAIN,
                "candidate_sha": CANDIDATE, "repo": "deyi2026/llm-first-loop"}
@@ -45,7 +72,7 @@ def test_ed25519_signature_is_accepted_by_real_host_verifier():
                            time.time())
 
 
-def test_keygen_requires_separate_owner_and_refuses_reuse(tmp_path):
+def test_keygen_requires_separate_owner_and_refuses_reuse(tmp_path, crypto_for_unit_tests):
     directory = tmp_path / "private"
     directory.mkdir(mode=0o700)
     with pytest.raises(IssuerHoldError, match="issuer_uid_invalid"):
@@ -228,7 +255,7 @@ def test_no_arbitrary_url_or_signer_web_route():
         fetch_json("https://attacker.invalid/sign")
 
 
-def test_operator_issuer_atomic_publish_and_no_overwrite(tmp_path, monkeypatch):
+def test_operator_issuer_atomic_publish_and_no_overwrite(tmp_path, monkeypatch, crypto_for_unit_tests):
     """Synthetic end-to-end issue path; live source checks are tested separately."""
     import hashlib
     from types import SimpleNamespace
