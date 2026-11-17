@@ -5614,16 +5614,13 @@ class HostReviewAdmission:
     ) -> AdmissionDecision | None:
         """EVO-20261115-34ae7c99(A)（人工批准 2026-11-15，exec_override）：
         git_push 多批**联合覆盖**消费。
-
         设计不变量（与 _resolve_scope 历史拒绝理由同一根源）：窄 scope 的单条
         PASS 永不授权整次 push。分批协议不放宽这一点——只有同时满足：
-
           1. 同 parent、同 target（同一 push 命令绑定）；
           2. 每一批按自身 scope+冻结两级计数复算的 SHA 与冻结值**精确一致**
              （push 基点/头/批内内容/切片外未审计数任一漂移即失效）；
           3. 有效批的 paths 并集覆盖**当前全量增量的全部段落**
              （committed/working/untracked 段；新文件必然造成缺口或批 sha 漂移）；
-
         才放行并**一次性消费该 target 全部待决批行**；任一批失效、漂移或覆盖
         有缺口 ⇒ 整体拒绝且不消费任何批（fail-closed）。返回 None 表示无适用
         批记录，调用方回落既有拒绝路径。
@@ -5642,20 +5639,12 @@ class HostReviewAdmission:
         if not parent:
             return None
         with self._guard:
-            rows = []
-            blocked_reason = ""
-            for row in self._records.values():
-                if not (
-                    row.parent == parent and row.kind == "git_push"
-                    and row.granted and not row.consumed and row.batch_plan_id
-                ):
-                    continue
-                # P1-1/P1-2：联合批同样受策略 digest 与 reviewer 模型证据约束。
-                blocked = self._consume_block_reason(row)
-                if blocked:
-                    blocked_reason = blocked
-                    continue
-                rows.append(row)
+            pairs = [(row, self._consume_block_reason(row))
+                     for row in self._records.values()
+                     if row.parent == parent and row.kind == "git_push"
+                     and row.granted and not row.consumed and row.batch_plan_id]
+            rows = [row for row, blocked in pairs if not blocked]
+            blocked_reason = next((b for _, b in reversed(pairs) if b), "")
         if not rows:
             if blocked_reason:
                 return self._deny(blocked_reason)

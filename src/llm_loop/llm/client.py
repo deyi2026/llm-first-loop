@@ -2228,10 +2228,7 @@ class LLMClient:
                     if _observed_model is None:
                         _m = chunk.get("model")
                         if isinstance(_m, str) and _m:
-                            _observed_model = _m
-                            # P1-1：把 provider 自报 model 落到本响应对象上，供 in-process
-                            # 复核模型一致性；与请求侧 payload["model"] 相互独立。
-                            acc.observed_model = _m
+                            _observed_model = acc.observed_model = _m
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):
                         self._observe_transport_usage(usage, model_id=str(payload["model"]))
@@ -2470,8 +2467,7 @@ class LLMClient:
                 raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
         return _finish_response(
             acc, agg, self.provider, client=self, guard_context=guard_context,
-            actual_model=str(payload["model"]),
-            observed_model=acc.observed_model,
+            actual_model=str(payload["model"]), observed_model=acc.observed_model,
         )
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──

@@ -3240,7 +3240,6 @@ class SubAgentRunner:
         active_llm = llm_client or self.llm
         archived_once: set[int] = set()
         convergence_reminder_sent = False  # EVO-20261108-b5fead21 ①: 只注入一次
-
         while rounds < effective_rounds:
             if cancel_event is not None and cancel_event.is_set():
                 return SubAgentResult(
@@ -3384,8 +3383,6 @@ class SubAgentRunner:
                     attempt_kind=ProviderAttemptKind.PRIMARY,
                     site_index=0,
                 )
-                # P1-1：把本轮实际 Provider 响应自报的 model 记账（真值源是
-                # response.observed_model，绝不回填请求 label）；缺失则不落账。
                 self._record_observed_model(sess.session_id, resp)
                 if _provider_call_coordinator is not None:
                     _provider_call_coordinator.settle_shadow_call(
