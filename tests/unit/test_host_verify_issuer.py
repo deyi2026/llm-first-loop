@@ -265,6 +265,28 @@ def test_review_accepts_one_terminal_fenced_json(prefix):
     _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
 
 
+@pytest.mark.parametrize("prefix", [
+    "审查通过，未发现 P0/P1 问题。\n",
+    "Independent read-only review PASSed with no findings.\n",
+])
+def test_review_accepts_prose_prefix_pass(prefix):
+    answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
+    _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+@pytest.mark.parametrize("answer", [
+    # P1 negative repro 1: prose verdict contradicting the fenced JSON.
+    "REVISE: P1=2 high severity defect.\n{fence}json\n{payload}\n{fence}",
+    # P1 negative repro 2: extra contradictory JSON object ahead of the fence.
+    '{{"gate":"merge","verdict":"REVISE","p1":2}}\n{fence}json\n{payload}\n{fence}',
+    # Prose verdict without nonzero P0/P1 assignment is still a conflict.
+    "BLOCKED: review found issues.\n{fence}json\n{payload}\n{fence}",
+])
+def test_review_rejects_conflicting_prefix(answer):
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer.format(payload=_review_payload(), fence=FENCE), lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
 @pytest.mark.parametrize("answer", [
     "Read-only review.\n{fence}json\n{payload}\n{fence}\nMore prose",
     "Read-only review.\n{fence}json\n{payload}\n{fence}\n{fence}json\n{payload}\n{fence}",

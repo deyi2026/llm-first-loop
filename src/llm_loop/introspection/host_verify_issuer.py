@@ -65,6 +65,29 @@ def _git(cwd: Path, *args: str) -> str:
     return p.stdout.strip()
 
 
+_CONFLICT_TOKEN = re.compile(r"\b(REVISE\w*|BLOCK\w*|REJECT\w*|FAIL\w*)\b", re.IGNORECASE)
+_P_TOKEN = re.compile(r"\bp[01]\b\s*[:=]\s*(\d+)", re.IGNORECASE)
+
+
+def _reject_conflicting_prefix(prefix: str) -> None:
+    """Fail closed when prose ahead of the terminal JSON fence contradicts it.
+
+    The fenced verdict object is machine-checked below, but leading rationale
+    text is never authority: any embedded JSON/braces, fence markers, explicit
+    REVISE/BLOCK tokens, or nonzero P0/P1 assignments make the answer
+    ambiguous, so the whole answer is rejected.
+    """
+    if "{" in prefix or "}" in prefix:
+        raise HostVerifyError("review_not_structured")
+    if "```" in prefix:
+        raise HostVerifyError("review_not_structured")
+    if _CONFLICT_TOKEN.search(prefix):
+        raise HostVerifyError("review_not_structured")
+    for match in _P_TOKEN.finditer(prefix):
+        if int(match.group(1)) != 0:
+            raise HostVerifyError("review_not_structured")
+
+
 def _parse_review(text: str, *, lane_id: str, base: str, head: str) -> None:
     raw = text.strip()
     try:
@@ -79,10 +102,12 @@ def _parse_review(text: str, *, lane_id: str, base: str, head: str) -> None:
             raise HostVerifyError("review_not_structured") from exc
         if raw.startswith(marker):
             body = raw[len(marker):]
+            prefix = ""
         else:
             prefix, separator, body = raw.rpartition("\n" + marker)
             if not separator or not prefix.strip():
                 raise HostVerifyError("review_not_structured") from exc
+        _reject_conflicting_prefix(prefix)
         if not body.endswith("\n" + fence):
             raise HostVerifyError("review_not_structured") from exc
         try:
