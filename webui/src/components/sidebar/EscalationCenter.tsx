@@ -141,7 +141,7 @@ function EscalationLoginPrompt() {
   // 登录跳转仅使用本站路径；保留当前会话 query，登录后返回原审批位置。
   const next = window.location.pathname + window.location.search;
   return (
-    <div className="v2-esc-hash warn" role="alert" data-testid="esc-login-required">
+    <div className="v2-esc-hash warn v2-esc-login-required" role="alert" data-testid="esc-login-required">
       此次审批没有生效。<a href={`/login?next=${encodeURIComponent(next)}`} data-testid="esc-login-link">登录 LFL 后重试审批</a>
     </div>
   );
@@ -302,7 +302,7 @@ function PendingCard({
           data-testid={`esc-approve-${req.id}`}
           onClick={() => onDecide(req.id, "approved", note, req.command_sha256 || "")}
         >
-          批准
+          {busy ? "处理中…" : "批准"}
         </button>
         <button
           type="button"
@@ -310,7 +310,7 @@ function PendingCard({
           disabled={busy}
           onClick={() => onDecide(req.id, "denied", note, req.command_sha256 || "")}
         >
-          拒绝
+          {busy ? "处理中…" : "拒绝"}
         </button>
       </div>
     </div>
@@ -348,6 +348,8 @@ export function EscalationWatcher() {
 
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
     setBusy(true);
+    setResultMsg("正在提交审批，请稍候…");
+    setLoginRequired(false);
     void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
       setResultMsg(res.message);
       setLoginRequired(res.loginRequired);
@@ -399,18 +401,20 @@ export function EscalationWatcher() {
             ×
           </button>
         </div>
-        {resultMsg && <div className="v2-evo-action-msg">{resultMsg}</div>}
+        {resultMsg && <div className="v2-evo-action-msg" role="status" data-testid="esc-modal-feedback">{resultMsg}</div>}
         {loginRequired && <EscalationLoginPrompt />}
         {data?.error && (
           <div className="v2-esc-hash warn" data-testid="esc-store-error">
             ⚠️ {data.error}——待审列表当前不可用，请勿据此判断"无待审"
           </div>
         )}
-        {pending
-          .filter((r) => !mutedIds.has(r.id))
-          .map((r) => (
-            <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
-          ))}
+        <div className="v2-esc-modal-body">
+          {pending
+            .filter((r) => !mutedIds.has(r.id))
+            .map((r) => (
+              <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
+            ))}
+        </div>
         <div className="v2-esc-modal-foot">
           普通提权批准后 AI 收到一次性令牌；验证凭证类由 Host 专用签发，
           不提供通用文件写权限。拒绝后 AI 会收到拒绝理由。
@@ -428,6 +432,8 @@ export function EscalationPanel() {
   const [loginRequired, setLoginRequired] = useState(false);
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
     setBusy(true);
+    setActionMsg("正在提交审批，请稍候…");
+    setLoginRequired(false);
     void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
       setActionMsg(res.message);
       setLoginRequired(res.loginRequired);
