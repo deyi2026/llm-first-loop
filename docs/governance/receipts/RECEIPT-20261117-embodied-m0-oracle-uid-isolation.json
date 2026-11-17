@@ -1,0 +1,69 @@
+{
+  "schema": "lfl.embodied.m0-oracle-uid-acceptance/v1",
+  "observed_at_utc": "2026-11-17T09:19:29Z",
+  "scope": "M0 independent Oracle identity and OS isolation only; not full M0, M1, production or real hardware",
+  "result": "PASS",
+  "host_os": "macOS arm64",
+  "authorization": "macOS native administrator approval; no administrator credentials handled by LFL",
+  "source_branch": "feat/embodied-m0b-contract-gates-20261117",
+  "source_commit": "393fb26d945860554b5501a00d5e143c9c6fd92d",
+  "source_scripts": {
+    "scripts/embodied/provision_oracle_user_macos.sh": "81c9a78076974e3dcde3d0d42302803b021d2dd1c7f9e2b96fd1d6b93ce8b080",
+    "scripts/embodied/verify_oracle_uid_macos.py": "07880563da1890cbe3deec6f64364c57e4d31dbcc73e194f7d6c6d7b7eca972e"
+  },
+  "account": {
+    "name": "_lfl_oracle",
+    "uid": 463,
+    "gid": 463,
+    "host_uid": 501,
+    "dedicated_group": "_lfl_oracle",
+    "shell": "/usr/bin/false",
+    "home": "/var/empty",
+    "authentication_disabled": true,
+    "password_locked": true,
+    "admin_staff_wheel_membership": false,
+    "note": "macOS also projects inherited groups everyone/localaccounts/_lpoperator/sharepoint; no administrator privilege is claimed"
+  },
+  "independent_uid_probe": {
+    "schema": "lfl.embodied.m0-oracle-uid/v1",
+    "root_managed_probe_result": "PASS",
+    "distinct_uid": true,
+    "oracle_own_read": true,
+    "host_own_read": true,
+    "host_oracle_read_denied": true,
+    "oracle_host_read_denied": true,
+    "synthetic_files_cleaned": true,
+    "privilege_drop": "kernel setgroups/setgid/setuid before exec of /bin/cat"
+  },
+  "macos_kernel_sandbox_probe": {
+    "schema": "lfl.embodied.m0-isolation/v1",
+    "os_enforced": true,
+    "separate_process": true,
+    "same_uid_for_sandbox_probe": true,
+    "oracle_read_denied": true,
+    "device_read_denied": true,
+    "network_connect_denied": true,
+    "network_bind_denied": true,
+    "oracle_env_absent": true,
+    "oracle_canary_leaked": false,
+    "note": "Kernel sandbox and cross-UID DAC are separately demonstrated; this is not a full deployed two-process Oracle architecture"
+  },
+  "local_gates": {
+    "pytest_embodied": "22 passed",
+    "ruff": "PASS",
+    "pyright": "0 errors"
+  },
+  "safety_scope": {
+    "real_robot_control": "not_attempted",
+    "provider_call": "not_attempted",
+    "service_restart": "not_attempted",
+    "main_merge": "not_attempted"
+  },
+  "remaining_gates": [
+    "M0 remaining contracts and independent reviewer",
+    "full original R9 and GitHub PR/CI",
+    "protected main integration",
+    "M1 simulator autonomy with independent Oracle acceptance",
+    "separate real-hardware authorization and safety acceptance"
+  ]
+}
