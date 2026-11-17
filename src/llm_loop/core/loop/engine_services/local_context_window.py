@@ -138,10 +138,10 @@ class LocalContextWindowObserver:
         with self._lock:
             now = self._clock()
             cached = self._cache.get(key)
-            if cached is not None and cached[0] <= now < cached[0] + (
-                _LIVE_TTL_S if cached[1].kind == "live" else _UNKNOWN_TTL_S
-            ):
-                return cached[1]
+            if cached is not None:
+                ttl = _LIVE_TTL_S if cached[1].kind == "live" else _UNKNOWN_TTL_S
+                if cached[0] <= now < cached[0] + ttl:
+                    return cached[1]
             observed = _read_live_window(origin, model_id, self._fetch_json)
             self._cache[key] = (now, observed)
             return observed
