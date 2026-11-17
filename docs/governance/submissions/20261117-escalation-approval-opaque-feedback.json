@@ -1,0 +1,83 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261117-escalation-approval-opaque-feedback",
+  "summary": "Fix an opaque Web V2 escalation approval dialog and visible login/submit feedback; do not change approval authority or grants.",
+  "components": [
+    {
+      "component_id": "escalation-approval-feedback",
+      "paths": [
+        "webui/src/components/sidebar/EscalationCenter.tsx",
+        "webui/src/components/sidebar/EscalationCenter.test.tsx"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Web V2 EscalationWatcher and EscalationPanel (presentation only; Host remains approval authority)",
+      "disposition": "ADMIT: keep existing 403 human_auth_required/human_channel_required login flow and same-origin login link; immediately show submitting state and disable duplicate clicks; keep status and login prompt outside the scrollable request list. Do not grant authority or mutate approval evidence.",
+      "evidence": [
+        "Actual request ESC-20261117-ef27c311 produced repeated unauthenticated/rejected_human_channel_required audit records; no successful approval.",
+        "Targeted 18/18 and full WebUI Vitest 604/604 PASS, including new 403 watcher and in-flight negative tests; TypeScript typecheck PASS."
+      ],
+      "verification_level": "WebUI Vitest full suite and typecheck PASS; production visual and real human login/approval require separately authorized managed deployment.",
+      "model_evidence_veto_recovery_exit": "Reject if 403 becomes success, request is removed on failure, approval hash binding changes, login link becomes cross-origin, or click auto-approves without the user.",
+      "rollback_route": "Revert this UI-only commit; server-side human approval checks and audit ledger are unchanged.",
+      "declaration_id": "escalation-approval-feedback"
+    },
+    {
+      "component_id": "escalation-opaque-theme",
+      "paths": [
+        "webui/src/tokens/conversation.css"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Web V2 theme CSS / escalation modal",
+      "disposition": "ADMIT: replace undefined layer-panel/layer-input CSS variables with existing opaque light/dark theme layer tokens; make dialog, textarea, status and login prompts readable; keep request list scrollable.",
+      "evidence": [
+        "theme.css defines --dsw-alias-bg-layer-1 and --dsw-alias-bg-layer-2 for both light and dark themes; --dsw-alias-layer-panel was undefined and produced transparent dialog.",
+        "CSS opacity contract and npm run build PASS."
+      ],
+      "verification_level": "Source token validation and Vite production build PASS; browser visual verification remains required after managed rollout.",
+      "model_evidence_veto_recovery_exit": "Reject if dialog/inputs remain transparent, dark theme text becomes unreadable, or scrolling hides the login failure.",
+      "rollback_route": "Revert CSS change without touching any approval record."
+    },
+    {
+      "component_id": "architecture-submission",
+      "paths": [
+        "docs/governance/submissions/20261117-escalation-approval-opaque-feedback.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 exact changed-path declaration",
+      "disposition": "ADMIT: declare the exact changed paths; no runtime effect.",
+      "evidence": [
+        "A.5 checker verifies all four changed paths relative to frozen main base."
+      ],
+      "verification_level": "A.5 checker PASS required before PR.",
+      "model_evidence_veto_recovery_exit": "HOLD if any changed path is missing or declaration is stale.",
+      "rollback_route": "Revert with the UI commit."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "escalation-approval-feedback",
+      "g1": {
+        "necessity": "Real users clicked Approve repeatedly while the server correctly rejected unauthenticated browser approval; the dialog was transparent and feedback could be scrolled out of view."
+      },
+      "g2": {
+        "authority_owner": "Existing EscalationStore, Host Verify Authority and browser session remain the sole approval decision and signing authorities.",
+        "relationship": "reuse",
+        "non_duplication": "Only React presentation and local busy state change; existing /api/v1/escalation/review, SHA binding, cookie validation and Host signing are reused unchanged."
+      },
+      "g3": {
+        "model_evidence": [
+          "Repeated ESC-20261117-ef27c311 review audit outcome rejected_human_channel_required, status remains pending.",
+          "New watcher tests assert failed 403 leaves request visible, offers same-origin login, and in-flight submit disables the button; full 604 WebUI tests pass."
+        ],
+        "recovery_or_reason": "On missing browser session, fail closed with a clear login link and no automatic retry; after a real browser login the user must review and click again."
+      },
+      "g4": {
+        "rollback": "Revert UI-only commit; server security gates and pending approvals are unchanged.",
+        "verification": [
+          "Targeted 18/18 + full 604/604 Vitest + TypeScript typecheck + Vite build + A.5; independent review and original full R9 before any merge/deployment.",
+          "After managed rollout, visually inspect both themes and recheck a real human login and approval without scripted approval."
+        ]
+      }
+    }
+  ]
+}

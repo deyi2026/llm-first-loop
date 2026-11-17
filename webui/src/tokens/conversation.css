@@ -3612,7 +3612,7 @@ select.v2-control-pill {
   position: fixed;
   inset: 0;
   z-index: 3000;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(9, 12, 18, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3621,13 +3621,17 @@ select.v2-control-pill {
 .v2-esc-modal {
   max-width: 560px;
   width: 100%;
-  max-height: 80vh;
-  overflow: auto;
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-radius: 10px;
-  border: 1px solid var(--dsw-alias-border-secondary);
-  background: var(--dsw-alias-layer-panel);
+  border: 1px solid var(--dsw-alias-border-l3, #d1d5db);
+  /* The previous layer-panel token was undefined, leaving this dialog transparent. */
+  background: var(--dsw-alias-bg-layer-2, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
   padding: 14px 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 18px 64px rgba(0, 0, 0, 0.45);
 }
 .v2-esc-modal-head {
   display: flex;
@@ -3636,12 +3640,52 @@ select.v2-control-pill {
   font-weight: 600;
   font-size: 14px;
   margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+  flex-shrink: 0;
+}
+.v2-esc-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 8px 2px;
+}
+.v2-esc-modal .v2-evo-item.pending {
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  border-color: var(--dsw-alias-state-warn-primary, #d97706);
+}
+.v2-esc-modal .v2-evo-action-msg {
+  flex-shrink: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l3, #d1d5db);
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  font-weight: 600;
+}
+.v2-esc-login-required {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border: 2px solid var(--dsw-alias-state-warn-primary, #d97706);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.v2-esc-login-required a {
+  color: var(--dsw-alias-state-business-primary, #2563eb);
+  font-weight: 700;
+  text-decoration: underline;
 }
 .v2-esc-modal-foot {
   font-size: 11px;
-  opacity: 0.65;
+  color: var(--dsw-alias-label-secondary, #4b5563);
   margin-top: 10px;
   line-height: 1.5;
+  flex-shrink: 0;
 }
 .v2-esc-cmd code {
   display: block;
@@ -3670,7 +3714,7 @@ select.v2-control-pill {
   padding: 5px 7px;
   border-radius: 6px;
   border: 1px solid var(--dsw-alias-border-secondary);
-  background: var(--dsw-alias-layer-input, transparent);
+  background: var(--dsw-alias-bg-layer-1, #fff);
   color: inherit;
   resize: vertical;
 }
@@ -3688,9 +3732,9 @@ select.v2-control-pill {
   font-size: 12px;
   padding: 6px 10px;
   border-radius: 999px;
-  border: 1px solid var(--dsw-alias-border-secondary);
-  background: var(--dsw-alias-layer-panel);
-  opacity: 0.92;
+  border: 1px solid var(--dsw-alias-border-l3, #d1d5db);
+  background: var(--dsw-alias-bg-layer-2, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
 }
 
 /* Voice is a dedicated composer panel with a visible exit on narrow screens. */

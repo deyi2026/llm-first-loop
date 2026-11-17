@@ -215,6 +215,49 @@ describe("EscalationPanel/Watcher 待审独立查询（ESC-07）", () => {
   });
 });
 
+describe("EscalationWatcher 可见审批反馈", () => {
+  it("403 human_channel_required → 弹窗固定区域显示登录入口，申请仍待审", async () => {
+    const req = makeReq({ command: "verify receipt", command_truncated: false, request_kind: "verify_receipt" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/escalation/review")) {
+        return ok({ error: "human_channel_required" }, 403);
+      }
+      return listMock([req])(input);
+    }));
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
+    await waitFor(() => expect(screen.getByTestId("esc-login-required")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-modal-feedback")).toHaveTextContent("审批未生效");
+    expect(screen.getByTestId("esc-login-link")).toHaveAttribute("href", expect.stringContaining("/login?next="));
+    // 反馈在可滚动命令区之外：即使命令很长，也不会被卷到看不见。
+    expect(screen.getByTestId("esc-login-required").parentElement).toHaveClass("v2-esc-modal");
+    expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+  });
+
+  it("提交期间按钮禁用且显示处理中，拒绝响应不误报成功", async () => {
+    const req = makeReq({ command: "verify receipt", command_truncated: false });
+    let settle!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/escalation/review")) {
+        return new Promise<Response>((resolve) => { settle = resolve; });
+      }
+      return listMock([req])(input);
+    }));
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
+    const approve = screen.getByTestId("esc-approve-esc-1");
+    fireEvent.click(approve);
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveTextContent("处理中");
+    expect(screen.getByTestId("esc-modal-feedback")).toHaveTextContent("正在提交审批");
+    await act(async () => { settle(ok({ error: "human_channel_required" }, 403)); });
+    expect(approve).toBeEnabled();
+    expect(approve).toHaveTextContent("批准");
+    expect(screen.getByTestId("esc-modal-feedback")).toHaveTextContent("审批未生效");
+  });
+});
+
 describe("ESC-08 存储故障前端如实呈现", () => {
   it("list 503 → 错误横幅（esc-store-error）而非歧义空列表", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
