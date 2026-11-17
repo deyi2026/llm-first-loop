@@ -168,6 +168,18 @@ class EscalationWaitTool:
             token = str(rec.get("token", "") or "")
             exp = str(rec.get("token_expires_at", "") or "")
             note = str(rec.get("decision_note", "") or "")
+            if rec.get("request_kind") == "verify_receipt":
+                receipt_id = str(rec.get("verify_receipt_id", "") or "")
+                if not receipt_id:
+                    return _fail(self.name, f"[状态异常] Host 验证凭证未签发: {rid}")
+                return ToolResult(
+                    status=ToolResultStatus.SUCCESS,
+                    content=(f"[Host 已签发] request_id={rid}\n"
+                             f"verify_ref={receipt_id}\n"
+                             "专用宿主签发已完成；无需 execute_command 或 host-grant。"),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             if rec.get("request_kind") == "host_grant":
                 # DESIGN-20261114: host-grant 类批准不铸灾难令牌，凭持久 grant_id 消费
                 gid = str(rec.get("host_grant_id", "") or "")

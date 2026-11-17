@@ -55,6 +55,27 @@ afterEach(() => {
 });
 
 describe("EscalationPanel 审批（P0-5 + ESC-05 完整命令门控）", () => {
+  it.each(["human_auth_required", "human_channel_required"])(
+    "403 %s → 显示未登录原因和真实登录入口，保持待审",
+    async (error) => {
+      const req = makeReq({ command: "echo safe", command_truncated: false });
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/escalation/review")) {
+          return ok({ error, detail: "必须由浏览器会话审批" }, 403);
+        }
+        return listMock([req])(input);
+      }));
+      render(<EscalationPanel />);
+      await waitFor(() => expect(screen.getByTestId("esc-approve-esc-1")).toBeEnabled());
+      fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
+      await waitFor(() => expect(screen.getByTestId("esc-login-required")).toBeInTheDocument());
+      expect(screen.getByTestId("esc-panel-msg")).toHaveTextContent("审批未生效");
+      expect(screen.getByTestId("esc-login-link")).toHaveAttribute("href", expect.stringContaining("/login?next="));
+      expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+    }
+  );
+
   it("详情区展示 sha256 前 16 位 + command_len + 截断提示；未查看完整命令前批准禁用", async () => {
     const req = makeReq();
     const posts: Array<Record<string, unknown>> = [];

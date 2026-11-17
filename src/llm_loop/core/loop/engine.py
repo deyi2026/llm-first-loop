@@ -390,6 +390,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     scheduler: Any | None = None
     # 子代理 runner（factory 装配；Web 谱系面读 topology 机械事实，缺省 None 不伪造）
     subagent_runner: Any | None = None
+    # Host-only verifier; Web human approval is the sole receipt writer.
+    host_verify_authority: Any | None = None
     # EVO-20260919-f119847d: factory 装配的 wake grant 重铸钩子（lifecycle 以 getattr
     # 消费，缺省 None 即无钩子；钩子自身异常 fail-open，绝不阻断真人 run）。
     rearm_wake_grants: Callable[[str, object], None] | None = None

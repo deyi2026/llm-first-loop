@@ -66,6 +66,11 @@ from llm_loop.fleet.coordinator import ProjectCoordinator  # fleet slice 4 (G1) 
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.docs_search import DocsSearcher
 from llm_loop.introspection.goal import GoalStore
+from llm_loop.introspection.host_verify_issuer import (
+    HostVerifyAuthority,
+    MergeReviewStartTool,
+    VerifyReceiptRequestTool,
+)
 from llm_loop.introspection.search import RecordSearcher
 
 # GOAL-20261015-ac085ab1：settlement 打点/投影装配名顶层化——原 build_engine
@@ -884,6 +889,24 @@ def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner
     engine.subagent_runner = subagent_runner
     correction_ctx.subagent_runner = subagent_runner
     correction_ctx.job_registry = job_registry
+
+
+def _wire_host_review_and_verify(
+    registry: Any, host_review: Any, runner: Any, settings: Settings,
+    escalation_store: EscalationStore, engine: Any,
+) -> None:
+    """One Host-owned wiring point; keep build_engine's frozen size unchanged."""
+    host_review.attach_runner(runner)
+    registry.register(ReviewAdmissionTool(host_review))
+    authority = HostVerifyAuthority(
+        audit_dir=settings.audit_dir,
+        repo_root=settings._extra.get("runtime_root") or "",
+        runner=runner,
+        escalation_store=escalation_store,
+    )
+    engine.host_verify_authority = authority
+    registry.register(MergeReviewStartTool(authority))
+    registry.register(VerifyReceiptRequestTool(authority))
 
 
 def build_engine(
@@ -2956,9 +2979,8 @@ def build_engine(
         parent_session_provider=_subagent_parent_session,
         project_coordinator=_fleet_coordinator,
     )
-    # True child lifecycle/terminal is the sole review qualification authority.
-    _host_review.attach_runner(subagent_runner)
-    registry.register(ReviewAdmissionTool(_host_review))
+    # Host review and receipt issuance share a single trusted process boundary.
+    _wire_host_review_and_verify(registry, _host_review, subagent_runner, settings, _escalation_store, engine)
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面与 coordination_status 的 running 段都在这个装配点接线。
