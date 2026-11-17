@@ -256,6 +256,7 @@ class StubExecutor:
         clock: SimClock,
         oracle: StubOracle,
         reconcile_authority: TrustedReconcileAuthority | None = None,
+        max_grant_epoch_age_ms: float | None = None,
     ) -> None:
         self.clock = clock
         self.oracle = oracle
@@ -266,6 +267,11 @@ class StubExecutor:
         self.grants: dict[int, dict[str, Any]] = {}
         self._next_grant = 1
         self._current_grant_version: int | None = None
+        self._max_grant_epoch_age_ms = max_grant_epoch_age_ms
+        self._last_grant_verified_at_ms: float | None = None
+        self._grant_freshness_hold = False
+        self._clock_untrusted = False
+        self._host_connected = True
         self.ledger: dict[str, LedgerEntry] = {}
         self.intent_index: dict[str, str] = {}
         self.intent_fp: dict[str, str] = {}
@@ -289,11 +295,34 @@ class StubExecutor:
         self._next_grant += 1
         self.grants[version] = {"robot_id": self.oracle.robot_id, "revoked": False}
         self._current_grant_version = version  # 新授权自动取代未撤销的旧版本
+        self._last_grant_verified_at_ms = self.clock.now_ms
+        self._grant_freshness_hold = False
+        self._clock_untrusted = False
         return version
 
     def revoke_grant(self, version: int) -> None:
         if version in self.grants:
             self.grants[version]["revoked"] = True
+
+    def set_host_connected(self, connected: bool) -> None:
+        """Partition does not instantly revoke, but prevents refreshing stale grants."""
+        self._host_connected = connected
+
+    def mark_wake_clock_untrusted(self) -> None:
+        """A wake/migration event requires new Host confirmation even if age is small."""
+        self._clock_untrusted = True
+
+    def refresh_grant_epoch(self, version: int, *, host_verified: bool) -> None:
+        """Only explicit Host confirmation can clear a grant-freshness HOLD."""
+        grant = self.grants.get(version)
+        if (
+            not host_verified or not self._host_connected or grant is None
+            or grant["revoked"] or version != self._current_grant_version
+        ):
+            raise DeniedError("GRANT_REFRESH_UNVERIFIED")
+        self._last_grant_verified_at_ms = self.clock.now_ms
+        self._grant_freshness_hold = False
+        self._clock_untrusted = False
 
     # ---- 观察 ----
     def observe(self) -> Observation:
@@ -358,6 +387,15 @@ class StubExecutor:
             raise DeniedError("GRANT_STALE")
         if grant["robot_id"] != self.oracle.robot_id:
             raise DeniedError("GRANT_ROBOT_MISMATCH")
+        if self._max_grant_epoch_age_ms is not None:
+            last_verified = self._last_grant_verified_at_ms
+            age = None if last_verified is None else self.clock.now_ms - last_verified
+            if (
+                self._grant_freshness_hold or self._clock_untrusted or age is None
+                or age < 0 or age >= self._max_grant_epoch_age_ms
+            ):
+                self._grant_freshness_hold = True
+                raise DeniedError("GRANT_EPOCH_UNVERIFIED")
         # 4) 幂等：同键同参同语义 → 原样返回原 action_id（重放为查询性质，先于观察
         #    新鲜度检查——crash 后观察缓存已清也不阻断账本重放；绝不重复执行）
         prev_action_id = self.intent_index.get(intent_key)
@@ -477,6 +515,11 @@ class StubExecutor:
         self._obs_by_ref.clear()
         self._stop_samples.clear()
         self._stop_window_expired = False
+        if self._max_grant_epoch_age_ms is not None:
+            # Strict M0-B contract: restart invalidates old execution grants.
+            # Existing ledger remains queryable through get_action_status.
+            self._current_grant_version = None
+            self._grant_freshness_hold = True
 
     # ---- 独立 Oracle 验证通道 ----
     def claim_success(self, action_id: str, *, evidence_ref: str) -> None:
