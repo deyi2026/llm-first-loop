@@ -7,7 +7,6 @@ directions; the separate sandbox-exec probe checks network/device denial.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import pwd
@@ -17,20 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-_READ = r"""
-import hashlib
-import os
-import sys
-try:
-    data = open(sys.argv[1], 'rb').read()
-except PermissionError:
-    print('DENIED')
-else:
-    print('READ:' + hashlib.sha256(data).hexdigest())
-"""
 
-
-def _as_user(name: str, path: Path) -> str:
+def _as_user(name: str, path: Path) -> subprocess.CompletedProcess[bytes]:
     actor = pwd.getpwnam(name)
 
     def drop_privileges() -> None:
@@ -41,19 +28,20 @@ def _as_user(name: str, path: Path) -> str:
         os.setuid(actor.pw_uid)
 
     child = subprocess.run(
-        ["/usr/bin/python3", "-c", _READ, str(path)],
+        # /usr/bin/python3 can depend on CLT libraries unreadable by a
+        # dedicated low-privilege UID. /bin/cat has no Python/runtime dependency.
+        ["/bin/cat", str(path)],
         check=False,
         capture_output=True,
-        text=True,
         timeout=12,
-        env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+        env={"PATH": "/usr/bin:/bin"},
         preexec_fn=drop_privileges,
     )
-    if child.returncode != 0:
+    if child.returncode not in (0, 1):
         raise RuntimeError(
-            f"NO-GO: child as {name} exited {child.returncode}: {child.stderr[:200]}"
+            f"NO-GO: child as {name} exited {child.returncode}: {child.stderr[:300]!r}"
         )
-    return child.stdout.strip()
+    return child
 
 
 def run() -> dict[str, object]:
@@ -69,7 +57,7 @@ def run() -> dict[str, object]:
         root = Path(tmp)
         root.chmod(0o711)
         files: dict[str, Path] = {}
-        digests: dict[str, str] = {}
+        canaries: dict[str, bytes] = {}
         for label, actor in (("oracle", oracle), ("host", host)):
             directory = root / label
             directory.mkdir(mode=0o700)
@@ -79,20 +67,45 @@ def run() -> dict[str, object]:
             path.write_bytes(data)
             path.chmod(0o600)
             os.chown(path, actor.pw_uid, actor.pw_gid)
-            digests[label] = hashlib.sha256(data).hexdigest()
+            canaries[label] = data
             files[label] = path
 
         own_oracle = _as_user("_lfl_oracle", files["oracle"])
         own_host = _as_user("yyj", files["host"])
         cross_host = _as_user("yyj", files["oracle"])
         cross_oracle = _as_user("_lfl_oracle", files["host"])
+        def denied(child: subprocess.CompletedProcess[bytes]) -> bool:
+            return (
+                child.returncode == 1
+                and child.stdout == b""
+                and (
+                    b"Permission denied" in child.stderr
+                    or b"Operation not permitted" in child.stderr
+                )
+            )
+
         if not (
-            own_oracle == "READ:" + digests["oracle"]
-            and own_host == "READ:" + digests["host"]
-            and cross_host == "DENIED"
-            and cross_oracle == "DENIED"
+            own_oracle.returncode == 0
+            and own_oracle.stdout == canaries["oracle"]
+            and own_host.returncode == 0
+            and own_host.stdout == canaries["host"]
+            and denied(cross_host)
+            and denied(cross_oracle)
         ):
-            raise RuntimeError("NO-GO: Oracle/Host UID isolation proof failed")
+            diagnostic = {
+                name: {
+                    "exit": child.returncode,
+                    "stdout_len": len(child.stdout),
+                    "stderr": child.stderr[:180].decode("utf-8", "replace"),
+                }
+                for name, child in (
+                    ("oracle_own", own_oracle),
+                    ("host_own", own_host),
+                    ("host_cross", cross_host),
+                    ("oracle_cross", cross_oracle),
+                )
+            }
+            raise RuntimeError(f"NO-GO: Oracle/Host UID isolation failed: {diagnostic}")
 
     return {
         "schema": "lfl.embodied.m0-oracle-uid/v1",
