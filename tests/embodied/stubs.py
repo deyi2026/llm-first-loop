@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,8 @@ OBSERVATION_TTL_MS = 1000.0  # 观察新鲜半开区间 [acquired, acquired+TTL)
 STOP_CONFIRM_MIN_SAMPLES = 2  # 停止确认最少采样数
 STOP_CONFIRM_MAX_WAIT_MS = 500.0  # 确认窗口；超期未确认 fail-closed 保持 UNCONFIRMED
 STOP_SAMPLE_INTERVAL_MS = 50.0  # 两次有效采样的最小间隔
+STOP_VELOCITY_EPS_MM_S = 0.5  # 运动证据容差（双桩固定合同，不是实机测量）
+STOP_POSE_EPS_MM = 0.5
 ALLOWED_SKILLS = frozenset({"pick", "place", "move_home", "open_gripper", "close_gripper"})
 ALLOWED_PARAM_KEYS = frozenset({"target_id", "tray_id", "pose_name"})
 FORBIDDEN_LOW_LEVEL_KEYS = frozenset(
@@ -285,7 +288,9 @@ class StubExecutor:
         self.fault_drop_receipt: bool = False
         # 停止语义（两段时基）
         self.stop_requested_at_ms: float | None = None
+        self.stop_boundary_at_ms: float | None = None
         self.stop_confirmed_at_ms: float | None = None
+        self.stop_evidence_ref: str | None = None
         self._stop_samples: list[float] = []
         self._stop_window_expired = False
 
@@ -557,10 +562,19 @@ class StubExecutor:
     def stop(self, reason: str = "operator") -> str:
         if self.stop_requested_at_ms is None:
             self.stop_requested_at_ms = self.clock.now_ms
+            # The in-memory executor has no atomic motion stage: the safe
+            # boundary is reached immediately. A real simulator must measure it.
+            self.stop_boundary_at_ms = self.clock.now_ms
         return "STOP_REQUESTED"
 
-    def poll_stop_confirmation(self) -> str:
-        """停止确认采样：样本不足或窗口超期 → STOP_UNCONFIRMED（fail-closed 保持 HOLD）。"""
+    def poll_stop_confirmation(
+        self, *, motion_mm_s: float = 0.0, pose_delta_mm: float = 0.0
+    ) -> str:
+        """Two independent zero-motion samples are needed to confirm stopping.
+
+        Motion, nonfinite readings, missing samples or timeout are fail-closed.
+        The default zero readings preserve M0-A's static-arm contract only.
+        """
         if self.stop_requested_at_ms is None:
             raise DeniedError("STOP_NOT_REQUESTED")
         now = self.clock.now_ms
@@ -571,6 +585,13 @@ class StubExecutor:
         ):
             # 确认窗口超期且从未确认：sticky fail-closed（需要人工重新发起/重置）
             self._stop_window_expired = True
+        if (
+            not math.isfinite(motion_mm_s) or not math.isfinite(pose_delta_mm)
+            or abs(motion_mm_s) > STOP_VELOCITY_EPS_MM_S
+            or abs(pose_delta_mm) > STOP_POSE_EPS_MM
+        ):
+            self._stop_samples.clear()
+            return "STOP_UNCONFIRMED"
         if not self._stop_window_expired and (
             not self._stop_samples or now - self._stop_samples[-1] >= STOP_SAMPLE_INTERVAL_MS
         ):
@@ -578,6 +599,7 @@ class StubExecutor:
         if len(self._stop_samples) >= STOP_CONFIRM_MIN_SAMPLES:
             if self.stop_confirmed_at_ms is None:
                 self.stop_confirmed_at_ms = now
+                self.stop_evidence_ref = f"ev:stop:{now}:zero_motion"
             return "STOPPED_CONFIRMED"
         return "STOP_UNCONFIRMED"
 

@@ -150,3 +150,39 @@ def test_grant_negative_age_wake_and_restart_fail_closed(side_effect_sentinel):
         _run(ex, oracle, grant, obs2, key="old-after-restart", semantic="place-goal", skill="place", params={"tray_id": "tray-A"})
     assert err.value.code == "GRANT_STALE"
     assert ex.executed_count == 1
+
+
+def test_stop_requires_zero_motion_evidence_not_only_elapsed_time(side_effect_sentinel):
+    """AT-09d: moving, NaN and insufficient samples cannot confirm physical stop."""
+    clock, oracle = SimClock(), StubOracle()
+    ex = StubExecutor(clock, oracle)
+    assert ex.stop(reason="safety-controller") == "STOP_REQUESTED"
+    assert ex.stop_boundary_at_ms == ex.stop_requested_at_ms == 0.0
+    assert ex.poll_stop_confirmation(motion_mm_s=5.0) == "STOP_UNCONFIRMED"
+    clock.advance(50)
+    assert ex.poll_stop_confirmation(pose_delta_mm=2.0) == "STOP_UNCONFIRMED"
+    clock.advance(50)
+    assert ex.poll_stop_confirmation(motion_mm_s=float("nan")) == "STOP_UNCONFIRMED"
+    clock.advance(50)
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOP_UNCONFIRMED"
+    assert ex.stop_evidence_ref is None
+    clock.advance(50)
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0, pose_delta_mm=0.0) == "STOPPED_CONFIRMED"
+    assert ex.stop_confirmed_at_ms == 200.0
+    assert ex.stop_evidence_ref == "ev:stop:200.0:zero_motion"
+    assert ex.executed_count == 0
+    assert oracle.verify() is False
+
+
+def test_stop_timeout_stays_unconfirmed_even_if_late_motion_zero(side_effect_sentinel):
+    clock, oracle = SimClock(), StubOracle()
+    ex = StubExecutor(clock, oracle)
+    ex.stop()
+    assert ex.poll_stop_confirmation(motion_mm_s=3.0) == "STOP_UNCONFIRMED"
+    clock.advance(600)
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0) == "STOP_UNCONFIRMED"
+    clock.advance(50)
+    assert ex.poll_stop_confirmation(motion_mm_s=0.0) == "STOP_UNCONFIRMED"
+    assert ex.stop_confirmed_at_ms is None
+    assert ex.stop_evidence_ref is None
+    assert ex.executed_count == 0
