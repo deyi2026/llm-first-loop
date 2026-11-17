@@ -464,6 +464,13 @@ def _verify_gate_closure(client: Any, main: str) -> None:
             # A computed script name cannot be proven to be in the pinned
             # closure.  No silent success when the literal parser misses it.
             _require(bool(matches), "gate_closure_incomplete", unavailable=False)
+            # One valid literal must not hide a second dynamic reference on
+            # the same shell/YAML line (scripts/a.sh; scripts/${NAME}.py).
+            residual = line
+            for match in reversed(matches):
+                residual = residual[:match.start()] + residual[match.end():]
+            _require(b"scripts/" not in residual,
+                     "gate_closure_incomplete", unavailable=False)
             for match in matches:
                 try:
                     referenced = match.group().decode("ascii")

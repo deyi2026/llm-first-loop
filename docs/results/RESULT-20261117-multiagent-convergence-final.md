@@ -19,3 +19,10 @@
 - P2-4：浅克隆/历史不完整的 Host Git baseline 直接 unknown；新增真实 shallow clone 负测。
 - P2-2：执行代码已加载后再校验的固有 TOCTOU 边界仍按附录记录，需由受信任 Host launcher 承担，当前不宣称全域物理防护。
 - 上述 P2 补修改变候选 SHA；旧 `5ee64fca7` 的代码 PASS **不能直接复用为新候选 PASS**。新 SHA 审查、原版完整 R9、远端 CI、合并与发布仍待完成。
+
+## 2026-11-17 第二次精确 SHA 代码审查（P2 覆盖补充）
+
+- `364db0396cc818d6d03631987d7658562b830ff2` 独立 DeepSeek-v4-Flash（工具 `model_used` 权威值）只读审查，`REVISE`（审查覆盖不足），已读代码面 P0=0/P1=0/P2=4；未逐字读完文档与浅克隆负测，不得称正式 PASS。
+- 发现同一行字面脚本 + 动态脚本混合时的残段漏检，新增 `residual` 负测并修复；浅克隆真实 `file://` clone 负测在 `tests/unit/test_baseline_impact_projection.py::test_shallow_clone_never_claims_complete_baseline` 已存在，Reviewer 当轮未读取。
+- 现有 Gate P2 的 `docs/scripts/` 文本误报属于可用性保守拒绝；不因 P2 放宽到不安全的静默放行。
+- 新代码提交后需独立精确 SHA Reviewer 重新 PASS；旧 SHA 回执仅作为历史。
