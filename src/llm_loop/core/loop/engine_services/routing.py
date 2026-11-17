@@ -246,6 +246,18 @@ class RoutingService:
             llm_client = self._host.llm
             model_used = self._default_model_label()
             metadata_registry = None
+        return self._finalize_route_with_local_context(
+            llm_client, model_used, chat_model_arg, metadata_registry
+        )
+
+    def _finalize_route_with_local_context(
+        self,
+        llm_client: LLMClient,
+        model_used: str,
+        chat_model_arg: str | None,
+        metadata_registry: ProviderRegistry | None,
+    ) -> _RouteDecision:
+        """Enforce live local capacity before the provider route can be sent."""
         # A missing live local window is a routing hold, not a near-zero prompt
         # budget.  With a 32K max output, a 32K conservative fallback would
         # otherwise leave one input token and look like another context failure.
