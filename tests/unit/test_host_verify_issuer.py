@@ -259,19 +259,23 @@ def _review_payload(*, verdict="PASS", p0=0, p1=0, lane_id="lane-1234abcd", base
     })
 
 
-@pytest.mark.parametrize("prefix", ["", "Read-only findings: no P0/P1 issues.\n"])
-def test_review_accepts_one_terminal_fenced_json(prefix):
-    answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
+def test_review_accepts_one_terminal_fenced_json():
+    answer = f"{FENCE}json\n{_review_payload()}\n{FENCE}"
     _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+def test_review_accepts_raw_json():
+    _parse_review(_review_payload(), lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
 
 
 @pytest.mark.parametrize("prefix", [
     "审查通过，未发现 P0/P1 问题。\n",
     "Independent read-only review PASSed with no findings.\n",
 ])
-def test_review_accepts_prose_prefix_pass(prefix):
+def test_review_rejects_prose_prefix_even_if_pass(prefix):
     answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
-    _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
 
 
 
@@ -279,9 +283,10 @@ def test_review_accepts_prose_prefix_pass(prefix):
     "导入链信任：回应了此前 REVISE 中的可信路径问题。\n未发现可成立的 P0/P1 问题。\n",
     "The previous REVISE findings were fixed. Current review: PASS.\n",
 ])
-def test_review_allows_historical_negative_verdict_mentions(prefix):
+def test_review_rejects_historical_negative_verdict_prose(prefix):
     answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
-    _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
 
 
 @pytest.mark.parametrize("prefix", [
@@ -329,7 +334,7 @@ def test_review_rejects_ambiguous_fenced_answer(answer):
     ({"head": "c" * 40}, "review_identity_or_verdict_invalid"),
 ])
 def test_review_fenced_identity_and_verdict_still_fail_closed(changes, error):
-    answer = f"Independent review PASS with no P0/P1.\n{FENCE}json\n" + _review_payload(**changes) + f"\n{FENCE}"
+    answer = f"{FENCE}json\n" + _review_payload(**changes) + f"\n{FENCE}"
     with pytest.raises(HostVerifyError, match=error):
         _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
 
@@ -341,8 +346,7 @@ def test_fenced_terminal_review_can_request_then_human_issue(host, monkeypatch):
     def fenced_terminal(child_id, parent):
         terminal = original(child_id, parent)
         terminal["final_answer"] = (
-            "Independent read-only review found no P0/P1.\n"
-            + FENCE + "json\n" + terminal["final_answer"] + "\n" + FENCE
+            FENCE + "json\n" + terminal["final_answer"] + "\n" + FENCE
         )
         return terminal
 
@@ -372,5 +376,36 @@ def test_fenced_terminal_review_can_request_then_human_issue(host, monkeypatch):
 ])
 def test_review_rejects_semantic_negative_prefix_even_with_terminal_pass(prefix):
     answer = f"{prefix}\n{FENCE}json\n{_review_payload()}\n{FENCE}"
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+
+@pytest.mark.parametrize("prefix", [
+    "Previous PASS has been revoked. This candidate is dangerous to deploy.",
+    "No P0/P1 issues found. However, the code is vulnerable to arbitrary file writes.",
+    "审查通过，但存在严重漏洞，暂不能发布。",
+    "Earlier REVISE remains unresolved. PASS would be incorrect.",
+    "No P0/P1 issues. DO NOT SHIP this candidate.",
+    "This review is PASS, but a privilege escalation was found.",
+    "No P0/P1 issues. This patch is unsafe for production.",
+    "No P0/P1 issues. Do not deploy the code.",
+    "Previous REVISE remains valid. PASS is not warranted.",
+    "No P0/P1 issues; critical exploit is still open.",
+    "P1：2 处遗留问题，审查通过但不能合并。",
+    "当前REVISE：代码有缺陷；审查通过是假象。",
+])
+def test_review_rejects_adversarial_contradictory_prose(prefix):
+    answer = f"{prefix}\n{FENCE}json\n{_review_payload()}\n{FENCE}"
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_review_rejects_duplicate_json_keys(wrapped):
+    payload = _review_payload()
+    assert payload.endswith("}")
+    payload = payload[:-1] + ', "verdict": "PASS"}'
+    answer = f"{FENCE}json\n{payload}\n{FENCE}" if wrapped else payload
     with pytest.raises(HostVerifyError, match="review_not_structured"):
         _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)

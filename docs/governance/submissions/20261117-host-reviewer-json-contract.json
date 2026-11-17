@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "host-reviewer-json-contract-20261117",
-  "summary": "Bounded interoperability fix for Host-owned independent Reviewer terminal JSON: raw JSON remains preferred; accept one unique terminal Markdown json fence with optional narrative before it. No Reviewer authority, receipt signing, browser approval, Lane/Queue, or deployment policy changes.",
+  "summary": "Fail-closed independent Reviewer terminal verdict: accept raw JSON or exactly one prose-free json fenced object; reject duplicate keys, contradictory narrative and ambiguous output. Preserve Host-only human-approved issuance.",
   "components": [
     {
       "component_id": "host-review-terminal-json-parser",
@@ -10,13 +10,14 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "HostVerifyAuthority independent-review attestation",
-      "disposition": "When full raw JSON decoding fails, accept only exactly one final json fenced block, with no extra code fences or trailing content; parse its single JSON object and retain existing exact gate/verdict/lane/base/head/P0/P1 validation and host ownership.",
+      "disposition": "Decode strict raw JSON or exactly one prose-free terminal json fenced object; reject any prose prefix/suffix, multiple fences and duplicate JSON keys. Keep existing exact gate/verdict/lane/base/head/P0/P1 checks and Host ownership.",
       "evidence": [
-        "Two independent GLM-5.3-Flash Reviewer terminals returned prose plus one final fenced JSON PASS for exact PR55 head ffe760a27, causing review_not_structured despite substantive P0/P1=0.",
-        "RED targeted tests reproduce; 26 host verify issuer tests GREEN after minimal parser compatibility change."
+        "Real PR55 independent Reviewers sometimes emit prose plus a fenced PASS object, but such narrative cannot be safely attested as noncontradictory; the Host review prompt now requests strict raw JSON.",
+        "The prior 3d5f004de independent Reviewer returned REVISE P1=2. ChatGPT and LFL owner independently reproduced contradictory prose being incorrectly accepted by semantic keyword heuristics.",
+        "RED: 17 tests fail on the 3d5f candidate; GREEN: 62 Host issuer tests pass under strict structural parsing."
       ],
       "verification_level": "Targeted positive/negative and human-approval integration, Ruff/Pyright, A.5 exact paths, independent Reviewer, original full R9 and GitHub CI on frozen SHA.",
-      "model_evidence_veto_recovery_exit": "Prose never grants authority; ambiguous/multiple/nonterminal fences, wrong JSON type, mismatched identity, REVISE, P0/P1 nonzero or bool remain fail-closed. Browser-session approval and Host-only receipt writer are unchanged.",
+      "model_evidence_veto_recovery_exit": "Any prose outside JSON, duplicate keys, ambiguous/multiple/nonterminal fences, wrong JSON type, mismatched identity, REVISE, nonzero or boolean P0/P1 fail closed. Human browser approval and Host-only audit writer are unchanged.",
       "rollback_route": "Revert this single parser and test commit through protected PR; existing raw-JSON-only behavior remains safe but may reject valid isolated Reviewers.",
       "declaration_id": "host-review-json-interop"
     },
@@ -27,9 +28,9 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "HostVerifyAuthority negative controls and end-to-end human-approval tests",
-      "disposition": "Cover raw and fenced positive, one terminal block with prose, multiple blocks, trailing text, wrong fence label, unfenced prose, identity/P0/P1 mismatches and approved Host receipt issuance through existing guarded callback.",
+      "disposition": "Cover raw and prose-free fenced positive, reject every prose prefix (even superficially positive or historical), duplicate keys, multiple blocks, trailing content, wrong label, identity/P0/P1 mismatches; preserve guarded human-approval receipt issuance.",
       "evidence": [
-        "9 initial RED plus 12 contradictory-prose negative cases reproduced before the bounded fail-closed fix; 48 focused Host tests pass after change, including no unauthenticated receipt issuance."
+        "17 RED failures on prose/duplicate-key bypasses against 3d5f004de; 62/62 focused Host issuer tests GREEN, including human-approval integration and negative controls."
       ],
       "verification_level": "Targeted suite plus original R9 and CI.",
       "model_evidence_veto_recovery_exit": "Tests must never mock away the Host human approval, reviewer isolation, frozen identity or receipt writer guard.",
@@ -55,24 +56,24 @@
     {
       "declaration_id": "host-review-json-interop",
       "g1": {
-        "necessity": "Independent Reviewer has valid substantive PASS but commonly emits a final JSON code fence after prose, while Host's raw-only decoder blocks all verify_receipt_request attempts. Restore the intended review-to-human-approval path without permitting an agent to write audit receipts."
+        "necessity": "Allow uniquely fenced JSON-only Reviewer verdicts without letting an untrusted natural-language preface override or contradict the machine-checked verdict; keep the existing independent Reviewer and authenticated Host receipt issuance."
       },
       "g2": {
         "authority_owner": "Existing HostVerifyAuthority._attest and EscalationStore Web Host approval remain the only review identity and receipt issuance authorities.",
         "relationship": "reuse",
-        "non_duplication": "No new reviewer, signer, queue, audit writer, model prompt loop or override; reuse current process-local frozen review, exact SHA, and human browser approval."
+        "non_duplication": "No new reviewer, signer, queue, audit writer or model loop; only tighten existing read-only Reviewer output instructions and reuse process-local frozen review, exact SHA and browser approval."
       },
       "g3": {
         "model_evidence": [
-          "Actual two GLM-5.3-Flash read-only reviewer terminals for PR55 are narrative plus one final fenced JSON PASS, P0/P1=0, bound to exact base/head.",
-          "RED-to-GREEN targeted tests plus ambiguous/mismatched/non-PASS and contradictory-prefix negative controls; historical prior-REVISE prose remains accepted. Full new-SHA R9 and remote CI required before deployment."
+          "GLM-5.3-Flash Reviewers can emit raw or fenced JSON; narrative+fenced responses are rejected until the model supplies a strictly structured verdict.",
+          "Prior 3d5f Reviewer REVISE P1=2 and 17 RED adversarial cases motivate removal of semantic heuristics; 62/62 focused tests GREEN. New-SHA independent review, original full R9 and remote CI required."
         ],
-        "recovery_or_reason": "Reject all ambiguous output, including multiple blocks, nonterminal content, non-JSON, wrong identity or P0/P1; restart drops process-local review attestation; no fallback to fabricated verify_ref."
+        "recovery_or_reason": "Fail closed on any prose, duplicate JSON keys, multiple blocks, nonterminal content, non-JSON, wrong identity or P0/P1; restart drops process-local review attestation; no fabricated verify_ref or host-grant audit write."
       },
       "g4": {
         "rollback": "Protected revert of isolated parser patch, preserve existing Host approval and audit ledger, do not deploy if R9/CI or independent review fails.",
         "verification": [
-          "A.5 exact three paths and 48 focused Host issuer tests, Ruff/Pyright.",
+          "A.5 exact three paths, 62 focused Host issuer tests, Ruff/Pyright.",
           "Independent GLM-5.3-Flash Reviewer PASS P0/P1=0, original full R9 exit0 and exact GitHub CI.",
           "Managed four-service deployment only after protected merge, idle and SHA/generation CAS; then start fresh review and require logged-in human approval to issue receipt."
         ]
