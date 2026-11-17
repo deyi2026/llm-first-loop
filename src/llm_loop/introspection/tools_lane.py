@@ -711,14 +711,22 @@ def _remove_worktree(worktree: str) -> tuple[bool, str]:
     return True, ""
 
 
-def run_lane_reap(ctx: Any, host: Any, args: dict) -> ToolResult:
-    """lane 生命周期收尾（P2）。默认 dry_run=true：零写账本、零动工作树。"""
+def _reap_store_or_failure(host: Any) -> LaneStore | ToolResult:
+    """Resolve the reap store without hiding invalid Host lock configuration."""
     try:
         store = _store(host)
     except LaneStoreConfigError as exc:
         return _fail(f"[invalid_config] {exc}", "lane_reap", "invalid_config")
     if store is None:
         return _fail("audit_dir 未装配，lane 账本不可用", "lane_reap", "store_unavailable")
+    return store
+
+
+def run_lane_reap(ctx: Any, host: Any, args: dict) -> ToolResult:
+    """lane 生命周期收尾（P2）。默认 dry_run=true：零写账本、零动工作树。"""
+    store = _reap_store_or_failure(host)
+    if isinstance(store, ToolResult):
+        return store
     dry_run = bool(args.get("dry_run", True))
     remove_worktree = bool(args.get("remove_worktree", False))
     confirm = bool(args.get("confirm", False))

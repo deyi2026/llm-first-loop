@@ -265,6 +265,38 @@ def _register_runtime_event_predicates() -> None:
 logger = logging.getLogger(__name__)
 
 
+def _make_tool_fault_observer(
+    status_provider: ArchitectureStatusProvider,
+) -> Callable[[str, Any], None]:
+    """Bind the existing post-result fault recorder to this engine status provider."""
+    def _observer(tool_name: str, result: Any) -> None:
+        status = getattr(result, "status", None)
+        content = str(getattr(result, "content", "") or "")
+        if getattr(status, "value", status) == "success":
+            if tool_name == "execute_command" and content.rstrip().endswith(
+                "（命令执行成功，无输出）"
+            ):
+                status_provider.record_tool_fault(
+                    tool_name, "empty_output", "exit=0 且 stdout/stderr 均空（哨兵回执形态）"
+                )
+            return
+        first_line = content.splitlines()[0][:200] if content else "(no content)"
+        dur = getattr(result, "duration_ms", None)
+        detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
+        # EVO-20261014-459a8a1e: 分层诊断码（E1..E6）随拒绝落 exception_log，
+        # 拒绝可按层/按会话统计（edit_file 路径码在 error_detail 前缀）。
+        # 严格形态 E<1-6>_<UPPER>，避免任意 E 开头字符串被误统计。
+        fence_code = str(getattr(result, "error_type", "") or "")
+        if not re.fullmatch(r"E[1-6]_[A-Z_]+", fence_code):
+            error_detail = str(getattr(result, "error_detail", "") or "")
+            m = re.match(r"\[(E[1-6]_[A-Z_]+)\]", error_detail)
+            fence_code = m.group(1) if m else ""
+        status_provider.record_tool_fault(
+            tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
+        )
+    return _observer
+
+
 class _CorrectionAdapterTool:
     """把修正/检索工具包装为 Tool 协议（注册进 ToolRegistry，LLM 可见可调）."""
 
@@ -2121,39 +2153,7 @@ def build_engine(
         enabled=settings.tool_runtime.tool_octet,
     )
 
-    # B 最小闭环（工具故障可追溯，2026-09-24）：回执后观察者 → status 故障台账。
-    # registry.execute() 三个真实执行收口点（正常/BLOCKED post-hook/异常）统一通知；
-    # 非 SUCCESS（failure/timeout/error/blocked/unauthorized）与 execute_command
-    # "成功但零输出" 哨兵写入 exception_log.jsonl。观察者自身 fail-open。
-    # （ToolResultStatus 常量在函数体内以字面量 "success" 比较，避免函数内 import
-    #  触碰 local_imports 棘轮——status.value 恰为小写枚举名。）
-    def _tool_fault_observer(tool_name: str, result) -> None:
-        status = getattr(result, "status", None)
-        content = str(getattr(result, "content", "") or "")
-        if getattr(status, "value", status) == "success":
-            if tool_name == "execute_command" and content.rstrip().endswith(
-                "（命令执行成功，无输出）"
-            ):
-                status_provider.record_tool_fault(
-                    tool_name, "empty_output", "exit=0 且 stdout/stderr 均空（哨兵回执形态）"
-                )
-            return
-        first_line = content.splitlines()[0][:200] if content else "(no content)"
-        dur = getattr(result, "duration_ms", None)
-        detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
-        # EVO-20261014-459a8a1e: 分层诊断码（E1..E6）随拒绝落 exception_log，
-        # 拒绝可按层/按会话统计（edit_file 路径码在 error_detail 前缀）。
-        # 严格形态 E<1-6>_<UPPER>，避免任意 E 开头字符串被误统计。
-        fence_code = str(getattr(result, "error_type", "") or "")
-        if not re.fullmatch(r"E[1-6]_[A-Z_]+", fence_code):
-            error_detail = str(getattr(result, "error_detail", "") or "")
-            m = re.match(r"\[(E[1-6]_[A-Z_]+)\]", error_detail)
-            fence_code = m.group(1) if m else ""
-        status_provider.record_tool_fault(
-            tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
-        )
-
-    registry.add_post_result_observer(_tool_fault_observer)
+    registry.add_post_result_observer(_make_tool_fault_observer(status_provider))
 
     # Current-run model-window facts use the same run-latched registry as routing.
     # Outside a run, report the startup default registry explicitly as startup scope.

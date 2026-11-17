@@ -959,6 +959,19 @@ def _codearts_settings(env: Mapping[str, str]) -> CodeArtsSettings:
     )
 
 
+def _env_optional_true_set(name: str, env_values: Mapping[str, str]) -> bool | None:
+    """Preserve legacy optional bool semantics without later process-env reads."""
+    if name not in env_values:
+        return None
+    return str(env_values.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+def _env_optional_hit_telemetry(name: str, env_values: Mapping[str, str]) -> bool | None:
+    """Preserve CACHE_GUARD_HIT_TELEMETRY's historical explicit-value rule."""
+    if name not in env_values:
+        return None
+    return str(env_values.get(name, "")) not in {"0", "false", "False"}
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """从显式 mapping（默认进程环境）装配不可变 Settings。"""
     _fallback_notes.clear()
@@ -972,18 +985,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     def env_bool(name: str, default: bool) -> bool:
         return _env_bool(name, default, env_values)
-
-    def env_optional_true_set(name: str) -> bool | None:
-        """Preserve legacy optional bool semantics without later process-env reads."""
-        if name not in env_values:
-            return None
-        return str(env_values.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
-
-    def env_optional_hit_telemetry(name: str) -> bool | None:
-        """Preserve CACHE_GUARD_HIT_TELEMETRY's historical explicit-value rule."""
-        if name not in env_values:
-            return None
-        return str(env_values.get(name, "")) not in {"0", "false", "False"}
 
     def env_one(fn, name: str):
         return fn(name, env_values)
@@ -1163,10 +1164,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         llm_timeout_s=_env_float("LLM_TIMEOUT_S", 120.0, env_values),
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
-        llm_trust_env=env_optional_true_set("LLM_TRUST_ENV"),
+        llm_trust_env=_env_optional_true_set("LLM_TRUST_ENV", env_values),
         llm_retry_disconnect=env_int("LLM_RETRY_DISCONNECT", 1),
-        anthropic_cache_control=env_optional_true_set("ANTHROPIC_CACHE_CONTROL"),
-        cache_guard_hit_telemetry=env_optional_hit_telemetry("CACHE_GUARD_HIT_TELEMETRY"),
+        anthropic_cache_control=_env_optional_true_set("ANTHROPIC_CACHE_CONTROL", env_values),
+        cache_guard_hit_telemetry=_env_optional_hit_telemetry("CACHE_GUARD_HIT_TELEMETRY", env_values),
         data_dir=str(_resolved_paths.data_dir),
         history_policy=_history_policy,
         tool_runtime=_tool_runtime,

@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from llm_loop.introspection.task_claim import overlapping_paths
 from llm_loop.timekeeping import system_local_now
@@ -769,6 +770,22 @@ class LaneStore:
         except OSError:
             return None
 
+    def _normalized_peer_paths(self, raw_paths: Any) -> tuple[list[str], str]:
+        """Validate legacy peer path declarations; unknown must never look disjoint."""
+        if not isinstance(raw_paths, list):
+            return [], "对方 paths 非 list（旧账本/损坏），冲突面不可判定"
+        if not raw_paths:
+            return [], "对方在途 paths 为空/缺失，冲突面不可判定"
+        if any(not isinstance(p, str) or not p.strip() for p in raw_paths):
+            return [], "对方 paths 含非字符串/空白声明，冲突面不可判定"
+        try:
+            their = self._normalize_declared_paths(raw_paths)
+        except LaneConstraintError:
+            return [], "对方声明路径无法根绑定（旧账本非法/越界路径），冲突面不可判定"
+        if not their:
+            return [], "对方 paths 归一后为空，冲突面不可判定"
+        return their, ""
+
     def _cross_goal_check(
         self,
         rows: list[dict],
@@ -802,26 +819,7 @@ class LaneStore:
             # 过严格校验——非 list / 含无法根绑定路径（如 ../outside 越界、绝对
             # 越出、symlink 逃逸）→ 冲突面不可判定，跨 Goal 按 unknown fail-closed
             # 拒写；不得用宽松 _normalize_paths 归一后以字面比较放行（GPT-6 复现）。
-            raw_paths = row.get("paths")
-            their_unknown_reason = ""
-            their: list[str] = []
-            if not isinstance(raw_paths, list):
-                their_unknown_reason = "对方 paths 非 list（旧账本/损坏），冲突面不可判定"
-            elif not raw_paths:
-                their_unknown_reason = "对方在途 paths 为空/缺失，冲突面不可判定"
-            elif any(not isinstance(p, str) or not p.strip() for p in raw_paths):
-                # P1-F: never stringify None/number/blank legacy entries into
-                # seemingly disjoint paths; the historical claim is unknown.
-                their_unknown_reason = "对方 paths 含非字符串/空白声明，冲突面不可判定"
-            else:
-                try:
-                    their = self._normalize_declared_paths(raw_paths)
-                    if not their:
-                        their_unknown_reason = "对方 paths 归一后为空，冲突面不可判定"
-                except LaneConstraintError:
-                    their_unknown_reason = (
-                        "对方声明路径无法根绑定（旧账本非法/越界路径），冲突面不可判定"
-                    )
+            their, their_unknown_reason = self._normalized_peer_paths(row.get("paths"))
             if their_unknown_reason:
                 if their_goal != my_goal_id:
                     unknowns.append(
