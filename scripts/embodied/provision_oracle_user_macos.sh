@@ -19,10 +19,18 @@ verify() {
     test "$(/usr/bin/id -g "$name" 2>/dev/null)" = "$gid" || die 'oracle GID mismatch'
     test "$(/usr/bin/dscl . -read "$user_path" UserShell | /usr/bin/awk '{print $2}')" = /usr/bin/false || die 'oracle login shell enabled'
     test "$(/usr/bin/dscl . -read "$user_path" NFSHomeDirectory | /usr/bin/awk '{print $2}')" = /var/empty || die 'oracle home mismatch'
-    /usr/bin/dscl . -read "$user_path" AuthenticationAuthority | /usr/bin/grep -Fq 'DisabledUser' || die 'oracle authentication not disabled'
+    if test "$(/usr/bin/id -u)" = 0; then
+        /usr/bin/dscl . -read "$user_path" AuthenticationAuthority | /usr/bin/grep -Fq 'DisabledUser' || die 'oracle authentication not disabled'
+        auth=disabled
+    else
+        # macOS intentionally hides AuthenticationAuthority from non-root dscl.
+        # Verify the locked password; only root may assert auth=disabled.
+        /usr/bin/dscl . -read "$user_path" Password | /usr/bin/grep -Fq 'Password: *' || die 'oracle password not locked'
+        auth=password_locked_root_verification_required
+    fi
     /usr/bin/id -Gn "$name" | /usr/bin/tr ' ' '\n' | /usr/bin/grep -Eq '^(admin|staff|wheel)$' && die 'oracle has privileged/shared group'
     /usr/bin/dscl . -read "$group_path" PrimaryGroupID | /usr/bin/grep -Eq "^PrimaryGroupID: $gid$" || die 'oracle group mismatch'
-    printf 'ORACLE_ACCOUNT_VERIFIED name=%s uid=%s gid=%s shell=/usr/bin/false home=/var/empty auth=disabled admin_group=false\n' "$name" "$uid" "$gid"
+    printf 'ORACLE_ACCOUNT_VERIFIED name=%s uid=%s gid=%s shell=/usr/bin/false home=/var/empty auth=%s admin_group=false\n' "$name" "$uid" "$gid" "$auth"
 }
 
 test "$(/usr/bin/uname -s)" = Darwin || die 'macOS host required'

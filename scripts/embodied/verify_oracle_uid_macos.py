@@ -31,16 +31,28 @@ else:
 
 
 def _as_user(name: str, path: Path) -> str:
+    actor = pwd.getpwnam(name)
+
+    def drop_privileges() -> None:
+        # This probe runs as root only; drop all supplemental groups first.
+        # A real process UID change is independently visible to the kernel.
+        os.setgroups([actor.pw_gid])
+        os.setgid(actor.pw_gid)
+        os.setuid(actor.pw_uid)
+
     child = subprocess.run(
-        ["/usr/bin/sudo", "-n", "-u", name, "/usr/bin/python3", "-c", _READ, str(path)],
+        ["/usr/bin/python3", "-c", _READ, str(path)],
         check=False,
         capture_output=True,
         text=True,
         timeout=12,
         env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+        preexec_fn=drop_privileges,
     )
     if child.returncode != 0:
-        raise RuntimeError(f"NO-GO: child as {name} exited {child.returncode}")
+        raise RuntimeError(
+            f"NO-GO: child as {name} exited {child.returncode}: {child.stderr[:200]}"
+        )
     return child.stdout.strip()
 
 
