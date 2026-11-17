@@ -468,7 +468,10 @@ class StubExecutor:
             raise DeniedError("GRANT_ROBOT_MISMATCH")
         if obs.scene_epoch != self.oracle.scene_epoch or scene_epoch != self.oracle.scene_epoch:
             raise DeniedError("OBSERVATION_STALE_SCENE")
-        if self.clock.now_ms - obs.acquired_ms >= OBSERVATION_TTL_MS:
+        age_ms = self.clock.now_ms - obs.acquired_ms
+        if not math.isfinite(age_ms) or age_ms < 0:
+            raise DeniedError("OBSERVATION_CLOCK_SKEW")
+        if age_ms >= OBSERVATION_TTL_MS:
             raise DeniedError("OBSERVATION_STALE_TTL")
         # 6) 高层技能白名单：模型不得发关节/扭矩/速度类低层指令
         if skill not in ALLOWED_SKILLS:

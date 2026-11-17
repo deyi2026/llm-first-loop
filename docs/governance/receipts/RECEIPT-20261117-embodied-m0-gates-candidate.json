@@ -9,7 +9,7 @@
     "M0-G2": ["docs/governance/receipts/RECEIPT-20261117-embodied-m0-integration-audit.json", "MuJoCo simulator choice is provisional; no persistent action_id in physics engine; crash resume explicitly excluded until M1 ledger"],
     "M0-G3": ["tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device", "docs/governance/receipts/RECEIPT-20261117-embodied-m0-oracle-uid-isolation.json"],
     "M0-G4": ["tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device", "docs/governance/receipts/RECEIPT-20261117-embodied-m0-oracle-uid-isolation.json"],
-    "M0-G5": ["tests/embodied/test_m0a_contracts.py::test_observation_epoch_ttl", "tests/embodied/test_m0b_safety_contracts.py::test_grant_negative_age_wake_and_restart_fail_closed"],
+    "M0-G5": ["tests/embodied/test_m0a_contracts.py::test_observation_epoch_ttl", "tests/embodied/test_m0b_safety_contracts.py::test_grant_negative_age_wake_and_restart_fail_closed", "tests/embodied/test_m0b_observation_clock_skew.py::test_observation_clock_rollback_and_nonfinite_fail_closed"],
     "M0-G6": ["tests/embodied/test_m0b_closure_gates.py::test_oracle_privileged_precision_never_enters_observation", "tests/embodied/m0_isolation_probe.py"],
     "M0-G7": ["tests/embodied/test_m0a_contracts.py::test_unknown_holds_write_and_reconcile", "tests/embodied/test_m0b_safety_contracts.py::test_unknown_reconcile_poll_limit_expiry_scope_and_replay", "tests/embodied/test_m0b_closure_gates.py::test_unknown_cannot_be_released_by_reset_or_forged_teardown"],
     "M0-G8": ["tests/embodied/test_m0a_contracts.py::test_idempotency_and_crash_recovery", "tests/embodied/test_m0b_safety_contracts.py::test_semantic_duplicate_cannot_change_intent_key_while_running"],
