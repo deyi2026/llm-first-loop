@@ -29,7 +29,7 @@
       "owning_subsystem": "HostVerifyAuthority negative controls and end-to-end human-approval tests",
       "disposition": "Cover raw and fenced positive, one terminal block with prose, multiple blocks, trailing text, wrong fence label, unfenced prose, identity/P0/P1 mismatches and approved Host receipt issuance through existing guarded callback.",
       "evidence": [
-        "9 expected RED failures before parser change; 26 focused tests pass after change, including no unauthenticated receipt issuance."
+        "9 initial RED plus 12 contradictory-prose negative cases reproduced before the bounded fail-closed fix; 48 focused Host tests pass after change, including no unauthenticated receipt issuance."
       ],
       "verification_level": "Targeted suite plus original R9 and CI.",
       "model_evidence_veto_recovery_exit": "Tests must never mock away the Host human approval, reviewer isolation, frozen identity or receipt writer guard.",
@@ -72,7 +72,7 @@
       "g4": {
         "rollback": "Protected revert of isolated parser patch, preserve existing Host approval and audit ledger, do not deploy if R9/CI or independent review fails.",
         "verification": [
-          "A.5 exact three paths and 26+ targeted Host issuer tests, Ruff/Pyright.",
+          "A.5 exact three paths and 48 focused Host issuer tests, Ruff/Pyright.",
           "Independent GLM-5.3-Flash Reviewer PASS P0/P1=0, original full R9 exit0 and exact GitHub CI.",
           "Managed four-service deployment only after protected merge, idle and SHA/generation CAS; then start fresh review and require logged-in human approval to issue receipt."
         ]
