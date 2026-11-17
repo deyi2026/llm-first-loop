@@ -1,0 +1,129 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261117-embodied-m0-contract-closure",
+  "summary": "M0 embodied safety contract harness and Mac Oracle UID isolation, with explicit M1/real-hardware non-claims; exact SHA 5d5262e reviewed and original R9 exit0.",
+  "components": [
+    {
+      "component_id": "m0-contract-harness",
+      "paths": [
+        "tests/embodied/conftest.py",
+        "tests/embodied/m0_gateway.py",
+        "tests/embodied/m0_isolation_probe.py",
+        "tests/embodied/stubs.py",
+        "tests/embodied/test_m0_gateway_contracts.py",
+        "tests/embodied/test_m0_os_isolation.py",
+        "tests/embodied/test_m0a_contracts.py",
+        "tests/embodied/test_m0b_closure_gates.py",
+        "tests/embodied/test_m0b_observation_clock_skew.py",
+        "tests/embodied/test_m0b_safety_contracts.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "M0 in-memory dual-stub safety executor, independent Oracle contract and read-only OS probes",
+      "disposition": "Add fail-closed UNKNOWN reconciliation, observation TTL/clock skew, stop evidence, provenance, single-writer/budget and 16-gate negative tests; no production robotics tool registered.",
+      "evidence": [
+        "Independent LFL Reviewer subagent_d5ec976c0eb2 actual glm/glm-5.3-flash: PASS P0=0/P1=0/P2=3 on frozen SHA 5d5262e7e525c6fe39f483f99c7f4da50619efeb.",
+        "Local macOS arm64 tests/embodied: 36 passed; Ruff PASS; Pyright 0 errors.",
+        "Original full R9 on exact SHA exit0; full parallel suite 15,686 passed, 162 skipped, 3 xfailed; serial_signal 1 passed."
+      ],
+      "verification_level": "Independent Reviewer PASS and original full R9 exit0; GitHub PR/CI pending.",
+      "model_evidence_veto_recovery_exit": "UNKNOWN or untrusted observation cannot authorize a write; stop and grant revocation are model-independent; if any safety/Oracle/TTL gate fails, HOLD and no M1 or hardware claims.",
+      "rollback_route": "Revert this PR via protected GitHub process; test doubles have no production robot side effects.",
+      "declaration_id": "m0-contract"
+    },
+    {
+      "component_id": "oracle-uid-probes",
+      "paths": [
+        "scripts/embodied/provision_oracle_user_macos.sh",
+        "scripts/embodied/verify_oracle_uid_macos.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "macOS root-managed dedicated Oracle service identity; OS DAC/sandbox isolation",
+      "disposition": "Create a dedicated non-login _lfl_oracle UID/GID463 with native administrator approval and verify synthetic two-way DAC canary denial; never collect passwords in LFL.",
+      "evidence": [
+        "macOS root-managed Oracle UID isolation receipt records separate UID, two-way private file denial and sandbox network/device denial.",
+        "Script SHA256 and historical source commit are preserved in the receipt; the receipt is not a new signed attestation for this candidate.",
+        "No real hardware, provider call or production service restart occurred."
+      ],
+      "verification_level": "Real macOS administrator-confirmed OS probe PASS; independent Reviewer inspected code and receipt; P2 portability and historical receipt pin remain declared.",
+      "model_evidence_veto_recovery_exit": "A missing/partial account or UID collision must fail closed; model text cannot grant root privileges or bypass OS DAC.",
+      "rollback_route": "Code rollback via PR revert; persistent local Oracle account removal is a separate administrator-authorized operation, not automatic.",
+      "declaration_id": "oracle-identity"
+    },
+    {
+      "component_id": "m0-evidence-and-prereg",
+      "paths": [
+        "docs/design/DESIGN-20261116-lfl-embodied-intelligence-llm-first-v2.3.md",
+        "docs/governance/receipts/RECEIPT-20261117-embodied-m0-gates-candidate.json",
+        "docs/governance/receipts/RECEIPT-20261117-embodied-m0-integration-audit.json",
+        "docs/governance/receipts/RECEIPT-20261117-embodied-m0-oracle-uid-isolation.json",
+        "docs/governance/submissions/20261117-embodied-m0-contract-closure.json",
+        "experiments/embodied/prereg-m1-sim-001.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "M0 architecture, gate evidence index and pre-registered M1 simulation experiment",
+      "disposition": "Declare all changed docs, receipts, experiment protocol and this A.5 submission; no claims that a real MuJoCo arm or crash-safe action ledger exists.",
+      "evidence": [
+        "M0-G1..G16 evidence index enumerates exact test/receipt paths and states independent review pending at source commit.",
+        "M1-SIM-001 preregistration fixes seeds, samples, success/cost axes, budget and stop rules before any real simulator trial.",
+        "A.5 mechanical presence/coverage checker will validate exact base...head paths; remote CI remains required."
+      ],
+      "verification_level": "A.5 presence/coverage validation local before new SHA; remote PR CI pending.",
+      "model_evidence_veto_recovery_exit": "If any changed path is missing, any source claims M1/real hardware completion, or any PR required check fails, HOLD integration.",
+      "rollback_route": "Revert documentation/receipt/experiment additions together with the protected PR; never rewrite historical experiment results."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "m0-contract",
+      "g1": {
+        "necessity": "M0 must prove no blind retries, stale/forged observations, unsafe motion or false Oracle success before allowing any real simulator autonomy."
+      },
+      "g2": {
+        "authority_owner": "Existing LFL ToolRegistry/TaskBudget/GoalStore own orchestration; the trusted executor and independent Oracle own action and truth in M1.",
+        "relationship": "reuse",
+        "non_duplication": "No new production tool/privilege, no duplicate Goal/Queue authority, no real robot connection; M0 is an isolated test harness."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent read-only GLM-5.3-flash Reviewer PASS P0=0/P1=0 on exact SHA after fixing observation clock skew.",
+          "36 M0 targeted tests passed; original complete R9 exit0; safety tests assert zero actions and independent Oracle state."
+        ],
+        "recovery_or_reason": "UNKNOWN remains HOLD_WRITE pending bounded trusted reconciliation; stale grant/observation and unconfirmed stop deny dispatch; fail closed on clock rollback."
+      },
+      "g4": {
+        "rollback": "Revert protected PR; M0 harness is not a deployed tool.",
+        "verification": [
+          "Independent Reviewer PASS on exact SHA 5d5262e7e525c6fe39f483f99c7f4da50619efeb",
+          "Original full R9 exit0 on exact SHA",
+          "GitHub PR/CI and protected main push CI must pass before integration"
+        ]
+      }
+    },
+    {
+      "declaration_id": "oracle-identity",
+      "g1": {
+        "necessity": "A separately privileged Oracle cannot be considered independent when it shares the model executor UID; OS DAC proof is required."
+      },
+      "g2": {
+        "authority_owner": "macOS administrator owns user creation and OS sandbox; LFL is only a low-privilege consumer of synthetic probe receipts.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses macOS directory services, setuid/setgid and sandbox-exec; no self-authorized elevation or new production issuer."
+      },
+      "g3": {
+        "model_evidence": [
+          "Mac native administrator approval created _lfl_oracle UID463/GID463 with disabled login and no privileged groups.",
+          "Root-run synthetic canary tests confirmed own reads and two-way cross-UID read denials; sandbox probe blocked device/network access."
+        ],
+        "recovery_or_reason": "Any root privilege, UID collision, auth enabled or cross-read success is NO-GO; script fails closed and does not grant model access to Oracle secrets."
+      },
+      "g4": {
+        "rollback": "Revert scripts through PR; any already-created local OS identity must be removed only by a separately authorized macOS administrator action.",
+        "verification": [
+          "Review historical receipt and script digest against frozen candidate",
+          "Independent Reviewer P0/P1=0",
+          "Original full R9 and remote CI before main integration"
+        ]
+      }
+    }
+  ]
+}
