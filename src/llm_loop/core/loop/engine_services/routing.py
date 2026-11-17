@@ -246,6 +246,48 @@ class RoutingService:
             llm_client = self._host.llm
             model_used = self._default_model_label()
             metadata_registry = None
+        # A missing live local window is a routing hold, not a near-zero prompt
+        # budget.  With a 32K max output, a 32K conservative fallback would
+        # otherwise leave one input token and look like another context failure.
+        if metadata_registry is not None and model_used.startswith("cognilocal/"):
+            _mid = model_used.split("/", 1)[1]
+            _provider = metadata_registry.providers.get("cognilocal")
+            _observer = getattr(self, "_local_context_observer", None)
+            if _provider is not None and _observer is not None:
+                _observed = _observer.observe(str(getattr(_provider, "base_url", "") or ""), _mid)
+                if _observed.kind == "unavailable":
+                    return _RouteDecision(
+                        llm_client=llm_client,
+                        model_used=model_used,
+                        chat_model_arg=chat_model_arg,
+                        final_answer_override=(
+                            f"本地模型 {model_used} 的实时上下文不可核验"
+                            f"（{_observed.reason}）；本次未向 Provider 发送。"
+                            "请检查受管本地模型是否已启动、模型别名是否一致，"
+                            "以及 /props 和 /slots 是否可用。"
+                        ),
+                        metadata_registry=metadata_registry,
+                    )
+                if _observed.kind == "live" and _observed.limit is not None:
+                    _model_spec = _provider.models.get(_mid)
+                    _max_output = int(
+                        getattr(_model_spec, "max_tokens", None)
+                        or getattr(_provider, "max_tokens", None)
+                        or getattr(self._host.settings, "llm_max_tokens", 0)
+                        or 0
+                    )
+                    if _max_output >= _observed.limit:
+                        return _RouteDecision(
+                            llm_client=llm_client,
+                            model_used=model_used,
+                            chat_model_arg=chat_model_arg,
+                            final_answer_override=(
+                                f"本地模型 {model_used} 的实时窗口 {_observed.limit} tokens"
+                                f" 不大于最大输出预留 {_max_output} tokens；本次未向 Provider 发送。"
+                                "请增大受管运行时 n_ctx 或降低该模型 max_tokens。"
+                            ),
+                            metadata_registry=metadata_registry,
+                        )
         # Rule-first: model selection is explicit user/session/default state.
         # No program-side "simple task" classifier may silently substitute a faster model.
         # Physical context metadata is still needed by history budgeting, overflow

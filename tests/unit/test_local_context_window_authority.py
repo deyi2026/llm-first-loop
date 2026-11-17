@@ -188,3 +188,50 @@ def test_one_million_cloud_window_is_not_subject_to_local_probe_or_184k_cap():
     assert budget["allowed_input_tokens"] == 900000
     assert budget["limited_by"] == "model_window"
     assert calls == []
+
+
+def test_unverified_managed_model_route_holds_before_provider_send():
+    observer, _calls = _observer(_payloads(alias="another-serving-model"))
+    routing, _model, _provider = _routing(observer)
+    fake = SimpleNamespace(model="qwen3.8-flash-next")
+    registry = routing._host.llm_pool.registry_snapshot()
+    routing._host.llm_pool.get_resolved_client = lambda *_args, **_kwargs: (
+        fake, "cognilocal", "qwen3.8-flash-next"
+    )
+    sess = SimpleNamespace(model_override="cognilocal/qwen3.8-flash-next")
+    result = routing._route_model(None, sess, registry_snapshot=registry)
+    assert result.llm_client is fake
+    assert result.model_used == "cognilocal/qwen3.8-flash-next"
+    assert "实时上下文不可核验" in result.final_answer_override
+    assert "未向 Provider 发送" in result.final_answer_override
+
+
+def test_verified_managed_model_route_keeps_provider_call_available():
+    observer, _calls = _observer(_payloads())
+    routing, _model, _provider = _routing(observer)
+    fake = SimpleNamespace(model="qwen3.8-flash-next")
+    registry = routing._host.llm_pool.registry_snapshot()
+    routing._host.llm_pool.get_resolved_client = lambda *_args, **_kwargs: (
+        fake, "cognilocal", "qwen3.8-flash-next"
+    )
+    sess = SimpleNamespace(model_override="cognilocal/qwen3.8-flash-next")
+    result = routing._route_model(None, sess, registry_snapshot=registry)
+    assert result.final_answer_override is None
+    assert result.context_limit == 131072
+
+
+def test_live_window_not_larger_than_max_output_holds_instead_of_one_token():
+    observer, _calls = _observer(_payloads(props_ctx=32768, slot_ctx=32768))
+    routing, _model, _provider = _routing(observer, registered=131072, output=32768)
+    fake = SimpleNamespace(model="qwen3.8-flash-next")
+    registry = routing._host.llm_pool.registry_snapshot()
+    routing._host.llm_pool.get_resolved_client = lambda *_args, **_kwargs: (
+        fake, "cognilocal", "qwen3.8-flash-next"
+    )
+    result = routing._route_model(
+        None,
+        SimpleNamespace(model_override="cognilocal/qwen3.8-flash-next"),
+        registry_snapshot=registry,
+    )
+    assert "不大于最大输出预留" in result.final_answer_override
+    assert "未向 Provider 发送" in result.final_answer_override
