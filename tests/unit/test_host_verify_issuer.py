@@ -18,6 +18,7 @@ from llm_loop.core.run_context import (
 from llm_loop.introspection.host_verify_issuer import (
     HostVerifyAuthority,
     HostVerifyError,
+    _parse_review,
 )
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.merge_queue import load_receipts
@@ -246,3 +247,67 @@ def test_browser_auth_required_then_host_issue(host, build_test_engine, isolated
     assert ok.status_code == 200, ok.text
     assert store.get(rec["id"])["status"] == "approved"
     assert load_receipts(audit / "verify_receipts.jsonl")
+
+
+FENCE = "```"
+
+
+def _review_payload(*, verdict="PASS", p0=0, p1=0, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40):
+    return json.dumps({
+        "gate": "merge", "verdict": verdict, "p0": p0, "p1": p1,
+        "lane_id": lane_id, "base_sha": base, "head_sha": head,
+    })
+
+
+@pytest.mark.parametrize("prefix", ["", "Read-only findings: no P0/P1 issues.\n"])
+def test_review_accepts_one_terminal_fenced_json(prefix):
+    answer = f"{prefix}{FENCE}json\n{_review_payload()}\n{FENCE}"
+    _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+@pytest.mark.parametrize("answer", [
+    "Read-only review.\n{fence}json\n{payload}\n{fence}\nMore prose",
+    "Read-only review.\n{fence}json\n{payload}\n{fence}\n{fence}json\n{payload}\n{fence}",
+    "Read-only review.\n{fence}python\n{payload}\n{fence}",
+    "Read-only review.\n{payload}",
+    "Read-only review.\n{fence}json\n{payload}\n{fence}\nextra block marker {fence}",
+])
+def test_review_rejects_ambiguous_fenced_answer(answer):
+    with pytest.raises(HostVerifyError, match="review_not_structured"):
+        _parse_review(answer.format(payload=_review_payload(), fence=FENCE), lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+@pytest.mark.parametrize("changes,error", [
+    ({"verdict": "REVISE"}, "review_identity_or_verdict_invalid"),
+    ({"p0": 1}, "review_p0_p1_blocked"),
+    ({"p1": 1}, "review_p0_p1_blocked"),
+    ({"p0": True}, "review_p0_p1_invalid"),
+    ({"lane_id": "lane-ffffffff"}, "review_identity_or_verdict_invalid"),
+    ({"head": "c" * 40}, "review_identity_or_verdict_invalid"),
+])
+def test_review_fenced_identity_and_verdict_still_fail_closed(changes, error):
+    answer = f"Reviewer notes.\n{FENCE}json\n" + _review_payload(**changes) + f"\n{FENCE}"
+    with pytest.raises(HostVerifyError, match=error):
+        _parse_review(answer, lane_id="lane-1234abcd", base="a" * 40, head="b" * 40)
+
+
+def test_fenced_terminal_review_can_request_then_human_issue(host, monkeypatch):
+    authority, runner, store, lane_id, _, audit = host
+    original = runner.review_terminal_current
+
+    def fenced_terminal(child_id, parent):
+        terminal = original(child_id, parent)
+        terminal["final_answer"] = (
+            "Independent read-only review found no P0/P1.\n"
+            + FENCE + "json\n" + terminal["final_answer"] + "\n" + FENCE
+        )
+        return terminal
+
+    monkeypatch.setattr(runner, "review_terminal_current", fenced_terminal)
+    rec = requested(host)
+    assert rec["request_kind"] == "verify_receipt"
+    assert not (audit / "verify_receipts.jsonl").exists()
+    approved, reason = human_decide(store, rec, authority)
+    assert reason == ""
+    assert approved["verify_receipt_id"].startswith(lane_id + ":")
+    assert load_receipts(audit / "verify_receipts.jsonl")[approved["verify_receipt_id"]]["result"] == "pass"

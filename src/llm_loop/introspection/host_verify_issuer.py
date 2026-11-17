@@ -66,10 +66,29 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 def _parse_review(text: str, *, lane_id: str, base: str, head: str) -> None:
+    raw = text.strip()
     try:
-        payload = json.loads(text.strip())
+        payload = json.loads(raw)
     except (ValueError, TypeError) as exc:
-        raise HostVerifyError("review_not_structured") from exc
+        # Some independent Reviewers put the single verdict object in a final
+        # Markdown JSON fence. Accept only that unambiguous terminal form;
+        # prose is never authority and all identity/P0/P1 checks stay below.
+        fence = "```"
+        marker = fence + "json\n"
+        if raw.count(fence) != 2:
+            raise HostVerifyError("review_not_structured") from exc
+        if raw.startswith(marker):
+            body = raw[len(marker):]
+        else:
+            prefix, separator, body = raw.rpartition("\n" + marker)
+            if not separator or not prefix.strip():
+                raise HostVerifyError("review_not_structured") from exc
+        if not body.endswith("\n" + fence):
+            raise HostVerifyError("review_not_structured") from exc
+        try:
+            payload = json.loads(body[: -len(fence) - 1].strip())
+        except (ValueError, TypeError) as inner_exc:
+            raise HostVerifyError("review_not_structured") from inner_exc
     if not isinstance(payload, dict) or any(
         payload.get(key) != value
         for key, value in (
