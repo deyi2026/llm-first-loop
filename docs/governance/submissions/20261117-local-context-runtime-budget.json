@@ -1,0 +1,84 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261117-local-context-runtime-budget",
+  "summary": "Managed local llama.cpp context is bounded by live slot facts, without altering cloud 1M or generic local provider budgets.",
+  "components": [
+    {
+      "component_id": "local-live-window-authority",
+      "paths": [
+        "src/llm_loop/core/loop/engine_services/local_context_window.py",
+        "src/llm_loop/core/loop/engine_services/routing.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "RoutingService and managed cognilocal read-only llama.cpp runtime observation",
+      "disposition": "Reuse model registry as an upper bound, intersect with exact loopback /props and /slots n_ctx for the same model alias; on uncertainty hold the real route before Provider send, never expand registry or touch remote endpoints. Reject output reserve >= live n_ctx. Cache briefly, invalidate per Run.",
+      "evidence": [
+        "GGUF advertises 262144; live llama-server /props and 4 /slots report 131072 for qwen3.8-flash-next",
+        "New regression tests cover live shrink, alias mismatch, slot mismatch, restart, cloud non-probe, explicit route hold and unmanaged local preservation"
+      ],
+      "verification_level": "RED module import failed; GREEN 17 focused tests (including effective-window output reserve); expanded regression, Ruff, Pyright, original R9 and independent reviewer are separate gates, not yet claimed.",
+      "model_evidence_veto_recovery_exit": "Reject candidate if reviewer finds unsafe SSRF, false local identity, silent model expansion, network activity for cloud or failure to reserve output. Revert isolated commit; keep old registry-only behavior if required.",
+      "rollback_route": "Revert this candidate commit; no state migration, no config mutation, no new Provider API endpoint.",
+      "declaration_id": "local-live-context-authority"
+    },
+    {
+      "component_id": "local-window-negative-tests",
+      "paths": [
+        "tests/unit/test_local_context_window_authority.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "pytest local context and budget regression",
+      "disposition": "Add isolated no-Provider test cases and a read-only real local probe; no production network generation.",
+      "evidence": [
+        "17 focused tests passed, including registry 32K / live 128K / output 32K pre-send hold",
+        "Existing schema-capacity 101-tool 32K regression retained"
+      ],
+      "verification_level": "Focused tests executed; full R9 remains required.",
+      "model_evidence_veto_recovery_exit": "Any mismatch in expected fail-closed capacity or cloud route behavior vetoes change.",
+      "rollback_route": "Revert the test with the implementation."
+    },
+    {
+      "component_id": "architecture-declaration",
+      "paths": [
+        "docs/governance/submissions/20261117-local-context-runtime-budget.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture-submission gate",
+      "disposition": "Declare exact changed paths and review obligations.",
+      "evidence": [
+        "Check with scripts/check_architecture_submission.py --staged before freezing SHA"
+      ],
+      "verification_level": "Schema and coverage checker required; no self-referential candidate SHA.",
+      "model_evidence_veto_recovery_exit": "Missing path or nonmatching changed path fails A.5.",
+      "rollback_route": "Revert with the candidate."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "local-live-context-authority",
+      "g1": {
+        "necessity": "Registry context can be 256K while a live 128K llama-server slot is serving; historical 32K tool schema pressure also exposed the need for exact runtime input authority."
+      },
+      "g2": {
+        "authority_owner": "Live llama.cpp /props model_alias and /slots n_ctx bound by registry ModelSpec.context; routing planner owns the final input budget.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses existing RoutingService physical window/output reserve and schema-capacity selection; no second tool scheduler, model selection, global cap, or duplicate history compaction."
+      },
+      "g3": {
+        "model_evidence": [
+          "RED import failure then GREEN 12 focused unit tests",
+          "Read-only real llama-server observed 131072 with 4 slots; GGUF metadata 262144 is not promoted",
+          "No cloud or unmanaged loopback probe; 147 related regression tests passed before the final 1M cloud negative test"
+        ],
+        "recovery_or_reason": "When managed runtime facts are absent or inconsistent, reject the real model route before Provider send with an explicit reason. A conservative 32768-token fallback remains for read-only budget introspection. When max output is >= the effective window min(registry context, live n_ctx), reject the route instead of sending a one-token prompt. New Run invalidates cached facts."
+      },
+      "g4": {
+        "rollback": "Revert exact branch commit; no persistent data, provider config, or schema changes.",
+        "verification": [
+          "Focused regression, Ruff, Pyright, A.5, independent Reviewer PASS P0/P1=0, original R9 exit 0, PR/CI, then managed deploy required",
+          "Before deploy confirm actual n_ctx, PID and desired SHA; if probe unavailable hold deploy and do not claim 1M local."
+        ]
+      }
+    }
+  ]
+}
