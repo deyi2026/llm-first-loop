@@ -22,10 +22,7 @@ from llm_loop.core.session import SessionStore
 from llm_loop.event_log.store import EventStore
 from llm_loop.factory import review_terminal_predicate
 from llm_loop.llm.client import LLMClient, LLMResponse
-from llm_loop.subagent.runner import (
-    SubAgentRunner,
-    preserve_host_review_on_normal_final,
-)
+from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.tools.review_host_admission import (
     HostReviewAdmission,
@@ -312,8 +309,7 @@ def test_mixed_normal_final_cancels_only_side_effect_child_not_host_review(tmp_p
             {"kind": "subagent", "id": ordinary_child, "state": "running"}
         ]
         # The production engine uses this exact scoped cancellation on final.
-        with preserve_host_review_on_normal_final():
-            assert registry.cancel_session("owner") >= 1
+        assert registry.cancel_normal_final_obligations("owner") >= 1
         assert runner._handles[ordinary_child].cancel_requested
         assert not runner._handles[review_child].cancel_requested
         assert host.poll("owner", review_child)["qualification"] == "pending"

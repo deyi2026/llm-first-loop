@@ -3040,6 +3040,15 @@ def _unavailable_receipt(
     )
 
 
+def _full_test_target_for_command(workdir: str, command: str) -> tuple[str, str]:
+    """Canonical worktree+exact-command target, or an actionable fail-closed error."""
+    try:
+        dest = Path(workdir).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return "", f"full_test_workdir_invalid:{type(exc).__name__}"
+    return f"full_test:{dest}:command:{_digest(command.encode('utf-8'))}", ""
+
+
 def _head_commit_of(workdir: str) -> str:
     """当前 git HEAD commit id（bookkeeping 用；失败返回空串，调用方 fail-closed）。"""
     if not workdir:
@@ -4945,16 +4954,31 @@ class HostReviewAdmission:
             },
         )
 
+    def _canceled_reviewer_outcome(
+        self, parent: str, child_id: str, frozen: _Frozen, live_child: str,
+    ) -> dict[str, Any]:
+        """A canceled reviewer cannot mint PASS, even if its model answered late."""
+        if live_child not in self._reviewer_fail_audited:
+            self._reviewer_fail_audited.add(live_child)
+            self._audit_reviewer_unavailable(
+                parent, frozen.kind, "reviewer_cancel_requested",
+                "Host reviewer child was canceled before qualification",
+                child_id=live_child,
+            )
+        self._settle_record(child_id, "UNAVAILABLE", "reviewer_cancel_requested")
+        return _unavailable_receipt(
+            child_id, frozen, reason="reviewer_cancel_requested",
+            detail="Reviewer was canceled; start a fresh independent review of the exact target",
+            extra={"reviewer_failure": "reviewer_cancel_requested"},
+        )
+
     def _failed_outcome(
         self, parent: str, child_id: str, frozen: _Frozen, live_child: str,
         state: dict[str, Any], remaining: float,
     ) -> dict[str, Any]:
-        """E2/E4: terminal-but-not-completed is a reviewer failure, not a verdict.
-
-        Classify it, audit it once per attempt, offer one bounded automatic
-        re-spawn, and otherwise report UNAVAILABLE. No permit is minted either
-        way, so this only changes what the caller is TOLD.
-        """
+        """E2/E4: terminal or canceled review is not a qualifying verdict."""
+        if state.get("cancel_requested"):
+            return self._canceled_reviewer_outcome(parent, child_id, frozen, live_child)
         failure_text = str(
             getattr(state.get("result"), "final_answer", "")
             or state.get("final_answer")
@@ -5118,28 +5142,11 @@ class HostReviewAdmission:
         if not ok:
             return {"qualification": "DENIED", "reason": reason}
         remaining = deadline_at - time.time()
-        # An explicit Stop (or a historical normal-final cancellation) can
-        # arrive while the Provider is still in flight. A later PASS-shaped
-        # model response must not revive that canceled child into a grant.
-        if state.get("cancel_requested"):
-            if live_child not in self._reviewer_fail_audited:
-                self._reviewer_fail_audited.add(live_child)
-                self._audit_reviewer_unavailable(
-                    parent, frozen.kind, "reviewer_cancel_requested",
-                    "Host reviewer child was canceled before qualification",
-                    child_id=live_child,
-                )
-            self._settle_record(child_id, "UNAVAILABLE", "reviewer_cancel_requested")
-            return _unavailable_receipt(
-                child_id, frozen, reason="reviewer_cancel_requested",
-                detail="Reviewer was canceled; start a fresh independent review of the exact target",
-                extra={"reviewer_failure": "reviewer_cancel_requested"},
-            )
-        if state.get("state") in {"running", "accepted"}:
+        if state.get("state") in {"running", "accepted"} and not state.get("cancel_requested"):
             if remaining > 0:
                 return self._pending_receipt(frozen, deadline_at, remaining)
             return self._deadline_outcome(parent, child_id, frozen, live_child, deadline_at)
-        if state.get("state") != "completed":
+        if state.get("state") != "completed" or state.get("cancel_requested"):
             return self._failed_outcome(parent, child_id, frozen, live_child, state, remaining)
         # A successful durable row alone is not authority: model-controlled
         # shell commands can touch same-user journal files. Demand the genuine
@@ -5511,15 +5518,11 @@ class HostReviewAdmission:
         # Only replay a frozen full_test anchor if its exact canonical
         # worktree+command target matches. Unrelated stale grants must not
         # cause a misleading full_test_no_delta for this command.
-        full_test_target = ""
-        if kind == "full_test":
-            try:
-                dest = Path(workdir).expanduser().resolve(strict=True)
-            except (OSError, RuntimeError) as exc:
-                return self._deny(f"full_test_workdir_invalid:{type(exc).__name__}")
-            full_test_target = (
-                f"full_test:{dest}:command:{_digest(command.encode('utf-8'))}"
-            )
+        full_test_target, invalid = (
+            _full_test_target_for_command(workdir, command) if kind == "full_test" else ("", "")
+        )
+        if invalid:
+            return self._deny(invalid)
         scopes = self._pending_scopes(parent, kind, target=full_test_target)
         has_batches = (
             kind == "git_push" and self._has_pending_push_batches(parent)

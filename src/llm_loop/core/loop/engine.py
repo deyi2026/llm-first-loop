@@ -2788,14 +2788,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             + "; prompt_chars=0",
                         )
                     with contextlib.suppress(Exception):
-                        # Normal final must stop side-effect children, while
-                        # a Host-created tool-less independent Reviewer may
-                        # continue to a bounded verdict for a later status
-                        # poll. Explicit Stop does NOT enter this scope.
-                        from llm_loop.subagent.runner import preserve_host_review_on_normal_final
-
-                        with preserve_host_review_on_normal_final():
-                            self.registry.cancel_session(session_id)
+                        self.registry.cancel_normal_final_obligations(session_id)
                 self._tool_cycle._reachability_finalize("completed_no_tools")
                 self._kpi_note_no_tool()
                 self._phase("honest_answer")

@@ -18,7 +18,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,7 +67,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
-from llm_loop.tools.registry import ToolRegistry
+from llm_loop.tools.registry import _NORMAL_FINAL_PRESERVE_HOST_REVIEW, ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
 if TYPE_CHECKING:
@@ -91,24 +91,6 @@ _PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS = 12_000
 _CURRENT_SUBAGENT_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
     "lfl_current_subagent_depth", default=-1
 )
-
-
-# Only the engine's normal-answer cleanup sets this private, thread-local flag.
-# Explicit Stop and child-finalization must still cancel reviewers. It is not a
-# model/tool parameter and cannot be set by a spawned child via tool arguments.
-_PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "lfl_preserve_host_review_on_normal_final", default=False,
-)
-
-
-@contextmanager
-def preserve_host_review_on_normal_final():
-    """Let tool-less Host reviewers outlive a normal answer, never an explicit Stop."""
-    token = _PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL.set(True)
-    try:
-        yield
-    finally:
-        _PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL.reset(token)
 
 
 def next_subagent_depth() -> int:
@@ -1046,7 +1028,7 @@ class SubAgentRunner:
                 handle = self._handles.get(sid)
                 if (
                     not _all_generations
-                    and _PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL.get()
+                    and _NORMAL_FINAL_PRESERVE_HOST_REVIEW.get()
                     and handle is not None
                     and handle.review_isolated
                     and handle.depth == 0
