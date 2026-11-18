@@ -80,14 +80,26 @@ class TaskLeaseClaims:
 
     lease_id: str
     goal_id: str
+    task_id: str
     owner_session_id: str
     agent_id: str
+    lane_id: str
     revision: int
     expires_at: datetime
     resources: tuple[CapabilityResource, ...]
+    parent_lease_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not all((self.lease_id, self.goal_id, self.owner_session_id, self.agent_id)):
+        if not all(
+            (
+                self.lease_id,
+                self.goal_id,
+                self.task_id,
+                self.owner_session_id,
+                self.agent_id,
+                self.lane_id,
+            )
+        ):
             raise ValueError("lease identity is required")
         if type(self.revision) is not int or self.revision < 1:
             raise ValueError("lease revision must be positive")
@@ -100,8 +112,10 @@ class TaskLeaseClaims:
 @dataclass(frozen=True)
 class CapabilityRequest:
     goal_id: str
+    task_id: str
     owner_session_id: str
     agent_id: str
+    lane_id: str
     expected_revision: int
     kind: ResourceKind
     target: str
@@ -189,8 +203,10 @@ def resolve_capability(
         )
     if (
         request.goal_id != lease.goal_id
+        or request.task_id != lease.task_id
         or request.owner_session_id != lease.owner_session_id
         or request.agent_id != lease.agent_id
+        or request.lane_id != lease.lane_id
     ):
         return _deny("deny", "owner", "lease_identity_mismatch", "核对可信会话和 Agent 归属")
     if request.expected_revision != lease.revision:

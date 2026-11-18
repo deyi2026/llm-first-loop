@@ -26,8 +26,10 @@ def _fixtures(tmp_path):
     lease = TaskLeaseClaims(
         lease_id="lease-1",
         goal_id="goal-1",
+        task_id="task-1",
         owner_session_id="owner-1",
         agent_id="agent-1",
+        lane_id="lane-1",
         revision=3,
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         resources=(
@@ -38,7 +40,15 @@ def _fixtures(tmp_path):
         ),
     )
     req = CapabilityRequest(
-        "goal-1", "owner-1", "agent-1", 3, "project", str(a / "file.txt"), "write"
+        "goal-1",
+        "task-1",
+        "owner-1",
+        "agent-1",
+        "lane-1",
+        3,
+        "project",
+        str(a / "file.txt"),
+        "write",
     )
     facts = HostAuthorityFacts(
         authority="verified",
@@ -55,13 +65,23 @@ def test_two_project_scope_and_unapproved_third(tmp_path):
     a, b, lease, req, facts = _fixtures(tmp_path)
     assert resolve_capability(req, lease=lease, facts=facts).allowed
     second = CapabilityRequest(
-        req.goal_id, req.owner_session_id, req.agent_id, 3, "project", str(b / "x"), "write"
+        req.goal_id,
+        req.task_id,
+        req.owner_session_id,
+        req.agent_id,
+        req.lane_id,
+        3,
+        "project",
+        str(b / "x"),
+        "write",
     )
     assert resolve_capability(second, lease=lease, facts=facts).allowed
     third = CapabilityRequest(
         req.goal_id,
+        req.task_id,
         req.owner_session_id,
         req.agent_id,
+        req.lane_id,
         3,
         "project",
         str(tmp_path / "project-c" / "x"),
@@ -77,13 +97,29 @@ def test_component_boundary_and_symlink_escape(tmp_path):
     neighbor = tmp_path / "project-a-evil"
     neighbor.mkdir()
     denied = CapabilityRequest(
-        req.goal_id, req.owner_session_id, req.agent_id, 3, "project", str(neighbor / "x"), "write"
+        req.goal_id,
+        req.task_id,
+        req.owner_session_id,
+        req.agent_id,
+        req.lane_id,
+        3,
+        "project",
+        str(neighbor / "x"),
+        "write",
     )
     assert not resolve_capability(denied, lease=lease, facts=facts).allowed
     link = a / "escape"
     link.symlink_to(neighbor, target_is_directory=True)
     escaped = CapabilityRequest(
-        req.goal_id, req.owner_session_id, req.agent_id, 3, "project", str(link / "x"), "write"
+        req.goal_id,
+        req.task_id,
+        req.owner_session_id,
+        req.agent_id,
+        req.lane_id,
+        3,
+        "project",
+        str(link / "x"),
+        "write",
     )
     assert not resolve_capability(escaped, lease=lease, facts=facts).allowed
 
@@ -92,8 +128,10 @@ def test_protected_root_overrides_project_allow(tmp_path):
     a, _b, lease, req, facts = _fixtures(tmp_path)
     secret = CapabilityRequest(
         req.goal_id,
+        req.task_id,
         req.owner_session_id,
         req.agent_id,
+        req.lane_id,
         3,
         "project",
         str(a / ".secrets" / "key"),
@@ -137,6 +175,14 @@ def test_identity_and_revision_are_bound(tmp_path):
 
     assert (
         resolve_capability(replace(req, agent_id="other"), lease=lease, facts=facts).reason_code
+        == "lease_identity_mismatch"
+    )
+    assert (
+        resolve_capability(replace(req, task_id="other"), lease=lease, facts=facts).reason_code
+        == "lease_identity_mismatch"
+    )
+    assert (
+        resolve_capability(replace(req, lane_id="other"), lease=lease, facts=facts).reason_code
         == "lease_identity_mismatch"
     )
     assert (
