@@ -17,7 +17,8 @@
       "evidence": [
         "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
         "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 34/34 (test sets overlap; do not sum as unique)."
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 38/38 (test_tools_merge_queue 14 + test_baseline_impact_projection 14 + test_multiagent_convergence_benchmark 10; sets overlap by design, do not sum as unique).",
+        "B2 availability fix: duplicate lane_id version history (append-only ledger per LaneStore last-write-wins+version CAS semantics) now deterministically resolves to the latest version only when strictly increasing + identity-identical + terminal-irreversible; real-audit repro (102 rows, duplicate selftest-guard v1/v2) was globally degraded before the fix and now resolves 101 lanes with selftest-guard=(v2,closed); version ties/regressions, identity drift and post-terminal rows still degrade the whole snapshot (fail-closed)."
       ],
       "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
@@ -36,7 +37,7 @@
       "evidence": [
         "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
         "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 34/34 (test sets overlap; do not sum as unique)."
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 38/38 (test_tools_merge_queue 14 + test_baseline_impact_projection 14 + test_multiagent_convergence_benchmark 10; sets overlap by design, do not sum as unique)."
       ],
       "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
@@ -55,7 +56,7 @@
       "evidence": [
         "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
         "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 34/34 (test sets overlap; do not sum as unique)."
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 38/38 (test_tools_merge_queue 14 + test_baseline_impact_projection 14 + test_multiagent_convergence_benchmark 10; sets overlap by design, do not sum as unique)."
       ],
       "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",

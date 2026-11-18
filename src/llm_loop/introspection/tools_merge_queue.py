@@ -243,9 +243,10 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(host, args.get("repo_root"))
     try:
         lanes = _lanes(host)
-    except LaneStoreConfigError as exc:
-        # P1-B: 宿主 lane 严格配置非法（INV-1/INV-2）→ 显式失败，不静默降级。
-        return _fail(f"lane store 配置非法: {exc}", tool, "invalid_config")
+    except LaneStoreConfigError:
+        # P1-B: 宿主 lane 严格配置非法（INV-1/INV-2）→ 显式失败，不静默降级；
+        # 异常原文可能携带宿主路径/配置细节，回执只保留结构化 reason code。
+        return _fail("lane store 配置非法（invalid_config）", tool, "invalid_config")
     if store is None or lanes is None:
         return _fail("audit_dir 未装配或账本不可用", tool, "store_unavailable")
     try:
@@ -342,6 +343,45 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     )
 
 
+_LANE_TERMINAL_STATUSES = frozenset({"merged", "closed", "abandoned"})
+_LANE_IDENTITY_KEYS = ("branch", "worktree", "goal_id")
+
+
+def _resolve_lane_versions(lanes: list[dict]) -> list[dict] | None:
+    """同 lane_id 多版本行的确定性收敛（fail-closed；B2 可用性修复）。
+
+    账本为 append-only 历史 + 当前态语义（LaneStore: last-write-wins +
+    version CAS，见 lane.py 模块头）。仅当同 lane_id 的重复行同时满足：
+      1) version 为正整数且按文件顺序严格递增（version CAS：禁回退/并列）；
+      2) 身份字段 branch/worktree/goal_id 逐行一致（防漂移冒用同 id）；
+      3) 终态（merged/closed/abandoned）不可逆——终态行后不得再有同 id 行；
+    才收敛为最新版本行。任何违反（含 version 缺失/非整数）返回 None，
+    由调用方整体降级 lane_snapshot_degraded；绝不盲目 last-write-wins。
+    """
+    groups: dict[str, list[dict]] = {}
+    for lane in lanes:
+        groups.setdefault(lane["lane_id"], []).append(lane)
+    resolved: list[dict] = []
+    for rows in groups.values():
+        if len(rows) == 1:
+            resolved.append(rows[0])
+            continue
+        prev_version: int | None = None
+        for row in rows:
+            version = row.get("version")
+            if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+                return None
+            if prev_version is not None and version <= prev_version:
+                return None
+            prev_version = version
+            if any(row.get(key) != rows[0].get(key) for key in _LANE_IDENTITY_KEYS):
+                return None
+            if row is not rows[-1] and row.get("status") in _LANE_TERMINAL_STATUSES:
+                return None
+        resolved.append(rows[-1])
+    return resolved
+
+
 def _read_impact_lanes(audit_dir: str) -> tuple[list[dict], str]:
     """Never construct LaneStore here: its constructor calls mkdir."""
     if not audit_dir:
@@ -356,7 +396,10 @@ def _read_impact_lanes(audit_dir: str) -> tuple[list[dict], str]:
         return [], "lane_snapshot_degraded"
     ids = [lane["lane_id"] for lane in lanes]
     if len(set(ids)) != len(ids):
-        return [], "lane_snapshot_degraded"
+        resolved = _resolve_lane_versions(lanes)
+        if resolved is None:
+            return [], "lane_snapshot_degraded"
+        return resolved, ""
     return lanes, ""
 
 
@@ -503,10 +546,11 @@ def _autosweep_lane_after_merge(host: Any, queue_entry: dict) -> dict:
     """
     try:
         lanes = _lanes(host)
-    except LaneStoreConfigError as exc:
+    except LaneStoreConfigError:
         # P1-B: 宿主 strict/enforce 配置非法 → 如实回执不关闭；done 既成事实
-        # 不可回滚，也不静默降级为默认 warn 绕过严格锁（fail-closed 不谎称）。
-        return {"closed": False, "note": f"lane store 配置非法（不降级）: {exc}"}
+        # 不可回滚，也不静默降级为默认 warn 绕过严格锁（fail-closed 不谎称）；
+        # 异常原文可能携带宿主路径/配置细节，note 不内嵌原始异常文本。
+        return {"closed": False, "note": "lane store 配置非法（不降级，invalid_config）"}
     if lanes is None:
         return {"closed": False, "note": "lane 账本不可用"}
     lane_id = str((queue_entry or {}).get("lane_id") or "")

@@ -176,3 +176,103 @@ def test_status_impact_unknown_future_status_fails_closed(monkeypatch, tmp_path:
     assert doc["groups"]["unknown"] == ["lane-1"]
     assert doc["items"][0]["impact"]["reason_codes"] == ["projection_status_invalid"]
     assert doc["items"][0]["impact"]["recommended_next_step"] == "hold"
+
+
+def test_read_impact_lanes_resolves_version_history_to_latest(tmp_path: Path) -> None:
+    """合法版本历史（同 id 严格递增+同身份+终态收尾）收敛为最新版本行。"""
+    import json
+
+    from llm_loop.introspection import tools_merge_queue
+
+    (tmp_path / "lanes.jsonl").write_text(
+        json.dumps({"lane_id": "lane-1", "version": 1, "status": "active",
+                    "branch": "feat/a", "worktree": "/w/a", "goal_id": "g1"}) + "\n"
+        + json.dumps({"lane_id": "lane-1", "version": 2, "status": "merged",
+                      "branch": "feat/a", "worktree": "/w/a", "goal_id": "g1"}) + "\n"
+        + json.dumps({"lane_id": "lane-2", "version": 1, "status": "active",
+                      "branch": "feat/b", "worktree": "/w/b", "goal_id": "g2"}) + "\n",
+        encoding="utf-8",
+    )
+    lanes, err = tools_merge_queue._read_impact_lanes(str(tmp_path))
+    assert err == ""
+    by_id = {lane["lane_id"]: lane for lane in lanes}
+    assert by_id["lane-1"]["version"] == 2
+    assert by_id["lane-1"]["status"] == "merged"
+    assert by_id["lane-2"]["version"] == 1
+
+
+def test_read_impact_lanes_rejects_version_tie_and_regression(tmp_path: Path) -> None:
+    """版本并列或回退的重复行 fail-closed 整体降级，不盲目 last-write-wins。"""
+    import json
+
+    from llm_loop.introspection import tools_merge_queue
+
+    base = {"lane_id": "lane-1", "branch": "feat/a", "worktree": "/w/a",
+            "goal_id": "g1", "status": "active"}
+    tie = [json.dumps({**base, "version": 2}), json.dumps({**base, "version": 2})]
+    regression = [json.dumps({**base, "version": 2}), json.dumps({**base, "version": 1})]
+    for lines in (tie, regression):
+        (tmp_path / "lanes.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        lanes, err = tools_merge_queue._read_impact_lanes(str(tmp_path))
+        assert (lanes, err) == ([], "lane_snapshot_degraded")
+
+
+def test_read_impact_lanes_rejects_identity_drift_and_post_terminal(tmp_path: Path) -> None:
+    """身份漂移（branch 变化）与终态后再现（终态不可逆违反）均整体降级。"""
+    import json
+
+    from llm_loop.introspection import tools_merge_queue
+
+    v1 = {"lane_id": "lane-1", "version": 1, "status": "active",
+          "branch": "feat/a", "worktree": "/w/a", "goal_id": "g1"}
+    drifted = [json.dumps(v1),
+               json.dumps({**v1, "version": 2, "branch": "feat/other"})]
+    post_terminal = [json.dumps(v1),
+                     json.dumps({**v1, "version": 2, "status": "merged"}),
+                     json.dumps({**v1, "version": 3, "status": "active"})]
+    for lines in (drifted, post_terminal):
+        (tmp_path / "lanes.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        lanes, err = tools_merge_queue._read_impact_lanes(str(tmp_path))
+        assert (lanes, err) == ([], "lane_snapshot_degraded")
+
+
+def test_status_impact_version_history_keeps_source_complete(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """端到端：合法版本历史不拖垮 with_impact 投影（source_complete=True，
+    队列 lane 正常参与投影分组，不再全局 unknown）。"""
+    import json
+    from types import SimpleNamespace
+
+    from llm_loop.introspection import baseline_impact, tools_merge_queue
+
+    class FakeStore:
+        def list(self, *, include_terminal: bool = False) -> list[dict]:
+            return [{"lane_id": "lane-1", "status": "queued"}]
+
+        def slot_holder(self) -> None:
+            return None
+
+        def probe_main_head(self) -> str:
+            return "a" * 40
+
+    host = SimpleNamespace(audit_dir=str(tmp_path), workspace_root=str(tmp_path))
+    (tmp_path / "lanes.jsonl").write_text(
+        json.dumps({"lane_id": "lane-1", "version": 1, "status": "active",
+                    "branch": "feat/a", "worktree": "/w/a", "goal_id": "g1"}) + "\n"
+        + json.dumps({"lane_id": "lane-1", "version": 2, "status": "merged",
+                      "branch": "feat/a", "worktree": "/w/a", "goal_id": "g1"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(tools_merge_queue, "_store", lambda *_a, **_k: FakeStore())
+    monkeypatch.setattr(baseline_impact, "project_baseline_impact", lambda *_a, **_k: {
+        "lane_id": "lane-1", "impact": {"status": "carryover_candidate",
+                                        "reason_codes": ["merged_history"],
+                                        "recommended_next_step": "hold"},
+        "evidence": {"projection_is_authoritative": False},
+    })
+    result = run_lane_queue_status(None, host, {"with_impact": True})
+    doc = json.loads(result.content.split("\n", 1)[1])["impact_projection"]
+    assert doc["source_complete"] is True
+    assert doc["items"][0]["impact"]["status"] == "carryover_candidate"
+    assert "lane-1" not in doc["groups"]["unknown"]
