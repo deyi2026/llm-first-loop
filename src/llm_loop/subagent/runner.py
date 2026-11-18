@@ -18,7 +18,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -91,6 +91,24 @@ _PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS = 12_000
 _CURRENT_SUBAGENT_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
     "lfl_current_subagent_depth", default=-1
 )
+
+
+# Only the engine's normal-answer cleanup sets this private, thread-local flag.
+# Explicit Stop and child-finalization must still cancel reviewers. It is not a
+# model/tool parameter and cannot be set by a spawned child via tool arguments.
+_PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "lfl_preserve_host_review_on_normal_final", default=False,
+)
+
+
+@contextmanager
+def preserve_host_review_on_normal_final():
+    """Let tool-less Host reviewers outlive a normal answer, never an explicit Stop."""
+    token = _PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL.set(True)
+    try:
+        yield
+    finally:
+        _PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL.reset(token)
 
 
 def next_subagent_depth() -> int:
@@ -810,9 +828,13 @@ class SubAgentRunner:
     def pending_obligations(
         self, parent_session_id: str, *, run_generation: str = ""
     ) -> list[dict[str, object]]:
-        """返回 parent 正常 final 时仍在运行、必须机械收束的 child 资源。
+        """Return active side-effect children that normal parent final must cancel.
 
-        terminal-but-unread result 不是完成门槛：模型可自行决定是否读取 child 结果。
+        A Host-created review_isolated child has an enforced empty tool scope:
+        its bounded Provider verdict is not a late external side effect.
+        It may finish after a normal parent answer and be polled by a later Run.
+        Explicit Stop still uses cancel_parent() and cancels it normally.
+        terminal-but-unread results do not block final.
         """
 
         target_generation = str(run_generation or current_run_generation.get() or "")
@@ -822,6 +844,7 @@ class SubAgentRunner:
                 for sid, handle in sorted(self._handles.items())
                 if handle.parent_id == parent_session_id
                 and handle.state == "running"
+                and not handle.review_isolated
                 and (
                     not target_generation
                     or handle.parent_run_generation == target_generation
@@ -1019,6 +1042,18 @@ class SubAgentRunner:
             for sid in self._children_by_parent.get(parent_session_id, set()):
                 owner_generation = self._parent_run_generation_by_child.get(sid, "")
                 if target_generation and owner_generation != target_generation:
+                    continue
+                handle = self._handles.get(sid)
+                if (
+                    not _all_generations
+                    and _PRESERVE_HOST_REVIEW_ON_NORMAL_FINAL.get()
+                    and handle is not None
+                    and handle.review_isolated
+                    and handle.depth == 0
+                ):
+                    # Normal-final cancellation is for late side effects, not
+                    # a Host-created, zero-tool independent review. The same
+                    # child remains cancelable by explicit Stop (flag unset).
                     continue
                 rows.append(
                     (
@@ -2226,6 +2261,7 @@ class SubAgentRunner:
                 handle is None
                 or handle.parent_id != str(parent_id)
                 or not handle.review_isolated
+                or handle.cancel_requested
                 or handle.state != "completed"
                 or not handle.done_event.is_set()
                 or handle.result is None

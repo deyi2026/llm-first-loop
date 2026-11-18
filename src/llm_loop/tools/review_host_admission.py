@@ -5118,6 +5118,23 @@ class HostReviewAdmission:
         if not ok:
             return {"qualification": "DENIED", "reason": reason}
         remaining = deadline_at - time.time()
+        # An explicit Stop (or a historical normal-final cancellation) can
+        # arrive while the Provider is still in flight. A later PASS-shaped
+        # model response must not revive that canceled child into a grant.
+        if state.get("cancel_requested"):
+            if live_child not in self._reviewer_fail_audited:
+                self._reviewer_fail_audited.add(live_child)
+                self._audit_reviewer_unavailable(
+                    parent, frozen.kind, "reviewer_cancel_requested",
+                    "Host reviewer child was canceled before qualification",
+                    child_id=live_child,
+                )
+            self._settle_record(child_id, "UNAVAILABLE", "reviewer_cancel_requested")
+            return _unavailable_receipt(
+                child_id, frozen, reason="reviewer_cancel_requested",
+                detail="Reviewer was canceled; start a fresh independent review of the exact target",
+                extra={"reviewer_failure": "reviewer_cancel_requested"},
+            )
         if state.get("state") in {"running", "accepted"}:
             if remaining > 0:
                 return self._pending_receipt(frozen, deadline_at, remaining)
