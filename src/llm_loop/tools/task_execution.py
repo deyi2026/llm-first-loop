@@ -50,6 +50,106 @@ class TrustedTaskExecution:
     expected_head: str
     protected_roots: tuple[str, ...]
 
+    def authorize_app(
+        self,
+        bundle_id: str,
+        *,
+        verb: str = "edit",
+        os_permission_granted: bool,
+    ) -> None:
+        """Reverify exact Host-signed app scope before native AX delivery.
+
+        The bundle identity must be observed by the desktop backend, never
+        copied from a model parameter. This does not override the desktop
+        privacy, foreground, TCC, review, confirmation or write gates.
+        """
+        if (
+            current_task_execution.get() is not self
+            or current_session_id.get() != self.owner_session_id
+            or verb not in ("observe", "edit")
+            or not isinstance(bundle_id, str)
+            or not bundle_id.strip()
+            or any(char in bundle_id for char in ("/", "\\", "*"))
+        ):
+            raise TaskExecutionError("task_app_identity_invalid")
+        if verb == "edit":
+            parent_scope = current_write_scope.get()
+            if parent_scope is not None and parent_scope.declared:
+                raise TaskExecutionError("task_parent_scope_requires_precise_compilation")
+        lane = self.lanes.get(self.lane_id)
+        if (
+            not lane
+            or lane.get("status") != "active"
+            or lane.get("goal_id") != self.goal_id
+            or lane.get("owner_session_id") != self.owner_session_id
+            or lane.get("version") != self.lane_version
+            or lane.get("head_sha") != self.expected_head
+        ):
+            raise TaskExecutionError("task_lane_cas_conflict")
+        worktree = os.path.realpath(str(lane.get("worktree") or ""))
+        if not os.path.lexists(os.path.join(worktree, ".git")):
+            raise TaskExecutionError("task_worktree_git_missing")
+        env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+        env.update(
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_NO_REPLACE_OBJECTS="1",
+        )
+        try:
+            observed = subprocess.run(
+                ["git", "-C", worktree, "rev-parse", "--verify", "HEAD"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise TaskExecutionError("task_git_head_unavailable") from exc
+        if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+            raise TaskExecutionError("task_git_head_cas_conflict")
+        protected = tuple(os.path.realpath(p) for p in self.protected_roots)
+        if (
+            os.path.realpath(str(self.authority.root)) not in protected
+            or os.path.realpath(str(self.lanes._dir)) not in protected
+        ):
+            raise TaskExecutionError("task_protected_roots_missing")
+        request = CapabilityRequest(
+            self.goal_id,
+            self.task_id,
+            self.owner_session_id,
+            self.agent_id,
+            self.lane_id,
+            self.revision,
+            "app",
+            bundle_id,
+            verb,
+        )
+        try:
+            claims = self.authority.verify(self.lease_id, request)
+        except TaskAuthorityError as exc:
+            raise TaskExecutionError(exc.reason_code) from exc
+        if claims.parent_lease_id is not None:
+            raise TaskExecutionError("task_parent_lease_chain_unverified")
+        verdict = resolve_capability(
+            request,
+            lease=claims,
+            facts=HostAuthorityFacts(
+                authority="verified",
+                parent_scope_allows=True,
+                lane_fence_valid=True,
+                backend_supported=True,
+                os_permission_granted=bool(os_permission_granted),
+                protected_roots=protected,
+            ),
+        )
+        if not verdict.allowed:
+            raise TaskExecutionError(
+                "task_os_tcc_required"
+                if verdict.reason_code == "os_permission_required"
+                else verdict.reason_code
+            )
+
     def authorize_file(self, target: str, verb: str) -> str:
         """Authorize an exact cross-project file path; return its signed root.
 

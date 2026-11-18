@@ -15,6 +15,7 @@ from llm_loop.core.run_context import (
 )
 from llm_loop.core.task_capabilities import CapabilityResource, TaskLeaseClaims
 from llm_loop.introspection.lane import LaneStore
+from llm_loop.tools.task_execution import TaskExecutionError
 from llm_loop.tools.task_runtime import (
     TaskRuntimeActivationError,
     resolve_task_execution_for_run,
@@ -80,6 +81,7 @@ def active_binding(tmp_path, monkeypatch):
         (
             CapabilityResource("project", str(a), frozenset({"read", "write"})),
             CapabilityResource("project", str(b), frozenset({"read", "write"})),
+            CapabilityResource("app", "com.microsoft.VSCode", frozenset({"edit"})),
         ),
     )
 
@@ -175,6 +177,33 @@ def test_wrong_workspace_or_git_head_fails_closed(active_binding):
             data_dir=str(data),
             authority_root=host,
         )
+
+
+def test_signed_exact_app_requires_tcc_and_fresh_lane(active_binding):
+    a, _b, host, data, lanes, _claims, row = active_binding
+    ctx = resolve_task_execution_for_run(
+        session_id="owner-1",
+        workspace_root=str(a),
+        data_dir=str(data),
+        authority_root=host,
+    )
+    assert ctx is not None
+    sid = current_session_id.set("owner-1")
+    ws = current_workspace_root.set(str(a))
+    task = current_task_execution.set(ctx)
+    try:
+        ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True)
+        with pytest.raises(TaskExecutionError, match="task_os_tcc_required"):
+            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=False)
+        with pytest.raises(TaskExecutionError, match="capability_scope_missing"):
+            ctx.authorize_app("com.apple.Terminal", os_permission_granted=True)
+        lanes.update(ctx.lane_id, expected_version=row["version"], status="verifying")
+        with pytest.raises(TaskExecutionError, match="task_lane_cas_conflict"):
+            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True)
+    finally:
+        current_task_execution.reset(task)
+        current_workspace_root.reset(ws)
+        current_session_id.reset(sid)
 
 
 def test_loop_generator_resumes_with_task_context_and_resets(build_test_engine, monkeypatch):

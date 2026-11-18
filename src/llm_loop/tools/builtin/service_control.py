@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import current_session_id
+from llm_loop.core.run_context import current_session_id, current_task_execution
 from llm_loop.runtime.admission_barrier import BarrierConflictError
 from llm_loop.runtime.service_control import (
     NEXT_STEP_KIND_GENERATION_CONFLICT,
@@ -537,6 +537,14 @@ class ServiceControlTool:
             return self._failure(contract_error)
         if action == "status":
             return self._status(kwargs)
+        # A Task Lease checked only here cannot protect a detached worker:
+        # revocation can happen after acceptance, before physical restart.
+        if current_task_execution.get() is not None:
+            return self._failure(
+                "[task service hold] task_service_worker_fence_unavailable: "
+                "仅 status 可用；异步重启/发布须走现有独立受管审批入口，"
+                "不得把 Task Lease 当成跳过发布屏障或 worker 复验的授权。"
+            )
 
         if action == "publish":
             return self._publish_action(kwargs)

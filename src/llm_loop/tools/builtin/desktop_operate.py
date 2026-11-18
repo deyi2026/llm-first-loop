@@ -70,9 +70,10 @@ import secrets as _secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_task_execution
 from llm_loop.desktop.hid_idle import USER_PRESENT_WINDOW_MS
 from llm_loop.desktop.models import (
     AX_NODE_LIMIT_DEFAULT,
@@ -110,8 +111,18 @@ from llm_loop.desktop.operate import (
 )
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.timekeeping import system_local_now
+from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
 
 _DOS = ("click", "type", "press_key", "scroll", "scroll_into_view")
+_TASK_IDE_AX_BUNDLES = frozenset(
+    {
+        "com.microsoft.vscode",
+        "com.apple.dt.xcode",
+        "com.jetbrains.pycharm",
+        "com.jetbrains.intellij",
+        "com.sublimetext.4",
+    }
+)
 _BASE_FIELDS = {"do", "window_id", "target", "text", "keys", "dry_run", "confirm_token", "force", "force_credential"}
 
 # S3：force 凭据失败节流（进程内）——连续 3 次不匹配锁定 60s
@@ -646,6 +657,9 @@ class DesktopOperateTool:
         refused = self._resolve_target(flow)
         if refused is not None:
             return refused
+        refused = self._gate_task_app(flow)
+        if refused is not None:
+            return refused
         refused = self._gate_review_web(flow)
         if refused is not None:
             return refused
@@ -707,6 +721,18 @@ class DesktopOperateTool:
             )
         # D6/T3：act 白名单（终端/IDE 只读）
         actable, deny_kind = self._act_allowlist.is_actable(bundle)
+        target = flow.options.get("target")
+        task_ide_ax = (
+            current_task_execution.get() is not None
+            and str(bundle or "").lower() in _TASK_IDE_AX_BUNDLES
+            and flow.do == "type"
+            and isinstance(target, dict)
+            and set(target) == {"ax_ref"}
+        )
+        # Only a candidate. Exact Host signature, Lane and TCC are verified
+        # below, and reverified immediately before native AX delivery.
+        if not actable and task_ide_ax:
+            actable = True
         if not actable:
             if deny_kind == "terminal_readonly":
                 return self._refuse(
@@ -729,6 +755,42 @@ class DesktopOperateTool:
                 f"目标应用不在 desktop.see_allowlist 可见范围（bundle_id={bundle}，U14 对齐）："
                 "perceive 隐藏的 app 不可 act；如需操作请先把该 app 加入"
                 " LFL_DESKTOP_SEE_ALLOWLIST。",
+            )
+        return None
+
+    def _gate_task_app(self, flow: _ActFlow) -> ToolResult | None:
+        task = current_task_execution.get()
+        if task is None:
+            return None
+        bundle = str(flow.window.bundle_id or "")
+        if bundle.lower() in _TASK_IDE_AX_BUNDLES:
+            role = str(flow.target_identity.get("role") or "").lower()
+            if (
+                flow.do != "type"
+                or flow.target_identity.get("kind") != "ax_ref"
+                or role not in {"axtextarea", "axtextfield", "axtextview"}
+            ):
+                return self._refuse(
+                    flow,
+                    DesktopErrorCode.APP_NOT_ALLOWED,
+                    "Task IDE 仅允许精确 AX 文本控件的 type；终端和 HID 不开放。",
+                )
+        try:
+            cast(TrustedTaskExecution, task).authorize_app(
+                bundle,
+                verb="edit",
+                os_permission_granted=bool(flow.base["permissions"]["ax_trusted"]),
+            )
+        except TaskExecutionError as exc:
+            return self._refuse(
+                flow,
+                (
+                    DesktopErrorCode.AX_UNAVAILABLE
+                    if exc.reason_code == "task_os_tcc_required"
+                    else DesktopErrorCode.APP_NOT_ALLOWED
+                ),
+                f"Task Host 应用授权拒绝: {exc.reason_code}；"
+                "请核对 Owner 签名范围、Lane/CAS 与系统辅助功能 TCC。",
             )
         return None
 
@@ -1376,6 +1438,33 @@ class DesktopOperateTool:
         idle_ms, frontmost_before = flow.idle_ms, flow.frontmost_before
         force_used = flow.force_used
         channel_token_required = flow.channel_token_required
+        task = current_task_execution.get()
+        if task is not None:
+            # Fresh window identity and Host state must still hold after
+            # token/world/AX probes, immediately before physical delivery.
+            if (
+                fresh_window is None
+                or fresh_window.window_id != window.window_id
+                or fresh_window.pid != window.pid
+                or fresh_window.bundle_id != window.bundle_id
+            ):
+                return self._refuse(
+                    flow,
+                    DesktopErrorCode.FOREGROUND_CHANGED,
+                    "Task 窗口 PID/ID/bundle 已变化；禁止投递，重新绑定。",
+                )
+            try:
+                cast(TrustedTaskExecution, task).authorize_app(
+                    bundle,
+                    verb="edit",
+                    os_permission_granted=bool(backend.permission_snapshot().ax_trusted),
+                )
+            except TaskExecutionError as exc:
+                return self._refuse(
+                    flow,
+                    DesktopErrorCode.APP_NOT_ALLOWED,
+                    f"Task 投递前授权失效: {exc.reason_code}；未投递。",
+                )
         # ── 真实投递 ──────────────────────────────────────────────────────
         # S2：一次性 force 凭据在此刻才消耗——此前所有关卡（写开关/EXEC_MODE/令牌/
         # 世界重绑/AX 探针）都可能拒绝，拒绝路径不得烧掉用户预置的凭据。
