@@ -5518,12 +5518,12 @@ class HostReviewAdmission:
         # Only replay a frozen full_test anchor if its exact canonical
         # worktree+command target matches. Unrelated stale grants must not
         # cause a misleading full_test_no_delta for this command.
-        full_test_target, invalid = (
-            _full_test_target_for_command(workdir, command) if kind == "full_test" else ("", "")
-        )
+        full_test_target, invalid = _full_test_target_for_command(workdir, command) if kind == "full_test" else ("", "")
         if invalid:
             return self._deny(invalid)
-        scopes = self._pending_scopes(parent, kind, target=full_test_target)
+        scopes = self._pending_scopes(
+            parent, kind, **({"target": full_test_target} if kind == "full_test" else {})
+        )
         has_batches = kind == "git_push" and self._has_pending_push_batches(parent)
         if not scopes and not has_batches:
             # EVO-20261102-677f6c44：无待消费 full_test 资格但处于 no-delta 状态
