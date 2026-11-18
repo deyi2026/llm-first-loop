@@ -193,3 +193,50 @@ def test_live_queue_cas_drift_blocks_before_check_write(facts):
             post=lambda *args: called.append(args),
         )
     assert not called
+
+
+def test_protection_disabled_after_host_verification_blocks_publication(facts):
+    client = facts[0]
+    original_get = client.get
+    count = 0
+
+    def remove_required_host_check_on_third_read(path):
+        nonlocal count
+        value = original_get(path)
+        if path == f"{PREFIX}/branches/main/protection/required_status_checks":
+            count += 1
+            if count >= 3:
+                value["checks"] = [
+                    x for x in value["checks"]
+                    if x["context"] != "lfl-host-premerge"
+                ]
+        return value
+
+    client.get = remove_required_host_check_on_third_read
+    called = []
+    with pytest.raises(HostHoldError, match="prepublish_protection_changed"):
+        publish(
+            facts, apply=True, token="host-app-token" * 3,
+            post=lambda *args: called.append(args),
+        )
+    assert not called
+
+
+def test_web_uid_cannot_run_host_publisher_even_with_apply(tmp_path):
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "host_premerge_check_publisher.py"
+    envelope = tmp_path / "signed.json"
+    envelope.write_text("{}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(script), "--repo", "o/r",
+         "--pr", str(PR_NUMBER), "--run-id", str(RUN_ID),
+         "--expected-main-sha", MAIN, "--expected-candidate-sha", CANDIDATE,
+         "--host-snapshot", str(envelope), "--execution-root", str(tmp_path),
+         "--apply"],
+        capture_output=True, text=True, timeout=10, env={},
+    )
+    assert proc.returncode == 3
+    assert "host_check_issuer_isolation_required" in proc.stdout
+    assert "PUBLISHED" not in proc.stdout

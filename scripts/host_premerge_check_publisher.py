@@ -122,6 +122,23 @@ def publish_verified(
         and pull.get("merge_commit_sha") == tested_merge,
         "prepublish_identity_changed", unavailable=False,
     )
+    protection = client.get(f"repos/{repo}/branches/main/protection")
+    required = client.get(
+        f"repos/{repo}/branches/main/protection/required_status_checks"
+    )
+    pinned = required.get("checks") or []
+    _require(
+        (protection.get("enforce_admins") or {}).get("enabled") is True
+        and (protection.get("allow_force_pushes") or {}).get("enabled") is False
+        and (protection.get("allow_deletions") or {}).get("enabled") is False
+        and required.get("strict") is True
+        and isinstance(pinned, list)
+        and sum(
+            x.get("context") == _HOST_CHECK_CONTEXT and x.get("app_id") == app_id
+            for x in pinned if isinstance(x, dict)
+        ) == 1,
+        "prepublish_protection_changed", unavailable=False,
+    )
     if not apply:
         return {
             "decision": "ELIGIBLE_TO_PUBLISH", "read_only": True,
@@ -181,8 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         # The check writer must not be callable from the Web/model UID.
-        _require(os.geteuid() == _ISSUER_UID and sys.flags.isolated
-                 and sys.flags.no_site, "host_check_issuer_isolation_required")
+        _require(os.geteuid() == _ISSUER_UID and bool(sys.flags.isolated)
+                 and bool(sys.flags.no_site),
+                 "host_check_issuer_isolation_required")
         # Load only the root-owned frozen crypto runtime, never PR code.
         site = Path(_TRUSTED_SITE)
         st = site.lstat()

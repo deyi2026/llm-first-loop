@@ -132,6 +132,11 @@ class FakeGitHub:
             f"{PREFIX}/commits/{MERGE}": {
                 "sha": MERGE, "parents": [{"sha": MAIN}, {"sha": CANDIDATE}],
             },
+            f"{PREFIX}/branches/main/protection": {
+                "enforce_admins": {"enabled": True},
+                "allow_force_pushes": {"enabled": False},
+                "allow_deletions": {"enabled": False},
+            },
             f"{PREFIX}/branches/main/protection/required_status_checks": {
                 "strict": True, "checks": [
                     {"context": c["context"], "app_id": c["app_id"]} for c in checks
@@ -760,3 +765,37 @@ def test_v19_p1_gate_closure_rejects_lookalike_paths(fixture, untrusted_ref: byt
     client.blobs["scripts/ci_gate.sh", MAIN] = b"python " + untrusted_ref + b"\n"
     with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
         _verify_gate_closure(client, MAIN)
+
+
+@pytest.mark.parametrize(
+    ("setting", "unsafe_value"),
+    [
+        ("enforce_admins", False),
+        ("allow_force_pushes", True),
+        ("allow_deletions", True),
+    ],
+)
+def test_issue73_branch_protection_admin_or_ref_bypass_fails_closed(
+    fixture, setting, unsafe_value,
+):
+    protection = fixture[0].data[f"{PREFIX}/branches/main/protection"]
+    protection[setting]["enabled"] = unsafe_value
+    holds(fixture, "branch_protection_bypass_possible")
+
+
+def test_issue73_branch_protection_changes_during_host_check_fails_closed(fixture):
+    client = fixture[0]
+    original_get = client.get
+    calls = 0
+
+    def mutate_on_final_read(path):
+        nonlocal calls
+        value = original_get(path)
+        if path == f"{PREFIX}/branches/main/protection":
+            calls += 1
+            if calls == 2:
+                value["enforce_admins"]["enabled"] = False
+        return value
+
+    client.get = mutate_on_final_read
+    holds(fixture, "premerge_race_detected")
