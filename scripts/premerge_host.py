@@ -31,6 +31,8 @@ _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GATE_PATHS = (
     "scripts/premerge_gate.py",
     "scripts/premerge_host.py",
+    "scripts/host_premerge_check_publisher.py",
+    "scripts/premerge_host_snapshot_issuer.py",
     "scripts/integration_writer_lock.py",
     "scripts/ci_gate.sh",
     ".github/workflows/ci.yml",
@@ -49,6 +51,7 @@ _GATE_PATHS = (
 )
 _POLICY_PATH = "docs/governance/required-ci-checks.json"
 _MAX_ARTIFACT = 1024 * 1024
+_HOST_CHECK_CONTEXT = "lfl-host-premerge"
 
 
 class HostHoldError(Exception):
@@ -381,7 +384,7 @@ def _workflow_events(data: bytes) -> set[str]:
 
 
 def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
-                    remote_required: list[dict]) -> list[dict]:
+                    remote_required: list[dict], *, host_app_id: int) -> list[dict]:
     main_policy_sha, raw = client.blob(_POLICY_PATH, main)
     candidate_policy_sha, _ = client.blob(_POLICY_PATH, candidate)
     _require(main_policy_sha == candidate_policy_sha, "gate_version_untrusted",
@@ -436,7 +439,18 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
         key = (context, app_id)
         _require(key not in required, "check_context_ambiguous")
         required.add(key)
-    _require(seen == required, "required_checks_source_inadequate")
+    # The required Host check must be emitted by a separate GitHub App, not
+    # the candidate-controlled GitHub Actions app. Its ID is pinned by the
+    # operator outside this repository, never supplied by the PR.
+    _require(type(host_app_id) is int and host_app_id > 0,
+             "host_check_app_unconfigured", unavailable=False)
+    _require(all(app_id != host_app_id for _, app_id in seen),
+             "host_check_app_not_independent", unavailable=False)
+    host_checks = [key for key in required if key[0] == _HOST_CHECK_CONTEXT]
+    _require(host_checks == [(_HOST_CHECK_CONTEXT, host_app_id)],
+             "host_check_not_required", unavailable=False)
+    _require(seen == required - {(_HOST_CHECK_CONTEXT, host_app_id)},
+             "required_checks_source_inadequate")
     _require(sum(x.get("purpose") == "managed_evidence" for x in pinned) == 1,
              "required_checks_source_inadequate")
     return pinned
@@ -512,7 +526,9 @@ def _verify_host_execution(client: Any, main: str, *,
              and git("rev-parse", "HEAD") == main
              and git("status", "--porcelain=v1", "--untracked-files=all") == "",
              "gate_execution_root_untrusted", unavailable=False)
-    for path in ("scripts/premerge_host.py", "scripts/premerge_gate.py"):
+    for path in ("scripts/premerge_host.py", "scripts/premerge_gate.py",
+                 "scripts/host_premerge_check_publisher.py",
+                 "scripts/premerge_host_snapshot_issuer.py"):
         local = root / path
         _require(local.is_file() and not local.is_symlink(),
                  "gate_execution_blob_untrusted", unavailable=False)
@@ -535,7 +551,7 @@ def _verify_gate_blobs(client: Any, main: str, candidate: str) -> dict[str, str]
 
 def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
                   candidate: str, run_id: int, envelope: dict,
-                  snapshot_public_key: str, now: float,
+                  snapshot_public_key: str, now: float, host_app_id: int,
                   final_now: float | None = None) -> dict:
     """No Git writes. All external facts are read through the injected client."""
     _require(bool(_REPO.fullmatch(repo)) and pr_number > 0 and run_id > 0,
@@ -573,7 +589,9 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
              "required_checks_unavailable")
     rulesets = client.get(f"{prefix}/rulesets?includes_parents=true")
     _require(rulesets == [], "rulesets_unverified")
-    pinned = _trusted_policy(client, prefix, main, candidate, remote_required)
+    pinned = _trusted_policy(
+        client, prefix, main, candidate, remote_required, host_app_id=host_app_id
+    )
     blobs = _verify_gate_blobs(client, main, candidate)
     main_runs = _checks(client, prefix, main)
     pr_runs = _checks(client, prefix, tested_merge)
@@ -672,6 +690,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         "tested_merge_sha": tested_merge, "required_checked": len(pinned),
         "trusted_gate_blobs": blobs, "host_snapshot_signature_verified": True,
         "branch_protection_verified": True, "remote_main_cas": False,
+        "host_check_context": _HOST_CHECK_CONTEXT, "host_check_app_id": host_app_id,
         "git_writes": False, "deployment": False,
     }
 
@@ -693,6 +712,10 @@ def main(argv: list[str] | None = None) -> int:
             raise HostHoldError("host_snapshot_unavailable") from exc
         token = os.environ.get("LFL_PREMERGE_HOST_GITHUB_TOKEN", "")
         public_key = os.environ.get("LFL_PREMERGE_HOST_SNAPSHOT_PUBKEY", "")
+        try:
+            host_app_id = int(os.environ.get("LFL_PREMERGE_HOST_CHECK_APP_ID", "0"))
+        except ValueError as exc:
+            raise HostHoldError("host_check_app_unconfigured") from exc
         client = GitHubReadOnly(args.repo, token)
         _verify_host_execution(client, args.expected_main_sha)
         result = evaluate_host(
@@ -700,6 +723,7 @@ def main(argv: list[str] | None = None) -> int:
             main=args.expected_main_sha, candidate=args.expected_candidate_sha,
             run_id=args.run_id, envelope=envelope,
             snapshot_public_key=public_key, now=time.time(),
+            host_app_id=host_app_id,
         )
         code = 0
     except HostHoldError as exc:
