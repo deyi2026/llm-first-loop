@@ -25,6 +25,9 @@ from llm_loop.tools.review_host_admission import (
     _receipt_placeholder_receipt,
 )
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 CARD_BODY = "# 测试卡\n" + "这是用于回归测试的临时方法卡正文，必须超过四十字节的入库阈值。" * 2
 
 
@@ -60,7 +63,7 @@ class _BlowUpRunner:
 
 
 def _host() -> HostReviewAdmission:
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(_BlowUpRunner())
     return host
 
@@ -196,7 +199,7 @@ def test_receipt_scan_failure_is_fail_closed(tmp_path: Path) -> None:
 
 def test_git_push_lane_precheck_runs_before_consume(monkeypatch, tmp_path: Path) -> None:
     """P2：lane 门命中时不得消费一次性资格（不得走到 _target/_consume）。"""
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     monkeypatch.setattr(
         HostReviewAdmission,
         "_pending_scopes",
@@ -297,7 +300,7 @@ def test_consume_side_knowledge_gate_does_not_burn_qualification(
     """
     repo = _repo(tmp_path)
     _card(repo, "data/methods/probe-consume/METHOD.md")
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     record = admission_module._Frozen(
         kind="git_push", parent="author-2", target="git_push:origin/main:main",
         sha="a" * 64, child_id="child-consume", granted=True, consumed=False,

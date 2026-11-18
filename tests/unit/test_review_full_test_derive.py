@@ -9,6 +9,9 @@ from types import SimpleNamespace
 
 from llm_loop.tools.review_host_admission import HostReviewAdmission
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 # 测试夹具命令字面量（不落 shell 命令行，避免写文件被 push 守卫误伤）。
 _PUSH_MAIN = "git push " + "origin main"
 
@@ -22,7 +25,8 @@ class FakeChildRunner:
 
     def start(self, task: str, **kwargs):
         self.task = task
-        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": kwargs["model"]}
+        self.model = kwargs.get("model", "")
+        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": self.model}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
         if self.state != "completed" or parent_id != self.parent:
@@ -31,6 +35,8 @@ class FakeChildRunner:
             "child_id": child_id, "parent_id": parent_id,
             "state": self.state, "generation": "gen-1",
             "review_isolated": True, "final_answer": self.answer,
+            # P1-1：provider 侧自报 model 必须由 runner 回传，Host 才能 mint。
+            "observed_model": self.model,
         }
 
     def result_current(self, child_id: str, wait_seconds=0):
@@ -74,7 +80,7 @@ def _seed_bare_remote(repo: Path, tmp_path: Path, sha: str) -> Path:
 
 def _push_pass_host() -> tuple[HostReviewAdmission, FakeChildRunner]:
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     return host, runner
 
@@ -107,12 +113,38 @@ def test_no_delta_full_test_derives_from_push_pass(tmp_path: Path) -> None:
     assert started["derived_from"] == "child-review-1"
     assert started["qualification"] == "GRANTED"
     assert started["basis"]["covering"] == "push_pass_tree_identical"
+    # 派生资格继承源 PASS 的模型证据与策略 digest（不刷新成当前值）。
+    derived_row = host._records[started["child_id"]]
+    src_row = host._records["child-review-1"]
+    assert derived_row.reviewer_model == src_row.reviewer_model == "glm/glm-5.3"
+    assert derived_row.reviewer_observed_model == src_row.reviewer_observed_model
+    assert derived_row.policy_digest == src_row.policy_digest
     # 消费侧：同一命令放行（一次性，走既有 _consume）。
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
     # 复跑：同一覆盖仍成立时按需再派生（每张仍是一次性）。
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
     # 不同命令各自派生，互不冒用。
     assert host.check_shell("author-1", "bash scripts/ci_gate.sh", str(repo)).allowed
+
+
+def test_derivation_refuses_stale_policy_pass(tmp_path: Path) -> None:
+    """外部复核 P1：旧策略 PASS 不得被重新包装成当前策略下的派生 grant。"""
+    repo = _repo(tmp_path)
+    host, _runner = _mint_push_pass(repo, tmp_path)
+    assert host._records["child-review-1"].policy_digest
+    # 模拟策略漂移：源 PASS 仍是旧 digest，Host 当前策略已不同。
+    host._policy_digest = "drifted-digest"
+    started = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    # 旧策略 PASS 不再是合法派生源：不得派生，也不得凭空发 GRANTED；
+    # 此处也没有任何新差异可审 ⇒ full_test 门按设计 fail-closed 拒绝。
+    assert started["accepted"] is False
+    assert "full_test_no_delta" in started["reason"]
+    assert started.get("derived") is not True
+    assert not any(
+        row.derived_from for row in host._records.values() if row.kind == "full_test"
+    )
+    # 没有派生 grant 可供消费：同一命令仍被拒。
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed is False
 
 
 def test_no_delta_without_push_pass_still_rejected(tmp_path: Path) -> None:
