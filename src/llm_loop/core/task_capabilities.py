@@ -17,7 +17,6 @@ Security invariants:
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -34,7 +33,6 @@ _VERBS = {
     "app": _APP_VERBS,
     "service": _SERVICE_VERBS,
 }
-_CASEFOLD = sys.platform == "darwin"
 
 
 def _norm_path(path: str) -> str:
@@ -45,8 +43,9 @@ def _is_within(path: str, root: str) -> bool:
     """Component-safe containment; no prefix matching or cross-drive leaks."""
     try:
         target, base = _norm_path(path), _norm_path(root)
-        if _CASEFOLD:
-            target, base = target.casefold(), base.casefold()
+        # Keep component comparisons case-sensitive even on macOS: APFS may
+        # use a case-sensitive volume. False denial is safer than treating
+        # two distinct roots as one grant.
         return os.path.commonpath((target, base)) == base
     except (ValueError, OSError):
         return False
