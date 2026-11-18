@@ -1,0 +1,38 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "issuer-test-gid-fixture-20261118",
+  "summary": "Isolated test-only fix for PR61 R9 red: Web sandbox tmp dirs inherit st_gid=0 (wheel) while process primary gid=20 (staff); test fixture now derives web_group_gid from output_dir.lstat().st_gid (production issue() permission require untouched) and adds two negative tests (wrong group rejected; group-writable/other-perm modes rejected).",
+  "base_main_sha": "e9507bd9154b88ce28909030266e552e03409c55",
+  "components": [
+    {
+      "component_id": "issuer-test-gid-fixture",
+      "paths": [
+        "tests/unit/test_premerge_host_snapshot_issuer.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Host snapshot issuer unit tests (test-only; production scripts/premerge_host_snapshot_issuer.py NOT modified)",
+      "disposition": "Fixture parity with real Web sandbox gid facts; fail-closed negative coverage for output_dir_not_isolated.",
+      "evidence": [
+        "Diagnostic: /tmp dir lstat st_gid=0 vs os.getgid()=20 in Web sandbox (2026-11-18)",
+        "Targeted: 22 passed (20 existing + 2 new negative tests)",
+        "Ruff PASS; Pyright 0 errors"
+      ],
+      "verification_level": "Targeted pytest + Ruff + Pyright; full R9 rerun remains for independent gate after cross-acceptance.",
+      "model_evidence_veto_recovery_exit": "No relaxation of production security require; no known-red, no skip, no timeout loosening.",
+      "rollback_route": "Revert this single test-file commit; production code unaffected."
+    },
+    {
+      "component_id": "a5-manifest",
+      "paths": [
+        "docs/governance/submissions/20261118-issuer-test-gid-fixture.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 exact-path declaration",
+      "disposition": "Record exact changed paths for this lane.",
+      "evidence": ["A.5 exact changed-path coverage: 2 paths."],
+      "verification_level": "Mechanical A.5.",
+      "model_evidence_veto_recovery_exit": "A.5 presence is not a semantic security approval.",
+      "rollback_route": "Delete manifest."
+    }
+  ]
+}
