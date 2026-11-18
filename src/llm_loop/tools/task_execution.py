@@ -12,12 +12,18 @@ import os
 import subprocess
 from dataclasses import dataclass
 
-from llm_loop.core.run_context import current_session_id, current_write_scope
+from llm_loop.core.run_context import (
+    current_session_id,
+    current_task_execution,
+    current_write_scope,
+    workspace_base,
+)
 from llm_loop.core.task_capabilities import (
     CapabilityRequest,
     HostAuthorityFacts,
     resolve_capability,
 )
+from llm_loop.core.write_scope import scope_allows
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.tools.task_authority import RootOwnedTaskAuthority, TaskAuthorityError
 from llm_loop.tools.task_sandbox import TaskSandboxPlan, compile_task_sandbox
@@ -44,8 +50,114 @@ class TrustedTaskExecution:
     expected_head: str
     protected_roots: tuple[str, ...]
 
+    def authorize_file(self, target: str, verb: str) -> str:
+        """Authorize an exact cross-project file path; return its signed root.
+
+        FileService must still perform its own atomic write/CAS and durable
+        effect journal. This check is repeated at its mutation boundary.
+        """
+        if (
+            current_task_execution.get() is not self
+            or current_session_id.get() != self.owner_session_id
+            or verb not in ("read", "write", "create", "rename", "delete")
+            or not os.path.isabs(target)
+            or os.path.realpath(target) != target
+        ):
+            raise TaskExecutionError("task_file_identity_or_path_invalid")
+        lane = self.lanes.get(self.lane_id)
+        if (
+            not lane
+            or lane.get("status") != "active"
+            or lane.get("goal_id") != self.goal_id
+            or lane.get("owner_session_id") != self.owner_session_id
+            or lane.get("version") != self.lane_version
+            or lane.get("head_sha") != self.expected_head
+        ):
+            raise TaskExecutionError("task_lane_cas_conflict")
+        worktree = os.path.realpath(str(lane.get("worktree") or ""))
+        if os.path.lexists(os.path.join(worktree, ".git")):
+            env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+            env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+            try:
+                observed = subprocess.run(
+                    ["git", "-C", worktree, "rev-parse", "--verify", "HEAD"],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise TaskExecutionError("task_git_head_unavailable") from exc
+            if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+                raise TaskExecutionError("task_git_head_cas_conflict")
+        for other in self.lanes.list():
+            if other.get("lane_id") == self.lane_id or not other.get("worktree"):
+                continue
+            other_root = os.path.realpath(str(other["worktree"]))
+            if os.path.commonpath((target, other_root)) == other_root:
+                raise TaskExecutionError("task_other_lane_worktree_conflict")
+        parent_scope = current_write_scope.get()
+        if verb != "read" and parent_scope is not None:
+            allowed, _reason = scope_allows(parent_scope, target, workspace_base())
+            if not allowed:
+                raise TaskExecutionError("task_parent_scope_denied")
+        protected = tuple(os.path.realpath(p) for p in self.protected_roots)
+        if (
+            os.path.realpath(str(self.authority.root)) not in protected
+            or os.path.realpath(str(self.lanes._dir)) not in protected
+        ):
+            raise TaskExecutionError("task_protected_roots_missing")
+        request = CapabilityRequest(
+            self.goal_id,
+            self.task_id,
+            self.owner_session_id,
+            self.agent_id,
+            self.lane_id,
+            self.revision,
+            "project",
+            target,
+            verb,
+        )
+        try:
+            claims = self.authority.verify(self.lease_id, request)
+        except TaskAuthorityError as exc:
+            raise TaskExecutionError(exc.reason_code) from exc
+        if claims.parent_lease_id is not None:
+            raise TaskExecutionError("task_parent_lease_chain_unverified")
+        roots = [
+            resource.identity
+            for resource in claims.resources
+            if resource.kind == "project"
+            and verb in resource.verbs
+            and (
+                target == resource.identity
+                or target.startswith(resource.identity.rstrip("/") + "/")
+            )
+        ]
+        if not roots:
+            raise TaskExecutionError("task_file_root_not_authorized")
+        root = max(roots, key=len)
+        facts = HostAuthorityFacts(
+            authority="verified",
+            parent_scope_allows=True,
+            lane_fence_valid=True,
+            backend_supported=True,
+            os_permission_granted=os.access(
+                target if verb == "read" else os.path.dirname(target),
+                os.R_OK if verb == "read" else os.W_OK,
+            ),
+            protected_roots=protected,
+        )
+        verdict = resolve_capability(request, lease=claims, facts=facts)
+        if not verdict.allowed:
+            raise TaskExecutionError(verdict.reason_code)
+        return root
+
     def preflight(self, command: str, workdir: str, mode: str) -> TaskSandboxPlan:
         """Verify signed lease, parent/Lane/OS facts and compile exact multi-root plan."""
+        if current_task_execution.get() is not self:
+            raise TaskExecutionError("task_context_not_active")
         if current_session_id.get() != self.owner_session_id:
             raise TaskExecutionError("task_owner_session_mismatch")
         parent_scope = current_write_scope.get()

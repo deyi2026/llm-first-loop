@@ -463,6 +463,7 @@ class FileService:
         effect_sink: FileEffectSink | None = None,
         workspace_scope: str | None = None,
         expected_snapshot_ref: str = "",
+        expected_sha256: str = "",
         whole_file: bool = False,
         write_scope: WriteScope | None = None,
     ) -> FileEditResult:
@@ -494,6 +495,7 @@ class FileService:
                 effect_sink=effect_sink,
                 workspace_scope=workspace_scope,
                 expected_snapshot_ref=str(expected_snapshot_ref or ""),
+                expected_sha256=str(expected_sha256 or ""),
                 whole_file=whole_file,
             )
         if write_scope is not None and result.applied:
@@ -518,6 +520,7 @@ class FileService:
         effect_sink: FileEffectSink | None,
         workspace_scope: str | None,
         expected_snapshot_ref: str,
+        expected_sha256: str,
         whole_file: bool,
     ) -> FileEditResult:
         try:
@@ -529,6 +532,14 @@ class FileService:
             raise FileServiceError(
                 "ReadError", detail=str(exc), cause_type=type(exc).__name__
             ) from exc
+        if expected_sha256:
+            if (
+                len(expected_sha256) != 64
+                or any(ch not in "0123456789abcdef" for ch in expected_sha256)
+            ):
+                raise FileServiceError("VersionPreconditionInvalid")
+            if hashlib.sha256(source_bytes).hexdigest() != expected_sha256:
+                raise FileServiceError("VersionConflict")
 
         try:
             baseline = self._baseline_reader(path)
