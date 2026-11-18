@@ -1,7 +1,7 @@
 # LFL Task Capability & Host Execution v1.0 — 需求与实现设计方案书
 
 > 日期：2026-11-19
-> 状态：**实施基线草案（待独立 Reviewer 审查与冻结）**；不是“已开发/已部署”证明
+> 状态：**v1.0 实施基线冻结（2026-11-19）**；代码仍需独立 Reviewer 与完整验收，不是“已开发/已部署”证明
 > 代码基线：`origin/main = 98d0bb2a6e14655afe341f0c29189a4abb83908f`（创建隔离 worktree 时的事实）
 > 生产观察：`desired_generation=433`、`deployed_sha=98d0bb2...`、`in_sync=true`（只读 board 快照，必须在部署前重新核验）
 > 主要责任：ChatGPT 主开发/集成/验收；LFL Goal、Lane、受管执行与任务续接；独立 Reviewer 审核精确候选
@@ -502,7 +502,7 @@ Reviewer 只针对精确冻结候选审查；发现 P0/P1 修复代码和测试�
 
 ## 17. 当前执行状态（2026-11-19）
 
-- 设计：本文件为**首次完整方案**，待审查与冻结。
+- 设计：**v1.0 实施基线已冻结**；若后续事实证明必须修改关键合同，记录 spec_change 并对新候选重新审查，不进入无限文档拷问。
 - 代码：M1 已提交**纯判定基础** `src/llm_loop/core/task_capabilities.py` 和 22 条定向单测（`2e7d10d19`、`0a16d7742`）；Ruff/Pyright/pytest 定向通过。尚未接入 Host 签发、文件/命令执行器、多根物理沙箱、Git Adapter、桌面/服务工具，**不能称正常任务闭环已完成**。
 - LFL Goal：必须通过 LFL 原生 `create_goal` 在独立会话创建；本文件不是 Goal 创建凭证。
 - 审查/R9/PR/CI/合并/部署：尚未针对本方案执行；不得借用 Issue #73 或其他 Lane 的回执。
