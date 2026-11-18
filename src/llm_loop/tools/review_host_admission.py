@@ -79,6 +79,12 @@ class _Frozen:
     attempts: int = 0                  # E4 automatic re-spawns so far
     live_child_id: str = ""            # the underlying child of the latest attempt
     reviewer_model: str = ""           # model actually used for the live attempt
+    # P1-1：Provider 响应自报的 model（in-process 观测）。缺省为空=未核验，mint/consume
+    # 都要求非空且与 reviewer_model 一致，否则资格不可用（fail closed）。
+    reviewer_observed_model: str = ""
+    # P1-2：start 时刻冻结的准入策略 digest；mint/cache/consume/联合批都要求与
+    # 当前策略一致——策略漂移后旧 grant 不可消费。
+    policy_digest: str = ""
     previous_sha: str = ""             # E3 coverage chain
     previous_child_id: str = ""
     cached_pass: bool = False          # E5 replay of an identical PASS
@@ -123,6 +129,25 @@ class _Frozen:
 
 
 _ALLOWED = AdmissionDecision(True, "")
+
+
+def _normalize_model_label(label: str) -> str:
+    """把 model 标签归一为可比较形式。
+
+    只抹掉路由前缀（``provider/model`` 的 provider 段）与大小写/空白差异；
+    绝不做模糊匹配或后缀包含匹配——模型名不同就是不同。
+    """
+    text = str(label or "").strip().lower()
+    if "/" in text:
+        text = text.rsplit("/", 1)[-1]
+    return text
+
+
+def _model_labels_match(expected: str, observed: str) -> bool:
+    """请求模型 vs Provider 响应自报模型：归一后必须**完全相等**。"""
+    want = _normalize_model_label(expected)
+    got = _normalize_model_label(observed)
+    return bool(want) and want == got
 
 
 def _same_admission(left: _Frozen, right: _Frozen) -> bool:
@@ -2595,14 +2620,10 @@ def _page_visible_text(raw: dict[str, Any]) -> str:
 # reviewer model the conservative static ceiling below stays authoritative;
 # when it can, the effective cap is the min of both. The headroom factor
 # leaves room for task-contract framing and the JSON wire envelope.
-_REVIEWER_MODEL = "glm/glm-5.3"
-# EVO-20261101-9a6be8b1 E4: the reviewer model is a preference list, not a
-# fixed identity. Three of four reviews in one real run died on provider-side
-# stalls (tokens_in=0, no verdict) while the fourth succeeded on the same
-# model, so a per-attempt model choice is worth having -- but the binding
-# properties (independent child, empty tool scope, Host-minted verdict) do not
-# change with the model, so the fallback is a cost/availability knob only.
-_REVIEWER_FALLBACK_MODELS: tuple[str, ...] = ("glm/glm-5.3-flashx",)
+# Reviewer 模型没有内置默认（2026-11-16 外部独立复核 P0）：模型身份属于
+# operator 可信配置面（LFL_REVIEWER_MODELS → settings.reviewer_models_raw），
+# 代码里写死任何一个 model 都会让"未配置"的生产实例静默用上未经批准的身份。
+# 未配置 ⇒ start() 直接 DENIED(reviewer_models_unconfigured)，不 spawn 子代理。
 # EVO-20261023-fc5c34b9 (human-approved 2026-10-23, exec_override): the 192KB
 # static ceiling was sized for a single integrated Rule28 patch and made the
 # admission gate structurally unsatisfiable for any branch whose committed
@@ -2661,6 +2682,8 @@ _REVIEWER_FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         r"(?:input[ _-]*too[ _-]*large|prompt[ _-]*too[ _-]*long|"
         r"context[ _-]*length|maximum[ _-]*context|context[ _-]*window|"
         r"token[ _-]*limit|输入接近.{0,8}窗口|已耗尽.{0,8}输入容量|输出预留已占满|上下文预检)", re.I)),
+    ("reviewer_model_entitlement", re.compile(
+        r"\b1311\b|无权限|套餐|not[ _-]*entitled|entitlement", re.I)),
     ("reviewer_rate_limited", re.compile(
         r"\b(?:429|rate[ _-]*limit|too many requests|quota)", re.I)),
     ("reviewer_timeout", re.compile(
@@ -2672,17 +2695,21 @@ _REVIEWER_FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _REVIEWER_RETRY_MAX = 2
 _REVIEWER_RETRY_DELAYS = (5.0, 20.0)
 _REVIEWER_RETRY_SLEEP_CAP = 90.0
-_REVIEWER_RETRYABLE = {"reviewer_rate_limited", "reviewer_timeout"}
+# P1-3：entitlement（如上游 1311 无权限/套餐未开放）不重试同一模型，但允许
+# 推进到下一个 operator-approved 模型；列表耗尽即 fail closed。
+_REVIEWER_RETRYABLE = {
+    "reviewer_rate_limited", "reviewer_timeout", "reviewer_model_entitlement",
+}
 # ---- EVO-20261101-9a6be8b1 E1/E3/E4/E5/E6 ---------------------------------
 # E4: one wall-clock budget for the WHOLE review (all attempts), so "the
 # reviewer never answered" costs 300s instead of 600s per attempt forever.
-_REVIEWER_MODELS: tuple[str, ...] = (_REVIEWER_MODEL, *_REVIEWER_FALLBACK_MODELS)
 
 
 def _configured_reviewer_models(raw: str) -> tuple[tuple[str, ...], str]:
-    """Operator-only model preference; invalid explicit config disables review (not Web)."""
+    """Operator-only model preference; unset/invalid config disables review (not Web)."""
     if not raw.strip():
-        return _REVIEWER_MODELS, ""
+        # 未配置 ≠ 回落到内置默认：模型身份只能来自 operator 可信配置。
+        return (), "reviewer_models_unconfigured"
     parts = [part.strip() for part in raw.split(",")]
     if (len(parts) > 3 or not all(parts) or len(set(parts)) != len(parts)
             or any(not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", part)
@@ -3011,6 +3038,15 @@ def _unavailable_receipt(
         candidate_sha256=frozen.sha, qualification="UNAVAILABLE",
         artifact_reviewed=False, extra=payload,
     )
+
+
+def _full_test_target_for_command(workdir: str, command: str) -> tuple[str, str]:
+    """Canonical worktree+exact-command target, or an actionable fail-closed error."""
+    try:
+        dest = Path(workdir).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return "", f"full_test_workdir_invalid:{type(exc).__name__}"
+    return f"full_test:{dest}:command:{_digest(command.encode('utf-8'))}", ""
 
 
 def _head_commit_of(workdir: str) -> str:
@@ -3615,11 +3651,14 @@ class HostReviewAdmission:
     _CURRENT_AUTHORITY: HostReviewAdmission | None = None
 
     def __init__(self, *, reviewer_models_raw: str = "") -> None:
+        self._reviewer_models: tuple[str, ...]
         self._reviewer_models, self._reviewer_model_error = _configured_reviewer_models(
             reviewer_models_raw
         )
         if self._reviewer_model_error:
-            self._reviewer_models = _REVIEWER_MODELS  # nonempty invariant; start still denies
+            # 未配置/非法时模型链保持为空：start() 在索引任何 model 之前就按
+            # _reviewer_model_error 拒绝，这里不再回填内置模型链（P0：不写死）。
+            self._reviewer_models = ()
         self._runner: Any | None = None
         self._event_store: Any | None = None  # production receipt must be durable
         self._browser_capture: Callable[[], dict[str, Any]] | None = None
@@ -3648,6 +3687,29 @@ class HostReviewAdmission:
         self._attempts: OrderedDict[tuple[str, str, str, str], list[_AttemptEntry]] = (
             OrderedDict()
         )
+        # P1-2（外部独立复核）：start 时刻冻结准入策略 digest；mint/cache/consume/
+        # 联合批都要求与当前一致。策略漂移后旧 grant 不可消费（fail closed）。
+        self._policy_digest = self._compute_policy_digest()
+
+    def _policy_snapshot(self) -> dict[str, Any]:
+        """参与授权语义的策略面（只取影响"能否放行/放行给谁"的字段）。"""
+        return {
+            "reviewer_models": list(self._reviewer_models),
+            "reviewer_model_error": str(self._reviewer_model_error or ""),
+            "async_retry_max": int(_REVIEWER_ASYNC_RETRY_MAX),
+            "retry_min_remaining_s": float(_REVIEWER_RETRY_MIN_REMAINING_S),
+            "retry_max": int(_REVIEWER_RETRY_MAX),
+            "retry_sleep_cap_s": float(_REVIEWER_RETRY_SLEEP_CAP),
+            "retry_delays_s": [float(d) for d in _REVIEWER_RETRY_DELAYS],
+            "max_estimated_s": float(_REVIEWER_MAX_ESTIMATED_S),
+            "static_material_cap_chars": int(_REVIEWER_STATIC_MATERIAL_CAP_CHARS),
+            "wire_headroom": float(_REVIEWER_WIRE_HEADROOM),
+            "retryable_labels": sorted(_REVIEWER_RETRYABLE),
+        }
+
+    def _compute_policy_digest(self) -> str:
+        blob = json.dumps(self._policy_snapshot(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def attach_runner(self, runner: Any) -> None:
         self._runner = runner
@@ -4076,6 +4138,7 @@ class HostReviewAdmission:
             deadline_at=now + review_deadline,
             estimated_s=_review_estimate_seconds(task_chars),
             reviewer_model=self._reviewer_models[0],
+            policy_digest=self._policy_digest,
             previous_sha=previous_row.sha if previous_row is not None else "",
             previous_child_id=previous_row.child_id if previous_row is not None else "",
             content_fingerprint=push_extra.get("content_fingerprint", ""),
@@ -4428,11 +4491,35 @@ class HostReviewAdmission:
             self._records[child_id] = replace(row, attempts=reserved)
         # Continue after the model actually selected by the initial spawn,
         # not after the count of asynchronous retries (the two differ on 429).
-        try:
-            current_index = self._reviewer_models.index(row.reviewer_model)
-        except ValueError:
-            return None  # unknown model identity cannot authorize a new child
-        model = self._reviewer_models[min(current_index + 1, len(self._reviewer_models) - 1)]
+        if label == "reviewer_model_entitlement":
+            try:
+                current_index = self._reviewer_models.index(row.reviewer_model)
+            except ValueError:
+                return None  # unknown model identity cannot authorize a new child
+            # P1-3：只推进到下一个**不同的** operator-approved 模型；列表已到尾就
+            # fail closed（不再 clamp 回末位重试同一模型），并留下可核验的审计原因。
+            next_index = current_index + 1
+            if next_index >= len(self._reviewer_models):
+                self._audit_reviewer_unavailable(
+                    parent, row.kind, "reviewer_models_exhausted",
+                    f"current={row.reviewer_model}: no further operator-approved model",
+                    child_id=child_id,
+                )
+                return None
+            model = self._reviewer_models[next_index]
+        else:
+            # 429/超时等瞬时故障：列表里还有下一个就换下一个；已到链尾则同一
+            # model 有界重试（attempt 预占已生效，不会无限重试）。
+            if not str(row.reviewer_model or "").strip():
+                return None
+            try:
+                current_index = self._reviewer_models.index(row.reviewer_model)
+            except ValueError:
+                return None
+            if current_index + 1 < len(self._reviewer_models):
+                model = self._reviewer_models[current_index + 1]
+            else:
+                model = row.reviewer_model
         runner = self._runner
         if runner is None:  # 未挂 runner：与 start() 同口径，不 spawn、不记账
             return None
@@ -4509,6 +4596,17 @@ class HostReviewAdmission:
         with self._guard:
             source = self._records.get(cached)
             reviewed_model = source.reviewer_model if source and source.granted else ""
+            observed_model = source.reviewer_observed_model if source and source.granted else ""
+            # P1-1/P1-2：缓存复用的前提是来源 PASS 自身具备合法证据；缺证据
+            # 直接拒绝复用（fail closed），不签发一条注定无法消费的 grant。
+            if source is None or not source.granted:
+                return {"accepted": False, "reason": "review_cached_pass_missing"}
+            if not source.policy_digest or source.policy_digest != self._policy_digest:
+                return {"accepted": False, "reason": "review_policy_changed"}
+            if self._reviewer_model_denial(reviewed_model, observed_model):
+                return {"accepted": False, "reason": "reviewer_model_unattested"}
+            # P1-1/P1-2：缓存复用也必须带过来源 pass 的 policy digest 与
+            # Provider 观测 model；两者随后在 consume 处复检，缺失即不可消费。
             self._reclaim_records(parent, kind)
             self._records[reused_id] = _Frozen(
                 kind, parent, target, sha, child_id=reused_id, granted=True,
@@ -4518,6 +4616,8 @@ class HostReviewAdmission:
                 bound_unreviewed_tracked=(tier_counts or (0, 0))[0],
                 bound_unreviewed_untracked=(tier_counts or (0, 0))[1],
                 cached_pass=True, reused_from=cached, reviewer_model=reviewed_model,
+                reviewer_observed_model=observed_model,
+                policy_digest=self._policy_digest,
                 full_test_base=full_test_anchor[0] if kind == "full_test" else "",
                 full_test_first_push_ref=full_test_anchor[1] if kind == "full_test" else "",
             )
@@ -4707,9 +4807,27 @@ class HostReviewAdmission:
         try:
             child = ""
             slept = 0.0
-            for attempt in range(_REVIEWER_RETRY_MAX + 1):
-                last_failure = ""
-                model = self._reviewer_models[min(attempt, len(self._reviewer_models) - 1)]
+            last_failure = ""
+            model = ""
+            model_index = 0
+            attempt = 0
+            while True:
+                # P1-3：entitlement（1311/无权限）把 operator 列表走完就 fail
+                # closed，不得重试同一 model；429/超时属瞬时抖动，允许在同一
+                # model 上有界重试（总次数仍受 _REVIEWER_RETRY_MAX 约束）。
+                if model_index >= len(self._reviewer_models):
+                    self._audit_reviewer_unavailable(
+                        parent, kind, "reviewer_models_exhausted", last_failure,
+                    )
+                    return {
+                        "accepted": False,
+                        "reason": (
+                            "reviewer_models_exhausted: operator-approved reviewer "
+                            f"models exhausted (last={last_failure[:200] or 'n/a'})"
+                        ),
+                        "reviewer_failure": "reviewer_models_exhausted",
+                    }
+                model = self._reviewer_models[model_index]
                 try:
                     started = runner.start(
                         task, inherit=False, depth=0, max_rounds=1,
@@ -4756,6 +4874,27 @@ class HostReviewAdmission:
                     return failure
                 time.sleep(delay)
                 slept += delay
+                attempt += 1
+                if model_index + 1 < len(self._reviewer_models):
+                    # 列表里还有下一个 operator-approved 模型：换一个试（429 也
+                    # 一样——被限流的模型换下一个通常比原地重试恢复得更快）。
+                    model_index += 1
+                elif label == "reviewer_model_entitlement":
+                    # P1-3：链尾 + 无权限 ⇒ 不得重试同一 model，直接 fail closed。
+                    self._audit_reviewer_unavailable(
+                        parent, kind, "reviewer_models_exhausted",
+                        f"tail={model}: {last_failure[:200]}",
+                    )
+                    return {
+                        "accepted": False,
+                        "reason": (
+                            "reviewer_models_exhausted: operator-approved reviewer "
+                            f"models exhausted (last={last_failure[:200] or 'n/a'})"
+                        ),
+                        "reviewer_failure": "reviewer_models_exhausted",
+                    }
+                # 链尾 + 429/超时：瞬时故障，允许同一 model 有界重试
+                # （总次数仍受 _REVIEWER_RETRY_MAX 约束）。
         finally:
             current_session_id.reset(tok)
         if not child:
@@ -4815,16 +4954,31 @@ class HostReviewAdmission:
             },
         )
 
+    def _canceled_reviewer_outcome(
+        self, parent: str, child_id: str, frozen: _Frozen, live_child: str,
+    ) -> dict[str, Any]:
+        """A canceled reviewer cannot mint PASS, even if its model answered late."""
+        if live_child not in self._reviewer_fail_audited:
+            self._reviewer_fail_audited.add(live_child)
+            self._audit_reviewer_unavailable(
+                parent, frozen.kind, "reviewer_cancel_requested",
+                "Host reviewer child was canceled before qualification",
+                child_id=live_child,
+            )
+        self._settle_record(child_id, "UNAVAILABLE", "reviewer_cancel_requested")
+        return _unavailable_receipt(
+            child_id, frozen, reason="reviewer_cancel_requested",
+            detail="Reviewer was canceled; start a fresh independent review of the exact target",
+            extra={"reviewer_failure": "reviewer_cancel_requested"},
+        )
+
     def _failed_outcome(
         self, parent: str, child_id: str, frozen: _Frozen, live_child: str,
         state: dict[str, Any], remaining: float,
     ) -> dict[str, Any]:
-        """E2/E4: terminal-but-not-completed is a reviewer failure, not a verdict.
-
-        Classify it, audit it once per attempt, offer one bounded automatic
-        re-spawn, and otherwise report UNAVAILABLE. No permit is minted either
-        way, so this only changes what the caller is TOLD.
-        """
+        """E2/E4: terminal or canceled review is not a qualifying verdict."""
+        if state.get("cancel_requested"):
+            return self._canceled_reviewer_outcome(parent, child_id, frozen, live_child)
         failure_text = str(
             getattr(state.get("result"), "final_answer", "")
             or state.get("final_answer")
@@ -4865,6 +5019,38 @@ class HostReviewAdmission:
             return None
         return attested
 
+    @staticmethod
+    def _attested_observed_model(attested: dict[str, Any]) -> str:
+        """从 in-process 终态证明里读出 Provider 自报 model（多值并列视为不可核验）。"""
+        raw = attested.get("observed_model")
+        if not isinstance(raw, str):
+            return ""
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        unique = list(dict.fromkeys(parts))
+        return unique[0] if len(unique) == 1 else ""
+
+    @staticmethod
+    def _reviewer_model_denial(expected: str, observed: str) -> str:
+        """P1-1 fail-closed：缺失=reviewer_model_unattested；错配=reviewer_model_mismatch。"""
+        if not str(observed or "").strip():
+            return "reviewer_model_unattested"
+        if not _model_labels_match(expected, observed):
+            return "reviewer_model_mismatch"
+        return ""
+
+    def _consume_block_reason(self, row: _Frozen) -> str:
+        """P1-1/P1-2 消费前复检：策略 digest 与 reviewer 模型都必须仍成立。"""
+        if not row.policy_digest or row.policy_digest != self._policy_digest:
+            return "审核策略在冻结后已变化，旧资格不可消费（请重新 start）"
+        denial = self._reviewer_model_denial(
+            row.reviewer_model, row.reviewer_observed_model,
+        )
+        if denial == "reviewer_model_unattested":
+            return "reviewer 模型未经 Provider 响应核实，资格不可消费"
+        if denial:
+            return "reviewer 模型与 Provider 实际响应不一致，资格不可消费"
+        return ""
+
     def _mint_pass(
         self, parent: str, child_id: str, frozen: _Frozen,
         attested: dict[str, Any], answer: str, p2: int,
@@ -4874,6 +5060,14 @@ class HostReviewAdmission:
             previous = self._records.get(child_id)
             if previous is None or not _same_admission(previous, frozen):
                 return {"qualification": "DENIED", "reason": "review_changed_while_polling"}
+            # P1-2：策略在 start 后发生漂移 ⇒ 旧冻结记录不再具备签发资格。
+            if not previous.policy_digest or previous.policy_digest != self._policy_digest:
+                return {"qualification": "DENIED", "reason": "review_policy_changed"}
+            # P1-1：reviewer 模型必须由 Provider 响应自报并核对通过，缺失即拒绝。
+            observed_model = self._attested_observed_model(attested)
+            model_denial = self._reviewer_model_denial(frozen.reviewer_model, observed_model)
+            if model_denial:
+                return {"qualification": "DENIED", "reason": model_denial}
             audit_payload = {
                 "child_id": child_id, "parent_id": parent,
                 "generation": str(attested.get("generation") or ""),
@@ -4882,11 +5076,14 @@ class HostReviewAdmission:
                 "review_text_sha256": _digest(answer.encode("utf-8")),
                 "review_qualification_verified": True, "p0": 0, "p1": 0, "p2": p2,
                 "reviewer_model": frozen.reviewer_model,
+                "reviewer_observed_model": observed_model,
+                "policy_digest": self._policy_digest,
             }
             if not self._audit(parent, "review_admission_qualified", audit_payload):
                 return {"qualification": "DENIED", "reason": "review_receipt_not_durable"}
             self._records[child_id] = replace(
                 previous, granted=True, state="settled", findings="",
+                reviewer_observed_model=observed_model,
             )
             # EVO-20261101-9a6be8b1 E5: remember that this exact content (and
             # target) already passed, so an identical resubmission replays the
@@ -4945,11 +5142,11 @@ class HostReviewAdmission:
         if not ok:
             return {"qualification": "DENIED", "reason": reason}
         remaining = deadline_at - time.time()
-        if state.get("state") in {"running", "accepted"}:
+        if state.get("state") in {"running", "accepted"} and not state.get("cancel_requested"):
             if remaining > 0:
                 return self._pending_receipt(frozen, deadline_at, remaining)
             return self._deadline_outcome(parent, child_id, frozen, live_child, deadline_at)
-        if state.get("state") != "completed":
+        if state.get("state") != "completed" or state.get("cancel_requested"):
             return self._failed_outcome(parent, child_id, frozen, live_child, state, remaining)
         # A successful durable row alone is not authority: model-controlled
         # shell commands can touch same-user journal files. Demand the genuine
@@ -5004,12 +5201,18 @@ class HostReviewAdmission:
         self, parent: str, kind: str, target: str, sha: str,
         scope_paths: tuple[str, ...] = (), content_fingerprint: str = "",
     ) -> AdmissionDecision:
+        block_reason = ""
         with self._guard:
             for key, row in self._records.items():
                 if (
                     row.parent == parent and row.kind == kind and row.target == target
                     and row.sha == sha and row.granted and not row.consumed
                 ):
+                    # P1-1/P1-2：策略漂移或 reviewer 模型未经 Provider 核实 ⇒ 不可消费。
+                    blocked = self._consume_block_reason(row)
+                    if blocked:
+                        block_reason = blocked
+                        continue
                     # EVO-20261115-34ae7c99(A)：批记录只能被联合消费
                     # （_consume_joint_push_batches）。若放行此处，单批 PASS
                     # 就能授权整次 push——这正是 _resolve_scope 历史上
@@ -5028,6 +5231,10 @@ class HostReviewAdmission:
             #   * 远端移动仍会失败：base 参与指纹，重算出的指纹不同；
             #   * 越界漂移仍会失败：调用方已先做 out_scope_digest 比对；
             #   * 指纹为空 ⇒ 不放宽（fail-closed）。
+            # P1-2：被策略漂移/未核实 model 拦下的记录必须给出具体原因，
+            # 不能被下面的通用"无资格"文案吞掉（否则调用方无法区分该重审）。
+            if block_reason:
+                return self._deny(block_reason)
             if kind != "git_push" or not content_fingerprint:
                 return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
             for key, row in self._records.items():
@@ -5038,12 +5245,18 @@ class HostReviewAdmission:
                     and row.scope_paths == tuple(scope_paths)
                     and row.granted and not row.consumed
                 ):
+                    blocked = self._consume_block_reason(row)
+                    if blocked:
+                        block_reason = blocked
+                        continue
                     # 同上：批记录不享受单条指纹放宽——联合消费要求逐批
                     # sha 精确复算一致，纯 commit 容忍对批集合不适用。
                     if row.batch_plan_id:
                         continue
                     self._records[key] = replace(row, granted=True, consumed=True)
                     return _ALLOWED
+        if block_reason:
+            return self._deny(block_reason)
         return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
 
     def _derive_full_test_from_push(
@@ -5093,6 +5306,10 @@ class HostReviewAdmission:
                 # 绝不能作 full_test 资格的派生源（单批 PASS 铸不出全量资格）。
                 # 联合消费也只证明"并集覆盖过一次 push"，不等于整树受审。
                 and not row.batch_plan_id
+                # 外部复核 P1（2026-11-16）：派生源本身必须仍具备可消费证据
+                # （策略 digest 未漂移 + Provider 自报 model 与请求一致）。否则
+                # 一条旧策略 PASS 会被重新包装成当前策略下的派生 grant。
+                and not self._consume_block_reason(row)
             ]
             src = candidates[-1] if candidates else None
         if src is None:
@@ -5129,6 +5346,12 @@ class HostReviewAdmission:
                     "full_test", parent, target, sha, child_id=child,
                     created_at=time.time(), state="settled", granted=True,
                     scope="tree", derived_from=src.child_id,
+                    # P1-2：派生资格继承派生源那条 PASS 的证据（策略 digest 与
+                    # 观测 model 一并继承，不刷新成当前值）——源必须已在选源处
+                    # 通过 _consume_block_reason()（digest 与当前一致、model 匹配）。
+                    policy_digest=src.policy_digest,
+                    reviewer_model=src.reviewer_model,
+                    reviewer_observed_model=src.reviewer_observed_model,
                 )
                 self._records[child] = minted
                 self._audit(parent, "review_admission_derived_full_test", {
@@ -5176,7 +5399,7 @@ class HostReviewAdmission:
             str(derived["candidate_sha256"]), scope_paths=(), content_fingerprint="",
         )
 
-    def _diagnose_no_pending(self, parent: str, kind: str) -> str:
+    def _diagnose_no_pending(self, parent: str, kind: str, target: str = "") -> str:
         """EVO-20261106-141b29b9: 「无待消费资格」的 deny 诊断——指名维度.
 
         scopes 为空时唯一能拿到的事实是 records 里的行：用它们区分
@@ -5200,6 +5423,19 @@ class HostReviewAdmission:
                 "parent_mismatch: kind 匹配的待消费资格属于其他父会话"
                 f"（{','.join(others) or '?'}…）——PASS 资格不跨会话，"
                 "跨 run 消费须由发起会话自身执行"
+            )
+        # A PASS for another command/worktree is not a missing or empty delta.
+        # Tell the operator how to request a review for this exact target.
+        if (
+            target
+            and not any(r.target == target for r in parent_rows)
+            and any(r.granted and not r.consumed for r in parent_rows)
+        ):
+            return (
+                "target_mismatch: 本会话有未消费 PASS，但只覆盖其他命令或工作树；"
+                "请在当前 workdir 使用当前 command 重新"
+                " review_admission(action=start,kind=full_test)，"
+                "再用 action=status 核验 PASS。旧资格未被消费"
             )
         states = sorted({f"granted={int(r.granted)},consumed={int(r.consumed)},state={r.state}" for r in parent_rows})
         return (
@@ -5279,10 +5515,16 @@ class HostReviewAdmission:
         # PASS 永远消费不到（独立审查 P1，实测反例见 test_..._consumable）。
         # EVO-20261115-34ae7c99(A)：_pending_scopes 排除批记录（单批永不单独
         # 授权 push）；批记录走循环后的联合覆盖消费。两者都空才早退。
-        scopes = self._pending_scopes(parent, kind)
-        has_batches = (
-            kind == "git_push" and self._has_pending_push_batches(parent)
+        # Only replay a frozen full_test anchor if its exact canonical
+        # worktree+command target matches. Unrelated stale grants must not
+        # cause a misleading full_test_no_delta for this command.
+        full_test_target, invalid = _full_test_target_for_command(workdir, command) if kind == "full_test" else ("", "")
+        if invalid:
+            return self._deny(invalid)
+        scopes = self._pending_scopes(
+            parent, kind, **({"target": full_test_target} if kind == "full_test" else {})
         )
+        has_batches = kind == "git_push" and self._has_pending_push_batches(parent)
         if not scopes and not has_batches:
             # EVO-20261102-677f6c44：无待消费 full_test 资格但处于 no-delta 状态
             # （全部已推送+树干净）时，尝试由 git_push PASS 派生一次性资格并消费。
@@ -5293,7 +5535,8 @@ class HostReviewAdmission:
             # EVO-20261106-141b29b9: 指名失配维度（无记录/parent/未签发/已消费）
             return self._deny(
                 "不存在覆盖当前产物、目标及父会话的有效独立审查资格",
-                hint=(hint + "\n" if hint else "") + self._diagnose_no_pending(parent, kind),
+                hint=(hint + "\n" if hint else "")
+                + self._diagnose_no_pending(parent, kind, full_test_target),
             )
         binding_error = ""
         drift_error = ""
@@ -5381,7 +5624,7 @@ class HostReviewAdmission:
         )
 
     def _pending_scopes(
-        self, parent: str, kind: str,
+        self, parent: str, kind: str, *, target: str = "",
     ) -> list[tuple[tuple[str, ...], str, tuple[int, int], str, str]]:
         """未消费资格的 scope、越界绑定和 full_test 冻结基准，保序。
 
@@ -5402,6 +5645,8 @@ class HostReviewAdmission:
                 # 单批 scope 重放会在 _consume 精确命中自己，等于单批 PASS
                 # 授权整次 push。批资格只走 _consume_joint_push_batches。
                 if row.batch_plan_id:
+                    continue
+                if target and row.target != target:
                     continue
                 item = (
                     row.scope_paths,
@@ -5430,16 +5675,13 @@ class HostReviewAdmission:
     ) -> AdmissionDecision | None:
         """EVO-20261115-34ae7c99(A)（人工批准 2026-11-15，exec_override）：
         git_push 多批**联合覆盖**消费。
-
         设计不变量（与 _resolve_scope 历史拒绝理由同一根源）：窄 scope 的单条
         PASS 永不授权整次 push。分批协议不放宽这一点——只有同时满足：
-
           1. 同 parent、同 target（同一 push 命令绑定）；
           2. 每一批按自身 scope+冻结两级计数复算的 SHA 与冻结值**精确一致**
              （push 基点/头/批内内容/切片外未审计数任一漂移即失效）；
           3. 有效批的 paths 并集覆盖**当前全量增量的全部段落**
              （committed/working/untracked 段；新文件必然造成缺口或批 sha 漂移）；
-
         才放行并**一次性消费该 target 全部待决批行**；任一批失效、漂移或覆盖
         有缺口 ⇒ 整体拒绝且不消费任何批（fail-closed）。返回 None 表示无适用
         批记录，调用方回落既有拒绝路径。
@@ -5458,12 +5700,15 @@ class HostReviewAdmission:
         if not parent:
             return None
         with self._guard:
-            rows = [
-                row for row in self._records.values()
-                if row.parent == parent and row.kind == "git_push"
-                and row.granted and not row.consumed and row.batch_plan_id
-            ]
+            pairs = [(row, self._consume_block_reason(row))
+                     for row in self._records.values()
+                     if row.parent == parent and row.kind == "git_push"
+                     and row.granted and not row.consumed and row.batch_plan_id]
+            rows = [row for row, blocked in pairs if not blocked]
+            blocked_reason = next((b for _, b in reversed(pairs) if b), "")
         if not rows:
+            if blocked_reason:
+                return self._deny(blocked_reason)
             return None
         try:
             _sha, target_full, _text, _base, _extra, sections_full = self._target(

@@ -17,6 +17,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,14 @@ from llm_loop.tools.review_gate import ARTICLE_REVIEW_OBLIGATION
 from llm_loop.tools.safety import CatastrophicGuard
 
 logger = logging.getLogger(__name__)
+
+
+# A normal parent answer may clean up ordinary asynchronous side effects,
+# but must not cancel a trusted, no-tool Host Reviewer. Explicit Stop never
+# sets this flag. Scoped to the caller thread, not model/tool arguments.
+_NORMAL_FINAL_PRESERVE_HOST_REVIEW: ContextVar[bool] = ContextVar(
+    "lfl_normal_final_preserve_host_review", default=False,
+)
 
 # Machine validators present in the current built-in full-schema inventory and
 # required for a truthful first-call contract. Keep this list evidence-based:
@@ -693,6 +702,14 @@ class ToolRegistry:
                 self._active_exec[session_id] = kept
             else:
                 self._active_exec.pop(session_id, None)
+
+    def cancel_normal_final_obligations(self, session_id: str) -> int:
+        """Normal-answer cleanup: cancel side effects, preserve tool-less Host review."""
+        token = _NORMAL_FINAL_PRESERVE_HOST_REVIEW.set(True)
+        try:
+            return self.cancel_session(session_id)
+        finally:
+            _NORMAL_FINAL_PRESERVE_HOST_REVIEW.reset(token)
 
     def cancel_session(self, session_id: str, *, run_generation: str = "") -> int:
         """尽力取消指定会话/运行代次正在执行的工具，不触碰其他 owner。

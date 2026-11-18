@@ -23,6 +23,9 @@ from types import SimpleNamespace
 
 from llm_loop.tools.review_host_admission import HostReviewAdmission
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 class FakeChildRunner:
     def __init__(self) -> None:
@@ -39,7 +42,8 @@ class FakeChildRunner:
         assert kwargs["inherit"] is False
         assert kwargs["max_rounds"] == 1
         assert kwargs["review_isolated"] is True
-        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": kwargs["model"]}
+        self.model = kwargs.get("model", "")
+        return {"accepted": True, "child_id": "child-review-1", "state": "running", "model": self.model}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
         if self.state != "completed" or parent_id != self.parent:
@@ -49,6 +53,8 @@ class FakeChildRunner:
             "result_id": "result-verified", "generation": "gen-1",
             "review_isolated": True,
             "final_answer": self.answer,
+            # P1-1：provider 侧自报 model 必须由 runner 回传，Host 才能 mint。
+            "observed_model": self.model,
         }
 
     def result_current(self, child_id: str, wait_seconds=0):
@@ -96,7 +102,7 @@ def _seed_bare_remote(repo: Path, tmp_path: Path, sha: str) -> Path:
 
 def _mint_push_pass(repo: Path) -> tuple[HostReviewAdmission, dict]:
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo),
                         command="git push origin main")
@@ -164,7 +170,7 @@ def test_reviewer_material_still_shows_workspace_state(tmp_path: Path) -> None:
     (repo / "docs" / "draft.md").write_text("草稿内容必须仍对审查者可见\n")
     (repo / "src_change.py").write_text("value = 1  # 本地未提交修改\n")
     runner = FakeChildRunner()
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "git_push", workdir=str(repo),
                         command="git push origin main")
@@ -180,7 +186,7 @@ def test_full_test_identity_still_binds_workspace_state(tmp_path: Path) -> None:
                           capture_output=True, text=True, check=True).stdout.strip()
     _seed_bare_remote(repo, tmp_path, base)
     _commit(repo, "pending.py", "value = 1\n", "unpushed")  # 未推送 delta → 材料非空
-    gate = HostReviewAdmission()
+    gate = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     cmd = "pytest -q"
     sha_before, _, _ = (
         gate._target("full_test", str(repo), cmd, "", None)[:3]
