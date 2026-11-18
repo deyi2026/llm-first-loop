@@ -266,6 +266,7 @@ def test_operator_issuer_atomic_publish_and_no_overwrite(tmp_path, monkeypatch, 
     private_dir.mkdir(mode=0o700)
     output_dir = tmp_path / "receipts"
     output_dir.mkdir(mode=0o750)
+    web_group_gid = output_dir.lstat().st_gid
     keygen(private_dir, expected_uid=os.geteuid())
     review, r9, integration = receipts()
     raw_log = b"pytest summary\nci_gate all tests PASS\n"
@@ -313,7 +314,7 @@ def test_operator_issuer_atomic_publish_and_no_overwrite(tmp_path, monkeypatch, 
                   private_dir=private_dir, output_dir=output_dir,
                   audit_dir=tmp_path, expected_main=MAIN, expected_candidate=CANDIDATE,
                   expected_uid=os.geteuid(), web_uid=os.geteuid() + 1,
-                  web_group_gid=os.getgid())
+                  web_group_gid=web_group_gid)
     result = issue(**params)
     assert result["decision"] == "SIGNED"
     output = Path(result["snapshot_path"])
@@ -327,3 +328,45 @@ def test_operator_issuer_atomic_publish_and_no_overwrite(tmp_path, monkeypatch, 
     with pytest.raises(FileExistsError):
         issue(**params)
     assert len(list(private_dir.glob(".snapshot-pending-*"))) == 0
+
+
+def test_operator_issuer_rejects_wrong_output_dir_group(tmp_path):
+    """output_dir st_gid must match the claimed web group; mismatch is fail-closed."""
+    from premerge_host_snapshot_issuer import IssuerHoldError, issue
+
+    output_dir = tmp_path / "receipts"
+    output_dir.mkdir(mode=0o750)
+    actual_gid = output_dir.lstat().st_gid
+    params = dict(pr=53, run_id=123, lane_id=LANE,
+                  worktree=tmp_path / "candidate",
+                  review_path=tmp_path / "review.json",
+                  r9_path=tmp_path / "r9.json",
+                  integration_path=tmp_path / "integration.json",
+                  private_dir=tmp_path / "private", output_dir=output_dir,
+                  audit_dir=tmp_path, expected_main=MAIN, expected_candidate=CANDIDATE,
+                  expected_uid=os.geteuid(), web_uid=os.geteuid() + 1,
+                  web_group_gid=actual_gid + 1)
+    with pytest.raises(IssuerHoldError, match="output_dir_not_isolated"):
+        issue(**params)
+
+
+def test_operator_issuer_rejects_permissive_output_dir(tmp_path):
+    """Group-writable or other-readable output_dir must be rejected regardless of gid."""
+    from premerge_host_snapshot_issuer import IssuerHoldError, issue
+
+    for mode in (0o770, 0o755, 0o757):
+        output_dir = tmp_path / f"receipts_{oct(mode)}"
+        output_dir.mkdir()
+        output_dir.chmod(mode)
+        actual_gid = output_dir.lstat().st_gid
+        params = dict(pr=53, run_id=123, lane_id=LANE,
+                      worktree=tmp_path / "candidate",
+                      review_path=tmp_path / "review.json",
+                      r9_path=tmp_path / "r9.json",
+                      integration_path=tmp_path / "integration.json",
+                      private_dir=tmp_path / "private", output_dir=output_dir,
+                      audit_dir=tmp_path, expected_main=MAIN, expected_candidate=CANDIDATE,
+                      expected_uid=os.geteuid(), web_uid=os.geteuid() + 1,
+                      web_group_gid=actual_gid)
+        with pytest.raises(IssuerHoldError, match="output_dir_not_isolated"):
+            issue(**params)
