@@ -1,0 +1,56 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261118-host-gate-upgrade",
+  "summary": "Isolated operator-reviewed Host premerge trust-boundary hardening, separated from PR #61 B2/B3 to avoid a self-referential gate_version_untrusted check.",
+  "components": [
+    {
+      "component_id": "host-gate-trusted-upgrade",
+      "paths": [
+        "scripts/premerge_host.py",
+        "tests/unit/test_premerge_gate_host.py",
+        "docs/governance/submissions/20261118-host-gate-upgrade.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host premerge verifier and protected-main trusted gate closure",
+      "disposition": "Reuse protected-main Host verifier; verify all referenced CI scripts are in its trusted gate closure and bind actual executed verifier bytes to protected main. This patch never signs its own approval or relaxes the candidate/main gate blob equality.",
+      "evidence": [
+        "PR #61 original candidate bf479eccee64a14e140e69a156c9efe9cdb95e94 contains the exact +80-line verifier and +105-line negative tests, extracted as a standalone patch against protected main f86a7daf9467097994c615e4ed489ccd676753d3.",
+        "Original PR #61 owner released exactly these two paths via managed lane_update CAS v5 to v6; isolated lane-2e1485ad now owns them and this manifest.",
+        "Pre-implementation isolated archive preview on current main: 97 focused gate tests passed, Ruff passed, and _verify_gate_closure passed against actual main blobs. This preview is not independent Reviewer, full R9, or signed Host approval."
+      ],
+      "verification_level": "Isolated local focused tests and mechanical manifest coverage; exact candidate independent Reviewer, original complete R9, remote CI and independent Host operator gate-upgrade approval are required before protected main integration.",
+      "model_evidence_veto_recovery_exit": "Hold on Reviewer P0/P1, any R9/CI failure, missing operator approval, untrusted execution root, dynamic script dependency, mismatched trusted gate blob, stale main or conflicting Lane. Do not use this candidate to self-approve its own gate upgrade.",
+      "rollback_route": "Only a separately reviewed protected GitHub revert; preserve Host audit, signed evidence and original PR #61 branch.",
+      "declaration_id": "host-gate-trusted-upgrade"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-gate-trusted-upgrade",
+      "g1": {
+        "necessity": "Close P1 trust gaps in Host premerge verification: unpinned direct CI script dependencies and unverifiable executed gate code identity."
+      },
+      "g2": {
+        "authority_owner": "Independent Host operator and protected GitHub main own trust upgrades and signing; existing Host verifier and Lane/Queue CAS remain sole execution authorities.",
+        "relationship": "reuse",
+        "non_duplication": "Extend the existing premerge_host.py verifier and its tests, not a new signer, self-upgrading trust list, alternate gate, or bypass."
+      },
+      "g3": {
+        "model_evidence": [
+          "Original PR #61 precise +80/+105 gate patch isolated on main f86a7daf; 97 focused gate tests and Ruff passed in an independent /tmp preview.",
+          "Independent Reviewer PASS P0/P1=0 for the final exact commit is not yet available; operator trust upgrade approval and signed receipts are not yet issued."
+        ],
+        "recovery_or_reason": "Reject dynamic or unpinned scripts, non-clean or stale Host execution roots, tampered blobs, missing trusted operator authorization, or any incomplete Reviewer/R9/CI receipt; retain HOLD rather than bypass."
+      },
+      "g4": {
+        "rollback": "Protected revert with preserved evidence; never overwrite or disclose the Host private key or downgrade the current verifier.",
+        "verification": [
+          "A.5 exact changed-path coverage and changed-file Ruff/Pyright.",
+          "Independent Reviewer PASS P0/P1=0 on exact candidate before original complete R9 exit 0.",
+          "Managed PR and exact SHA remote CI, followed by independent Host operator gate-upgrade approval; do not invoke the current self-comparing gate to authorize its own code replacement.",
+          "Protected main merge and main push CI, then original PR #61 rebase and B2/B3 real LLM A/B acceptance before any unified deployment."
+        ]
+      }
+    }
+  ]
+}
