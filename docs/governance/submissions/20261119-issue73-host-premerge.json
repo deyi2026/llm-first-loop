@@ -1,0 +1,114 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261119-issue73-host-premerge",
+  "summary": "Issue #73 Host 预合并治理链（Host App required status check lfl-host-premerge）的 A.5 补交 manifest：精确覆盖 origin/main..fb57744 全部 6 个变更代码/测试文件与本 manifest；控制边界=Host App 独立签发 scoped token、check-run 精确 PR/base/head/tested-merge 身份绑定、fail-closed live recheck、root-owned verifier 签名快照。证据全部来自宿主回执/独立 reviewer 回执/远端 CI 实测；successor SHA（本 manifest 提交后）的独立 Reviewer、完整 R9 与受管 push 门禁待跑，不复用旧 SHA 证据。",
+  "components": [
+    {
+      "component_id": "host-premerge-check-publisher",
+      "paths": ["scripts/host_premerge_check_publisher.py"],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "add",
+      "declaration_id": "decl-host-premerge-authority",
+      "evidence": [
+        "新增 Host 侧 check-run publisher：隔离引导自 root-owned verifier（33c9a38 修复 Python -I -S 导入 P1）、接受已核验独立 reviewer 模型标签（3f34844）、check-run external_id 收敛到 GitHub 64 字符上限（fb57744 修复复审 P1，见 data/review_admission/subagent_722849b1a131-git_push.md）。"
+      ],
+      "verification_level": "targeted_regression_132_passed_exit0__ruff_all_pass__canonical_pyright_ratchet_pass_on_fb57744__reviewer_R9_push_pending_on_successor_sha",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——本组件不采信任何模型自证，仅采信宿主回执/独立 reviewer/远端 CI。recovery：见声明 g3.recovery_or_reason。exit：分支保护规则未启用；禁用 lfl-host-premerge required check 并 revert 本组件提交即完全退出。",
+      "rollback_route": "git revert 该组件所在提交；GitHub 侧删除或禁用 lfl-host-premerge required status check（当前无分支保护规则绑定该 check，revert 后 main 不受影响）。"
+    },
+    {
+      "component_id": "premerge-host-gate",
+      "paths": ["scripts/premerge_host.py"],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-host-premerge-authority",
+      "evidence": [
+        "Host 预合并闸编排：admin 保护强制 + fail-closed live recheck（d9db10c）、Host publish 时刻钉死完整 required check set（651703c）、scoped Host App token 从 FD-bound signer key 签发（47563a6）。"
+      ],
+      "verification_level": "targeted_regression_132_passed_exit0__ruff_all_pass__canonical_pyright_ratchet_pass_on_fb57744__reviewer_R9_push_pending_on_successor_sha",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——闸判定全部机器可验（精确 SHA/queue/PR 绑定 + fail-closed）。recovery：见声明 g3.recovery_or_reason。exit：同 publisher 组件。",
+      "rollback_route": "git revert 该组件所在提交；fail-closed 语义保证 revert 后门禁默认拒绝而非放行。"
+    },
+    {
+      "component_id": "premerge-host-snapshot-issuer",
+      "paths": ["scripts/premerge_host_snapshot_issuer.py"],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-host-premerge-authority",
+      "evidence": [
+        "Host 签名快照签发器：从 root-owned verifier 引导隔离 Host publisher（33c9a38，修复 2 文件 +48，当时 109 项定向测试与 Ruff/Pyright 独立核验通过）；5d38ff 轮曾取得 Reviewer PASS 与原版 R9 exit0（用户核实，SHA 绑定，不适用于 successor）。"
+      ],
+      "verification_level": "targeted_regression_132_passed_exit0__ruff_all_pass__canonical_pyright_ratchet_pass_on_fb57744__reviewer_R9_push_pending_on_successor_sha",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——快照由 root-owned verifier 签名，模型无法自证或伪造。recovery：见声明 g3.recovery_or_reason。exit：同 publisher 组件。",
+      "rollback_route": "git revert 该组件所在提交；已签发快照因含 tested-merge SHA 绑定而天然失效。"
+    },
+    {
+      "component_id": "host-premerge-tests",
+      "paths": [
+        "tests/unit/test_host_premerge_check_publisher.py",
+        "tests/unit/test_premerge_gate_host.py",
+        "tests/unit/test_premerge_host_snapshot_issuer.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "evidence": [
+        "覆盖上述三个控制组件的定向测试集合；2026-11-19T07:44 宿主回执：三文件合计 132 passed / 11.09s / exit 0（fb57744 树，venv Python 3.13.13，PYTHONPATH 前置本树 src）。"
+      ],
+      "verification_level": "targeted_regression_132_passed_exit0_on_fb57744",
+      "model_evidence_veto_recovery_exit": "不适用（测试代码，非控制机器）。",
+      "rollback_route": "随对应控制组件一并 revert。"
+    },
+    {
+      "component_id": "a5-manifest-self",
+      "paths": ["docs/governance/submissions/20261119-issue73-host-premerge.json"],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "A.5 CI 门禁（远端 run 44351638756 FAIL：expected exactly one changed architecture-submission manifest; found 0）要求补交的唯一变更 manifest；覆盖 origin/main...HEAD 全部 7 个变更路径，与 scripts/check_architecture_submission.py 的精确覆盖语义一致。"
+      ],
+      "verification_level": "staged_check_plus_post_commit_strict_pass_required",
+      "model_evidence_veto_recovery_exit": "不适用（治理文档）。",
+      "rollback_route": "revert 本 manifest 提交即回到 A.5 FAIL 状态；不影响代码行为。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-host-premerge-authority",
+      "g1": {
+        "necessity": "Issue #73 前的预合并证据依赖会话侧自报，缺少 Host 权威侧 required status check：未签名、未绑定 PR/base/head/tested-merge 的 check-run 可伪造合并绿态。需要 Host App 独立签发、fail-closed、机器可验的 required check（lfl-host-premerge）作为受保护合并的权威前置。"
+      },
+      "g2": {
+        "authority_owner": "Host 宿主侧：root-owned verifier 签发 scoped Host App token，是 lfl-host-premerge check 的唯一签发身份；任何模型/会话身份均不是该 authority。",
+        "relationship": "new_authority",
+        "non_duplication": "不与仓库侧 CI workflow、web publish 闸、lane 机检重复：lfl-host-premerge 只消费 Host 签名 premerge 快照（精确 PR/base/head/tested-merge 绑定），本地 R9 与仓库 CI 均无法产出该签名；required check set 由 Host publish 时刻钉死，不存在第二套 required check 管理入口。"
+      },
+      "g3": {
+        "model_evidence": [
+          "独立 Rule-28 审查链（GLM-5.3-flash 只读 reviewer）：5d38ff 轮 Reviewer PASS 且原版完整 R9 exit0（用户核实；SHA 绑定，对 successor 不复用）；33c9a38 轮独立核验 diff+109 项定向测试+Ruff/Pyright（协调方核实）；3f34844 复审 REVISE P1=1（check-run external_id 超 GitHub 64 字符上限，data/review_admission/subagent_722849b1a131-git_push.md），该 P1 已由 fb57744 提交修复。",
+          "远端 CI 实测（fb57744，用户 GitHub 核实）：required check run 44351638848 SUCCESS；privacy run 44351638994 SUCCESS；A.5 run 44351638756 FAIL（缺本 manifest）——本提交即修复项。",
+          "定向回归（fb57744，宿主回执 2026-11-19T07:44）：三个测试文件合计 132 passed，exit 0。",
+          "静态诊断（fb57744，canonical ratchet：ledger b7ed6806d661，pyright 钉版 1.1.411）：Ruff 6 文件 0 违规；Pyright historical=45 / current=8 / new=0 / changed_file_diagnostics=0 → PASS。",
+          "successor SHA（manifest 提交后）：独立 Reviewer PASS P0/P1=0、原版完整 R9 exit0、受管 git push、PR 远端 CI 全绿、App 真实正负探针——均待跑且不复用旧 SHA 证据。"
+        ],
+        "recovery_or_reason": "任一证据被否决时的恢复路径：revert 对应组件提交并禁用 lfl-host-premerge required check（保护规则未启用，main 不受影响）；如需重建，由 root-owned verifier 重新签发快照后重跑 Reviewer/R9。fail-closed 语义保证证据缺失或签名不匹配时门禁拒绝而非放行。"
+      },
+      "g4": {
+        "rollback": "分支提交链 22e0459..HEAD 线性可逐提交 revert；GitHub 侧删除/禁用 lfl-host-premerge required status check 即移除 authority（当前无保护规则绑定，回滚零风险触及 main）。保护规则按纪律仅在真实正负探针通过后启用，当前未启用。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base origin/main --head HEAD 严格 PASS（本 manifest 提交后必跑）",
+          "定向回归 132 tests exit0（fb57744 已验；successor SHA 重跑）",
+          "Ruff/Pyright canonical ratchet PASS（fb57744 已验；successor SHA 重跑）",
+          "独立 Rule-28 Reviewer PASS 且 P0/P1=0（successor SHA，待跑）",
+          "原版完整 R9：bash scripts/ci_gate.sh exit0（successor SHA，待跑，不复用旧 SHA）",
+          "受管 git push（精确命令+workdir）与 PR 远端 CI 全绿（待跑）",
+          "App 真实正负探针（正：真实签发快照后 check-run 送达并绑定精确身份；负：未签名/SHA 不匹配的 check-run 被 fail-closed 拒绝）全部通过后才启用分支保护规则"
+        ]
+      }
+    }
+  ]
+}
