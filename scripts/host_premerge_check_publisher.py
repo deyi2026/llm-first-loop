@@ -26,6 +26,33 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Python -I -S deliberately omits the script directory from sys.path. The
+# Host publisher must import its frozen, root-owned sibling verifier instead
+# of a candidate worktree or a caller-controlled PYTHONPATH module.
+if sys.flags.isolated:
+    _bin = Path("/Library/Application Support/LFL-HostIssuer/bin")
+    try:
+        _directory = _bin.lstat()
+        _publisher = (_bin / "host_premerge_check_publisher.py").lstat()
+        _verifier = (_bin / "premerge_host.py").lstat()
+        _trusted = (
+            stat.S_ISDIR(_directory.st_mode)
+            and _directory.st_uid == 0
+            and (_directory.st_mode & 0o022) == 0
+            and all(
+                stat.S_ISREG(entry.st_mode)
+                and entry.st_uid == 0
+                and (entry.st_mode & 0o022) == 0
+                for entry in (_publisher, _verifier)
+            )
+        )
+    except OSError:
+        _trusted = False
+    if not _trusted:
+        print(json.dumps({"decision": "HOLD", "reason": "host_check_install_untrusted", "check_published": False}))
+        raise SystemExit(1)
+    sys.path.insert(0, str(_bin))
+
 import premerge_host
 from premerge_host import (
     _HOST_CHECK_CONTEXT,

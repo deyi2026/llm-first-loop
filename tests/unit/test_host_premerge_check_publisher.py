@@ -247,6 +247,27 @@ def test_web_uid_cannot_run_host_publisher_even_with_apply(tmp_path):
     assert "PUBLISHED" not in proc.stdout
 
 
+def test_isolated_python_never_imports_verifier_from_untrusted_worktree():
+    import json
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "host_premerge_check_publisher.py"
+    proc = subprocess.run(
+        [sys.executable, "-I", "-S", str(script), "--help"],
+        capture_output=True, text=True, timeout=10, env={},
+    )
+    assert "ModuleNotFoundError" not in proc.stderr
+    if proc.returncode == 0:
+        assert "--host-snapshot" in proc.stdout
+    else:
+        assert proc.returncode == 1
+        assert json.loads(proc.stdout) == {
+            "decision": "HOLD", "reason": "host_check_install_untrusted",
+            "check_published": False,
+        }
+
+
 def test_ci_required_check_removed_after_host_preflight_blocks_publish(facts):
     client = facts[0]
     original_get = client.get
