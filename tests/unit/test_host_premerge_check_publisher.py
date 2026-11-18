@@ -14,7 +14,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from datetime import UTC
 
-from host_premerge_check_publisher import publish_verified
+from host_premerge_check_publisher import (
+    _external_id,
+    _fingerprint,
+    publish_verified,
+)
 from premerge_host import HostHoldError, evaluate_host
 
 _spec = importlib.util.spec_from_file_location(
@@ -78,8 +82,20 @@ def test_real_host_app_publishes_only_tested_merge_sha(facts):
     assert repo == "o/r" and token.startswith("host-app-token")
     assert body["name"] == "lfl-host-premerge"
     assert body["head_sha"] == MERGE != CANDIDATE
-    assert body["external_id"].startswith(f"lfl-host:{PR_NUMBER}:{MAIN}:{CANDIDATE}:{MERGE}:")
+    _, envelope = facts
+    assert body["external_id"] == _external_id(
+        PR_NUMBER, CANDIDATE, MERGE, _fingerprint(envelope),
+    )
+    assert len(body["external_id"]) <= 64
     assert "signed Host snapshot SHA-256" in body["output"]["summary"]
+
+
+def test_external_id_stays_within_github_64_char_bound():
+    worst = _external_id(9999999, "f" * 40, "a" * 40, "0" * 64)
+    assert len(worst) <= 64
+    assert worst == "lfl-host:9999999:ffffffff:aaaaaaaa:0000000000000000"
+    # Identical inputs must reproduce an identical reference (idempotency).
+    assert worst == _external_id(9999999, "f" * 40, "a" * 40, "0" * 64)
 
 
 def test_missing_separate_host_token_cannot_publish(facts):

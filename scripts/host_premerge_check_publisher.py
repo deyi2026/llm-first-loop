@@ -202,6 +202,18 @@ def _fingerprint(envelope: dict) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _external_id(
+    pr_number: int, candidate: str, tested_merge: str, digest: str
+) -> str:
+    """Compact deterministic check-run reference within the 64-char bound.
+
+    GitHub check-run external_id must stay short; the full PR/base/head/
+    merge/digest identity travels in the check-run output.summary instead,
+    so this field carries only bounded fragments of the same inputs.
+    """
+    return f"lfl-host:{pr_number}:{candidate[:8]}:{tested_merge[:8]}:{digest[:16]}"
+
+
 def _post_check(repo: str, token: str, body: dict) -> dict:
     _require(bool(token) and len(token) >= 20, "host_check_token_unavailable")
     raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
@@ -244,7 +256,7 @@ def publish_verified(
     )
     tested_merge = verdict["tested_merge_sha"]
     digest = _fingerprint(envelope)
-    external_id = f"lfl-host:{pr_number}:{main}:{candidate}:{tested_merge}:{digest}"
+    external_id = _external_id(pr_number, candidate, tested_merge, digest)
     if apply:
         _require(live_state is not None, "host_live_state_unavailable")
         assert live_state is not None
