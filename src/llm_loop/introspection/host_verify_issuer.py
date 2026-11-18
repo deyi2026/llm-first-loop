@@ -52,7 +52,15 @@ class _FrozenReview:
     created: float
 
 
-def _git(cwd: Path, *args: str) -> str:
+_GIT_OUTPUT_LIMIT = 100_000
+_FROZEN_DIFF_LIMIT = 256_000
+
+
+def _git(
+    cwd: Path, *args: str,
+    output_limit: int = _GIT_OUTPUT_LIMIT,
+    too_large_code: str = "git_state_unavailable",
+) -> str:
     try:
         p = subprocess.run(
             ["git", "-C", str(cwd), *args], capture_output=True, text=True,
@@ -60,9 +68,20 @@ def _git(cwd: Path, *args: str) -> str:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HostVerifyError("git_state_unavailable") from exc
-    if p.returncode or len(p.stdout) > 100_000:
+    if p.returncode:
         raise HostVerifyError("git_state_unavailable")
+    if len(p.stdout) > output_limit:
+        raise HostVerifyError(too_large_code)
     return p.stdout.strip()
+
+
+def _has_git_binary_diff_marker(diff: str) -> bool:
+    """Recognize Git's unprefixed metadata, not quoted strings in source code."""
+    return any(
+        line == "GIT binary patch"
+        or (line.startswith("Binary files ") and line.endswith(" differ"))
+        for line in diff.splitlines()
+    )
 
 
 def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -155,8 +174,12 @@ class HostVerifyAuthority:
         if any(sensitive_path_reason(name) for name in changed.splitlines()):
             raise HostVerifyError("review_sensitive_path")
         # Freeze the exact committed patch, not mutable worktree contents.
-        diff = _git(worktree, "diff", "--no-ext-diff", "--no-color", base, head)
-        if (not diff or "GIT binary patch" in diff or "Binary files " in diff
+        diff = _git(
+            worktree, "diff", "--no-ext-diff", "--no-color", base, head,
+            output_limit=_FROZEN_DIFF_LIMIT,
+            too_large_code="review_diff_too_large",
+        )
+        if (not diff or _has_git_binary_diff_marker(diff)
                 or has_strong_secret(diff)):
             raise HostVerifyError("review_diff_unavailable_or_sensitive")
         return lane, changed, diff

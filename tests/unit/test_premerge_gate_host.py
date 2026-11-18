@@ -636,7 +636,9 @@ def test_v19_p1_new_direct_ci_script_outside_closure_holds(fixture):
         _verify_gate_closure(client, MAIN)
 
 
-def test_v19_p1_host_executed_root_sha_and_blob_must_match(tmp_path: Path):
+def test_v19_p1_host_executed_root_sha_and_blob_must_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
     from premerge_host import _verify_host_execution
 
     root = tmp_path / "clean-main"
@@ -663,7 +665,20 @@ def test_v19_p1_host_executed_root_sha_and_blob_must_match(tmp_path: Path):
             return _blob_sha(data), data
 
     client = TrustedClient()
-    _verify_host_execution(client, main, execution_root=root)
+    with monkeypatch.context() as env:
+        # Caller-controlled Git environment must never redirect Host identity.
+        env.setenv("GIT_DIR", str(root / "invalid-gitdir"))
+        env.setenv("GIT_WORK_TREE", str(root / "invalid-worktree"))
+        env.setenv("GIT_INDEX_FILE", str(root / "invalid-index"))
+        _verify_host_execution(client, main, execution_root=root)
+    subprocess.run(["git", "-C", str(root), "config", "status.showUntrackedFiles", "no"],
+                   check=True)
+    (root / "untracked.txt").write_text("must not be hidden\n")
+    with pytest.raises(HostHoldError, match="gate_execution_root_untrusted"):
+        _verify_host_execution(client, main, execution_root=root)
+    (root / "untracked.txt").unlink()
+    subprocess.run(["git", "-C", str(root), "config", "--unset", "status.showUntrackedFiles"],
+                   check=True)
     (root / "README.md").write_text("dirty\n")
     with pytest.raises(HostHoldError, match="gate_execution_root_untrusted"):
         _verify_host_execution(client, main, execution_root=root)
@@ -710,5 +725,33 @@ def test_v19_p2_case_variant_dynamic_script_reference_holds(fixture):
 
     client = fixture[0]
     client.blobs["scripts/ci_gate.sh", MAIN] = b'"$PY" "Scripts/${TARGET}.py"\n'
+    with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
+        _verify_gate_closure(client, MAIN)
+
+
+def test_v19_p2_mixed_case_dynamic_reference_cannot_hide_after_literal(fixture):
+    from premerge_host import _verify_gate_closure
+
+    client = fixture[0]
+    client.blobs["scripts/ci_gate.sh", MAIN] = (
+        b'bash scripts/ci_gate.sh; "$PY" "Scripts/${TARGET}.py"\n'
+    )
+    with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
+        _verify_gate_closure(client, MAIN)
+
+
+@pytest.mark.parametrize("untrusted_ref", [
+    b"vendor/scripts/run_eval.py",
+    b"my-scripts/run_eval.py",
+    b".scripts/run_eval.py",
+    b"scripts/run_eval.pyx",
+    b"scripts/run_eval.py/extra",
+    b"scripts/run_eval.py*",
+])
+def test_v19_p1_gate_closure_rejects_lookalike_paths(fixture, untrusted_ref: bytes):
+    from premerge_host import _verify_gate_closure
+
+    client = fixture[0]
+    client.blobs["scripts/ci_gate.sh", MAIN] = b"python " + untrusted_ref + b"\n"
     with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
         _verify_gate_closure(client, MAIN)

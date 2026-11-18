@@ -454,7 +454,12 @@ def _verify_gate_closure(client: Any, main: str) -> None:
         ".github/workflows/privacy-scan.yml",
         ".github/workflows/architecture-review.yml",
     )
-    pattern = re.compile(rb"(?<![A-Za-z0-9_])scripts/[A-Za-z0-9_./-]+\.(?:py|sh)")
+    # Match whole script tokens, never a pinned substring inside another path
+    # (vendor/scripts/x.py, .scripts/x.py, scripts/x.pyx, glob suffixes).
+    pattern = re.compile(
+        rb"(?<![A-Za-z0-9_./$*?+-])scripts/[A-Za-z0-9_./-]+\.(?:py|sh)"
+        rb"(?![A-Za-z0-9_./$*?+-])"
+    )
     for entrypoint in entrypoints:
         _, source = client.blob(entrypoint, main)
         for line in source.splitlines():
@@ -469,7 +474,7 @@ def _verify_gate_closure(client: Any, main: str) -> None:
             residual = line
             for match in reversed(matches):
                 residual = residual[:match.start()] + residual[match.end():]
-            _require(b"scripts/" not in residual,
+            _require(b"scripts/" not in residual.lower(),
                      "gate_closure_incomplete", unavailable=False)
             for match in matches:
                 try:
@@ -489,7 +494,9 @@ def _verify_host_execution(client: Any, main: str, *,
     eligible, never a stale checkout or a release directory without Git.
     """
     root = (execution_root or Path(__file__).resolve().parents[1]).resolve()
-    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    # Never inherit caller-controlled Git repository/index/config redirects.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_OPTIONAL_LOCKS"] = "0"
     def git(*args: str) -> str:
         try:
             proc = subprocess.run(
@@ -503,7 +510,7 @@ def _verify_host_execution(client: Any, main: str, *,
 
     _require(git("rev-parse", "--show-toplevel") == str(root)
              and git("rev-parse", "HEAD") == main
-             and git("status", "--porcelain=v1") == "",
+             and git("status", "--porcelain=v1", "--untracked-files=all") == "",
              "gate_execution_root_untrusted", unavailable=False)
     for path in ("scripts/premerge_host.py", "scripts/premerge_gate.py"):
         local = root / path
