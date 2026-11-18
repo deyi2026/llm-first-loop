@@ -209,19 +209,23 @@ def _is_bare_python_tool_command(command: str) -> bool:
 def _workspace_python_env(
     env: dict[str, str], workdir: str | None, command: str
 ) -> dict[str, str]:
-    """Pin bare Python/tool resolution to the active LFL checkout when possible.
+    """Prefer the active LFL checkout's Python environment for Python commands.
 
     Linked git worktrees intentionally do not carry their own ``.venv``. In that
     case the nearest ancestor LFL checkout with ``.venv/bin/python`` supplies the
     interpreter, while ``PYTHONPATH`` stays pinned to the *current* worktree's
-    ``src`` so an editable install cannot silently execute code from the main tree.
+    ``src`` for direct Python/project-tool commands, so an editable install
+    cannot silently execute code from the main tree.
 
-    Binding is deliberately narrow: only a bare Python/project-tool executable at
-    the start of the shell command is pinned. Commands that explicitly name an
-    interpreter path or first ``cd``/delegate to another shell keep the host env,
-    preventing the LFL venv from leaking into a different project.
+    PATH is pinned for commands containing a bare Python executable, including
+    compound shell commands such as ``cd . && python3`` that previously fell
+    back to Xcode's Python 3.9. Unrelated commands (git/ssh/etc.) keep host PATH
+    to avoid shadowing their executables. PYTHONPATH remains narrower: commands
+    that change directory do not inherit a source-tree import override.
     """
-    if not workdir or not _is_bare_python_tool_command(command):
+    if not workdir or not (
+        _is_bare_python_tool_command(command) or _PY_WORD_RE.search(command)
+    ):
         return env
     try:
         start = Path(workdir).expanduser().resolve()
@@ -252,6 +256,9 @@ def _workspace_python_env(
     path_parts = [p for p in pinned.get("PATH", "").split(os.pathsep) if p]
     pinned["PATH"] = os.pathsep.join([venv_bin_s, *(p for p in path_parts if p != venv_bin_s)])
 
+    if not _is_bare_python_tool_command(command):
+        return pinned
+
     src_s = str(project_root / "src")
     pythonpath_parts = [p for p in pinned.get("PYTHONPATH", "").split(os.pathsep) if p]
     pinned["PYTHONPATH"] = os.pathsep.join(
@@ -261,8 +268,8 @@ def _workspace_python_env(
 
 
 # B 最小闭环（工具故障可追溯）：词级匹配 python/python3（覆盖 `cd X && python3 …`
-# 等非裸形态——_workspace_python_env 只 pin 以 python 开头的裸命令）。
-_PY_WORD_RE = re.compile(r"(?:^|[\s;&|`(])python3?(?=[\s;&|)`]|$)")
+# 及 `sh -c 'python3 …'`；仅含 Python 命令时才优先选用项目 venv）。
+_PY_WORD_RE = re.compile(r"""(?:^|[\s;&|`('"])python3?(?=[\s;&|)`'"]|$)""")
 
 
 def _python_interpreter_fact(command: str, env: dict[str, str]) -> str:

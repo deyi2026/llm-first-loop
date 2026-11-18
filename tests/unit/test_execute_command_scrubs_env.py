@@ -163,11 +163,34 @@ def test_non_lfl_workdir_keeps_host_python_environment(tmp_path):
     assert _workspace_python_env(env, str(plain), "python3 -c pass") == env
 
 
-def test_lfl_workdir_does_not_pin_after_shell_cd_or_explicit_python_path(tmp_path):
-    """显式跨目录/绝对解释器属于调用者选择，不能被 LFL venv 环境重写。"""
+def test_lfl_workdir_pins_python_path_for_compound_shell_without_import_leak(tmp_path):
+    """复合 shell 也应优先使用 3.13 venv，但不得把 PYTHONPATH 注入跨目录命令。"""
     root = tmp_path / "repo"
     _make_lfl_tree(root, with_venv=True)
     env = {"PATH": "/usr/bin", "PYTHONPATH": "/custom"}
 
-    assert _workspace_python_env(env, str(root), "cd /tmp && python3 -c pass") == env
+    pinned = _workspace_python_env(env, str(root), "cd /tmp && python3 -c pass")
+    assert pinned["PATH"].split(os.pathsep)[0] == str(root / ".venv" / "bin")
+    assert pinned["PYTHONPATH"] == "/custom"
     assert _workspace_python_env(env, str(root), "/usr/bin/python3 -c pass") == env
+    assert _workspace_python_env(env, str(root), "echo ok") == env
+    assert env == {"PATH": "/usr/bin", "PYTHONPATH": "/custom"}
+
+
+def test_compound_shell_resolves_python3_from_lfl_venv(tmp_path, monkeypatch):
+    """真实 shell 复现：即使宿主 PATH 仅含 Xcode Python，也不能回落到 3.9。"""
+    root = tmp_path / "repo"
+    _make_lfl_tree(root, with_venv=True)
+    venv_bin = root / ".venv" / "bin"
+    (venv_bin / "python").write_text(
+        "#!/bin/sh\nprintf 'Python 3.13.13\\n'\n", encoding="utf-8"
+    )
+    (venv_bin / "python3").symlink_to("python")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    for command in ("cd . && python3 --version", "sh -c 'python3 --version'"):
+        result = ExecuteCommandTool(sandbox_mode="none").execute(
+            command=command, workdir=str(root)
+        )
+        assert result.status == ToolResultStatus.SUCCESS, result.content
+        assert "Python 3.13.13" in result.content
