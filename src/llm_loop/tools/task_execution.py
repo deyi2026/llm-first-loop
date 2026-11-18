@@ -88,6 +88,10 @@ class TrustedTaskExecution:
             claims = self.authority.verify(self.lease_id, request)
         except TaskAuthorityError as exc:
             raise TaskExecutionError(exc.reason_code) from exc
+        if claims.parent_lease_id is not None:
+            # Until recursive parent-chain verification is wired, never treat
+            # an unchecked parent as an implicit all-access grant.
+            raise TaskExecutionError("task_parent_lease_chain_unverified")
         roots = tuple(
             resource.identity
             for resource in claims.resources

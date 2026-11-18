@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -199,3 +200,13 @@ def test_task_context_does_not_combine_with_host_grant(task_context):
     tool = ExecuteCommandTool(sandbox_mode="sandbox-exec", safety_audit_dir=audit, timeout_s=10)
     result = tool.execute(command="true", workdir=str(a), host_grant_id="abcdef123")
     assert result.error_type == "task_host_grant_conflict"
+
+
+def test_unverified_parent_lease_cannot_widen_task(task_context):
+    a, b, _c, audit, authority, _lanes, _ctx = task_context
+    authority.claims = replace(authority.claims, parent_lease_id="lease-parent123")
+    target = b / "must-not-exist.txt"
+    tool = ExecuteCommandTool(sandbox_mode="sandbox-exec", safety_audit_dir=audit, timeout_s=10)
+    result = tool.execute(command=f"printf forbidden > {target}", workdir=str(a))
+    assert result.error_type == "task_parent_lease_chain_unverified"
+    assert not target.exists()

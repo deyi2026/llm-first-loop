@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -20,6 +21,7 @@ from llm_loop.tools.task_authority import (
     RootOwnedTaskAuthority,
     TaskAuthorityError,
     _canonical_json,
+    _read_separated_issuer_file,
     verify_signed_task_lease,
 )
 
@@ -218,3 +220,69 @@ def test_invalid_key_and_oversized_receipt_rejected(signed_receipts):
         verify_signed_task_lease(
             pem, b" " * 65537, sign(state, b"lfl.task-lease-state.v1"), req, now=NOW
         )
+
+
+def test_root_pinned_separate_issuer_uid_and_public_digest(signed_receipts, monkeypatch):
+    from pathlib import Path
+
+    import llm_loop.tools.task_authority as authority_module
+
+    real_verify = authority_module.verify_signed_task_lease
+    monkeypatch.setattr(
+        authority_module,
+        "verify_signed_task_lease",
+        lambda *args, **kwargs: real_verify(*args, now=NOW, **kwargs),
+    )
+    pem, lease, state, sign, req = signed_receipts
+    uid = os.getuid() + 1
+    trust = {
+        "schema": "lfl.task-authority-trust/v1",
+        "issuer_uid": uid,
+        "public_key_sha256": hashlib.sha256(pem).hexdigest(),
+    }
+    monkeypatch.setattr(
+        authority_module,
+        "_read_root_owned",
+        lambda path: json.dumps(trust).encode() if path.name == "trust.json" else pem,
+    )
+    monkeypatch.setattr(
+        authority_module,
+        "_read_separated_issuer_file",
+        lambda path, root, issuer_uid: (
+            sign(lease, b"lfl.task-lease.v1")
+            if path.parent.name == "leases"
+            else sign(state, b"lfl.task-lease-state.v1")
+        ),
+    )
+    root = RootOwnedTaskAuthority(
+        Path("/Library/Application Support/LFL-HostIssuer/task-authority")
+    )
+    assert root.verify("lease-12345678", req).lease_id == "lease-12345678"
+    trust["issuer_uid"] = os.getuid()
+    with pytest.raises(TaskAuthorityError, match="authority_trust_config_invalid"):
+        root.verify("lease-12345678", req)
+    trust["issuer_uid"] = uid
+    trust["public_key_sha256"] = "0" * 64
+    with pytest.raises(TaskAuthorityError, match="authority_public_key_mismatch"):
+        root.verify("lease-12345678", req)
+
+
+def test_separated_issuer_file_rejects_symlink_hardlink_and_group_write(tmp_path):
+    root = tmp_path / "authority"
+    child = root / "leases"
+    child.mkdir(parents=True)
+    target = child / "lease-12345678.json"
+    target.write_text("signed receipt")
+    target.chmod(0o644)
+    assert _read_separated_issuer_file(target, root, os.getuid()) == b"signed receipt"
+    alias = child / "alias.json"
+    alias.symlink_to(target)
+    with pytest.raises(TaskAuthorityError, match="authority_store_unavailable"):
+        _read_separated_issuer_file(alias, root, os.getuid())
+    os.link(target, child / "hardlink.json")
+    with pytest.raises(TaskAuthorityError, match="authority_store_untrusted"):
+        _read_separated_issuer_file(target, root, os.getuid())
+    (child / "hardlink.json").unlink()
+    child.chmod(0o777)
+    with pytest.raises(TaskAuthorityError, match="authority_store_untrusted"):
+        _read_separated_issuer_file(target, root, os.getuid())

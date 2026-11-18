@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -216,3 +217,11 @@ def test_wrong_session_denied(setup_git):
             adapter.commit_paths(item)
     finally:
         current_session_id.reset(token)
+
+
+def test_unverified_parent_lease_denies_git_effect(setup_git):
+    _main, linked, _audit, _store, authority, adapter, item = setup_git
+    authority.claims = replace(authority.claims, parent_lease_id="lease-parent123")
+    with pytest.raises(ManagedGitError, match="git_parent_lease_chain_unverified"):
+        adapter.commit_paths(item)
+    assert not git(linked, "diff", "--cached", "--name-only")

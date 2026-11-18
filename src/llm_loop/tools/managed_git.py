@@ -229,6 +229,8 @@ class ManagedGitAdapter:
             claims = self._authority.verify(item.lease_id, request)
         except TaskAuthorityError as exc:
             raise ManagedGitError(exc.reason_code) from exc
+        if claims.parent_lease_id is not None:
+            raise ManagedGitError("git_parent_lease_chain_unverified")
         gitdir, common = _git_metadata(worktree)
         if (
             not os.path.isabs(item.expected_gitdir)

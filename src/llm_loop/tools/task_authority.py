@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -265,13 +266,56 @@ def _read_root_owned(path: Path) -> bytes:
         os.close(fd)
 
 
+def _read_separated_issuer_file(path: Path, root: Path, issuer_uid: int) -> bytes:
+    """Trust a distinct Host UID only below a root-owned pinned trust anchor."""
+    if (
+        not path.is_absolute()
+        or not root.is_absolute()
+        or os.path.commonpath((str(path), str(root))) != str(root)
+    ):
+        raise TaskAuthorityError("authority_store_untrusted")
+    parent = path.parent
+    while parent != root:
+        try:
+            info = os.lstat(parent)
+        except OSError as exc:
+            raise TaskAuthorityError("authority_store_unavailable") from exc
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid not in (0, issuer_uid)
+            or info.st_mode & 0o022
+        ):
+            raise TaskAuthorityError("authority_store_untrusted")
+        parent = parent.parent
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise TaskAuthorityError("authority_store_unavailable") from exc
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != issuer_uid
+            or info.st_mode & 0o022
+            or info.st_nlink != 1
+        ):
+            raise TaskAuthorityError("authority_store_untrusted")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(_MAX_RECEIPT_BYTES + 1)
+        if not raw or len(raw) > _MAX_RECEIPT_BYTES:
+            raise TaskAuthorityError("authority_receipt_size_invalid")
+        return raw
+    finally:
+        os.close(fd)
+
+
 @dataclass(frozen=True)
 class RootOwnedTaskAuthority:
-    """Read-only Host authority adapter; no signer or privileged shell.
+    """Read-only Host adapter with root-pinned public key and separate issuer UID.
 
-    The directory and *all* ancestors must be root-owned and non-writable by
-    the agent's Unix user. Public key/lease/state may be world-readable, but
-    their bytes cannot be changed by an untrusted workspace process.
+    Root-owned trust.json fixes issuer UID and public PEM digest. Lease/state
+    files must be owned by that distinct UID, not by the agent's Unix user.
+    No signer or privileged shell is exposed to the model.
     """
 
     root: Path
@@ -279,9 +323,37 @@ class RootOwnedTaskAuthority:
     def verify(self, lease_id: str, request: CapabilityRequest) -> TaskLeaseClaims:
         if not isinstance(lease_id, str) or not _LEASE_ID_RE.fullmatch(lease_id):
             raise TaskAuthorityError("authority_lease_id_invalid")
+        try:
+            trust = json.loads(_read_root_owned(self.root / "trust.json"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise TaskAuthorityError("authority_trust_config_invalid") from exc
+        if (
+            not isinstance(trust, dict)
+            or set(trust) != {"schema", "issuer_uid", "public_key_sha256"}
+            or trust["schema"] != "lfl.task-authority-trust/v1"
+            or type(trust["issuer_uid"]) is not int
+            or trust["issuer_uid"] < 0
+            or trust["issuer_uid"] == os.getuid()
+            or not isinstance(trust["public_key_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", trust["public_key_sha256"])
+        ):
+            raise TaskAuthorityError("authority_trust_config_invalid")
+        public_key = _read_root_owned(self.root / "public_key.pem")
+        if not hmac.compare_digest(
+            hashlib.sha256(public_key).hexdigest(), trust["public_key_sha256"]
+        ):
+            raise TaskAuthorityError("authority_public_key_mismatch")
         return verify_signed_task_lease(
-            _read_root_owned(self.root / "public_key.pem"),
-            _read_root_owned(self.root / "leases" / f"{lease_id}.json"),
-            _read_root_owned(self.root / "states" / f"{lease_id}.json"),
+            public_key,
+            _read_separated_issuer_file(
+                self.root / "leases" / f"{lease_id}.json",
+                self.root,
+                trust["issuer_uid"],
+            ),
+            _read_separated_issuer_file(
+                self.root / "states" / f"{lease_id}.json",
+                self.root,
+                trust["issuer_uid"],
+            ),
             request,
         )
