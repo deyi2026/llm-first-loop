@@ -1,27 +1,8 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261117-multiagent-final-closure",
-  "summary": "Freeze v1.9 unchanged; isolate B1 gate P1 defense, B2 readonly baseline projection, B3 evidence analyzer and honest HOLD boundaries.",
+  "summary": "Freeze v1.9 unchanged; B1 Host gate defense superseded by PR65 main (merged as e9507bd9); isolate B2 readonly baseline projection and B3 evidence analyzer on M2-A strict-CAS base with honest HOLD boundaries.",
   "components": [
-    {
-      "component_id": "host-gate-p1-closure",
-      "paths": [
-        "scripts/premerge_host.py",
-        "tests/unit/test_premerge_gate_host.py"
-      ],
-      "control_machinery": true,
-      "owning_subsystem": "Host premerge trusted gate closure and executed code identity",
-      "disposition": "Keep fail-closed on untrusted candidate gate dependencies; no approval bypass.",
-      "evidence": [
-        "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
-        "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "Targeted B1 Host 86 passed, B2 21 passed, B3 8 passed (test sets overlap; do not sum as unique)."
-      ],
-      "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
-      "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
-      "rollback_route": "Revert this isolated PR; no migration, Host signing or production restart.",
-      "declaration_id": "host-gate-p1-closure"
-    },
     {
       "component_id": "baseline-impact-b2",
       "paths": [
@@ -36,7 +17,7 @@
       "evidence": [
         "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
         "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "Targeted B1 Host 86 passed, B2 21 passed, B3 8 passed (test sets overlap; do not sum as unique)."
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 34/34 (test sets overlap; do not sum as unique)."
       ],
       "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
@@ -55,7 +36,7 @@
       "evidence": [
         "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
         "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "Targeted B1 Host 86 passed, B2 21 passed, B3 8 passed (test sets overlap; do not sum as unique)."
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 34/34 (test sets overlap; do not sum as unique)."
       ],
       "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
@@ -74,7 +55,7 @@
       "evidence": [
         "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
         "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
-        "Targeted B1 Host 86 passed, B2 21 passed, B3 8 passed (test sets overlap; do not sum as unique)."
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 34/34 (test sets overlap; do not sum as unique)."
       ],
       "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
@@ -82,33 +63,6 @@
     }
   ],
   "declarations": [
-    {
-      "declaration_id": "host-gate-p1-closure",
-      "g1": {
-        "necessity": "Host premerge trusted gate closure and executed code identity; Keep fail-closed on untrusted candidate gate dependencies; no approval bypass."
-      },
-      "g2": {
-        "authority_owner": "GitHub protected main + Host signed issuer own merge authority; LFL Lane/Queue own coordination; this patch is advisory or fail-closed only.",
-        "relationship": "reuse",
-        "non_duplication": "Reuse existing LaneStore/MergeQueueStore, assess_rebase_replay, Host premerge, GitHub CI; no new ledger or automatic merge."
-      },
-      "g3": {
-        "model_evidence": [
-          "Original v1.9 independent Reviewer REVISE P0=0/P1=2, not PASS.",
-          "B1 auxiliary gate closure and Host execution identity tests pass in isolation.",
-          "B2 real Git path/dirty/rebase tests; B3 real Git worktree mechanical integration only, not real LLM A/B."
-        ],
-        "recovery_or_reason": "Missing upgrade issuer, strict M2-A integration, true A/B, exact SHA review or main protection => HOLD; no self-issued approval."
-      },
-      "g4": {
-        "rollback": "Revert protected PR; retain audit and source branch; no runtime mutation in this patch.",
-        "verification": [
-          "Focused negative tests + Ruff/Pyright/A.5 first.",
-          "Independent Reviewer PASS P0/P1=0 before original full R9 exit0, PR/CI, protected main merge and managed deployment.",
-          "Do not close original Goal until M2-A, B2/B3, gate upgrade and real runtime acceptance are verified."
-        ]
-      }
-    },
     {
       "declaration_id": "baseline-impact-b2",
       "g1": {
@@ -122,7 +76,7 @@
       "g3": {
         "model_evidence": [
           "Original v1.9 independent Reviewer REVISE P0=0/P1=2, not PASS.",
-          "B1 auxiliary gate closure and Host execution identity tests pass in isolation.",
+          "B1 auxiliary gate closure superseded by PR65 main (merged as e9507bd9); Host execution identity now owned by main.",
           "B2 real Git path/dirty/rebase tests; B3 real Git worktree mechanical integration only, not real LLM A/B."
         ],
         "recovery_or_reason": "Missing upgrade issuer, strict M2-A integration, true A/B, exact SHA review or main protection => HOLD; no self-issued approval."
