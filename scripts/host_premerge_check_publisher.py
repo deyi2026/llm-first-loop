@@ -11,6 +11,7 @@ Dry-run by default. No branch protection mutation, merge, or push is possible.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -21,6 +22,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +41,132 @@ from premerge_host import (
 
 _ISSUER_UID = 462
 _TRUSTED_SITE = "/Library/Application Support/LFL-DualAgent/runtime/site"
+_PRIVATE_DIR = Path("/Library/Application Support/LFL-HostIssuer/private")
+_APP_TOKEN_URL = "https://api.github.com/app/installations/"
 
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _app_jwt(app_id: int, *, now: float) -> str:
+    """Sign RS256 from an FD-bound key owned by the independent Host UID."""
+    _require(type(app_id) is int and app_id > 0, "host_check_app_unconfigured")
+    directory_fd = -1
+    key_fd = -1
+    try:
+        directory_fd = os.open(
+            _PRIVATE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+        parent = os.fstat(directory_fd)
+        _require(
+            stat.S_ISDIR(parent.st_mode) and parent.st_uid == _ISSUER_UID
+            and (parent.st_mode & 0o077) == 0,
+            "host_app_key_dir_untrusted", unavailable=False,
+        )
+        key_fd = os.open(
+            f"github-app-{app_id}.pem", os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        st = os.fstat(key_fd)
+        _require(
+            stat.S_ISREG(st.st_mode) and st.st_uid == _ISSUER_UID
+            and (st.st_mode & 0o377) == 0 and 1000 <= st.st_size <= 16384,
+            "host_app_key_untrusted", unavailable=False,
+        )
+        key_bytes = os.read(key_fd, 16385)
+        _require(len(key_bytes) == st.st_size, "host_app_key_invalid")
+        from Crypto.Hash import SHA256
+        from Crypto.PublicKey import RSA
+        from Crypto.Signature import pkcs1_15
+
+        key = RSA.import_key(key_bytes)
+        _require(key.has_private() and key.size_in_bits() >= 2048,
+                 "host_app_key_invalid", unavailable=False)
+        issued = int(now) - 60
+        header = _b64url(b'{"alg":"RS256","typ":"JWT"}')
+        claims = _b64url(json.dumps(
+            {"iat": issued, "exp": int(now) + 540, "iss": str(app_id)},
+            sort_keys=True, separators=(",", ":"),
+        ).encode())
+        message = (header + "." + claims).encode("ascii")
+        signature = pkcs1_15.new(key).sign(SHA256.new(message))
+    except HostHoldError:
+        raise
+    except (OSError, ValueError, TypeError, ImportError) as exc:
+        raise HostHoldError("host_app_key_unavailable") from exc
+    finally:
+        if key_fd >= 0:
+            os.close(key_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
+    return message.decode("ascii") + "." + _b64url(signature)
+
+
+def _mint_installation_token(
+    app_id: int, installation_id: int, repo: str, *, write_checks: bool,
+    now: float | None = None,
+) -> str:
+    """Request a short-lived token scoped to exactly one installed repository."""
+    from premerge_host import _REPO
+    _require(bool(_REPO.fullmatch(repo)), "repo_invalid")
+    _require(type(installation_id) is int and installation_id > 0,
+             "host_installation_unconfigured")
+    stamp = time.time() if now is None else now
+    jwt = _app_jwt(app_id, now=stamp)
+    permissions = {
+        "actions": "read", "administration": "read",
+        "checks": "write" if write_checks else "read",
+        "contents": "read", "pull_requests": "read",
+    }
+    body = json.dumps({
+        "repositories": [repo.split("/", 1)[1]],
+        "permissions": permissions,
+    }, sort_keys=True, separators=(",", ":")).encode()
+    request = urllib.request.Request(
+        _APP_TOKEN_URL + str(installation_id) + "/access_tokens",
+        data=body, method="POST",
+        headers={
+            "Authorization": "Bearer " + jwt,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "lfl-independent-host-check",
+        },
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirect()).open(
+            request, timeout=12
+        ) as response:
+            raw = response.read(16385)
+        _require(len(raw) <= 16384, "host_app_token_response_oversize")
+        value = json.loads(raw)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError,
+            TimeoutError, ValueError) as exc:
+        raise HostHoldError("host_app_token_unavailable") from exc
+    _require(isinstance(value, dict), "host_app_token_invalid")
+    token = value.get("token")
+    granted = value.get("permissions")
+    expires = value.get("expires_at")
+    _require(
+        isinstance(token, str) and len(token) >= 20
+        and isinstance(granted, dict)
+        and all(granted.get(k) == v for k, v in permissions.items())
+        and value.get("repository_selection") == "selected"
+        and isinstance(expires, str),
+        "host_app_token_scope_invalid", unavailable=False,
+    )
+    try:
+        expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        _require(
+            expiry.tzinfo is not None
+            and stamp + 120 < expiry.timestamp() <= stamp + 3700,
+            "host_app_token_expiry_invalid", unavailable=False,
+        )
+    except ValueError as exc:
+        raise HostHoldError("host_app_token_expiry_invalid") from exc
+    return token
 
 def _fingerprint(envelope: dict) -> str:
     canonical = json.dumps(
@@ -76,10 +203,10 @@ def _post_check(repo: str, token: str, body: dict) -> dict:
 def publish_verified(
     client: Any, *, repo: str, pr_number: int, main: str, candidate: str,
     run_id: int, envelope: dict, public_key: str, app_id: int,
-    check_token: str = "", apply: bool = False,
-    now: float | None = None,
+    apply: bool = False, now: float | None = None,
     post: Callable[[str, str, dict], dict] = _post_check,
     live_state: Callable[[dict], None] | None = None,
+    token_supplier: Callable[[], str] | None = None,
 ) -> dict:
     """No check writes until all signed Host + CI + protection facts pass."""
     stamp = time.time() if now is None else now
@@ -111,6 +238,16 @@ def publish_verified(
             "app_id": app_id, "check_id": existing.get("id"),
             "snapshot_sha256": digest,
         }
+    # Mint only after signed Host evaluation and existing-check validation.
+    # No static installation token is accepted from a model or environment.
+    if apply:
+        _require(token_supplier is not None, "host_check_token_supplier_unavailable")
+        assert token_supplier is not None
+        check_token = token_supplier()
+        _require(isinstance(check_token, str) and len(check_token) >= 20,
+                 "host_check_token_unavailable")
+    else:
+        check_token = ""
     # Recheck the exact live identities immediately before the write.
     branch = client.get(f"repos/{repo}/branches/main")
     pull = client.get(f"repos/{repo}/pulls/{pr_number}")
@@ -155,8 +292,6 @@ def publish_verified(
     # Check the Lane/Queue again after the last GitHub identity read.
     assert live_state is not None
     live_state(envelope["payload"])
-    _require(bool(check_token) and len(check_token) >= 20,
-             "host_check_token_unavailable")
     body = {
         "name": _HOST_CHECK_CONTEXT,
         # GitHub evaluates PR required checks on the tested merge ref.
@@ -215,10 +350,11 @@ def main(argv: list[str] | None = None) -> int:
                  and (st.st_mode & 0o022) == 0,
                  "host_check_crypto_runtime_untrusted")
         sys.path.insert(0, str(site))
-        from Crypto.PublicKey import ECC
-        from Crypto.Signature import eddsa
+        from Crypto.Hash import SHA256
+        from Crypto.PublicKey import ECC, RSA
+        from Crypto.Signature import eddsa, pkcs1_15
         trusted_site = site.resolve(strict=True)
-        for module in (ECC, eddsa):
+        for module in (ECC, eddsa, RSA, pkcs1_15, SHA256):
             source = Path(module.__file__).resolve(strict=True)
             _require(source.is_relative_to(trusted_site),
                      "host_check_crypto_module_untrusted")
@@ -228,10 +364,20 @@ def main(argv: list[str] | None = None) -> int:
             raise HostHoldError("host_snapshot_unavailable") from exc
         try:
             app_id = int(os.environ.get("LFL_PREMERGE_HOST_CHECK_APP_ID", "0"))
+            installation_id = int(
+                os.environ.get("LFL_PREMERGE_HOST_INSTALLATION_ID", "0")
+            )
         except ValueError as exc:
-            raise HostHoldError("host_check_app_unconfigured") from exc
+            raise HostHoldError("host_app_config_invalid") from exc
+        _require(app_id > 0 and installation_id > 0,
+                 "host_app_config_unavailable")
+        # The Host-only private key mints a fresh, repo-scoped READ token.
+        # The check-WRITE token is minted only after eligibility passes.
         client = GitHubReadOnly(
-            args.repo, os.environ.get("LFL_PREMERGE_HOST_GITHUB_TOKEN", "")
+            args.repo,
+            _mint_installation_token(
+                app_id, installation_id, args.repo, write_checks=False,
+            ),
         )
         # The installed entrypoint and imported verifier are root-owned
         # immutable copies of protected main, not code from the candidate.
@@ -302,8 +448,10 @@ def main(argv: list[str] | None = None) -> int:
             run_id=args.run_id, envelope=envelope,
             public_key=os.environ.get("LFL_PREMERGE_HOST_SNAPSHOT_PUBKEY", ""),
             app_id=app_id,
-            check_token=os.environ.get("LFL_PREMERGE_HOST_CHECK_TOKEN", ""),
             apply=args.apply, live_state=live_state,
+            token_supplier=lambda: _mint_installation_token(
+                app_id, installation_id, args.repo, write_checks=True,
+            ),
         )
         code = 0
     except HostHoldError as exc:

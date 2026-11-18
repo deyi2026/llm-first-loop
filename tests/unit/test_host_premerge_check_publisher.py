@@ -6,9 +6,14 @@ import copy
 # Reuse the full authoritative fake-GitHub fixture without creating a
 # second, potentially divergent model of GitHub branch protection.
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from datetime import UTC
+
 from host_premerge_check_publisher import publish_verified
 from premerge_host import HostHoldError, evaluate_host
 
@@ -44,8 +49,8 @@ def publish(facts, *, apply=False, token="", post=None):
     kwargs = dict(
         repo="o/r", pr_number=PR_NUMBER, main=MAIN, candidate=CANDIDATE,
         run_id=RUN_ID, envelope=envelope, public_key=TEST_PUBLIC,
-        app_id=HOST_APP_ID, now=NOW, apply=apply, check_token=token,
-        live_state=lambda payload: None,
+        app_id=HOST_APP_ID, now=NOW, apply=apply,
+        token_supplier=lambda: token, live_state=lambda payload: None,
     )
     if post is not None:
         kwargs["post"] = post
@@ -173,7 +178,7 @@ def test_live_lane_queue_probe_unavailable_blocks_even_with_green_ci(facts):
             client, repo="o/r", pr_number=PR_NUMBER, main=MAIN,
             candidate=CANDIDATE, run_id=RUN_ID, envelope=envelope,
             public_key=TEST_PUBLIC, app_id=HOST_APP_ID, now=NOW,
-            apply=True, check_token="host-app-token" * 3,
+            apply=True, token_supplier=lambda: "host-app-token" * 3,
             live_state=None,
         )
 
@@ -188,7 +193,7 @@ def test_live_queue_cas_drift_blocks_before_check_write(facts):
             main=MAIN, candidate=CANDIDATE, run_id=RUN_ID,
             envelope=facts[1], public_key=TEST_PUBLIC,
             app_id=HOST_APP_ID, now=NOW, apply=True,
-            check_token="host-app-token" * 3,
+            token_supplier=lambda: "host-app-token" * 3,
             live_state=changed,
             post=lambda *args: called.append(args),
         )
@@ -281,3 +286,172 @@ def test_ruleset_added_after_host_preflight_blocks_publish(facts):
     client.get = ruleset_on_third_read
     with pytest.raises(HostHoldError, match="prepublish_protection_changed"):
         publish(facts, apply=True, token="host-app-token" * 3)
+
+
+def test_host_app_jwt_is_fd_bound_rs256_and_never_reads_repo_key(tmp_path, monkeypatch):
+    import base64
+    import json
+    import os
+
+    import host_premerge_check_publisher as publisher
+    from Crypto.Hash import SHA256
+    from Crypto.PublicKey import RSA
+    from Crypto.Signature import pkcs1_15
+
+    key = RSA.generate(2048)
+    tmp_path.chmod(0o700)
+    path = tmp_path / "github-app-5818173.pem"
+    path.write_bytes(key.export_key())
+    path.chmod(0o400)
+    monkeypatch.setattr(publisher, "_PRIVATE_DIR", tmp_path)
+    monkeypatch.setattr(publisher, "_ISSUER_UID", os.geteuid())
+    jwt = publisher._app_jwt(5818173, now=1_700_000_000)
+    header, claims, signature = jwt.split(".")
+    def decode(value: str) -> bytes:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    assert json.loads(decode(header)) == {"alg": "RS256", "typ": "JWT"}
+    assert json.loads(decode(claims)) == {
+        "iat": 1_699_999_940, "exp": 1_700_000_540, "iss": "5818173",
+    }
+    pkcs1_15.new(key.publickey()).verify(
+        SHA256.new((header + "." + claims).encode()), decode(signature),
+    )
+    path.chmod(0o644)
+    with pytest.raises(HostHoldError, match="host_app_key_untrusted"):
+        publisher._app_jwt(5818173, now=1_700_000_000)
+
+
+def test_host_app_jwt_refuses_symlinked_key(tmp_path, monkeypatch):
+    import os
+
+    import host_premerge_check_publisher as publisher
+
+    tmp_path.chmod(0o700)
+    (tmp_path / "target.pem").write_bytes(b"x" * 2000)
+    (tmp_path / "github-app-5818173.pem").symlink_to("target.pem")
+    monkeypatch.setattr(publisher, "_PRIVATE_DIR", tmp_path)
+    monkeypatch.setattr(publisher, "_ISSUER_UID", os.geteuid())
+    with pytest.raises(HostHoldError, match="host_app_key_unavailable"):
+        publisher._app_jwt(5818173, now=1_700_000_000)
+
+
+def test_host_app_tokens_are_repo_scoped_and_read_write_separated(monkeypatch):
+    import json
+    from datetime import datetime
+
+    import host_premerge_check_publisher as publisher
+
+    observed = []
+    stamp = 1_700_000_000
+
+    class Response:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self, _max_bytes):
+            return json.dumps(self.body).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            assert timeout == 12
+            body = json.loads(request.data)
+            observed.append((request.full_url, body))
+            return Response({
+                "token": "ghs_fake_token_for_unit_tests_only",
+                "expires_at": datetime.fromtimestamp(
+                    stamp + 3000, UTC,
+                ).isoformat(),
+                "permissions": body["permissions"],
+                "repository_selection": "selected",
+            })
+
+    monkeypatch.setattr(publisher, "_app_jwt", lambda app_id, now: "fake.jwt")
+    monkeypatch.setattr(
+        publisher.urllib.request, "build_opener", lambda *_: Opener(),
+    )
+    for write in (False, True):
+        token = publisher._mint_installation_token(
+            5818173, 183345910, "deyi2026/llm-first-loop",
+            write_checks=write, now=stamp,
+        )
+        assert token.startswith("ghs_fake_token")
+    assert len(observed) == 2
+    for url, body in observed:
+        assert url.endswith("/app/installations/183345910/access_tokens")
+        assert body["repositories"] == ["llm-first-loop"]
+        assert body["permissions"]["administration"] == "read"
+        assert body["permissions"]["contents"] == "read"
+        assert body["permissions"]["pull_requests"] == "read"
+        assert body["permissions"]["actions"] == "read"
+    assert observed[0][1]["permissions"]["checks"] == "read"
+    assert observed[1][1]["permissions"]["checks"] == "write"
+
+
+def test_host_app_token_wrong_scope_is_fail_closed(monkeypatch):
+    import json
+
+    import host_premerge_check_publisher as publisher
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self, _limit):
+            return json.dumps({
+                "token": "ghs_fake_token_for_unit_tests_only",
+                "expires_at": "2030-01-01T00:00:00Z",
+                "permissions": {"checks": "write"},
+                "repository_selection": "all",
+            }).encode()
+
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(publisher, "_app_jwt", lambda app_id, now: "fake.jwt")
+    monkeypatch.setattr(
+        publisher.urllib.request, "build_opener", lambda *_: Opener(),
+    )
+    with pytest.raises(HostHoldError, match="host_app_token_scope_invalid"):
+        publisher._mint_installation_token(
+            5818173, 183345910, "deyi2026/llm-first-loop",
+            write_checks=True, now=1_700_000_000,
+        )
+
+
+def test_invalid_reviewer_never_mints_write_token(facts):
+    payload = copy.deepcopy(facts[1]["payload"])
+    payload["review"]["verdict"] = "REVISE"
+    facts[1] = sign(payload)
+    minted = []
+    with pytest.raises(HostHoldError, match="review_missing_or_stale"):
+        publish_verified(
+            facts[0], repo="o/r", pr_number=PR_NUMBER, main=MAIN,
+            candidate=CANDIDATE, run_id=RUN_ID, envelope=facts[1],
+            public_key=TEST_PUBLIC, app_id=HOST_APP_ID, now=NOW,
+            apply=True, live_state=lambda _payload: None,
+            token_supplier=lambda: minted.append(True) or "ghs_fake_token",
+        )
+    assert minted == []
+
+
+def test_read_only_preflight_never_mints_write_token(facts):
+    minted = []
+    result = publish_verified(
+        facts[0], repo="o/r", pr_number=PR_NUMBER, main=MAIN,
+        candidate=CANDIDATE, run_id=RUN_ID, envelope=facts[1],
+        public_key=TEST_PUBLIC, app_id=HOST_APP_ID, now=NOW,
+        apply=False, live_state=lambda _payload: None,
+        token_supplier=lambda: minted.append(True) or "ghs_fake_token",
+    )
+    assert result["decision"] == "ELIGIBLE_TO_PUBLISH"
+    assert minted == []
