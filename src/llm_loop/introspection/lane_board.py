@@ -498,6 +498,9 @@ def build_board(
         degraded.append("audit_missing")
     else:
         try:
+            # M2-A（P1-B 声明）: Board 是只读投影，此处保持默认 warn 构造——
+            # 严格锁/跨 Goal 检查只约束写路径（create/update/close），不参与
+            # 只读 list；写侧统一经 lane_store_from_host（宿主 lane_* 配置）。
             store = LaneStore(audit)
             # 取全量再由本层按版本收敛：store.list() 只按文件顺序返回，不解释 version。
             raw_lanes = store.list(include_terminal=True)
