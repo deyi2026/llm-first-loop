@@ -5524,9 +5524,7 @@ class HostReviewAdmission:
         if invalid:
             return self._deny(invalid)
         scopes = self._pending_scopes(parent, kind, target=full_test_target)
-        has_batches = (
-            kind == "git_push" and self._has_pending_push_batches(parent)
-        )
+        has_batches = kind == "git_push" and self._has_pending_push_batches(parent)
         if not scopes and not has_batches:
             # EVO-20261102-677f6c44：无待消费 full_test 资格但处于 no-delta 状态
             # （全部已推送+树干净）时，尝试由 git_push PASS 派生一次性资格并消费。
