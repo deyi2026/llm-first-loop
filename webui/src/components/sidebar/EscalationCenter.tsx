@@ -50,7 +50,22 @@ interface DetailResp {
 
 const POLL_MS = 5000;
 
+// Watcher 与展开的审批面板可能同一时刻请求；只共享在途读取，
+// 不缓存已完成结果，避免审批状态被旧快照遮蔽。
+let escalationInFlight: Promise<ListResp> | null = null;
+
 async function fetchEscalations(): Promise<ListResp> {
+  if (escalationInFlight) return escalationInFlight;
+  const pending = fetchEscalationsUncached();
+  escalationInFlight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (escalationInFlight === pending) escalationInFlight = null;
+  }
+}
+
+async function fetchEscalationsUncached(): Promise<ListResp> {
   try {
     // ESC-07（FR-07）: 待审队列用 pending 专用查询穿透历史窗口；
     // 历史视图保持"最新 50 条"。两请求并行，任一失败按整次加载失败处理。
@@ -170,9 +185,17 @@ function useEscalations(enabled = true) {
   }, []);
   useEffect(() => {
     if (!enabled) return;
-    load();
-    const t = window.setInterval(load, POLL_MS);
-    return () => window.clearInterval(t);
+    const poll = () => {
+      // 隐藏标签页不消耗双端点轮询；恢复可见时立即补读审批事实。
+      if (!document.hidden) load();
+    };
+    poll();
+    const t = window.setInterval(poll, POLL_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [enabled, load]);
   return { data, reload: load };
 }
