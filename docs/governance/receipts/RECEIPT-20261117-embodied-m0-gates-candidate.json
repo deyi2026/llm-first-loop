@@ -1,0 +1,32 @@
+{
+  "schema": "lfl.embodied.m0-gates-candidate/v1",
+  "result": "EVIDENCE_INDEX_ONLY_PENDING_INDEPENDENT_REVIEW",
+  "scope": "M0 in-memory contracts, OS negative probes, code audit and M1 preregistration; not a real simulator or production robotics integration",
+  "source_branch": "feat/embodied-m0b-contract-gates-20261117",
+  "test_command": "python -m pytest -q tests/embodied",
+  "gates": {
+    "M0-G1": ["docs/governance/receipts/RECEIPT-20261117-embodied-m0-integration-audit.json", "code inspection: ToolRegistry/TaskBudgetExecution/SideEffectRegistry/ToolExecutionJournal/GoalStore"],
+    "M0-G2": ["docs/governance/receipts/RECEIPT-20261117-embodied-m0-integration-audit.json", "MuJoCo simulator choice is provisional; no persistent action_id in physics engine; crash resume explicitly excluded until M1 ledger"],
+    "M0-G3": ["tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device", "docs/governance/receipts/RECEIPT-20261117-embodied-m0-oracle-uid-isolation.json"],
+    "M0-G4": ["tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device", "docs/governance/receipts/RECEIPT-20261117-embodied-m0-oracle-uid-isolation.json"],
+    "M0-G5": ["tests/embodied/test_m0a_contracts.py::test_observation_epoch_ttl", "tests/embodied/test_m0b_safety_contracts.py::test_grant_negative_age_wake_and_restart_fail_closed", "tests/embodied/test_m0b_observation_clock_skew.py::test_observation_clock_rollback_and_nonfinite_fail_closed"],
+    "M0-G6": ["tests/embodied/test_m0b_closure_gates.py::test_oracle_privileged_precision_never_enters_observation", "tests/embodied/m0_isolation_probe.py"],
+    "M0-G7": ["tests/embodied/test_m0a_contracts.py::test_unknown_holds_write_and_reconcile", "tests/embodied/test_m0b_safety_contracts.py::test_unknown_reconcile_poll_limit_expiry_scope_and_replay", "tests/embodied/test_m0b_closure_gates.py::test_unknown_cannot_be_released_by_reset_or_forged_teardown"],
+    "M0-G8": ["tests/embodied/test_m0a_contracts.py::test_idempotency_and_crash_recovery", "tests/embodied/test_m0b_safety_contracts.py::test_semantic_duplicate_cannot_change_intent_key_while_running"],
+    "M0-G9": ["tests/embodied/test_m0a_contracts.py::test_grant_revoke_and_stop_semantics", "tests/embodied/test_m0b_safety_contracts.py::test_stop_requires_zero_motion_evidence_not_only_elapsed_time", "tests/embodied/test_m0b_closure_gates.py::test_stop_evidence_revoked_on_motion_or_clock_rollback"],
+    "M0-G10": ["tests/embodied/test_m0b_safety_contracts.py::test_safety_stop_does_not_require_model_or_bridge"],
+    "M0-G11": ["tests/embodied/test_m0b_closure_gates.py::test_five_untrusted_data_interception_points", "tests/embodied/test_m0b_closure_gates.py::test_model_cannot_mutate_observation_provenance"],
+    "M0-G12": ["tests/embodied/test_m0_gateway_contracts.py::test_gateway_missing_skill_reports_gap_without_silent_substitution"],
+    "M0-G13": ["tests/embodied/test_m0a_contracts.py::test_oracle_isolation_and_false_success", "tests/embodied/test_m0a_contracts.py::test_goal_requires_actual_placement_not_held_or_wrong_tray"],
+    "M0-G14": ["tests/embodied/test_m0a_contracts.py::test_idempotency_and_crash_recovery"],
+    "M0-G15": ["tests/embodied/test_m0b_closure_gates.py::test_single_writer_budget_revoke_and_stop_are_independent", "tests/embodied/test_m0b_closure_gates.py::test_two_layer_ledger_metrics_recompute_without_model_claims", "tests/embodied/test_m0b_safety_contracts.py::test_grant_freshness_half_open_partition_and_reconfirmation"],
+    "M0-G16": ["experiments/embodied/prereg-m1-sim-001.json", "freeze before first real M1 simulator trial; protocol changes require a new experiment_id"]
+  },
+  "hard_limits": [
+    "All M0 model/robot calls remain in-memory test doubles",
+    "Independent Reviewer PASS P0/P1=0 still required",
+    "Original full R9 exit0 and protected GitHub PR/CI still required",
+    "M1 requires a real physics simulator and separate independent Oracle",
+    "No real hardware authorization"
+  ]
+}
