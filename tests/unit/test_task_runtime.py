@@ -39,6 +39,8 @@ def active_binding(tmp_path, monkeypatch):
     for path in (a, b, host, data):
         path.mkdir(exist_ok=True)
     a, b, host, data = (p.resolve() for p in (a, b, host, data))
+    (host / "trust.json").write_text("test-only fake trust")
+    (host / "bindings").mkdir()
     _git(a, "init", "-q")
     (a / "source.txt").write_text("version one")
     _git(a, "add", "source.txt")
@@ -103,6 +105,20 @@ def test_missing_installation_keeps_legacy_context(tmp_path):
             workspace_root=str(tmp_path),
             data_dir=str(tmp_path),
             authority_root=tmp_path / "not-installed",
+        )
+        is None
+    )
+
+
+def test_partially_installed_host_keeps_legacy_without_grant(tmp_path):
+    root = tmp_path / "host-partial"
+    root.mkdir()
+    assert (
+        resolve_task_execution_for_run(
+            session_id="owner-1",
+            workspace_root=str(tmp_path),
+            data_dir=str(tmp_path),
+            authority_root=root,
         )
         is None
     )

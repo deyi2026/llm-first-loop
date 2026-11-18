@@ -52,6 +52,10 @@ def resolve_task_execution_for_run(
         return None
     if not root.is_absolute() or os.path.realpath(root) != str(root):
         raise TaskRuntimeActivationError("task_authority_root_untrusted")
+    # A staged Host installation must not interrupt ordinary Web Runs.
+    # Without the trust anchor and binding directory there is no grant.
+    if not (root / "trust.json").is_file() or not (root / "bindings").is_dir():
+        return None
     authority = RootOwnedTaskAuthority(root)
     try:
         claims = authority.discover_for_session(session_id)
