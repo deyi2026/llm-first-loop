@@ -118,6 +118,25 @@ def test_foreground_two_roots_allowed_third_denied(task_context):
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS real Seatbelt test")
+def test_foreground_create_and_rename_in_b_with_c_denied(task_context):
+    """A signed Task sandbox allows normal B create/mv without opening C."""
+    a, b, c, audit, _authority, _lanes, _ctx = task_context
+    initial, renamed, forbidden = (b / "new.txt", b / "renamed.txt", c / "forbidden-rename.txt")
+    command = (
+        f"printf approved > {initial} && mv {initial} {renamed} && printf forbidden > {forbidden}"
+    )
+    result = ExecuteCommandTool(
+        sandbox_mode="sandbox-exec",
+        safety_audit_dir=audit,
+        timeout_s=10,
+    ).execute(command=command, workdir=str(a))
+    assert result.status != ToolResultStatus.SUCCESS
+    assert not initial.exists()
+    assert renamed.read_text() == "approved"
+    assert not forbidden.exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS real Seatbelt test")
 def test_background_uses_same_task_sandbox(task_context):
     a, b, c, audit, authority, _lanes, _ctx = task_context
     good, bad = b / "background.txt", c / "blocked-bg.txt"
