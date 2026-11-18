@@ -45,6 +45,7 @@ LFL 当前的主要问题不是 Git 本身，而是 **任务授权、实际 OS �
 ### 1.2 已完成的真实诊断
 
 - 临时 `sandbox-exec` 双项目探针：只放行项目 A 写时，读取项目 B 成功、写入项目 B 返回非零、原内容未变。说明**现行 macOS 写隔离不等于读/网络隔离**。
+- M1 隔离候选 `task_sandbox.py` 真实 Mac Seatbelt 测试：明确授权项目 B 可写，未授权项目 C 写入被拒；项目 B 的 `.git/` 目录和 linked worktree `.git` 指针文件写入被拒。此测试**尚未证明 Host 签发、实际工具接线、Deepin bwrap 真机及全文件系统读隔离**；受管临时/缓存目录仍为兼容性可写根，后续需专项收口。
 - Git linked worktree 的 `.git` 可为指向仓库外 gitdir 的文件，单纯放开工作树不足以让 `git add` 创建 index.lock；应授权受管 Git 元数据操作，而不是给所有模型命令整个仓库元数据写权限。
 - Host Grant 签名密钥当前为进程内随机 HMAC，重启后旧 grant 不再有效；这是已有安全设计事实，不应将其称为可跨重启的任务授权。
 - 已连接 MCP Console 的原生 Computer Use 能力与 LFL `desktop_operate` 不同；前者有后台窗口操作能力不等于 LFL 运行时已集成。
@@ -503,8 +504,8 @@ Reviewer 只针对精确冻结候选审查；发现 P0/P1 修复代码和测试�
 ## 17. 当前执行状态（2026-11-19）
 
 - 设计：**v1.0 实施基线已冻结**；若后续事实证明必须修改关键合同，记录 spec_change 并对新候选重新审查，不进入无限文档拷问。
-- 代码：M1 已提交**纯判定基础** `src/llm_loop/core/task_capabilities.py` 和 22 条定向单测（`2e7d10d19`、`0a16d7742`）；Ruff/Pyright/pytest 定向通过。尚未接入 Host 签发、文件/命令执行器、多根物理沙箱、Git Adapter、桌面/服务工具，**不能称正常任务闭环已完成**。
-- LFL Goal：必须通过 LFL 原生 `create_goal` 在独立会话创建；本文件不是 Goal 创建凭证。
+- 代码：M1 已提交纯 Resolver `src/llm_loop/core/task_capabilities.py`（`2e7d10d19`、`0a16d7742`、`1965a41f8`）及多根沙箱计划 `src/llm_loop/tools/task_sandbox.py`（`ff706e45b`）；Mac 真实写入/拒绝测试、61 项相关测试、Ruff/Pyright 定向通过。**尚未接入可信 Host 签发、实际文件/命令工具、多根 bwrap 真机、受管 Git Adapter、桌面/服务工具**，不能称正常任务闭环已完成。
+- LFL Goal：已通过原生 `create_goal` 创建 `GOAL-20261119-e6f2f767`（active）；T0 已 done、T1 in_progress、T2/T3/T4 pending；受管 Lane `lane-d656ddb7`（v2, active，路径 10 项，最后一次账本 head 为 `d92a38e`，新增提交 `ff706e45b` 尚待下次 CAS 同步）。此处只是事实快照，最终以实时账本为准。
 - 审查/R9/PR/CI/合并/部署：尚未针对本方案执行；不得借用 Issue #73 或其他 Lane 的回执。
 - 并行风险：创建本方案时协调看板显示 15 条在途 Lane；后续以实时看板为准。
 - 下一步：冻结文档、建立独立 Goal 与 Task、分配无冲突 Lane、从 M1 的双项目真实闭环直接落代码。
