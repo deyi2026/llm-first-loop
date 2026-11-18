@@ -52,6 +52,7 @@ function listMock(pending: EscalationRequest[], history: EscalationRequest[] = [
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("EscalationPanel 审批（P0-5 + ESC-05 完整命令门控）", () => {
@@ -422,5 +423,27 @@ describe("M1.1 R5 查看资格绑定命令指纹", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("审批轮询去重", () => {
+  it("隐藏标签页暂停审批读取，重新可见时立即恢复", async () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const fetchMock = vi.fn(listMock([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EscalationWatcher />);
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("同一页面 Watcher 与 Panel 的同时读取共享在途请求", async () => {
+    const fetchMock = vi.fn(listMock([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<><EscalationWatcher /><EscalationPanel /></>);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });
