@@ -4295,8 +4295,15 @@ def _sessions_fingerprint(sessions_dir: str | Path) -> str:
         return "err"
 
 
+# 同进程多个 SSE 客户端的 3s 轮询不应各自扫描数千个 session 文件。
+# 1s 复用窗口只影响通知延迟，不改变底层指纹或会话读写语义。
+_SSE_FINGERPRINT_CACHE_TTL_S = 1.0
+_SSE_FINGERPRINT_CACHE_LOCK = threading.Lock()
+_SSE_FINGERPRINT_CACHE: dict[str, tuple[float, str]] = {}
+
+
 def _session_events_fingerprint(engine: Any) -> str:
-    """当前SessionStore根 + 内容指纹；workspace切换本身也视为会话视图变化。"""
+    """当前 SessionStore 根 + 内容指纹；跨 SSE 连接短时复用同根扫描。"""
     session = getattr(engine, "session", None)
     sessions_dir = getattr(session, "root", None)
     if sessions_dir is None:
@@ -4305,7 +4312,21 @@ def _session_events_fingerprint(engine: Any) -> str:
             or "./data/sessions"
         )
     root = Path(sessions_dir)
-    return f"{root}:{_sessions_fingerprint(root)}"
+    key = os.path.abspath(os.fspath(root))
+    with _SSE_FINGERPRINT_CACHE_LOCK:
+        now = time.monotonic()
+        cached = _SSE_FINGERPRINT_CACHE.get(key)
+        if cached is not None and now - cached[0] < _SSE_FINGERPRINT_CACHE_TTL_S:
+            fingerprint = cached[1]
+        else:
+            fingerprint = _sessions_fingerprint(root)
+            if fingerprint == "err":
+                _SSE_FINGERPRINT_CACHE.pop(key, None)  # 读取失败不得伪装成旧成功
+            else:
+                _SSE_FINGERPRINT_CACHE[key] = (time.monotonic(), fingerprint)
+                if len(_SSE_FINGERPRINT_CACHE) > 32:
+                    _SSE_FINGERPRINT_CACHE.pop(next(iter(_SSE_FINGERPRINT_CACHE)))
+    return f"{root}:{fingerprint}"
 
 
 def _providers_events_fingerprint(engine: Any) -> tuple[str, dict[str, Any]]:

@@ -1,0 +1,78 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261118-m2a-cross-goal-integration",
+  "summary": "M2-A strict cross-Goal Lane path ownership integrated by an isolated no-ff merge onto protected-main baseline 839978b51; no production deployment or Host approval is claimed.",
+  "components": [
+    {
+      "component_id": "m2a-cross-goal-lane-locking",
+      "paths": [
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/introspection/corrections.py",
+        "src/llm_loop/introspection/lane.py",
+        "src/llm_loop/introspection/lane_board.py",
+        "src/llm_loop/introspection/tools_lane.py",
+        "src/llm_loop/introspection/tools_merge_queue.py",
+        "tests/unit/test_lane_m2a_cross_goal.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "LFL LaneStore and managed Lane/merge-queue tools",
+      "disposition": "Reuse the existing CAS LaneStore and strict Host configuration; reject invalid cross-Goal ownership instead of falling back to warning-only behavior.",
+      "evidence": [
+        "Original M2-A branch 97c7a676 is the second parent of local merge e9838cb; no rebase or overwrite.",
+        "Two prior Lane overlaps were released by managed CAS v9 and v5, preserving owners and heads.",
+        "397 focused tests passed on actual isolated integration worktree; Ruff on all eight changed files passed."
+      ],
+      "verification_level": "Local focused tests and Ruff passed; exact final SHA independent Reviewer, original full R9, remote CI, protected merge and deployment remain pending.",
+      "model_evidence_veto_recovery_exit": "No model claim substitutes for independent Reviewer PASS P0/P1=0; invalid Lane config, stale CAS, cross-Goal collision, missing Host receipt or failing R9/CI must HOLD.",
+      "rollback_route": "Revert the integration commit via protected GitHub workflow; retain audit and source branch; no runtime mutation in this change.",
+      "declaration_id": "m2a-cross-goal-lane-locking"
+    },
+    {
+      "component_id": "m2a-architecture-submission",
+      "paths": [
+        "docs/governance/submissions/20261118-m2a-cross-goal-integration.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission evidence",
+      "disposition": "Document exact changed-path partition and explicit gate limits without changing frozen v1.9 design.",
+      "evidence": [
+        "The manifest is a declaration only, not a Host-signed approval or production receipt.",
+        "All eight M2-A changed source/test paths are listed in the control component."
+      ],
+      "verification_level": "A.5 structural validation required on the exact candidate SHA.",
+      "model_evidence_veto_recovery_exit": "Do not claim Reviewer/R9/CI success based on this manifest.",
+      "rollback_route": "Remove manifest with its associated integration PR if rejected."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "m2a-cross-goal-lane-locking",
+      "g1": {
+        "necessity": "Prevent concurrent cross-Goal writes to shared Lane paths and enforce CAS ownership in the actual managed tool entrypoints."
+      },
+      "g2": {
+        "authority_owner": "Host-owned LaneStore/CAS and protected GitHub main retain authority; this patch introduces no independent signer or approval shortcut.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing LaneStore, lane_store_from_host, merge queue, and current Host review/receipt gates; do not create a parallel ledger."
+      },
+      "g3": {
+        "model_evidence": [
+          "Real Git no-ff integration of 97c7a676 onto main 839978b51, resulting local commit e9838cb.",
+          "397 focused tests and Ruff pass; model Reviewer for final candidate not yet completed.",
+          "Mechanical Git tests are not real LLM Agent A/B speedup evidence."
+        ],
+        "recovery_or_reason": "Fail closed on missing CAS, conflicting owner, invalid strict configuration, unavailable audit, or reviewer/R9/CI failure; do not silently downgrade."
+      },
+      "g4": {
+        "rollback": "Protected revert of M2-A integration, retain original branch and immutable audit receipts.",
+        "verification": [
+          "A.5 exact changed-path coverage and Ruff/Pyright.",
+          "Independent Host Reviewer PASS P0/P1=0 on the final exact SHA before original complete R9 exit0.",
+          "Remote PR required CI, protected main merge and main push CI before any managed deployment.",
+          "No original multi-Agent Goal completion until PR61 B2/B3 and Host upgrade plus real A/B acceptance are verified."
+        ]
+      }
+    }
+  ]
+}
