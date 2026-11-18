@@ -85,9 +85,17 @@ export function LaneBoard() {
     });
   }, []);
   useEffect(() => {
-    load();
-    const t = window.setInterval(load, POLL_MS);
-    return () => window.clearInterval(t);
+    const poll = () => {
+      if (!document.hidden) load();
+    };
+    poll();
+    const t = window.setInterval(poll, POLL_MS);
+    // 隐藏标签页不消耗 Board 轮询；重新可见时立即补读。
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [load]);
 
   return (
