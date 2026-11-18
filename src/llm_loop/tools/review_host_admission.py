@@ -5375,7 +5375,7 @@ class HostReviewAdmission:
             str(derived["candidate_sha256"]), scope_paths=(), content_fingerprint="",
         )
 
-    def _diagnose_no_pending(self, parent: str, kind: str) -> str:
+    def _diagnose_no_pending(self, parent: str, kind: str, target: str = "") -> str:
         """EVO-20261106-141b29b9: 「无待消费资格」的 deny 诊断——指名维度.
 
         scopes 为空时唯一能拿到的事实是 records 里的行：用它们区分
@@ -5399,6 +5399,19 @@ class HostReviewAdmission:
                 "parent_mismatch: kind 匹配的待消费资格属于其他父会话"
                 f"（{','.join(others) or '?'}…）——PASS 资格不跨会话，"
                 "跨 run 消费须由发起会话自身执行"
+            )
+        # A PASS for another command/worktree is not a missing or empty delta.
+        # Tell the operator how to request a review for this exact target.
+        if (
+            target
+            and not any(r.target == target for r in parent_rows)
+            and any(r.granted and not r.consumed for r in parent_rows)
+        ):
+            return (
+                "target_mismatch: 本会话有未消费 PASS，但只覆盖其他命令或工作树；"
+                "请在当前 workdir 使用当前 command 重新"
+                " review_admission(action=start,kind=full_test)，"
+                "再用 action=status 核验 PASS。旧资格未被消费"
             )
         states = sorted({f"granted={int(r.granted)},consumed={int(r.consumed)},state={r.state}" for r in parent_rows})
         return (
@@ -5478,7 +5491,19 @@ class HostReviewAdmission:
         # PASS 永远消费不到（独立审查 P1，实测反例见 test_..._consumable）。
         # EVO-20261115-34ae7c99(A)：_pending_scopes 排除批记录（单批永不单独
         # 授权 push）；批记录走循环后的联合覆盖消费。两者都空才早退。
-        scopes = self._pending_scopes(parent, kind)
+        # Only replay a frozen full_test anchor if its exact canonical
+        # worktree+command target matches. Unrelated stale grants must not
+        # cause a misleading full_test_no_delta for this command.
+        full_test_target = ""
+        if kind == "full_test":
+            try:
+                dest = Path(workdir).expanduser().resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                return self._deny(f"full_test_workdir_invalid:{type(exc).__name__}")
+            full_test_target = (
+                f"full_test:{dest}:command:{_digest(command.encode('utf-8'))}"
+            )
+        scopes = self._pending_scopes(parent, kind, target=full_test_target)
         has_batches = (
             kind == "git_push" and self._has_pending_push_batches(parent)
         )
@@ -5492,7 +5517,8 @@ class HostReviewAdmission:
             # EVO-20261106-141b29b9: 指名失配维度（无记录/parent/未签发/已消费）
             return self._deny(
                 "不存在覆盖当前产物、目标及父会话的有效独立审查资格",
-                hint=(hint + "\n" if hint else "") + self._diagnose_no_pending(parent, kind),
+                hint=(hint + "\n" if hint else "")
+                + self._diagnose_no_pending(parent, kind, full_test_target),
             )
         binding_error = ""
         drift_error = ""
@@ -5580,7 +5606,7 @@ class HostReviewAdmission:
         )
 
     def _pending_scopes(
-        self, parent: str, kind: str,
+        self, parent: str, kind: str, *, target: str = "",
     ) -> list[tuple[tuple[str, ...], str, tuple[int, int], str, str]]:
         """未消费资格的 scope、越界绑定和 full_test 冻结基准，保序。
 
@@ -5601,6 +5627,8 @@ class HostReviewAdmission:
                 # 单批 scope 重放会在 _consume 精确命中自己，等于单批 PASS
                 # 授权整次 push。批资格只走 _consume_joint_push_batches。
                 if row.batch_plan_id:
+                    continue
+                if target and row.target != target:
                     continue
                 item = (
                     row.scope_paths,
