@@ -2,7 +2,7 @@
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "issuer-test-gid-fixture-20261118",
   "summary": "Isolated test-only fix for PR61 R9 red: Web sandbox tmp dirs inherit st_gid=0 (wheel) while process primary gid=20 (staff); test fixture now derives web_group_gid from output_dir.lstat().st_gid (production issue() permission require untouched) and adds two negative tests (wrong group rejected; group-writable/other-perm modes rejected).",
-  "base_main_sha": "e9507bd9154b88ce28909030266e552e03409c55",
+  "declarations": [],
   "components": [
     {
       "component_id": "issuer-test-gid-fixture",
