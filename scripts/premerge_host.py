@@ -707,6 +707,9 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         "read_only": True, "remote_main_sha": main, "candidate_sha": candidate,
         "pr_number": pr_number, "github_run_id": run_id,
         "tested_merge_sha": tested_merge, "required_checked": len(pinned),
+        "required_check_keys": sorted(
+            (item["context"], item["app_id"]) for item in remote_required
+        ),
         "trusted_gate_blobs": blobs, "host_snapshot_signature_verified": True,
         "branch_protection_verified": True, "remote_main_cas": False,
         "host_check_context": _HOST_CHECK_CONTEXT, "host_check_app_id": host_app_id,

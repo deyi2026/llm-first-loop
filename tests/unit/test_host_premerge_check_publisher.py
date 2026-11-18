@@ -240,3 +240,44 @@ def test_web_uid_cannot_run_host_publisher_even_with_apply(tmp_path):
     assert proc.returncode == 3
     assert "host_check_issuer_isolation_required" in proc.stdout
     assert "PUBLISHED" not in proc.stdout
+
+
+def test_ci_required_check_removed_after_host_preflight_blocks_publish(facts):
+    client = facts[0]
+    original_get = client.get
+    calls = 0
+
+    def remove_ci_check_on_third_read(path):
+        nonlocal calls
+        value = original_get(path)
+        if path == f"{PREFIX}/branches/main/protection/required_status_checks":
+            calls += 1
+            if calls >= 3:
+                value["checks"] = [
+                    item for item in value["checks"]
+                    if item["context"] != "CI / test"
+                ]
+        return value
+
+    client.get = remove_ci_check_on_third_read
+    with pytest.raises(HostHoldError, match="prepublish_protection_changed"):
+        publish(facts, apply=True, token="host-app-token" * 3)
+
+
+def test_ruleset_added_after_host_preflight_blocks_publish(facts):
+    client = facts[0]
+    original_get = client.get
+    calls = 0
+
+    def ruleset_on_third_read(path):
+        nonlocal calls
+        value = original_get(path)
+        if path == f"{PREFIX}/rulesets?includes_parents=true":
+            calls += 1
+            if calls >= 3:
+                value = [{"name": "bypass", "enforcement": "active"}]
+        return value
+
+    client.get = ruleset_on_third_read
+    with pytest.raises(HostHoldError, match="prepublish_protection_changed"):
+        publish(facts, apply=True, token="host-app-token" * 3)

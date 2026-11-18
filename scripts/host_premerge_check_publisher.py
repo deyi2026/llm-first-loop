@@ -127,8 +127,15 @@ def publish_verified(
         f"repos/{repo}/branches/main/protection/required_status_checks"
     )
     pinned = required.get("checks") or []
+    rulesets = client.get(f"repos/{repo}/rulesets?includes_parents=true")
+    fresh_keys = sorted(
+        (item.get("context"), item.get("app_id"))
+        for item in pinned if isinstance(item, dict)
+    ) if isinstance(pinned, list) else []
     _require(
-        (protection.get("enforce_admins") or {}).get("enabled") is True
+        fresh_keys == verdict["required_check_keys"]
+        and rulesets == []
+        and (protection.get("enforce_admins") or {}).get("enabled") is True
         and (protection.get("allow_force_pushes") or {}).get("enabled") is False
         and (protection.get("allow_deletions") or {}).get("enabled") is False
         and required.get("strict") is True
