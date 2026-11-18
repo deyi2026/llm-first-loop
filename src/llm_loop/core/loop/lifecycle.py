@@ -36,6 +36,9 @@ from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
 )
 from llm_loop.core.run_context import (
+    current_task_execution as _current_task_execution,
+)
+from llm_loop.core.run_context import (
     current_workspace_root as _current_workspace_root,
 )
 from llm_loop.core.trace_leak.ingress_token import (
@@ -241,6 +244,7 @@ class _RunEntrypointMixin:
         _run_stack = ExitStack()
         _run_save_token: object | None = None
         _budget_execution: Any = None
+        _task_execution: Any = None
         _event_step_scope: ExitStack | None = None
         inner = None
 
@@ -248,6 +252,7 @@ class _RunEntrypointMixin:
         def _bound_run_context():
             nonlocal _event_step_scope
             sid_token = _current_session_id.set(session_id)
+            task_token = _current_task_execution.set(_task_execution)
             generation_token = _current_run_generation.set(run_generation)
             wait_budget_token = current_wait_budget.set(run_wait_budget)
             wait_cancel_token = current_wait_cancel_check.set(_wait_cancelled)
@@ -288,6 +293,7 @@ class _RunEntrypointMixin:
                 current_wait_cancel_check.reset(wait_cancel_token)
                 current_wait_budget.reset(wait_budget_token)
                 _current_run_generation.reset(generation_token)
+                _current_task_execution.reset(task_token)
                 _current_session_id.reset(sid_token)
 
         try:
@@ -298,6 +304,16 @@ class _RunEntrypointMixin:
                 raise SessionBusyError(f"会话 {session_id} 正由另一进程执行，请稍后重试")
             _run_save_token = self.session._activate_run_save_token(
                 session_id, run_generation=run_generation
+            )
+            # A Host-issuer-owned session binding is the only activation path.
+            # No model argument, workspace file or inherited ContextVar may
+            # select a Task Lease. Missing installation preserves legacy mode.
+            from llm_loop.tools.task_runtime import resolve_task_execution_for_run
+
+            _task_execution = resolve_task_execution_for_run(
+                session_id=session_id,
+                workspace_root=run_workspace,
+                data_dir=self.settings.data_dir,
             )
             # I5-A: a separately operator-signed, zero-send Web intent may be
             # consumed only after the real Run lease, generation and human

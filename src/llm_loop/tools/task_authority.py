@@ -320,9 +320,7 @@ class RootOwnedTaskAuthority:
 
     root: Path
 
-    def verify(self, lease_id: str, request: CapabilityRequest) -> TaskLeaseClaims:
-        if not isinstance(lease_id, str) or not _LEASE_ID_RE.fullmatch(lease_id):
-            raise TaskAuthorityError("authority_lease_id_invalid")
+    def _trust(self) -> tuple[int, bytes]:
         try:
             trust = json.loads(_read_root_owned(self.root / "trust.json"))
         except (UnicodeDecodeError, ValueError) as exc:
@@ -343,17 +341,112 @@ class RootOwnedTaskAuthority:
             hashlib.sha256(public_key).hexdigest(), trust["public_key_sha256"]
         ):
             raise TaskAuthorityError("authority_public_key_mismatch")
+        return trust["issuer_uid"], public_key
+
+    def verify(self, lease_id: str, request: CapabilityRequest) -> TaskLeaseClaims:
+        if not isinstance(lease_id, str) or not _LEASE_ID_RE.fullmatch(lease_id):
+            raise TaskAuthorityError("authority_lease_id_invalid")
+        issuer_uid, public_key = self._trust()
         return verify_signed_task_lease(
             public_key,
             _read_separated_issuer_file(
                 self.root / "leases" / f"{lease_id}.json",
                 self.root,
-                trust["issuer_uid"],
+                issuer_uid,
             ),
             _read_separated_issuer_file(
                 self.root / "states" / f"{lease_id}.json",
                 self.root,
-                trust["issuer_uid"],
+                issuer_uid,
             ),
             request,
         )
+
+    def load(self, lease_id: str) -> TaskLeaseClaims:
+        """Verify signed identity without accepting any model-authored claims."""
+        if not isinstance(lease_id, str) or not _LEASE_ID_RE.fullmatch(lease_id):
+            raise TaskAuthorityError("authority_lease_id_invalid")
+        issuer_uid, _public = self._trust()
+        raw = _read_separated_issuer_file(
+            self.root / "leases" / f"{lease_id}.json", self.root, issuer_uid
+        )
+        try:
+            payload = _parse_document(raw)["payload"]
+            first = payload["resources"][0]
+            request = CapabilityRequest(
+                goal_id=payload["goal_id"],
+                task_id=payload["task_id"],
+                owner_session_id=payload["owner_session_id"],
+                agent_id=payload["agent_id"],
+                lane_id=payload["lane_id"],
+                expected_revision=payload["revision"],
+                kind=first["kind"],
+                target=first["identity"],
+                verb=first["verbs"][0],
+            )
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise TaskAuthorityError("authority_lease_schema_invalid") from exc
+        claims = self.verify(lease_id, request)
+        if claims.lease_id != lease_id:
+            raise TaskAuthorityError("authority_lease_id_mismatch")
+        return claims
+
+    def discover_for_session(self, session_id: str) -> TaskLeaseClaims | None:
+        """Resolve one Host-owned session binding; ambiguous active leases HOLD."""
+        if not isinstance(session_id, str) or not 0 < len(session_id) <= 256:
+            raise TaskAuthorityError("authority_session_invalid")
+        issuer_uid, _public = self._trust()
+        base = self.root / "bindings"
+        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        directory = base / digest
+        for candidate, may_be_absent in ((base, False), (directory, True)):
+            try:
+                info = os.lstat(candidate)
+            except FileNotFoundError as exc:
+                if may_be_absent:
+                    return None
+                raise TaskAuthorityError("authority_bindings_unavailable") from exc
+            except OSError as exc:
+                raise TaskAuthorityError("authority_bindings_unavailable") from exc
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != issuer_uid or info.st_mode & 0o022:
+                raise TaskAuthorityError("authority_bindings_untrusted")
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError as exc:
+            raise TaskAuthorityError("authority_bindings_unavailable") from exc
+        if len(names) > 64:
+            raise TaskAuthorityError("authority_bindings_ambiguous")
+        active: list[TaskLeaseClaims] = []
+        for name in names:
+            if not name.endswith(".json") or not _LEASE_ID_RE.fullmatch(name[:-5]):
+                raise TaskAuthorityError("authority_binding_invalid")
+            lease_id = name[:-5]
+            try:
+                binding = json.loads(
+                    _read_separated_issuer_file(directory / name, self.root, issuer_uid)
+                )
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise TaskAuthorityError("authority_binding_invalid") from exc
+            if (
+                not isinstance(binding, dict)
+                or set(binding) != {"schema", "owner_session_id", "lease_id"}
+                or binding["schema"] != "lfl.task-session-binding/v1"
+                or binding["owner_session_id"] != session_id
+                or binding["lease_id"] != lease_id
+            ):
+                raise TaskAuthorityError("authority_binding_invalid")
+            try:
+                claims = self.load(lease_id)
+            except TaskAuthorityError as exc:
+                if exc.reason_code in (
+                    "authority_lease_revoked",
+                    "authority_lease_expired_or_not_yet_valid",
+                ):
+                    continue
+                raise
+            if claims.owner_session_id != session_id or claims.parent_lease_id is not None:
+                raise TaskAuthorityError("authority_binding_identity_invalid")
+            active.append(claims)
+            if len(active) > 1:
+                raise TaskAuthorityError("authority_bindings_ambiguous")
+        return active[0] if active else None

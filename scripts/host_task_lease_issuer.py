@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -283,6 +284,7 @@ def _check_installed() -> None:
         (_BASE / "private" / "consumed", _ISSUER_UID, True),
         (_BASE / "leases", _ISSUER_UID, False),
         (_BASE / "states", _ISSUER_UID, False),
+        (_BASE / "bindings", _ISSUER_UID, False),
     ):
         st = path.lstat()
         require(
@@ -432,6 +434,33 @@ def main(argv: list[str] | None = None) -> int:
                 _audit("issue_intent", ident, args.approval_id)
                 _create(_BASE / "leases" / f"{ident}.json", lease_doc, 0o644)
                 _create(_BASE / "states" / f"{ident}.json", state_doc, 0o644)
+                # Session selection is issuer-owned, never an LFL/model input.
+                # Old bindings remain for audit; runtime ignores revoked/expired
+                # leases and refuses multiple concurrently active candidates.
+                session_digest = hashlib.sha256(
+                    approval["owner_session_id"].encode("utf-8")
+                ).hexdigest()
+                binding_dir = _BASE / "bindings" / session_digest
+                with contextlib.suppress(FileExistsError):
+                    binding_dir.mkdir(mode=0o755)
+                binding_info = binding_dir.lstat()
+                require(
+                    stat.S_ISDIR(binding_info.st_mode)
+                    and binding_info.st_uid == _ISSUER_UID
+                    and binding_info.st_mode & 0o022 == 0,
+                    "issuer_binding_dir_untrusted",
+                )
+                _create(
+                    binding_dir / f"{ident}.json",
+                    canonical(
+                        {
+                            "schema": "lfl.task-session-binding/v1",
+                            "owner_session_id": approval["owner_session_id"],
+                            "lease_id": ident,
+                        }
+                    ),
+                    0o644,
+                )
                 _audit("issue_published", ident, args.approval_id)
                 result = {"decision": "SIGNED", "lease_id": ident}
             else:

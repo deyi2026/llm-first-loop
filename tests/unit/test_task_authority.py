@@ -286,3 +286,90 @@ def test_separated_issuer_file_rejects_symlink_hardlink_and_group_write(tmp_path
     child.chmod(0o777)
     with pytest.raises(TaskAuthorityError, match="authority_store_untrusted"):
         _read_separated_issuer_file(target, root, os.getuid())
+
+
+def test_issuer_owned_session_binding_real_signatures_and_ambiguity(
+    tmp_path,
+    signed_receipts,
+    monkeypatch,
+):
+    pem, lease, state, sign, _request = signed_receipts
+    root = tmp_path / "authority"
+    (root / "leases").mkdir(parents=True)
+    (root / "states").mkdir()
+    session = lease["owner_session_id"]
+    binding_dir = root / "bindings" / hashlib.sha256(session.encode()).hexdigest()
+    binding_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        RootOwnedTaskAuthority,
+        "_trust",
+        lambda self: (os.getuid(), pem),
+    )
+    authority = RootOwnedTaskAuthority(root)
+    clock = datetime.now(UTC)
+    lease = {
+        **lease,
+        "issued_at": (clock - timedelta(minutes=1)).isoformat(),
+        "expires_at": (clock + timedelta(hours=1)).isoformat(),
+    }
+
+    def publish(lease_payload, state_status="active"):
+        lease_id = lease_payload["lease_id"]
+        state_payload = {
+            **state,
+            "lease_id": lease_id,
+            "lease_sha256": hashlib.sha256(_canonical_json(lease_payload)).hexdigest(),
+            "status": state_status,
+        }
+        (root / "leases" / f"{lease_id}.json").write_bytes(
+            sign(lease_payload, b"lfl.task-lease.v1")
+        )
+        (root / "states" / f"{lease_id}.json").write_bytes(
+            sign(state_payload, b"lfl.task-lease-state.v1")
+        )
+        (binding_dir / f"{lease_id}.json").write_text(
+            json.dumps(
+                {
+                    "schema": "lfl.task-session-binding/v1",
+                    "owner_session_id": session,
+                    "lease_id": lease_id,
+                }
+            )
+        )
+
+    publish(lease)
+    first_claims = authority.discover_for_session(session)
+    assert first_claims is not None
+    assert first_claims.lease_id == lease["lease_id"]
+    second = {**lease, "lease_id": "lease-abcdefgh"}
+    publish(second)
+    with pytest.raises(TaskAuthorityError, match="authority_bindings_ambiguous"):
+        authority.discover_for_session(session)
+    (root / "states" / f"{second['lease_id']}.json").write_bytes(
+        sign(
+            {
+                **state,
+                "lease_id": second["lease_id"],
+                "lease_sha256": hashlib.sha256(_canonical_json(second)).hexdigest(),
+                "status": "revoked",
+            },
+            b"lfl.task-lease-state.v1",
+        )
+    )
+    remaining_claims = authority.discover_for_session(session)
+    assert remaining_claims is not None
+    assert remaining_claims.lease_id == lease["lease_id"]
+    (binding_dir / f"{second['lease_id']}.json").write_text(
+        json.dumps(
+            {
+                "schema": "lfl.task-session-binding/v1",
+                "owner_session_id": "other-session",
+                "lease_id": second["lease_id"],
+            }
+        )
+    )
+    with pytest.raises(TaskAuthorityError, match="authority_binding_invalid"):
+        authority.discover_for_session(session)
+    binding_dir.chmod(0o777)
+    with pytest.raises(TaskAuthorityError, match="authority_bindings_untrusted"):
+        authority.discover_for_session(session)
