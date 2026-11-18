@@ -469,7 +469,7 @@ def _verify_gate_closure(client: Any, main: str) -> None:
             residual = line
             for match in reversed(matches):
                 residual = residual[:match.start()] + residual[match.end():]
-            _require(b"scripts/" not in residual,
+            _require(b"scripts/" not in residual.lower(),
                      "gate_closure_incomplete", unavailable=False)
             for match in matches:
                 try:
@@ -489,7 +489,9 @@ def _verify_host_execution(client: Any, main: str, *,
     eligible, never a stale checkout or a release directory without Git.
     """
     root = (execution_root or Path(__file__).resolve().parents[1]).resolve()
-    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    # Never inherit caller-controlled Git repository/index/config redirects.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_OPTIONAL_LOCKS"] = "0"
     def git(*args: str) -> str:
         try:
             proc = subprocess.run(
