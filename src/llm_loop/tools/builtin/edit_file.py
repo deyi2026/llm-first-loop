@@ -29,9 +29,19 @@ class _ToolJournalFileEffectSink:
 
     effect_kind = "file_replace"
 
-    def __init__(self, binding: Any) -> None:
+    def __init__(self, binding: Any, *, task_target: str = "") -> None:
         self._binding = binding
         self.workspace_scope = str(binding.workspace_root)
+        if task_target:
+            from llm_loop.core.run_context import current_task_execution
+            from llm_loop.tools.task_execution import TrustedTaskExecution
+
+            task = current_task_execution.get()
+            if not isinstance(task, TrustedTaskExecution):
+                raise ValueError("task_effect_workspace_untrusted")
+            # Never accept a model-supplied workspace override: derive it
+            # from the exact Host-signed project root at effect time.
+            self.workspace_scope = task.authorize_file(task_target, "write")
         self.owner_session_id = str(binding.session_id)
         self.operation_id = str(binding.execution_id)
         self.tool_call_id = str(binding.tool_call_id)
@@ -60,7 +70,7 @@ class _ToolJournalFileEffectSink:
                 round_no=binding.round_no,
                 tool_call_id=binding.tool_call_id,
                 tool_name=binding.tool_name,
-                workspace_root=binding.workspace_root,
+                workspace_root=self.workspace_scope,
                 canonical_path=str(canonical_path),
                 effect_kind=self.effect_kind,
                 before_bytes=before_bytes,
@@ -85,7 +95,7 @@ class _ToolJournalFileEffectSink:
                 round_no=binding.round_no,
                 tool_call_id=binding.tool_call_id,
                 tool_name=binding.tool_name,
-                workspace_root=binding.workspace_root,
+                workspace_root=self.workspace_scope,
                 canonical_path=str(canonical_path),
                 effect_kind=self.effect_kind,
                 actual_after_bytes=actual_after_bytes,
@@ -149,7 +159,7 @@ class EditFileTool:
             },
             "expected_snapshot_ref": {
                 "type": "string",
-                "description": "read_file(snapshot=true) 返回的 artifact ref；提供时写前精确核对同工作区、同路径、完整字节版本",
+                "description": "read_file(snapshot=true) 返回的版本基线；普通模式为 artifact ref，受信 Task Lease 模式为 sha256:<完整文件哈希>；写前核对精确字节版本",
             },
         },
         "required": ["path", "old_string", "new_string"],
@@ -254,6 +264,14 @@ class EditFileTool:
         from llm_loop.core.tool_execution_journal import current_tool_effect_binding
 
         binding = current_tool_effect_binding()
+        from llm_loop.core.run_context import current_task_execution
+
+        if current_task_execution.get() is not None:
+            return self._task_edit(
+                path=path, path_str=path_str, old=old, new=new,
+                replace_all=replace_all, dry_run=dry_run,
+                expected_snapshot_ref=expected_snapshot_ref, binding=binding,
+            )
         sink = (
             _ToolJournalFileEffectSink(binding)
             if binding is not None and binding.tool_name == self.name
@@ -279,6 +297,58 @@ class EditFileTool:
         except FileServiceError as exc:
             return self._map_service_error(exc, path_str)
 
+        return self._success_result(result, path_str)
+
+    def _task_edit(
+        self, *, path: Path, path_str: str, old: str, new: str,
+        replace_all: bool, dry_run: bool, expected_snapshot_ref: str,
+        binding: Any,
+    ) -> ToolResult:
+        """Task-only exact-hash file edit through signed roots and original WAL."""
+        from llm_loop.core.run_context import current_task_execution
+        from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+        from llm_loop.tools.task_files import TaskFileAdapter, TaskFileError
+
+        task = current_task_execution.get()
+        if not isinstance(task, TrustedTaskExecution):
+            return self._fail("任务上下文未由可信 Host 激活", "task_context_untrusted")
+        if not expected_snapshot_ref.startswith("sha256:"):
+            return self._fail(
+                "任务级跨项目编辑要求 read_file(snapshot=true) 返回的 sha256:<完整文件哈希>；本次未写入。",
+                "TaskVersionPreconditionRequired",
+            )
+        expected_sha256 = expected_snapshot_ref.removeprefix("sha256:")
+        service = FileService(lock_root=Path(task.lanes._dir) / "task_file_locks")
+        try:
+            if dry_run:
+                root = task.authorize_file(str(path), "write")
+                result = service.edit(
+                    path=path, old_string=old, new_string=new,
+                    replace_all=replace_all, dry_run=True,
+                    expected_sha256=expected_sha256, workspace_scope=root,
+                )
+            else:
+                if binding is None or binding.tool_name != self.name:
+                    return self._fail(
+                        "任务级跨项目写入缺少本轮受信 ToolJournal 绑定；未写入。",
+                        "EffectPreparedUnavailable",
+                    )
+                sink = _ToolJournalFileEffectSink(binding, task_target=str(path))
+                result = TaskFileAdapter(task=task, service=service).edit_existing(
+                    path=str(path), old_string=old, new_string=new,
+                    replace_all=replace_all, expected_sha256=expected_sha256,
+                    effect_sink=sink,
+                )
+        except (TaskExecutionError, TaskFileError) as exc:
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content=f"[任务授权拒绝] {exc.reason_code}（未写入）",
+                error_type=exc.reason_code,
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        except FileServiceError as exc:
+            return self._map_service_error(exc, path_str)
         return self._success_result(result, path_str)
 
     def _map_service_error(self, exc: FileServiceError, path_str: str) -> ToolResult:

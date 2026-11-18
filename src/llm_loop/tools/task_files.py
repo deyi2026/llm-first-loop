@@ -80,6 +80,7 @@ class _FencedFileSink:
             if not allowed:
                 yield allowed
             else:
+                self._task.authorize_file(self._target, "read")
                 self._task.authorize_file(self._target, "write")
                 yield True
 
@@ -117,6 +118,7 @@ class TaskFileAdapter:
         ):
             raise TaskFileError("task_file_lock_root_untrusted")
         try:
+            self._task.authorize_file(target, "read")
             root = self._task.authorize_file(target, "write")
             if (
                 os.path.realpath(effect_sink.workspace_scope) != root

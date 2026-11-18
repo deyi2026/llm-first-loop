@@ -164,9 +164,26 @@ def test_real_cross_project_edit_with_durable_fence(cross_project):
     _a, _b, _c, _audit, _lanes, _authority, _ctx, adapter, sink, target = cross_project
     result = _edit(adapter, sink, target)
     assert result.applied
+    assert result.precondition_checked
     assert target.read_text() == "approved text\n"
     assert sink.prepared_count == 1
     assert sink.observed_count == 1
+
+
+def test_write_only_lease_cannot_edit_existing_file(cross_project, monkeypatch):
+    _a, _b, _c, _audit, _lanes, authority, _ctx, adapter, sink, target = cross_project
+    original = authority.verify
+
+    def reject_read(lease_id, request):
+        if request.verb == "read":
+            raise TaskAuthorityError("authority_read_verb_missing")
+        return original(lease_id, request)
+
+    monkeypatch.setattr(authority, "verify", reject_read)
+    with pytest.raises(TaskFileError, match="authority_read_verb_missing"):
+        _edit(adapter, sink, target)
+    assert target.read_text() == "original text\n"
+    assert sink.prepared_count == 0
 
 
 def test_stale_exact_hash_and_unauthorized_third_project(cross_project):

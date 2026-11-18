@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import logging
+import os
+import stat
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
     current_evidence_shadow_enabled,
     current_session_id,
+    current_task_execution,
     workspace_base,
 )
 from llm_loop.sealed_paths import seal_enabled, sealed_path_reason
@@ -24,6 +29,9 @@ from llm_loop.workspace.file_effects import FileArtifactProvenance
 from llm_loop.workspace.file_service import FileService, FileServiceError
 
 logger = logging.getLogger(__name__)
+_task_read_reentrant: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "lfl_task_read_reentrant", default=False
+)
 
 # R8.24-C C-3.2（C-D6/C-G7）: 短路说明中被指名工具的声明式白名单——T8 式静态扫描
 # 对照注册表逐一校验存在性（R8.7 注册事实原则：不得指名未注册工具）。
@@ -64,7 +72,8 @@ class ReadFileTool:
         "无法内联时该次复用按 failure 如实回执（evidence_force_refresh=true 显式要求物理重读）。"
         "evidence_force_refresh 只改变 Evidence 复用/读取来源，不创建 snapshot_ref，也不能替代 snapshot=true 的版本 baseline；"
         "legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
-        "snapshot=true 时强制物理观察当前完整文件并返回 file_contract_version=1 的 immutable baseline ref；"
+        "snapshot=true 时普通模式强制物理观察当前完整文件并返回 file_contract_version=1 的 immutable baseline ref；"
+        "受信 Task Lease 模式返回 sha256:<完整字节哈希> 作为精确写前置条件，非 immutable artifact；"
         "versioned write 的机械配对是 read_file(snapshot=true) 取得当前完整字节 baseline，再由 "
         "edit_file(expected_snapshot_ref=<snapshot_ref>) 使用该 baseline；普通 snapshot=false 读取不会产生这个精确写前置条件；"
         "path 也可为 artifact://v1/...；此时读取当前工作区绑定的 immutable artifact snapshot，"
@@ -98,7 +107,92 @@ class ReadFileTool:
             FileService(artifact_store=artifact_store) if artifact_store is not None else None
         )
 
+    @staticmethod
+    def _task_sha256(path: Path) -> str:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError("not a regular file")
+            digest = hashlib.sha256()
+            while chunk := os.read(fd, 1024 * 1024):
+                digest.update(chunk)
+            return digest.hexdigest()
+        finally:
+            os.close(fd)
+
+    def _task_read(self, kwargs: dict) -> ToolResult:
+        """Task-only read scope and exact SHA baseline; legacy path unchanged."""
+        from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+        task = current_task_execution.get()
+        if not isinstance(task, TrustedTaskExecution):
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content="[任务授权拒绝] 未受信的 Task Context",
+                tool_call_id="", tool_name=self.name, error_type="task_context_untrusted",
+            )
+        path_text = str(kwargs.get("path", "") or "").strip()
+        if path_text.startswith((ARTIFACT_SCHEME, "evidence://")):
+            token = _task_read_reentrant.set(True)
+            try:
+                return self.execute(**kwargs)
+            finally:
+                _task_read_reentrant.reset(token)
+        target = Path(path_text).expanduser()
+        if not target.is_absolute():
+            target = Path(workspace_base()) / target
+        try:
+            task.authorize_file(str(target), "read")
+        except TaskExecutionError as exc:
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content=f"[任务授权拒绝] {exc.reason_code}",
+                tool_call_id="", tool_name=self.name, error_type=exc.reason_code,
+            )
+        snapshot = bool(kwargs.get("snapshot", False))
+        if snapshot and sensitive_path_reason(target) is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[敏感文件] 任务级 SHA 基线拒绝敏感路径；可用 snapshot=false 脱敏读取。",
+                tool_call_id="", tool_name=self.name,
+                error_type="SensitivePathSnapshotRefused",
+            )
+        try:
+            before = self._task_sha256(target) if snapshot else ""
+        except OSError:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[任务快照失败] 无法读取完整文件基线",
+                tool_call_id="", tool_name=self.name, error_type="TaskSnapshotUnavailable",
+            )
+        token = _task_read_reentrant.set(True)
+        try:
+            result = self.execute(**{**kwargs, "snapshot": False})
+        finally:
+            _task_read_reentrant.reset(token)
+        if snapshot and result.status == ToolResultStatus.SUCCESS:
+            try:
+                after = self._task_sha256(target)
+            except OSError:
+                after = ""
+            if before != after:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[任务快照冲突] 文件在读取期间变化；重新读取后再编辑。",
+                    tool_call_id="", tool_name=self.name, error_type="TaskSnapshotChanged",
+                )
+            contract = (
+                f"\n[task_file_contract] snapshot_ref=sha256:{after} "
+                "version=sha256-exact-byte (不是 artifact:// 快照)"
+            )
+            result.content += contract
+            if result.raw_observation is not None:
+                result.raw_observation += contract
+        return result
+
     def execute(self, **kwargs) -> ToolResult:
+        if current_task_execution.get() is not None and not _task_read_reentrant.get():
+            return self._task_read(kwargs)
         path = str(kwargs.get("path", "")).strip()
         if path.startswith(ARTIFACT_SCHEME):
             return self._read_artifact(path, kwargs)

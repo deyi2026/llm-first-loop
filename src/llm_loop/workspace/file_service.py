@@ -548,7 +548,7 @@ class FileService:
                 "BaselineSnapshotFailed", detail=str(exc), cause_type=type(exc).__name__
             ) from exc
 
-        precondition_checked = False
+        precondition_checked = bool(expected_sha256)
         if expected_snapshot_ref:
             if self.artifact_store is None or not workspace_scope:
                 raise FileServiceError("VersionPreconditionInvalid")
