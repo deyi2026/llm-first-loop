@@ -32,6 +32,8 @@ import contextlib
 import difflib
 import hashlib
 import os
+import secrets
+import stat
 import tempfile
 import threading
 import weakref
@@ -128,6 +130,116 @@ class FileServiceError(ValueError):
         self.cause_type = cause_type
         self.match_count = match_count
         super().__init__(detail or error_type)
+
+
+@dataclass(frozen=True)
+class _PinnedTaskTarget:
+    """Task-only openat handle; all physical writes stay on the pinned parent FD."""
+
+    parent_fd: int
+    path: Path
+
+    def read(self) -> tuple[bytes, os.stat_result]:
+        try:
+            fd = os.open(
+                self.path.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=self.parent_fd,
+            )
+        except OSError as exc:
+            raise FileServiceError("TaskFileIdentityInvalid") from exc
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise FileServiceError("TaskFileIdentityInvalid")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                return stream.read(), info
+        finally:
+            os.close(fd)
+
+    def ensure_original(self, original: os.stat_result, data: bytes) -> None:
+        try:
+            parent_now = os.stat(self.path.parent, follow_symlinks=False)
+            parent_pinned = os.fstat(self.parent_fd)
+        except OSError as exc:
+            raise FileServiceError("TaskFileIdentityInvalid") from exc
+        if not stat.S_ISDIR(parent_now.st_mode) or (parent_now.st_dev, parent_now.st_ino) != (
+            parent_pinned.st_dev,
+            parent_pinned.st_ino,
+        ):
+            raise FileServiceError("TaskFileIdentityInvalid")
+        current, info = self.read()
+        if (info.st_dev, info.st_ino) != (original.st_dev, original.st_ino) or current != data:
+            raise FileServiceError("BaselineChanged")
+
+    def replace(self, data: bytes, original: os.stat_result, before: bytes) -> None:
+        self.ensure_original(original, before)
+        temp_name = f".{self.path.name}.lfl-{secrets.token_hex(12)}.tmp"
+        try:
+            fd = os.open(
+                temp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=self.parent_fd,
+            )
+            try:
+                with os.fdopen(fd, "wb", closefd=False) as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            finally:
+                os.close(fd)
+            # A second identity fence is needed because fsync may block.
+            self.ensure_original(original, before)
+            os.replace(
+                temp_name,
+                self.path.name,
+                src_dir_fd=self.parent_fd,
+                dst_dir_fd=self.parent_fd,
+            )
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temp_name, dir_fd=self.parent_fd)
+            raise
+
+
+@contextmanager
+def _pinned_task_target(path: Path, root: str) -> Iterator[_PinnedTaskTarget]:
+    """Resolve every ancestor without symlinks from /, never through a model path."""
+    absolute = str(path)
+    if (
+        not path.is_absolute()
+        or os.path.realpath(absolute) != absolute
+        or not os.path.isabs(root)
+        or os.path.realpath(root) != root
+        or root == os.sep
+    ):
+        raise FileServiceError("TaskFileIdentityInvalid")
+    try:
+        relative = path.relative_to(root)
+        if not relative.parts or any(part in ("", ".", "..") for part in relative.parts):
+            raise ValueError("invalid task target")
+    except ValueError as exc:
+        raise FileServiceError("TaskFileIdentityInvalid") from exc
+    fd = -1
+    try:
+        fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        for component in path.parent.parts[1:]:
+            next_fd = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=fd,
+            )
+            os.close(fd)
+            fd = next_fd
+    except OSError as exc:
+        if fd >= 0:
+            os.close(fd)
+        raise FileServiceError("TaskFileIdentityInvalid") from exc
+    try:
+        yield _PinnedTaskTarget(fd, path)
+    finally:
+        os.close(fd)
 
 
 def _process_lock(key: str) -> threading.RLock:
@@ -402,11 +514,10 @@ class FileService:
                         raise FileServiceError("UnsupportedTextEncoding", detail=str(exc)) from exc
                 stat_after = path.stat()
                 if (stat_before.st_mtime_ns, stat_before.st_size) == (
-                    stat_after.st_mtime_ns, stat_after.st_size
+                    stat_after.st_mtime_ns,
+                    stat_after.st_size,
                 ):
-                    source_version_token = (
-                        f"stat:{stat_after.st_mtime_ns}:{stat_after.st_size}"
-                    )
+                    source_version_token = f"stat:{stat_after.st_mtime_ns}:{stat_after.st_size}"
             except FileServiceError:
                 raise
             except FileNotFoundError as exc:
@@ -430,7 +541,9 @@ class FileService:
             except ArtifactError as exc:
                 raise FileServiceError("SnapshotUnavailable", detail=str(exc)) from exc
 
-        visible_data = data[len(UTF8_BOM) :] if strip_utf8_bom and data.startswith(UTF8_BOM) else data
+        visible_data = (
+            data[len(UTF8_BOM) :] if strip_utf8_bom and data.startswith(UTF8_BOM) else data
+        )
         text = visible_data.decode("utf-8", errors="replace")
         lines = text.splitlines(keepends=True)
         total = len(lines)
@@ -464,6 +577,7 @@ class FileService:
         workspace_scope: str | None = None,
         expected_snapshot_ref: str = "",
         expected_sha256: str = "",
+        task_pinned_root: str | None = None,
         whole_file: bool = False,
         write_scope: WriteScope | None = None,
     ) -> FileEditResult:
@@ -486,18 +600,25 @@ class FileService:
                 operation="edit",
             )
         with self._path_lock(path, workspace_scope):
-            result = self._edit_locked(
-                path=path,
-                old_string=old_string,
-                new_string=new_string,
-                replace_all=replace_all,
-                dry_run=dry_run,
-                effect_sink=effect_sink,
-                workspace_scope=workspace_scope,
-                expected_snapshot_ref=str(expected_snapshot_ref or ""),
-                expected_sha256=str(expected_sha256 or ""),
-                whole_file=whole_file,
+            pinned_context = (
+                _pinned_task_target(path, task_pinned_root)
+                if task_pinned_root is not None
+                else contextlib.nullcontext(None)
             )
+            with pinned_context as pinned:
+                result = self._edit_locked(
+                    path=path,
+                    old_string=old_string,
+                    new_string=new_string,
+                    replace_all=replace_all,
+                    dry_run=dry_run,
+                    effect_sink=effect_sink,
+                    workspace_scope=workspace_scope,
+                    expected_snapshot_ref=str(expected_snapshot_ref or ""),
+                    expected_sha256=str(expected_sha256 or ""),
+                    whole_file=whole_file,
+                    pinned=pinned,
+                )
         if write_scope is not None and result.applied:
             # C6/§5.7: forensic record after a successfully verified durable write
             # (dry_run never lands bytes, so it is never recorded). Best-effort:
@@ -522,9 +643,10 @@ class FileService:
         expected_snapshot_ref: str,
         expected_sha256: str,
         whole_file: bool,
+        pinned: _PinnedTaskTarget | None,
     ) -> FileEditResult:
         try:
-            raw = path.read_bytes()
+            raw, pinned_before = pinned.read() if pinned is not None else (path.read_bytes(), None)
             source_bytes = raw
         except FileNotFoundError as exc:
             raise FileServiceError("FileNotFoundError") from exc
@@ -533,16 +655,19 @@ class FileService:
                 "ReadError", detail=str(exc), cause_type=type(exc).__name__
             ) from exc
         if expected_sha256:
-            if (
-                len(expected_sha256) != 64
-                or any(ch not in "0123456789abcdef" for ch in expected_sha256)
+            if len(expected_sha256) != 64 or any(
+                ch not in "0123456789abcdef" for ch in expected_sha256
             ):
                 raise FileServiceError("VersionPreconditionInvalid")
             if hashlib.sha256(source_bytes).hexdigest() != expected_sha256:
                 raise FileServiceError("VersionConflict")
 
         try:
-            baseline = self._baseline_reader(path)
+            baseline = (
+                (pinned_before.st_mtime_ns, pinned_before.st_size)
+                if pinned_before is not None
+                else self._baseline_reader(path)
+            )
         except OSError as exc:
             raise FileServiceError(
                 "BaselineSnapshotFailed", detail=str(exc), cause_type=type(exc).__name__
@@ -602,11 +727,12 @@ class FileService:
         diff_text = "\n".join(diff_lines[:DIFF_MAX_LINES])
         if len(diff_lines) > DIFF_MAX_LINES:
             diff_text += (
-                f"\n... [diff 过长已截断: 共 {len(diff_lines)} 行，"
-                f"显示前 {DIFF_MAX_LINES} 行]"
+                f"\n... [diff 过长已截断: 共 {len(diff_lines)} 行，显示前 {DIFF_MAX_LINES} 行]"
             )
         added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
-        removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+        removed = sum(
+            1 for line in diff_lines if line.startswith("-") and not line.startswith("---")
+        )
 
         out_text = updated if ending == "\n" else updated.replace("\n", ending)
         out_bytes = (UTF8_BOM if had_bom else b"") + out_text.encode("utf-8")
@@ -632,11 +758,13 @@ class FileService:
             )
 
         try:
-            if self._baseline_reader(path) != baseline:
+            if pinned is not None and pinned_before is not None:
+                pinned.ensure_original(pinned_before, source_bytes)
+            elif self._baseline_reader(path) != baseline:
                 raise FileServiceError("BaselineChanged")
             # mtime/size is a legacy race detector, not a version proof. Re-read exact
             # bytes before mutation so same-size/same-mtime changes are not ignored.
-            if path.read_bytes() != source_bytes:
+            if pinned is None and path.read_bytes() != source_bytes:
                 raise FileServiceError("BaselineChanged")
         except FileServiceError:
             raise
@@ -667,9 +795,7 @@ class FileService:
                 fence_code = str(getattr(mutation_allowed, "code", "") or "")
                 fence_reason = str(getattr(mutation_allowed, "reason", "") or "")
                 fence_facts = getattr(mutation_allowed, "facts", None) or {}
-                facts_txt = " ".join(
-                    f"{k}={v}" for k, v in sorted(dict(fence_facts).items())
-                )
+                facts_txt = " ".join(f"{k}={v}" for k, v in sorted(dict(fence_facts).items()))
                 detail = " | ".join(
                     part
                     for part in (
@@ -681,27 +807,32 @@ class FileService:
                 )
                 raise FileServiceError("EffectAuthorityLost", detail=detail)
             try:
-                fd, tmp_name = tempfile.mkstemp(
-                    dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
-                )
-                tmp = Path(tmp_name)
-                try:
-                    with os.fdopen(fd, "wb") as file_obj:
-                        file_obj.write(out_bytes)
-                        file_obj.flush()
-                        os.fsync(file_obj.fileno())
-                    os.replace(tmp, path)
-                except BaseException:
-                    with contextlib.suppress(OSError):
-                        os.unlink(tmp)
-                    raise
+                if pinned is not None and pinned_before is not None:
+                    pinned.replace(out_bytes, pinned_before, source_bytes)
+                else:
+                    fd, tmp_name = tempfile.mkstemp(
+                        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+                    )
+                    tmp = Path(tmp_name)
+                    try:
+                        with os.fdopen(fd, "wb") as file_obj:
+                            file_obj.write(out_bytes)
+                            file_obj.flush()
+                            os.fsync(file_obj.fileno())
+                        os.replace(tmp, path)
+                    except BaseException:
+                        with contextlib.suppress(OSError):
+                            os.unlink(tmp)
+                        raise
             except OSError as exc:
                 raise FileServiceError(
                     "WriteFailed", detail=str(exc), cause_type=type(exc).__name__
                 ) from exc
 
             try:
-                reread = path.read_bytes()
+                reread, post_stat_pinned = (
+                    pinned.read() if pinned is not None else (path.read_bytes(), None)
+                )
             except OSError as exc:
                 raise FileServiceError(
                     "VerifyReadFailed", detail=str(exc), cause_type=type(exc).__name__
@@ -709,7 +840,7 @@ class FileService:
             if reread != out_bytes:
                 raise FileServiceError("VerifyMismatch")
 
-            post_stat = path.stat()
+            post_stat = post_stat_pinned if post_stat_pinned is not None else path.stat()
             artifact_fact: dict[str, object] | None = None
             artifact_error_type = ""
             if (

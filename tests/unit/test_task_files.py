@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,6 +52,7 @@ class DurableSink:
         self.prepared_count = 0
         self.observed_count = 0
         self.revoke_after_prepared = False
+        self.on_prepared = None
 
     @property
     def records_durable(self):
@@ -58,6 +60,8 @@ class DurableSink:
 
     def prepared(self, *, canonical_path, before_bytes, expected_after_bytes):
         self.prepared_count += 1
+        if self.on_prepared is not None:
+            self.on_prepared()
         if self.revoke_after_prepared:
             self.authority.revoked = True
         return True
@@ -262,3 +266,51 @@ def test_symlink_and_missing_precondition_denied(cross_project):
     with pytest.raises(TaskFileError, match="task_file_version_precondition_required"):
         _edit(adapter, sink, target, sha="not-a-sha")
     assert target.read_text() == "original text\n"
+
+
+def test_fd_pinned_edit_rejects_hardlinked_target(cross_project):
+    _a, _b, c, _audit, _lanes, _authority, _ctx, adapter, sink, target = cross_project
+    outside = c / "outside.txt"
+    outside.write_text("original text\n")
+    target.unlink()
+    os.link(outside, target)
+    with pytest.raises(FileServiceError, match="TaskFileIdentityInvalid"):
+        _edit(adapter, sink, target)
+    assert outside.read_text() == "original text\n"
+    assert sink.prepared_count == 0
+
+
+def test_fd_pinned_edit_rejects_same_bytes_inode_swap_after_wal_prepared(cross_project):
+    _a, b, _c, _audit, _lanes, _authority, _ctx, adapter, sink, target = cross_project
+    replacement = b / "replacement.txt"
+    replacement.write_text("original text\n")
+    sink.on_prepared = lambda: os.replace(replacement, target)
+    with pytest.raises(FileServiceError, match="BaselineChanged"):
+        _edit(adapter, sink, target)
+    assert target.read_text() == "original text\n"
+    assert sink.prepared_count == 1
+    assert sink.observed_count == 0
+
+
+def test_fd_pinned_edit_rejects_parent_directory_swap_after_wal_prepared(cross_project):
+    _a, b, c, _audit, _lanes, _authority, _ctx, adapter, sink, _target = cross_project
+    parent = b / "nested"
+    parent.mkdir()
+    target = parent / "file.txt"
+    target.write_text("original text\n")
+    outside_dir = c / "outside"
+    outside_dir.mkdir()
+    outside = outside_dir / "file.txt"
+    outside.write_text("original text\n")
+
+    def replace_parent():
+        parent.rename(b / "moved")
+        parent.symlink_to(outside_dir, target_is_directory=True)
+
+    sink.on_prepared = replace_parent
+    with pytest.raises((TaskFileError, FileServiceError)):
+        _edit(adapter, sink, target)
+    assert outside.read_text() == "original text\n"
+    assert (b / "moved" / "file.txt").read_text() == "original text\n"
+    assert sink.prepared_count == 1
+    assert sink.observed_count == 0

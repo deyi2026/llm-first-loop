@@ -181,6 +181,32 @@ def test_native_task_unapproved_read_and_sensitive_snapshot_denied(tool_env):
     assert "private-value" not in result.content
 
 
+def test_native_task_fd_read_rejects_hardlink_and_symlink_parent(tool_env):
+    _a, b, c, _target, _authority, _journal, _binding = tool_env
+    outside = c / "outside.txt"
+    outside.write_text("never expose outside bytes")
+    hardlink = b / "hardlink.txt"
+    hardlink.hardlink_to(outside)
+    result = ReadFileTool().execute(path=str(hardlink), snapshot=True)
+    assert result.error_type == "TaskFileIdentityInvalid"
+    assert "never expose" not in result.content
+    alias = b / "alias"
+    alias.symlink_to(c, target_is_directory=True)
+    result = ReadFileTool().execute(path=str(alias / "outside.txt"), snapshot=False)
+    assert result.status == ToolResultStatus.UNAUTHORIZED
+    assert "never expose" not in result.content
+
+
+def test_native_task_sensitive_read_redacts_without_snapshot(tool_env):
+    _a, b, _c, _target, _authority, _journal, _binding = tool_env
+    sensitive = b / ".env"
+    sensitive.write_text("SECRET_KEY=secretvalue123456")
+    result = ReadFileTool().execute(path=str(sensitive), snapshot=False)
+    assert result.status == ToolResultStatus.SUCCESS
+    assert "secretvalue123456" not in result.content
+    assert "敏感内容已脱敏" in result.content
+
+
 def test_native_task_stale_sha_and_missing_journal_denied(tool_env, monkeypatch):
     _a, _b, _c, target, _authority, journal, binding = tool_env
     ref = _ref(ReadFileTool().execute(path=str(target), snapshot=True))

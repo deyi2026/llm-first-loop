@@ -133,6 +133,7 @@ class TaskFileAdapter:
                 replace_all=replace_all,
                 dry_run=False,
                 expected_sha256=expected_sha256,
+                task_pinned_root=root,
                 workspace_scope=root,
                 effect_sink=cast(FileEffectSink, fenced),
             )

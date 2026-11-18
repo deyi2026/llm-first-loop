@@ -5,8 +5,6 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import logging
-import os
-import stat
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -26,7 +24,7 @@ from llm_loop.tools.source_recovery_contract import (
 )
 from llm_loop.workspace.artifacts import ARTIFACT_SCHEME, ArtifactError, WorkspaceArtifactStore
 from llm_loop.workspace.file_effects import FileArtifactProvenance
-from llm_loop.workspace.file_service import FileService, FileServiceError
+from llm_loop.workspace.file_service import FileService, FileServiceError, _pinned_task_target
 
 logger = logging.getLogger(__name__)
 _task_read_reentrant: contextvars.ContextVar[bool] = contextvars.ContextVar(
@@ -107,19 +105,6 @@ class ReadFileTool:
             FileService(artifact_store=artifact_store) if artifact_store is not None else None
         )
 
-    @staticmethod
-    def _task_sha256(path: Path) -> str:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise OSError("not a regular file")
-            digest = hashlib.sha256()
-            while chunk := os.read(fd, 1024 * 1024):
-                digest.update(chunk)
-            return digest.hexdigest()
-        finally:
-            os.close(fd)
-
     def _task_read(self, kwargs: dict) -> ToolResult:
         """Task-only read scope and exact SHA baseline; legacy path unchanged."""
         from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
@@ -141,8 +126,15 @@ class ReadFileTool:
         target = Path(path_text).expanduser()
         if not target.is_absolute():
             target = Path(workspace_base()) / target
+        sealed = sealed_path_reason(target) if seal_enabled() else None
+        if sealed is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[held-out 封条] {sealed}",
+                tool_call_id="", tool_name=self.name, error_type="HeldoutSealed",
+            )
         try:
-            task.authorize_file(str(target), "read")
+            root = task.authorize_file(str(target), "read")
         except TaskExecutionError as exc:
             return ToolResult(
                 status=ToolResultStatus.UNAUTHORIZED,
@@ -158,37 +150,74 @@ class ReadFileTool:
                 error_type="SensitivePathSnapshotRefused",
             )
         try:
-            before = self._task_sha256(target) if snapshot else ""
-        except OSError:
+            with _pinned_task_target(target, root) as pinned:
+                raw, before_stat = pinned.read()
+                if snapshot:
+                    after, after_stat = pinned.read()
+                    if (
+                        raw != after
+                        or (before_stat.st_dev, before_stat.st_ino)
+                        != (after_stat.st_dev, after_stat.st_ino)
+                    ):
+                        return ToolResult(
+                            status=ToolResultStatus.FAILURE,
+                            content="[任务快照冲突] 文件在读取期间变化；重新读取后再编辑。",
+                            tool_call_id="", tool_name=self.name, error_type="TaskSnapshotChanged",
+                        )
+        except (OSError, FileServiceError) as exc:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
-                content="[任务快照失败] 无法读取完整文件基线",
-                tool_call_id="", tool_name=self.name, error_type="TaskSnapshotUnavailable",
+                content="[任务读取失败] 无法通过受信 FD 绑定读取当前文件",
+                tool_call_id="", tool_name=self.name,
+                error_type=(
+                    exc.error_type if isinstance(exc, FileServiceError)
+                    else "TaskReadUnavailable"
+                ),
             )
-        token = _task_read_reentrant.set(True)
-        try:
-            result = self.execute(**{**kwargs, "snapshot": False})
-        finally:
-            _task_read_reentrant.reset(token)
-        if snapshot and result.status == ToolResultStatus.SUCCESS:
-            try:
-                after = self._task_sha256(target)
-            except OSError:
-                after = ""
-            if before != after:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content="[任务快照冲突] 文件在读取期间变化；重新读取后再编辑。",
-                    tool_call_id="", tool_name=self.name, error_type="TaskSnapshotChanged",
-                )
-            contract = (
-                f"\n[task_file_contract] snapshot_ref=sha256:{after} "
+        text = raw.decode("utf-8", errors="replace")
+        sensitive_note = ""
+        reason = sensitive_path_reason(target)
+        if reason is not None:
+            text, redactions = redact_sensitive_content(text)
+            sensitive_note = (
+                f"\n[敏感内容已脱敏] 该路径命中敏感判定（{reason}）——"
+                f"{redactions} 处敏感值已替换为占位符，明文未进入模型上下文"
+            )
+        lines = text.splitlines()
+        total = len(lines)
+        offset = max(0, int(kwargs.get("offset", 0) or 0))
+        start = min(offset, total)
+        selected = lines[start:]
+        if kwargs.get("limit") is not None:
+            selected = selected[: max(0, int(kwargs["limit"]))]
+        if selected:
+            numbered = "\n".join(f"{start + i + 1} | {line}" for i, line in enumerate(selected))
+            note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
+            content = (
+                f"[read_file] {target} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
+                f"\n{numbered}{note}{sensitive_note}"
+            )
+        else:
+            content = f"[空文件] {target} 为空或无内容。{sensitive_note}"
+        if snapshot:
+            content += (
+                f"\n[task_file_contract] snapshot_ref=sha256:{hashlib.sha256(raw).hexdigest()} "
                 "version=sha256-exact-byte (不是 artifact:// 快照)"
             )
-            result.content += contract
-            if result.raw_observation is not None:
-                result.raw_observation += contract
-        return result
+        from llm_loop.tools.path_registry import register_seen
+
+        register_seen(
+            str(target), mtime=before_stat.st_mtime_ns, size=before_stat.st_size, kind="file",
+        )
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
+            tool_call_id="", tool_name=self.name,
+            raw_observation=(content if current_evidence_shadow_enabled.get() else None),
+            evidence_source_version_token=(
+                f"stat:{before_stat.st_mtime_ns}:{before_stat.st_size}"
+            ),
+        )
 
     def execute(self, **kwargs) -> ToolResult:
         if current_task_execution.get() is not None and not _task_read_reentrant.get():

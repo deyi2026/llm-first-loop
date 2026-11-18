@@ -326,6 +326,7 @@ class EditFileTool:
                     path=path, old_string=old, new_string=new,
                     replace_all=replace_all, dry_run=True,
                     expected_sha256=expected_sha256, workspace_scope=root,
+                    task_pinned_root=root,
                 )
             else:
                 if binding is None or binding.tool_name != self.name:
