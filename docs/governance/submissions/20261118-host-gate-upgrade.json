@@ -16,7 +16,8 @@
       "evidence": [
         "PR #61 original candidate bf479eccee64a14e140e69a156c9efe9cdb95e94 contains the exact +80-line verifier and +105-line negative tests, extracted as a standalone patch against protected main f86a7daf9467097994c615e4ed489ccd676753d3.",
         "Original PR #61 owner released exactly these two paths via managed lane_update CAS v5 to v6; isolated lane-2e1485ad now owns them and this manifest.",
-        "Pre-implementation isolated archive preview on current main: 97 focused gate tests passed, Ruff passed, and _verify_gate_closure passed against actual main blobs. This preview is not independent Reviewer, full R9, or signed Host approval."
+        "Pre-implementation isolated archive preview on current main: 97 focused gate tests passed, Ruff passed, and _verify_gate_closure passed against actual main blobs. This preview is not independent Reviewer, full R9, or signed Host approval.",
+        "First Host Reviewer on 66f267750: PASS P0=0/P1=0/P2=3. After two P2 security fixes, independent Reviewer on 2493198e: REVISE P0=0/P1=1 for a script-token prefix/suffix collision. Six lookalike-path and one hidden-untracked negative cases were RED (7 failed) before the fix and GREEN (7 passed) afterward; 104 focused tests, Ruff and trusted-main positive closure now pass. New exact SHA independent Reviewer, full R9, CI and operator signoff remain pending."
       ],
       "verification_level": "Isolated local focused tests and mechanical manifest coverage; exact candidate independent Reviewer, original complete R9, remote CI and independent Host operator gate-upgrade approval are required before protected main integration.",
       "model_evidence_veto_recovery_exit": "Hold on Reviewer P0/P1, any R9/CI failure, missing operator approval, untrusted execution root, dynamic script dependency, mismatched trusted gate blob, stale main or conflicting Lane. Do not use this candidate to self-approve its own gate upgrade.",
@@ -38,7 +39,8 @@
       "g3": {
         "model_evidence": [
           "Original PR #61 precise +80/+105 gate patch isolated on main f86a7daf; 97 focused gate tests and Ruff passed in an independent /tmp preview.",
-          "Independent Reviewer PASS P0/P1=0 for the final exact commit is not yet available; operator trust upgrade approval and signed receipts are not yet issued."
+          "Independent Reviewer PASS P0/P1=0 for the final exact commit is not yet available; operator trust upgrade approval and signed receipts are not yet issued.",
+          "Second independent Host Reviewer REVISE P0=0/P1=1 on 2493198e; the path-token collision was repaired and regression-tested. This is not a PASS on the new candidate."
         ],
         "recovery_or_reason": "Reject dynamic or unpinned scripts, non-clean or stale Host execution roots, tampered blobs, missing trusted operator authorization, or any incomplete Reviewer/R9/CI receipt; retain HOLD rather than bypass."
       },
