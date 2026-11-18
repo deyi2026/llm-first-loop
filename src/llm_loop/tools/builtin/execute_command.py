@@ -28,6 +28,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
     current_evidence_shadow_enabled,
     current_session_id,
+    current_task_execution,
     current_write_scope,
     workspace_base,
 )
@@ -1163,22 +1164,31 @@ class ExecuteCommandTool:
         # note 文案与实际后端一一对应（S2-6，不夸大隔离范围）
         from llm_loop.tools.sandbox import sandbox_argv
 
+        task = current_task_execution.get()
         try:
-            sandbox_cmd, sandbox_note = sandbox_argv(
-                spec.launch_command,
-                str(workdir or "."),
-                mode=self._sandbox_mode,
-                image=self._sandbox_image,
-                extra_file_binds=extra_file_binds,
-                protected_roots=(
-                    [str(self._safety_audit_dir)] if self._safety_audit_dir is not None
-                    else []
-                ),
-            )
+            if task is not None:
+                from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+                if not isinstance(task, TrustedTaskExecution) or extra_file_binds:
+                    raise TaskExecutionError("task_context_or_host_grant_conflict")
+                plan = task.preflight(spec.launch_command, str(workdir or "."), self._sandbox_mode)
+                sandbox_cmd, sandbox_note = list(plan.argv), plan.note
+            else:
+                sandbox_cmd, sandbox_note = sandbox_argv(
+                    spec.launch_command,
+                    str(workdir or "."),
+                    mode=self._sandbox_mode,
+                    image=self._sandbox_image,
+                    extra_file_binds=extra_file_binds,
+                    protected_roots=(
+                        [str(self._safety_audit_dir)] if self._safety_audit_dir is not None else []
+                    ),
+                )
         except (RuntimeError, ValueError) as exc:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=wt_note_in(f"[沙箱不可用] {exc}"),
+                error_type=getattr(exc, "reason_code", "sandbox_unavailable"),
                 tool_call_id="",
                 tool_name=self.name,
             )
@@ -1199,6 +1209,43 @@ class ExecuteCommandTool:
                     tool_name=self.name,
                 )
         return sandbox_cmd, sandbox_note
+
+    def _task_effect_check(
+        self, spec: _CommandSpec, workdir: str | None, wrapped_cmd: list[str] | None
+    ) -> ToolResult | None:
+        """Re-verify signed state and the exact sandbox plan just before spawn."""
+        task = current_task_execution.get()
+        if task is None:
+            return None
+        from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+        try:
+            if not isinstance(task, TrustedTaskExecution):
+                raise TaskExecutionError("task_context_untrusted")
+            plan = task.preflight(spec.launch_command, str(workdir or "."), self._sandbox_mode)
+            expected_cmd = list(plan.argv)
+            if spec.exec_argv is not None:
+                expected_cmd, ok = self._sandbox_exec_argv(
+                    expected_cmd, spec.command, spec.exec_argv
+                )
+                if not ok:
+                    raise TaskExecutionError("task_argv_sandbox_incompatible")
+            if expected_cmd != wrapped_cmd:
+                raise TaskExecutionError("task_sandbox_plan_changed")
+        except (TaskExecutionError, RuntimeError, ValueError) as exc:
+            reason = (
+                exc.reason_code
+                if isinstance(exc, TaskExecutionError)
+                else "task_effect_recheck_failed"
+            )
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content=f"[任务授权拒绝] {reason}（未启动子进程）",
+                error_type=reason,
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        return None
 
     def _register_background_job(
         self, proc: subprocess.Popen, spec: _CommandSpec, workdir: str | None
@@ -1298,6 +1345,9 @@ class ExecuteCommandTool:
                 _bg_target, _bg_shell = spec.exec_argv, False
             else:
                 _bg_target, _bg_shell = spec.launch_command, True
+            task_denial = self._task_effect_check(spec, workdir, bg_cmd)
+            if task_denial is not None:
+                return task_denial
             proc = subprocess.Popen(
                 _bg_target,
                 shell=_bg_shell,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
@@ -1386,6 +1436,9 @@ class ExecuteCommandTool:
                 _fg_target, _fg_shell = spec.exec_argv, False
             else:
                 _fg_target, _fg_shell = spec.launch_command, True
+            task_denial = self._task_effect_check(spec, workdir, sandbox_cmd)
+            if task_denial is not None:
+                return task_denial
             proc = subprocess.Popen(
                 _fg_target,
                 shell=_fg_shell,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
@@ -1676,6 +1729,14 @@ class ExecuteCommandTool:
         host_grant_id = str(kwargs.get("host_grant_id", "") or "").strip()
         grant_ctx: dict | None = None
         if host_grant_id:
+            if current_task_execution.get() is not None:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] 任务级 Lease 与一次性 host_grant_id 不得混用",
+                    error_type="task_host_grant_conflict",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             if esc_id or esc_token:
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,

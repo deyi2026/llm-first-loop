@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,8 @@ def test_task_profile_ignores_unrelated_global_writable_env(roots, monkeypatch):
     monkeypatch.setenv("EXEC_SANDBOX_MACOS_WRITABLE", "/not-approved-by-task")
     plan = _plan(roots)
     assert "/not-approved-by-task" not in plan.argv[2]
+    for unapproved in ("/tmp", "/private/tmp", "/dev", str(Path.home() / ".cache")):
+        assert f'(subpath "{unapproved}")' not in plan.argv[2]
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="real Seatbelt requires macOS")
@@ -197,3 +200,29 @@ def test_real_macos_linked_worktree_marker_denied(roots):
     assert proc.returncode != 0
     assert ordinary.read_text() == "allowed"
     assert marker.read_text() == "gitdir: ../external/worktrees/b\n"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="real Seatbelt requires macOS")
+def test_real_macos_unapproved_private_tmp_project_denied():
+    """Global /private/tmp must not silently bypass the signed-root boundary."""
+    from llm_loop.tools.sandbox import sandbox_exec_available
+
+    if not sandbox_exec_available():
+        pytest.skip("sandbox-exec not usable on this host")
+    with tempfile.TemporaryDirectory(prefix="lfl-task-sbx-", dir="/private/tmp") as raw:
+        base = Path(raw).resolve()
+        a, b, c, audit = (base / name for name in ("a", "b", "c", "audit"))
+        for path in (a, b, c, audit):
+            path.mkdir()
+        approved, forbidden = b / "allowed.txt", c / "forbidden.txt"
+        plan = compile_task_sandbox(
+            f"printf approved > {approved}; printf forbidden > {forbidden}",
+            str(a),
+            verified_project_roots=[str(b)],
+            protected_audit_roots=[str(audit)],
+            mode="sandbox-exec",
+        )
+        result = subprocess.run(plan.argv, cwd=a, capture_output=True, text=True, timeout=15)
+        assert result.returncode != 0
+        assert approved.read_text() == "approved"
+        assert not forbidden.exists()

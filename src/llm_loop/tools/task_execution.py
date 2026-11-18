@@ -1,0 +1,170 @@
+"""Trusted per-run task sandbox execution context (never a tool argument).
+
+The Host/runtime injects this object into a ContextVar only after obtaining a
+signed lease from a root-owned authority. A model cannot supply project roots,
+authority facts, signatures or the Lane CAS as execute_command arguments.
+Every process spawn re-verifies the signed state and physical sandbox plan.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from dataclasses import dataclass
+
+from llm_loop.core.run_context import current_session_id, current_write_scope
+from llm_loop.core.task_capabilities import (
+    CapabilityRequest,
+    HostAuthorityFacts,
+    resolve_capability,
+)
+from llm_loop.introspection.lane import LaneStore
+from llm_loop.tools.task_authority import RootOwnedTaskAuthority, TaskAuthorityError
+from llm_loop.tools.task_sandbox import TaskSandboxPlan, compile_task_sandbox
+
+
+class TaskExecutionError(RuntimeError):
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
+@dataclass(frozen=True)
+class TrustedTaskExecution:
+    authority: RootOwnedTaskAuthority
+    lanes: LaneStore
+    lease_id: str
+    goal_id: str
+    task_id: str
+    owner_session_id: str
+    agent_id: str
+    lane_id: str
+    revision: int
+    lane_version: int
+    expected_head: str
+    protected_roots: tuple[str, ...]
+
+    def preflight(self, command: str, workdir: str, mode: str) -> TaskSandboxPlan:
+        """Verify signed lease, parent/Lane/OS facts and compile exact multi-root plan."""
+        if current_session_id.get() != self.owner_session_id:
+            raise TaskExecutionError("task_owner_session_mismatch")
+        parent_scope = current_write_scope.get()
+        if parent_scope is not None and parent_scope.declared:
+            # A whole writable directory bind would silently widen a narrower
+            # per-file child scope. Refuse until exact scope-root compilation.
+            raise TaskExecutionError("task_parent_scope_requires_precise_compilation")
+        if not os.path.isabs(workdir) or os.path.realpath(workdir) != workdir:
+            raise TaskExecutionError("task_workdir_not_canonical")
+        lane = self.lanes.get(self.lane_id)
+        if (
+            not lane
+            or lane.get("status") != "active"
+            or lane.get("goal_id") != self.goal_id
+            or lane.get("owner_session_id") != self.owner_session_id
+            or lane.get("version") != self.lane_version
+            or lane.get("head_sha") != self.expected_head
+            or os.path.realpath(str(lane.get("worktree") or "")) != workdir
+        ):
+            raise TaskExecutionError("task_lane_cas_conflict")
+        protected = tuple(os.path.realpath(p) for p in self.protected_roots)
+        if (
+            not protected
+            or os.path.realpath(str(self.authority.root)) not in protected
+            or os.path.realpath(str(self.lanes._dir)) not in protected
+        ):
+            raise TaskExecutionError("task_protected_roots_missing")
+        request = CapabilityRequest(
+            self.goal_id,
+            self.task_id,
+            self.owner_session_id,
+            self.agent_id,
+            self.lane_id,
+            self.revision,
+            "project",
+            workdir,
+            "write",
+        )
+        try:
+            claims = self.authority.verify(self.lease_id, request)
+        except TaskAuthorityError as exc:
+            raise TaskExecutionError(exc.reason_code) from exc
+        roots = tuple(
+            resource.identity
+            for resource in claims.resources
+            if resource.kind == "project" and "write" in resource.verbs
+        )
+        if workdir not in roots:
+            raise TaskExecutionError("task_workdir_not_authorized")
+        # Signed project access does not transfer another active Lane's
+        # worktree ownership; ancestor/descendant overlap is also denied.
+        for other in self.lanes.list():
+            if other.get("lane_id") == self.lane_id or not other.get("worktree"):
+                continue
+            other_root = os.path.realpath(str(other["worktree"]))
+            for root in roots:
+                try:
+                    overlap = os.path.commonpath((root, other_root)) in (root, other_root)
+                except (OSError, ValueError):
+                    overlap = True
+                if overlap:
+                    raise TaskExecutionError("task_other_lane_worktree_conflict")
+        if os.path.lexists(os.path.join(workdir, ".git")):
+            # Compare actual HEAD, not just the potentially stale Lane ledger.
+            env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+            env.update(
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_NO_REPLACE_OBJECTS="1",
+            )
+            try:
+                observed = subprocess.run(
+                    ["git", "-C", workdir, "rev-parse", "--verify", "HEAD"],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise TaskExecutionError("task_git_head_unavailable") from exc
+            if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+                raise TaskExecutionError("task_git_head_cas_conflict")
+        for root in roots:
+            root_request = CapabilityRequest(
+                self.goal_id,
+                self.task_id,
+                self.owner_session_id,
+                self.agent_id,
+                self.lane_id,
+                self.revision,
+                "project",
+                root,
+                "write",
+            )
+            facts = HostAuthorityFacts(
+                authority="verified",
+                parent_scope_allows=True,
+                lane_fence_valid=True,
+                backend_supported=True,
+                os_permission_granted=os.path.isdir(root) and os.access(root, os.W_OK),
+                protected_roots=protected,
+            )
+            verdict = resolve_capability(root_request, lease=claims, facts=facts)
+            if not verdict.allowed:
+                raise TaskExecutionError(verdict.reason_code)
+        try:
+            return compile_task_sandbox(
+                command,
+                workdir,
+                verified_project_roots=roots,
+                protected_audit_roots=protected,
+                mode=mode,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise TaskExecutionError("task_sandbox_backend_or_roots_unsupported") from exc
+
+    def recheck(self, command: str, workdir: str, mode: str, original: TaskSandboxPlan) -> None:
+        """Mutation-boundary re-verification, including revocation and Lane CAS."""
+        current = self.preflight(command, workdir, mode)
+        if current != original:
+            raise TaskExecutionError("task_sandbox_plan_changed")

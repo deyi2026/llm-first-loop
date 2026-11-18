@@ -56,18 +56,12 @@ def _git_metadata(project: str) -> tuple[list[str], list[str]]:
 
 
 def _task_macos_writable_roots(workdir: str, extra_roots: Sequence[str]) -> list[str]:
-    """Preserve bounded tool caches, not global EXEC_SANDBOX_MACOS_WRITABLE."""
-    home = os.path.expanduser("~")
-    candidates = (
-        workdir,
-        "/tmp",
-        "/private/tmp",
-        "/dev",
-        os.path.join(home, ".cache"),
-        os.path.join(home, "Library", "Caches"),
-        os.path.join(home, ".npm"),
-        *extra_roots,
-    )
+    """Only Host-verified roots; never global tmp, HOME caches or env overrides.
+
+    Build/cache directories outside a project must be explicit signed roots in
+    the Task Lease, not ambient /tmp or ~/.cache writable exceptions.
+    """
+    candidates = (workdir, *extra_roots)
     return list(dict.fromkeys(os.path.abspath(path) for path in candidates))
 
 
