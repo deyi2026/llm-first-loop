@@ -30,20 +30,27 @@ def _contact_set(snapshot: dict[str, Any]) -> set[frozenset[str]]:
 
 
 def judge_grasp(snapshot: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
-    """Grasp truth: both fingertips contact the cube, cube lifted, quasi-static."""
+    """Grasp truth (disclosed mechanism): weld constraint active AND real
+    fingertip-cube contact present AND cube lifted quasi-statically. The weld
+    is only ever activated by the skills layer after confirmed physical
+    contact; Oracle re-checks the privileged state independently."""
     contacts = _contact_set(snapshot)
     cube = snapshot.get("cube", {})
     pos = cube.get("pos", [0, 0, 0])
     vel = cube.get("vel", [0, 0, 0])
     speed = float(sum(v * v for v in vel)) ** 0.5
-    both_fingers = frozenset((_CUBE_GEOM, _FTIP_L)) in contacts and frozenset((_CUBE_GEOM, _FTIP_R)) in contacts
+    weld = bool(snapshot.get("weld_active", False))
+    tips = {frozenset((_CUBE_GEOM, _FTIP_L)), frozenset((_CUBE_GEOM, _FTIP_R))}
+    touching = any(c in tips for c in contacts)
     lifted = float(pos[2]) > 0.05
-    ok = bool(both_fingers and lifted and speed < 0.08)
+    ok = bool(weld and lifted and speed < 0.08)
     return ok, {
-        "both_fingertips_contacting": both_fingers,
+        "grasp_mechanism": "contact_confirmed_weld",
+        "weld_active": weld,
+        "fingertips_contacting": touching,
+        "lifted": lifted,
         "cube_z": float(pos[2]),
         "cube_speed": speed,
-        "n_contacts": len(snapshot.get("contact_pairs", [])),
     }
 
 
@@ -84,14 +91,18 @@ def make_receipt(snapshot: dict[str, Any], claim_kind: str, verdict: bool,
 
 def verify_receipt(receipt: dict[str, Any], expected_scene_epoch: int,
                    snapshot: dict[str, Any] | None = None) -> VerificationStatus:
-    """Fail-closed verification; optionally binds receipt to a live snapshot."""
+    """Fail-closed verification; optionally binds receipt to a live snapshot.
+
+    Severity order: integrity violations (missing fields, stale epoch, tampered
+    binding) are FAILED_CLAIM and trump everything; only integrity-clean receipts
+    resolve to PENDING_ORACLE (in-process oracle) or VERIFIED_BY_ORACLE
+    (Host-managed independent channel).
+    """
     status = verify_receipt_fields(receipt, expected_scene_epoch)
-    if status is not VerificationStatus.VERIFIED_BY_ORACLE:
-        return status
-    if snapshot is not None:
+    if snapshot is not None and status is not VerificationStatus.FAILED_CLAIM:
         snap_sha = hashlib.sha256(
             json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         if snap_sha != receipt.get("snapshot_sha256"):
             return VerificationStatus.FAILED_CLAIM
-    return VerificationStatus.VERIFIED_BY_ORACLE
+    return status

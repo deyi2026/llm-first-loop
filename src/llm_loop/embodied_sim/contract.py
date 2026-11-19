@@ -223,13 +223,30 @@ class ClaimGuard:
         return verify_receipt_fields(receipt, expected_scene_epoch)
 
 
+# Marker for the future Host-managed independent channel. Gate B callers can
+# NEVER reach VERIFIED_BY_ORACLE from verify_receipt_fields: every field in a
+# caller-supplied dict (including oracle_execution and any host_acceptance
+# block) is model-editable and untrusted. Promotion to VERIFIED happens only in
+# the Gate C dedicated Host verifier, which checks a real signature over the
+# receipt and the independent UID-463 execution channel; it must NOT reuse this
+# dict-based function. In-process physical success therefore caps at
+# PENDING_ORACLE here, with FAILED_CLAIM reserved for integrity tampering.
+INDEPENDENT_ORACLE_EXECUTION = "host_uid_463_managed"
+
+
 def verify_receipt_fields(receipt: dict[str, Any], expected_scene_epoch: int) -> VerificationStatus:
-    """Fail-closed receipt validation. Anything missing/stale/mismatched is not VERIFIED."""
-    required = ("experiment_id", "scene_epoch", "verdict", "oracle_impl", "snapshot_sha256", "evidence")
+    """Fail-closed receipt validation. Anything missing/stale/mismatched is FAILED_CLAIM.
+
+    Otherwise the result is at most PENDING_ORACLE: caller-supplied dicts cannot
+    prove independence, so VERIFIED_BY_ORACLE is unreachable from this function
+    by construction (see INDEPENDENT_ORACLE_EXECUTION note above).
+    """
+    required = ("experiment_id", "scene_epoch", "verdict", "oracle_impl", "oracle_execution",
+                "snapshot_sha256", "evidence")
     if any(k not in receipt for k in required):
         return VerificationStatus.FAILED_CLAIM
     if int(receipt["scene_epoch"]) != int(expected_scene_epoch):
         return VerificationStatus.FAILED_CLAIM
     if str(receipt["verdict"]).lower() != "success":
         return VerificationStatus.FAILED_CLAIM
-    return VerificationStatus.VERIFIED_BY_ORACLE
+    return VerificationStatus.PENDING_ORACLE

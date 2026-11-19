@@ -64,6 +64,9 @@ class MuJoCoScene:
         self.data.qpos[self._cube_qadr + 0] = float(spawn[0])
         self.data.qpos[self._cube_qadr + 1] = float(spawn[1])
         self.data.qpos[self._cube_qadr + 2] = SCENE_CONSTANTS["cube_half_size"] + 0.001
+        eq_weld = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY, "grasp_weld")
+        if eq_weld >= 0:
+            self.data.eq_active[eq_weld] = 0  # weld grasp OFF by default; skills activate on confirmed contact
         mujoco.mj_forward(self.model, self.data)
         self.scene_epoch += 1
         return {"seed": self.seed, "scene_epoch": self.scene_epoch,
@@ -124,6 +127,53 @@ class MuJoCoScene:
         blob = json.dumps(payload, sort_keys=True).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()
 
+    def weld_active(self) -> bool:
+        eq_weld = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY, "grasp_weld")
+        return bool(self.data.eq_active[eq_weld]) if eq_weld >= 0 else False
+
+    def has_fingertip_cube_contact(self) -> bool:
+        for i in range(self.data.ncon):
+            pair = {int(self.data.contact[i].geom1), int(self.data.contact[i].geom2)}
+            if pair == {self._ids["geom_cube"], self._ids["geom_ftip_l"]} or pair == {self._ids["geom_cube"], self._ids["geom_ftip_r"]}:
+                return True
+        return False
+
+    def _cube_relpose_in_gripper(self) -> tuple[list[float], list[float]]:
+        i1 = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "gripper")
+        i2 = self._ids["body_cube"]
+        p1, p2 = self.data.xpos[i1], self.data.xpos[i2]
+        q1 = np.array(self.data.xquat[i1], copy=True)
+        q2 = np.array(self.data.xquat[i2], copy=True)
+        r1 = np.zeros(9)
+        mujoco.mju_quat2Mat(r1, q1)
+        p_rel = r1.reshape(3, 3).T @ (p2 - p1)
+        q1[1:] *= -1.0
+        q_rel = np.zeros(4)
+        mujoco.mju_mulQuat(q_rel, q1, q2)
+        return [float(v) for v in q_rel], [float(v) for v in p_rel]
+
+    def activate_weld_grasp(self) -> bool:
+        """DISCLOSED simplified grasp: weld at CURRENT relative pose; caller must
+        have confirmed real fingertip-cube contact. State changes still flow
+        through mj_step constraint solving only."""
+        eq = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY, "grasp_weld")
+        if eq < 0 or self.weld_active():
+            return self.weld_active()
+        q_rel, p_rel = self._cube_relpose_in_gripper()
+        self.model.eq_data[eq, 0:3] = 0.0
+        self.model.eq_data[eq, 3:6] = p_rel
+        self.model.eq_data[eq, 6:10] = q_rel
+        self.model.eq_data[eq, 10] = 1.0
+        self.data.eq_active[eq] = 1
+        return True
+
+    def deactivate_weld_grasp(self) -> bool:
+        eq = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY, "grasp_weld")
+        if eq < 0:
+            return False
+        self.data.eq_active[eq] = 0
+        return True
+
     # -- privileged snapshot (Oracle-only consumption) --------------------
     def oracle_snapshot(self) -> dict[str, Any]:
         """Full state incl. contact pairs. NEVER expose via observe()."""
@@ -136,6 +186,7 @@ class MuJoCoScene:
         return {
             "t": float(self.data.time),
             "scene_digest": self.state_digest(),
+            "weld_active": self.weld_active(),
             "contact_pairs": pairs,
             "cube": self.observe()["cube"],
             "tool_pos": self.observe()["tool_pos"],

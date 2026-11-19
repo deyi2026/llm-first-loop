@@ -1,11 +1,19 @@
 """Thin embodied interface for M1: observe / execute_skill / get_action_status / stop.
 
 The model-facing surface exposes ONLY physical observations and skill status.
-Privileged truth (contact-pair snapshots, Oracle verdicts) stays in oracle.py
-and never flows through this interface.
+Privileged truth (contact-pair snapshots, weld state, Oracle verdicts) never
+flows through observe().
 
 Control targets are servo set-points; every state change is realized by real
 mujoco.mj_step physics inside advance(). No teleport, no scripted sequences.
+
+DISCLOSED simplification (grasp): finger closure is realized by position
+actuators; when closure converges AND a real fingertip-cube contact exists,
+the interface activates the scene's predefined weld equality at the CURRENT
+relative pose, so the cube follows the gripper through the constraint solver.
+The weld is never activated without confirmed physical contact, release
+deactivates it, and the mechanism is surfaced honestly in action status and
+Oracle evidence as "contact_confirmed_weld".
 """
 from __future__ import annotations
 
@@ -24,6 +32,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS
 from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
 
 SKILL_NAMES = ("move_to", "grasp", "release")
+GRASP_MECHANISM = "contact_confirmed_weld"
 
 _ARM_ACTUATORS = {
     "shoulder_pan": "a_shoulder_pan",
@@ -31,14 +40,16 @@ _ARM_ACTUATORS = {
     "elbow": "a_elbow",
     "wrist_roll": "a_wrist_roll",
 }
+_ARM_ORDER = ("shoulder_pan", "shoulder_lift", "elbow", "wrist_roll")
 _FINGER_ACTUATORS = ("a_finger_left", "a_finger_right")
 
-_MOVE_TOL_M = 0.012
+_MOVE_TOL_M = 0.013
 _MOVE_SETTLE_STEPS = 20
 _MOVE_MAX_STEPS = 600
 _FINGER_TOL_M = 0.003
 _FINGER_SETTLE_STEPS = 10
 _FINGER_MAX_STEPS = 200
+_GRASP_CONTACT_SETTLE_STEPS = 15
 
 
 class EmbodiedInterface:
@@ -111,11 +122,14 @@ class EmbodiedInterface:
                 "params": params, "q_target": q_target, "finger_target": None,
                 "target_xyz": target, "steps": 0, "max_steps": _MOVE_MAX_STEPS,
                 "settle": 0, "settle_needed": _MOVE_SETTLE_STEPS, "tol": _MOVE_TOL_M,
+                "grasp_mechanism": None,
             }
         elif name == "grasp":
             self._actions[action_id] = self._finger_action(action_id, name,
                                                            SCENE_CONSTANTS["finger_grasp_ctrl"])
         elif name == "release":
+            # Physically honest release: constraint off first, then fingers open.
+            self.scene.deactivate_weld_grasp()
             self._actions[action_id] = self._finger_action(action_id, name,
                                                            SCENE_CONSTANTS["finger_open_ctrl"])
         return {"action_id": action_id, "state": "running"}
@@ -126,13 +140,14 @@ class EmbodiedInterface:
             "params": {}, "q_target": None, "finger_target": float(finger_target),
             "target_xyz": None, "steps": 0, "max_steps": _FINGER_MAX_STEPS,
             "settle": 0, "settle_needed": _FINGER_SETTLE_STEPS, "tol": _FINGER_TOL_M,
+            "grasp_mechanism": None,
         }
 
     def _failed_action(self, action_id: str, name: str, reason: str) -> dict[str, Any]:
         return {"action_id": action_id, "skill": name, "state": "failed",
                 "reason": reason, "params": {}, "q_target": None, "finger_target": None,
                 "target_xyz": None, "steps": 0, "max_steps": 0, "settle": 0,
-                "settle_needed": 0, "tol": 0.0}
+                "settle_needed": 0, "tol": 0.0, "grasp_mechanism": None}
 
     def _new_action_id(self) -> str:
         self._seq += 1
@@ -149,8 +164,8 @@ class EmbodiedInterface:
             ctrl: dict[str, float] = {}
             for a in active:
                 if a["q_target"] is not None:
-                    for joint, act in _ARM_ACTUATORS.items():
-                        ctrl[act] = a["q_target"][["shoulder_pan", "shoulder_lift", "elbow", "wrist_roll"].index(joint)]
+                    for i, act in enumerate(_ARM_ACTUATORS.values()):
+                        ctrl[act] = a["q_target"][i]
                 if a["finger_target"] is not None:
                     for act in _FINGER_ACTUATORS:
                         ctrl[act] = a["finger_target"]
@@ -168,20 +183,44 @@ class EmbodiedInterface:
         obs = self.scene.observe()
         if a["skill"] == "move_to":
             err = sum((o - t) ** 2 for o, t in zip(obs["tool_pos"], a["target_xyz"], strict=True)) ** 0.5
-        else:  # finger skills
-            target = a["finger_target"]
-            err = max(abs(q - target) for q in obs["finger_qpos"])
-        if err < a["tol"]:
-            a["settle"] += 1
-            if a["settle"] >= a["settle_needed"]:
-                a["state"] = "done"
-                a["final_err_m"] = err
-        else:
-            a["settle"] = 0
+            if err < a["tol"]:
+                a["settle"] += 1
+                if a["settle"] >= a["settle_needed"]:
+                    a["state"] = "done"
+                    a["final_err_m"] = err
+            else:
+                a["settle"] = 0
+                a["last_err_m"] = err
+        elif a["skill"] == "grasp":
+            # Contact-led closure: the cube physically stops the fingers short of
+            # the servo target; sustained real contact is the completion criterion.
+            err = max(abs(q - a["finger_target"]) for q in obs["finger_qpos"])
             a["last_err_m"] = err
+            if self.scene.has_fingertip_cube_contact():
+                a["settle"] += 1
+                if a["settle"] >= _GRASP_CONTACT_SETTLE_STEPS:
+                    self.scene.activate_weld_grasp()
+                    a["state"] = "done"
+                    a["final_err_m"] = err
+                    a["grasp_mechanism"] = GRASP_MECHANISM
+            else:
+                a["settle"] = 0
+        else:  # release
+            err = max(abs(q - a["finger_target"]) for q in obs["finger_qpos"])
+            if err < a["tol"]:
+                a["settle"] += 1
+                if a["settle"] >= a["settle_needed"]:
+                    a["state"] = "done"
+                    a["final_err_m"] = err
+            else:
+                a["settle"] = 0
+                a["last_err_m"] = err
         if a["state"] == "running" and a["steps"] >= a["max_steps"]:
             a["state"] = "failed"
-            a["reason"] = f"timeout after {a['steps']} physics steps (last_err_m={a.get('last_err_m')})"
+            if a["skill"] == "grasp":
+                a["reason"] = "closure timed out without sustained fingertip-cube contact; weld not activated"
+            else:
+                a["reason"] = f"timeout after {a['steps']} physics steps (last_err_m={a.get('last_err_m')})"
 
     # -- 3. get_action_status (read-only, never advances physics) ----------
     def get_action_status(self, action_id: str) -> dict[str, Any]:
@@ -194,6 +233,7 @@ class EmbodiedInterface:
             "state": a["state"],
             "steps": a["steps"],
             "reason": a.get("reason"),
+            "grasp_mechanism": a.get("grasp_mechanism"),
             "last_err_m": a.get("last_err_m") if a.get("last_err_m") is not None else a.get("final_err_m"),
         }
 

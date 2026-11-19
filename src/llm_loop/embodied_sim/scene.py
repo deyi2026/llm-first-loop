@@ -48,7 +48,8 @@ _XML_TEMPLATE = """<mujoco model="embodied-m1">
           <body name="link3" pos="0 0 0.14">
             <joint name="elbow" type="hinge" axis="0 1 0" range="-2.4 2.4"/>
             <geom name="l3" type="capsule" fromto="0 0 0 0 0 0.12" size="0.016" rgba="0.3 0.6 1.0 1"/>
-            <body name="gripper" pos="0 0 0.12">
+            <geom name="wrist_rod" type="capsule" fromto="0 0 0.12 0 0 0.18" size="0.006" rgba="0.2 0.2 0.2 1"/>
+              <body name="gripper" pos="0 0 0.18">
               <joint name="wrist_roll" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
               <geom name="palm" type="box" size="0.035 0.035 0.012" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
               <site name="tool_site" pos="0 0 -0.037" size="0.005"/>
@@ -76,6 +77,9 @@ _XML_TEMPLATE = """<mujoco model="embodied-m1">
       <geom name="tray_wall_w" type="box" size="0.004 0.07 0.02" pos="-0.068 0 0.012" rgba="0.85 0.75 0.2 1"/>
     </body>
   </worldbody>
+  <equality>
+    <weld name="grasp_weld" body1="gripper" body2="cube" solimp="0.9 0.95 0.001" solref="0.006 1"/>
+  </equality>
   <actuator>
     <position name="a_shoulder_pan" joint="shoulder_pan" kp="{arm_kp}" ctrlrange="-2.6 2.6"/>
     <position name="a_shoulder_lift" joint="shoulder_lift" kp="{arm_kp}" ctrlrange="-1.9 1.9"/>

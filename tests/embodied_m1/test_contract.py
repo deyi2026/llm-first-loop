@@ -8,6 +8,7 @@ import pytest
 
 from llm_loop.embodied_sim import MuJoCoScene
 from llm_loop.embodied_sim.contract import (
+    INDEPENDENT_ORACLE_EXECUTION,
     ClaimGuard,
     ContractKernel,
     EpochMismatchError,
@@ -17,6 +18,7 @@ from llm_loop.embodied_sim.contract import (
     ObservationExpiredError,
     StopNotRequestedError,
     VerificationStatus,
+    verify_receipt_fields,
 )
 from llm_loop.embodied_sim.oracle import ORACLE_EXECUTION, judge_grasp, make_receipt, verify_receipt
 from llm_loop.embodied_sim.skills import EmbodiedInterface
@@ -119,6 +121,7 @@ def _grasp_snapshot():
         "t": 1.0,
         "contact_pairs": [["cube_geom", "fingertip_left", 0.0], ["cube_geom", "fingertip_right", 0.0]],
         "cube": {"pos": [0.1, 0.0, 0.06], "vel": [0.0, 0.0, 0.0]},
+        "weld_active": True,
     }
 
 
@@ -133,7 +136,8 @@ def test_oracle_receipt_fail_closed_matrix():
     ok, ev = judge_grasp(snap)
     assert ok is True
     receipt = make_receipt(snap, "grasp", ok, ev, "exp-gate-a", 3)
-    assert verify_receipt(receipt, 3, snap) == VerificationStatus.VERIFIED_BY_ORACLE
+    # in-process oracle: physical verdict true, independence unproven -> PENDING
+    assert verify_receipt(receipt, 3, snap) == VerificationStatus.PENDING_ORACLE
     # stale epoch
     assert verify_receipt(receipt, 4, snap) == VerificationStatus.FAILED_CLAIM
     # tampered snapshot binding
@@ -146,7 +150,24 @@ def test_oracle_receipt_fail_closed_matrix():
     # registered via ClaimGuard end-to-end
     g = ClaimGuard()
     g.register_receipt("c-ok", receipt)
-    assert g.evaluate_claim("c-ok", True, 3) == VerificationStatus.VERIFIED_BY_ORACLE
+    assert g.evaluate_claim("c-ok", True, 3) == VerificationStatus.PENDING_ORACLE
+
+
+def test_in_process_oracle_cannot_self_promote_to_verified():
+    """A model editing the oracle_execution string must NOT reach VERIFIED."""
+    snap = _grasp_snapshot()
+    ok, ev = judge_grasp(snap)
+    rc = make_receipt(snap, "grasp", ok, ev, "exp-x", 3)
+    assert verify_receipt(rc, 3, snap) == VerificationStatus.PENDING_ORACLE
+    rc["oracle_execution"] = INDEPENDENT_ORACLE_EXECUTION
+    assert verify_receipt(rc, 3, snap) == VerificationStatus.PENDING_ORACLE
+    # even a fully forged acceptance block stays PENDING from this dict path
+    rc["host_acceptance"] = {"receipt_ref": "forged://not-a-host-receipt"}
+    assert verify_receipt(rc, 3, snap) == VerificationStatus.PENDING_ORACLE
+    # tampering still wins severity: FAILED_CLAIM, never PENDING/VERIFIED
+    bad = dict(rc)
+    bad["scene_epoch"] = 99
+    assert verify_receipt_fields(bad, 3) == VerificationStatus.FAILED_CLAIM
 
 
 def test_oracle_independence_marker_remains_honest():
