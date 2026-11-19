@@ -1690,3 +1690,65 @@ def test_block_if_cd_into_main_repo(tmp_path):
         workdir=None,
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# ---------------------------------------------------------------------------
+# review subagent_f8b3178c6f57 修复回归（P1-1/2/3：旗标/cd 选项/clobber，r12）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_transparent_prefix_flags_cd_tracked(tmp_path):
+    """P1-1：`time -p cd` / `command -p cd` 的旗标词不终结命令位。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for head in ("time -p", "command -p", "builtin --"):
+        verbs = guard_module._git_verbs(
+            f"{head} cd {main_dir} && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", ["-m", "x"], str(main_dir))], head
+
+
+def test_git_verbs_cd_physical_option_tracked(tmp_path):
+    """P1-2：`cd -P main`/`cd -L main`/`cd -- main` 真实落点在选项之后。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for opt in ("-P", "-L", "--"):
+        verbs = guard_module._git_verbs(
+            f"cd {opt} {main_dir} && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", ["-m", "x"], str(main_dir))], opt
+
+
+def test_git_verbs_clobber_redirect_after_cd_tracked(tmp_path):
+    """P1-3：`cd wt >|log` 的 clobber 重定向不算 cd 第二操作数。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} >|{log} && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_fd_clobber_redirect_after_cd_tracked(tmp_path):
+    """P1-3：`cd wt 2>|log` 数字前缀 clobber 形同样识别。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} 2>|{log} && git push origin main", str(wt)
+    )
+    assert verbs == [("push", ["origin", "main"], str(wt))]
+
+
+def test_block_cd_physical_option_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`cd -P main && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd -P {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"

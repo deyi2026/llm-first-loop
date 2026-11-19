@@ -120,6 +120,11 @@
   ``\\\\``/``\\$``/续行），修复引号状态失步导致的伪段界或误触未配对
   引号哨兵；单引号内反斜杠保持字面（bash 语义）。实测偏差本就偏保守，
   此为保真度补齐。
+- **透明前缀旗标 / cd 选项 / clobber 重定向（审查 subagent_f8b3178c6f57
+  P1-1/2/3 修复）**：``time -p cd``/``command -p cd`` 的旗标词不再终结
+  命令位；``cd -P/-L/--`` 的真实落点在选项之后（``--`` 后按字面）；
+  ``>|``/``2>|``（clobber 重定向）并入 fd 重定向集。三者旧解析均会把
+  真实落点误判为"第二操作数/普通词"→ cwd 不变 → fail-open，已关闭。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -156,8 +161,9 @@ CLOSING_BLOCK_MAX_S = 30 * 60.0
 # 需先合并为单 token 再参与段边界判定（review 18c9ecb809a5 P1-1）。
 # `&>`/`&>>`（bash 双流重定向）同属此集：不识别会把 `cd wt &>log` 的
 # `&>` 误当 cd 第二操作数 → 误判 cd 失败 → 放行真实落点
-# （review subagent_cde453f77b91 P1-3）。
-_FD_REDIRECT_RE = re.compile(r"^(?:[0-9]*[<>]{1,2}&?[0-9]*|&(?:>>|>))$")
+# （review subagent_cde453f77b91 P1-3）。`>|`/`2>|`（clobber 重定向）
+# 同理（review subagent_f8b3178c6f57 P1-3）。
+_FD_REDIRECT_RE = re.compile(r"^(?:[0-9]*[<>]{1,2}&?[0-9]*|&(?:>>|>)|[0-9]*>[|])$")
 # 回执/证据窄通道（审查残余①，2026-11-09 收紧）：`git commit ... -- <paths>`
 # 显式列出且全部落在这些前缀下时，不受他人 live lane 阻挡（只追加证据，改不到
 # 代码）。原 `docs/` 整树过宽——`docs/ai_rules.md` 这类行为性文档也能借道；
@@ -296,11 +302,16 @@ def _git_verbs(
             i += 1
             continue
         if seg_start and tokens[i] in _CMD_POS_TRANSPARENT:
-            # 命令位透明前缀（builtin/command/time/!/{/}）：bash 仍执行后续命令
-            # 且 cd 语义不变（`! cd wt`/`time cd wt` 照常改 cwd，必须跟踪；
-            # `{ cd wt; }` 花括号组在当前 shell 执行、cwd 持续生效）→ 跳过、
-            # 命令位保持（review subagent_cde453f77b91 P1-2）。
+            # 命令位透明前缀（builtin/command/time/!/{/} + shell 复合关键字）：
+            # bash 仍执行后续命令且 cd 语义不变（`! cd wt`/`time cd wt` 照常改
+            # cwd，必须跟踪；`{ cd wt; }` 花括号组在当前 shell 执行、cwd 持续
+            # 生效）→ 跳过、命令位保持（review subagent_cde453f77b91 P1-2、
+            # subagent_3eab63eb5e61 P1-1）。前缀自身的旗标（`time -p cd`、
+            # `command -p cd`）也一并跳过——旗标词若按普通词处理会终结命令位，
+            # 使 cd 失踪（review subagent_f8b3178c6f57 P1-1）。
             i += 1
+            while i < len(tokens) and tokens[i].startswith("-") and len(tokens[i]) > 1:
+                i += 1
             continue
         if seg_start and tokens[i] in _CMD_POS_CWD_UNKNOWABLE:
             # eval/pushd/popd/source/.：可能改 cwd 且参数不可静态解析 → 置未知
@@ -334,6 +345,14 @@ def _git_verbs(
             # 可能携带隐藏 git 动词 → 保守哨兵（当 main 上的 commit 判定）。
             return [("commit", [], "")]
         if seg_start and tokens[i] == "cd":
+            # bash cd 选项（review subagent_f8b3178c6f57 P1-2）：`cd -P <main>`/
+            # `cd -L <main>`/`cd -- <main>` 的真实落点在选项之后；不跳过会把
+            # 选项当落点、真实目标变"第二操作数" → 误判多操作数 → cwd 不变
+            # → fail-open。`--` 之后一切按字面（目录名可以叫 `-P`）。
+            while i + 1 < len(tokens) and tokens[i + 1] in ("-P", "-L"):
+                i += 1
+            if i + 1 < len(tokens) and tokens[i + 1] == "--":
+                i += 1
             seg_start = False
             nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
             if (
