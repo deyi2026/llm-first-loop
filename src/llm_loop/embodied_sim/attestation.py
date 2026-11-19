@@ -342,10 +342,9 @@ def _verify_attestation_impl(
         pubkey.verify(bytes.fromhex(str(receipt["signature"])), canonical(core))
     except (InvalidSignature, ValueError, OSError):
         return VerificationStatus.FAILED_CLAIM  # forged/tampered/wrong key
+    # A genuine daemon-signed failure is not a success claim.
     if str(receipt["verdict"]).lower() != "success":
-        return (
-            VerificationStatus.FAILED_CLAIM
-        )  # a genuine daemon-signed failure is not a success claim
+        return VerificationStatus.FAILED_CLAIM
     if not host_authority:
         return VerificationStatus.PENDING_ORACLE
     receipt_sha = hashlib.sha256(canonical(receipt)).hexdigest()
