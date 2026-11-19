@@ -123,6 +123,11 @@ _TASK_IDE_AX_BUNDLES = frozenset(
         "com.sublimetext.4",
     }
 )
+_TASK_IDE_DOCUMENT_HOLD = (
+    "task_ide_editor_identity_unverified: IDE 编辑器与内嵌终端均可呈现 AXTextArea；"
+    "当前 Host 无法独立证明目标属于编辑文档，Task 模式 type 暂停投递。"
+    "需增加受信编辑文档身份/祖先链绑定及内嵌终端负例后才可启用。"
+)
 _BASE_FIELDS = {"do", "window_id", "target", "text", "keys", "dry_run", "confirm_token", "force", "force_credential"}
 
 # S3：force 凭据失败节流（进程内）——连续 3 次不匹配锁定 60s
@@ -792,6 +797,10 @@ class DesktopOperateTool:
                 f"Task Host 应用授权拒绝: {exc.reason_code}；"
                 "请核对 Owner 签名范围、Lane/CAS 与系统辅助功能 TCC。",
             )
+        if bundle.lower() in _TASK_IDE_AX_BUNDLES:
+            return self._refuse(
+                flow, DesktopErrorCode.APP_NOT_ALLOWED, _TASK_IDE_DOCUMENT_HOLD
+            )
         return None
 
     def _scan_window_world(self, flow: _ActFlow) -> None:
@@ -1431,6 +1440,10 @@ class DesktopOperateTool:
         task = current_task_execution.get()
         if task is None:
             return None
+        if str(flow.window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES:
+            return self._refuse(
+                flow, DesktopErrorCode.APP_NOT_ALLOWED, _TASK_IDE_DOCUMENT_HOLD
+            )
         fresh_window, window = flow.fresh_window, flow.window
         if (
             fresh_window is None

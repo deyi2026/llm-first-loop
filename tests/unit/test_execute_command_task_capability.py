@@ -174,8 +174,9 @@ def test_none_backend_fails_closed(task_context):
     target = b / "must-not-exist.txt"
     tool = ExecuteCommandTool(sandbox_mode="none", safety_audit_dir=audit, timeout_s=10)
     result = tool.execute(command=f"printf forbidden > {target}", workdir=str(a))
-    assert result.status == ToolResultStatus.ERROR
+    assert result.status == ToolResultStatus.UNAUTHORIZED
     assert result.error_type == "task_sandbox_backend_or_roots_unsupported"
+    assert "[任务授权拒绝]" in result.content
     assert not target.exists()
 
 
@@ -185,6 +186,7 @@ def test_lane_cas_and_parent_scope_fail_closed(task_context):
     tool = ExecuteCommandTool(sandbox_mode="sandbox-exec", safety_audit_dir=audit, timeout_s=10)
     lanes.update(ctx.lane_id, expected_version=ctx.lane_version, head_sha="b" * 40)
     result = tool.execute(command=f"printf forbidden > {target}", workdir=str(a))
+    assert result.status == ToolResultStatus.UNAUTHORIZED
     assert result.error_type == "task_lane_cas_conflict"
     token = current_write_scope.set(WriteScope(paths=("approved.txt",), declared=True))
     try:

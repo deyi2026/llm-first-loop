@@ -1185,6 +1185,19 @@ class ExecuteCommandTool:
                     ),
                 )
         except (RuntimeError, ValueError) as exc:
+            if task is not None:
+                from llm_loop.tools.task_execution import TaskExecutionError
+
+                if isinstance(exc, TaskExecutionError):
+                    return ToolResult(
+                        status=ToolResultStatus.UNAUTHORIZED,
+                        content=wt_note_in(
+                            f"[任务授权拒绝] {exc.reason_code}（未启动子进程）"
+                        ),
+                        error_type=exc.reason_code,
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=wt_note_in(f"[沙箱不可用] {exc}"),

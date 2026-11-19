@@ -31,3 +31,4 @@
 - 出现任何安装 SHA/UID/ACL/签名/审计不一致，保持 **HOLD**，不回退到 `EXEC_SANDBOX=none`、同 UID HMAC、自签发或可变脚本。
 - 回滚：停止签发、撤销现有 Lease、保持 `current_task_execution=None` 默认旧沙箱行为；保留审计与证据，通过受保护 PR 回退代码。不得删除/覆盖原 premerge 签发器及密钥。
 - Deepin 的独立 Host UID、Polkit/TCC 等价授权和 bwrap 真机验收在 T2 单独收口；Mac 的通过不代表 Deepin 通过。
+- Task 模式 IDE AX `type` **仍为 HOLD**：VS Code 等 IDE 的内嵌终端与编辑器都可能呈现 `AXTextArea`，签名 app bundle、窗口 PID、TCC 和控件 role 不能证明目标是编辑文档。当前即使签名 Lease 有效也拒绝真实投递；后续必须先补受信编辑文档身份/祖先链核验与内嵌终端负例，不能通过允许 AX role 绕过终端命令工具。Browser Task mutation 和 Service Task 异步发布同样继续 HOLD。

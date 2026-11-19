@@ -61,13 +61,13 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "Exact application/window desktop authorization and safe browser/service Task hold",
-      "disposition": "Permit bounded IDE AX typing only with signed exact bundle and TCC; reject Task browser mutation until OS CDP binding and Task service restart until worker-side fence exist.",
+      "disposition": "Keep Task IDE AX type HOLD until Host can attest editor-document identity independently of AXTextArea role; reject Task browser mutation until OS CDP binding and Task service restart until worker-side fence exist.",
       "evidence": [
-        "Desktop targeted tests 240 passed; browser/service targeted tests 101 passed.",
+        "Desktop targeted tests cover signed bundle/TCC and VS Code integrated-terminal AXTextArea negative cases; browser/service targeted tests 101 passed.",
         "No real LFL process TCC, browser OS CDP mapping or detached worker physical-effect verification claimed."
       ],
       "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
-      "model_evidence_veto_recovery_exit": "Browser and service Task mutations HOLD; desktop PID/window/bundle and TCC are rechecked before delivery; never downgrade release gates.",
+      "model_evidence_veto_recovery_exit": "IDE Task type, browser and service Task mutations HOLD until independently attested target/worker identity; desktop PID/window/bundle and TCC are still rechecked; never downgrade release gates.",
       "rollback_route": "Revert the feature via protected PR; Host install and physical service restart are separate Owner-approved actions.",
       "declaration_id": "desktop-browser-service"
     },
