@@ -1183,7 +1183,9 @@ def test_git_verbs_cd_then_relative_dash_c_chains_from_cd(tmp_path):
     wt = _git_repo(tmp_path / "repo" / "nest" / "wt", "feat/x")
     verbs = guard_module._git_verbs(f"cd {wt} && git -C ../.. commit -m x", None)
     assert verbs and verbs[0][0] == "commit"
-    assert Path(verbs[0][2]).resolve() == repo  # -C ../.. 落回 main 仓
+    target = verbs[0][2]
+    assert target is not None
+    assert Path(target).resolve() == repo  # -C ../.. 落回 main 仓
 
 
 def test_resolve_shell_cd_rules(tmp_path):
