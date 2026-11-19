@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -91,6 +94,61 @@ def test_no_host_queue_fails_closed(tmp_path):
             jobs_dir=str(tmp_path / "absent-jobs"),
             receipts_dir=str(tmp_path / "absent-receipts"),
         )
+
+
+def test_client_job_published_only_after_complete_write(tmp_path, monkeypatch):
+    jobs, receipts = tmp_path / "jobs", tmp_path / "receipts"
+    jobs.mkdir()
+    receipts.mkdir()
+    original_link = os.link
+    published = []
+
+    def inspect_atomic_publish(src, dest):
+        assert not Path(dest).exists()
+        raw = Path(src).read_bytes()
+        job = json.loads(raw)
+        assert raw.endswith(b"\n")
+        assert job["command"] == {"skill": "observe"}
+        assert job["nonce"] == Path(dest).stem
+        assert stat.S_IMODE(Path(src).stat().st_mode) == 0o644
+        published.append(Path(dest))
+        return original_link(src, dest)
+
+    monkeypatch.setattr(os, "link", inspect_atomic_publish)
+    with pytest.raises(attestation.AttestationUnavailableError, match="did not process"):
+        attestation.request_attestation(
+            {"skill": "observe"},
+            run_id="run-A",
+            action_seq=0,
+            jobs_dir=str(jobs),
+            receipts_dir=str(receipts),
+            timeout_s=0.01,
+            poll_interval_s=0.001,
+        )
+    assert len(published) == 1
+    assert published[0].exists()
+    assert list(jobs.glob(".*.tmp")) == []
+
+
+def test_host_private_key_requires_root_owned_parent(tmp_path, monkeypatch):
+    key = (tmp_path / "oracle.key").resolve()
+    key.write_text("test")
+    key.chmod(0o400)
+    original_stat = Path.stat
+    key_parent_owner = 0
+
+    def host_stat(path, *args, **kwargs):
+        real = original_stat(path, *args, **kwargs)
+        if path == key:
+            return SimpleNamespace(st_uid=463, st_mode=stat.S_IFREG | 0o400)
+        if path == key.parent:
+            return SimpleNamespace(st_uid=key_parent_owner, st_mode=stat.S_IFDIR | 0o755)
+        return SimpleNamespace(st_uid=0, st_mode=real.st_mode & ~0o022)
+
+    monkeypatch.setattr(Path, "stat", host_stat)
+    assert attestation._trusted_host_file(str(key), owner=463, private_key=True)
+    key_parent_owner = 463
+    assert not attestation._trusted_host_file(str(key), owner=463, private_key=True)
 
 
 def test_client_retains_issued_nonce_independently_of_receipt(daemon, tmp_path):

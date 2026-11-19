@@ -23,6 +23,7 @@ Trust boundary (re-designed after P0 review):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
@@ -157,15 +158,25 @@ def request_attestation(
     nonce = secrets.token_hex(16)
     job = {"command": command, "run_id": str(run_id), "action_seq": int(action_seq), "nonce": nonce}
     dest = Path(jobs_dir) / f"{nonce}.job"
+    temp = Path(jobs_dir) / f".{nonce}.{os.getpid()}.tmp"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
-        # Directory ACLs are installed by Host; 0644 permits cross-UID reads.
-        fd = os.open(dest, flags, 0o644)
-        with os.fdopen(fd, "wb") as out:
-            os.fchmod(out.fileno(), 0o644)
-            out.write(canonical(job) + b"\n")
+        # The Host must never observe a partially written job. Publish the
+        # complete payload with an atomic, no-overwrite hard link, just as the
+        # daemon does for receipts. Directory ACLs govern cross-UID access.
+        try:
+            fd = os.open(temp, flags, 0o644)
+            with os.fdopen(fd, "wb") as out:
+                os.fchmod(out.fileno(), 0o644)
+                out.write(canonical(job) + b"\n")
+                out.flush()
+                os.fsync(out.fileno())
+            os.link(temp, dest)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                temp.unlink()
     except OSError as exc:
         raise AttestationUnavailableError(f"host job submission failed: {exc}") from None
     receipt_path = Path(receipts_dir) / f"{nonce}.receipt.json"
@@ -203,7 +214,10 @@ def _trusted_host_file(path: str, *, owner: int, private_key: bool = False) -> b
             pst = parent.stat()
             # The nonce DB directory must be writable by the isolated Oracle
             # UID, never by the caller. All ancestors remain root-owned.
-            isolated_dir = owner == ATTEST_UID and parent == p.parent
+            # The private key lives in a root-owned directory so UID463 can
+            # read but cannot replace the trust key. Only the SQLite ledger
+            # needs a UID463-writable immediate parent for journal files.
+            isolated_dir = owner == ATTEST_UID and parent == p.parent and not private_key
             allowed_owner = ATTEST_UID if isolated_dir else 0
             if (
                 parent.is_symlink()
