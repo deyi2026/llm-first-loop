@@ -12,6 +12,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Direct invocation must import the checked-out project, not an unrelated
+# editable install or stale .releases/ snapshot.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
 WORKER = Path("/Library/PrivilegedHelperTools/lfl-oracle-v1/oracle_worker.py")
 PROFILE = Path("/Library/PrivilegedHelperTools/lfl-oracle-v1/oracle.sb")
 WORKER_SHA = "e83e3d837ca18bf5622f66f954e9c2be7c7b35132afc6f8c060c442e3b8f8f98"

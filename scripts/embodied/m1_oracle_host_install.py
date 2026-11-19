@@ -1,10 +1,11 @@
 #!/usr/bin/python3
-"""Root-only, exact-manifest macOS installer for M1 UID463 Oracle.
+"""Root-only, exact-manifest fresh v2 installer for M1 UID463 Oracle.
 
 Never run this file as root from a user-writable worktree. An operator must
 first copy the reviewed installer and bundle into a root:wheel 0700 staging
 directory, then supply the reviewed manifest SHA256. No existing LFL service,
 sudoers rule, key, or previous oracle-worker installation is modified.
+Historical v1 installations are migrated separately by m1_oracle_host_upgrade.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import json
 import os
 import plistlib
 import pwd
+import re
 import shutil
 import sqlite3
 import stat
@@ -23,9 +25,8 @@ import sys
 import time
 from pathlib import Path
 
-TARGET = Path("/Library/PrivilegedHelperTools/lfl-m1-oracle-v1")
-PYTHON = TARGET / "runtime/bin/python3.13"
-SERVICE = TARGET / "m1_oracle_host_service.py"
+PRIVILEGED_ROOT = Path("/Library/PrivilegedHelperTools")
+LEGACY_V1 = PRIVILEGED_ROOT / "lfl-m1-oracle-v1"
 KEY = Path("/usr/local/etc/lfl-m1-oracle-ed25519.key")
 PUB = Path("/usr/local/etc/lfl-m1-oracle-ed25519.pub")
 QUEUE = Path("/private/var/run/lfl-m1-oracle")
@@ -36,6 +37,41 @@ UID = 463
 GID = 463
 CLIENT_UID = 501
 CLIENT_GID = 20
+
+
+def _target_from_manifest(expected_sha: str) -> Path:
+    """Fresh installs use the same pinned v2 path accepted by service bootstrap."""
+    if re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None:
+        raise RuntimeError("reviewed manifest SHA256 must be 64 lowercase hex chars")
+    return PRIVILEGED_ROOT / f"lfl-m1-oracle-v2-{expected_sha[:12]}"
+
+
+def _installed_target() -> Path:
+    """Resolve the root-owned LaunchDaemon's exact service, never a caller path."""
+    if not _trusted(PLIST) or not _trusted(PLIST.parent, directory=True):
+        raise RuntimeError("untrusted installed M1 LaunchDaemon plist")
+    try:
+        plist = plistlib.loads(PLIST.read_bytes())
+        args = plist["ProgramArguments"]
+        service = Path(args[7])
+    except (KeyError, IndexError, TypeError, ValueError, OSError) as exc:
+        raise RuntimeError("invalid installed M1 LaunchDaemon arguments") from exc
+    target = service.parent
+    if (plist.get("Label") != LABEL
+            or plist.get("UserName") != "_lfl_oracle"
+            or plist.get("GroupName") != "_lfl_oracle"
+            or target.parent != PRIVILEGED_ROOT
+            or (target.name != LEGACY_V1.name
+                and re.fullmatch(r"lfl-m1-oracle-v2-[0-9a-f]{12}", target.name) is None)
+            or args != [
+                "/usr/bin/sandbox-exec", "-f", str(target / "oracle.sb"),
+                str(target / "runtime/bin/python3.13"), "-I", "-S", "-B",
+                str(target / "m1_oracle_host_service.py"), "--serve",
+            ]
+            or not _trusted(target, directory=True)
+            or not _trusted(service)):
+        raise RuntimeError("installed M1 LaunchDaemon path is not a trusted Oracle")
+    return target
 
 
 def _root_only() -> None:
@@ -101,17 +137,18 @@ def _manifest(bundle: Path, expected_sha: str) -> dict:
     return data
 
 
-def _install_bundle(bundle: Path) -> None:
-    if TARGET.exists() or TARGET.is_symlink():
+def _install_bundle(bundle: Path, target: Path) -> None:
+    if target.exists() or target.is_symlink():
         raise RuntimeError("refuse to overwrite an existing M1 Oracle installation")
-    if not _trusted(TARGET.parent, directory=True):
+    if not _trusted(target.parent, directory=True):
         raise RuntimeError("untrusted privileged helper parent")
-    shutil.copytree(bundle, TARGET, symlinks=False)
-    for path in [TARGET, *TARGET.rglob("*")]:
+    shutil.copytree(bundle, target, symlinks=False)
+    python = target / "runtime/bin/python3.13"
+    for path in [target, *target.rglob("*")]:
         if path.is_symlink():
             raise RuntimeError("installed symlink rejected")
         os.chown(path, 0, 0)
-        os.chmod(path, 0o755 if path.is_dir() or path == PYTHON else 0o644)
+        os.chmod(path, 0o755 if path.is_dir() or path == python else 0o644)
 
 
 def _directory(path: Path, uid: int, gid: int, mode: int) -> None:
@@ -147,7 +184,7 @@ def _prepare_state() -> None:
     os.chmod(dbpath, 0o600)
 
 
-def _init_key() -> None:
+def _init_key(target: Path) -> None:
     if not KEY.parent.exists():
         if not _trusted(KEY.parent.parent, directory=True):
             raise RuntimeError("untrusted /usr/local parent")
@@ -157,7 +194,8 @@ def _init_key() -> None:
     if any(path.exists() or path.is_symlink() for path in (KEY, PUB)):
         raise RuntimeError("refuse to replace existing Host key")
     proc = subprocess.run(
-        [str(PYTHON), "-I", "-S", "-B", str(SERVICE), "--init-key"],
+        [str(target / "runtime/bin/python3.13"), "-I", "-S", "-B",
+         str(target / "m1_oracle_host_service.py"), "--init-key"],
         text=True,
         capture_output=True,
         timeout=30,
@@ -167,7 +205,7 @@ def _init_key() -> None:
         raise RuntimeError(f"Host key initialization failed: exit={proc.returncode}")
 
 
-def _probe_isolated_runtime() -> None:
+def _probe_isolated_runtime(target: Path) -> None:
     command = [
         "/usr/bin/sudo",
         "-n",
@@ -175,12 +213,12 @@ def _probe_isolated_runtime() -> None:
         "_lfl_oracle",
         "/usr/bin/sandbox-exec",
         "-f",
-        str(TARGET / "oracle.sb"),
-        str(PYTHON),
+        str(target / "oracle.sb"),
+        str(target / "runtime/bin/python3.13"),
         "-I",
         "-S",
         "-B",
-        str(SERVICE),
+        str(target / "m1_oracle_host_service.py"),
         "--probe",
     ]
     proc = subprocess.run(
@@ -197,7 +235,7 @@ def _probe_isolated_runtime() -> None:
         raise RuntimeError("UID463 preflight did not prove isolated runtime")
 
 
-def _write_plist() -> None:
+def _write_plist(target: Path) -> None:
     if PLIST.exists() or PLIST.is_symlink():
         raise RuntimeError("refuse to overwrite existing LaunchDaemon")
     data = {
@@ -205,17 +243,17 @@ def _write_plist() -> None:
         "ProgramArguments": [
             "/usr/bin/sandbox-exec",
             "-f",
-            str(TARGET / "oracle.sb"),
-            str(PYTHON),
+            str(target / "oracle.sb"),
+            str(target / "runtime/bin/python3.13"),
             "-I",
             "-S",
             "-B",
-            str(SERVICE),
+            str(target / "m1_oracle_host_service.py"),
             "--serve",
         ],
         "UserName": "_lfl_oracle",
         "GroupName": "_lfl_oracle",
-        "WorkingDirectory": str(TARGET),
+        "WorkingDirectory": str(target),
         "EnvironmentVariables": {"HOME": "/var/empty", "PATH": "/usr/bin:/bin"},
         "RunAtLoad": True,
         "KeepAlive": True,
@@ -231,7 +269,10 @@ def _write_plist() -> None:
         os.fsync(out.fileno())
 
 
-def _service_health() -> dict:
+def _service_health(expected_target: Path | None = None) -> dict:
+    target = _installed_target()
+    if expected_target is not None and target != expected_target:
+        raise RuntimeError("Host health check resolved a different installed target")
     proc = subprocess.run(
         ["/bin/launchctl", "print", f"system/{LABEL}"],
         text=True,
@@ -258,14 +299,18 @@ def _service_health() -> dict:
         proc.returncode
         or len(fields) != 2
         or fields[0] != str(UID)
-        or str(SERVICE) not in fields[1]
+        or str(target / "m1_oracle_host_service.py") not in fields[1]
         or "--serve" not in fields[1]
     ):
         raise RuntimeError("Host daemon PID not running as UID463")
+    allowed_experiments = (
+        {"M1-SIM-001"} if expected_target is not None
+        else {"M1-SIM-001", "M1-SIM-002", "M1-SIM-003"}
+    )
     if (
         not isinstance(info.get("run_id"), str)
         or len(info["run_id"]) != 32
-        or info.get("experiment_id") != "M1-SIM-001"
+        or info.get("experiment_id") not in allowed_experiments
     ):
         raise RuntimeError("invalid Host run identity")
     return {"pid": pid, "uid": UID, "run_id": info.get("run_id")}
@@ -277,14 +322,18 @@ def _apply(bundle: Path, expected_sha: str) -> None:
         raise RuntimeError("installer must run from root-owned 0700 staging")
     _check_account()
     _manifest(bundle, expected_sha)
-    if any(p.exists() or p.is_symlink() for p in (TARGET, QUEUE, STATE, KEY, PUB, PLIST)):
+    target = _target_from_manifest(expected_sha)
+    # A fresh v2 installation must never coexist with an old v1 or stale v2.
+    if (any(p.exists() or p.is_symlink() for p in
+            (LEGACY_V1, target, QUEUE, STATE, KEY, PUB, PLIST))
+            or any(PRIVILEGED_ROOT.glob("lfl-m1-oracle-v2-*"))):
         raise RuntimeError("M1 Oracle paths already exist; refusing overwrite")
-    _install_bundle(bundle)
-    _manifest(TARGET, expected_sha)  # verify the root-owned copy before key creation
+    _install_bundle(bundle, target)
+    _manifest(target, expected_sha)  # verify the root-owned copy before key creation
     _prepare_state()
-    _init_key()
-    _probe_isolated_runtime()
-    _write_plist()
+    _init_key(target)
+    _probe_isolated_runtime(target)
+    _write_plist(target)
     subprocess.run(
         ["/bin/launchctl", "bootstrap", "system", str(PLIST)],
         check=True,
@@ -292,7 +341,7 @@ def _apply(bundle: Path, expected_sha: str) -> None:
     )
     for _ in range(30):
         try:
-            health = _service_health()
+            health = _service_health(target)
             print(json.dumps({"HOST_INSTALL": "PASS", "health": health}, sort_keys=True))
             return
         except (OSError, RuntimeError, ValueError):
