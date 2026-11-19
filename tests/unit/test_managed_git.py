@@ -204,6 +204,18 @@ def test_symlink_and_git_path_and_message_denied(setup_git):
         adapter.commit_paths(bad)
 
 
+def test_git_broker_rejects_hardlinked_file_before_stage(setup_git):
+    _main, linked, audit, _store, _authority, adapter, item = setup_git
+    outside = audit.parent / "outside-secret.txt"
+    outside.write_text("unrelated project bytes")
+    (linked / "hello.txt").unlink()
+    (linked / "hello.txt").hardlink_to(outside)
+    with pytest.raises(ManagedGitError, match="git_paths_untrusted"):
+        adapter.commit_paths(item)
+    assert outside.read_text() == "unrelated project bytes"
+    assert not git(linked, "diff", "--cached", "--name-only")
+
+
 def test_external_filter_and_existing_staged_index_denied(setup_git):
     _main, linked, _audit, _store, _authority, adapter, item = setup_git
     (linked / ".gitattributes").write_text("hello.txt filter=evil\n")

@@ -158,6 +158,12 @@ def _paths_checked(worktree: str, paths: tuple[str, ...], lane_paths: list[str])
         target = os.path.join(worktree, path)
         if os.path.realpath(target) != target or not os.path.isfile(target):
             raise ManagedGitError("git_paths_untrusted")
+        try:
+            info = os.lstat(target)
+        except OSError as exc:
+            raise ManagedGitError("git_paths_untrusted") from exc
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ManagedGitError("git_paths_untrusted")
         if not any(
             path == declared or (declared.endswith("/**") and path.startswith(declared[:-3] + "/"))
             for declared in lane_paths

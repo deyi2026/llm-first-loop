@@ -1885,6 +1885,20 @@ def build_engine(
             safety_audit_dir=settings.audit_dir,
         ),
     )
+    # Task Git is available only after the independent Host authority has
+    # been installed. No model-supplied Lease/worktree/Git argv is accepted.
+    # The legacy tool surface remains unchanged before Host bootstrap.
+    from llm_loop.tools.task_runtime import _installed_authority_root
+
+    _task_authority_root = _installed_authority_root()
+    if _task_authority_root is not None and _task_authority_root.is_dir():
+        from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
+
+        try:
+            (Path(settings.audit_dir) / "git-locks").mkdir(mode=0o700, exist_ok=True)
+        except OSError:
+            logger.warning("Task Git lock root unavailable; broker will HOLD", exc_info=True)
+        _register_basic("task_git_commit", TaskGitCommitTool())
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.
     _register_service_tools(_register_basic, settings, _review_gate_recorder)
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
