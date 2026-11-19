@@ -96,6 +96,31 @@ def test_grasp_failure_recovery_l3(tmp_path):
     assert ok and ev["lifted"]
 
 
+def test_l3_frozen_seed_recovery_and_place_within_action_budget():
+    """Mechanism-only L3 smoke; local Oracle is NOT independent Host truth."""
+    scene = MuJoCoScene(seed=20261117)  # prereg paired_seed_start
+    scene.step(100)
+    iface = EmbodiedInterface(scene)
+    failed = _run(iface, "grasp", {}, "fault1")
+    assert failed["state"] == "failed" and not scene.weld_active()
+    assert _run(iface, "release", {}, "recover1")["state"] == "done"
+    cube = _cube_xy(iface)
+    assert _run(iface, "move_to", {"x": cube[0], "y": cube[1],
+                                    "z": cube[2] + 0.07}, "k1")["state"] == "done"
+    assert _run(iface, "move_to", {"x": cube[0], "y": cube[1],
+                                    "z": cube[2] + 0.012}, "k2")["state"] == "done"
+    assert _run(iface, "grasp", {}, "k3")["state"] == "done"
+    tray = iface.observe()["observation"]["tray_pos"]
+    assert _run(iface, "move_to", {"x": tray[0], "y": tray[1],
+                                    "z": 0.1}, "k4")["state"] == "done"
+    scene.step(30)
+    assert judge_grasp(scene.oracle_snapshot())[0]
+    assert _run(iface, "release", {}, "k5")["state"] == "done"
+    scene.step(150)
+    assert judge_place(scene.oracle_snapshot(), tray)[0]
+    assert iface.tool_action_count == 7  # 1 injected + 1 reset + 5 task actions <= 8
+
+
 def test_skills_layer_never_writes_cube_pose(tmp_path):
     text = SRC_SKILLS.read_text()
     assert "qpos[" not in text, "skills layer must not touch qpos (no teleport path)"

@@ -220,7 +220,8 @@ def fresh_precheck(link: HostOracleLink) -> dict[str, Any]:
 
 def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
                      budget: dict[str, Any] | None = None,
-                     fresh_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
+                     fresh_receipt: dict[str, Any] | None = None,
+                     auto_recover_failed_grasp: bool = False) -> dict[str, Any]:
     now = clock or time.monotonic
     budget = budget or BUDGET
     t0 = now()
@@ -236,6 +237,8 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
     stop_receipts: dict[str, str] = {}
     host_claims: dict[str, Any] = {}
     grasp_pending_lift = False
+    grasp_failed = False
+    managed_recoveries = 0
     try:
         public_last = project_public_obs((fresh_receipt or link.observe(0))["observation"])
     except (AttestationUnavailableError, HostLinkError) as e:
@@ -312,7 +315,9 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
                           "reason": decision["params"].get("reason")})
             terminated_by = "stop_requested_client_only"
             break
-        if skill == "release" and "grasp" not in host_claims:
+        recovery_release = (skill == "release" and grasp_failed
+                            and "grasp" not in host_claims)
+        if skill == "release" and "grasp" not in host_claims and not recovery_release:
             # A closed gripper is not a proven lifted grasp. Do not release
             # before an independent Host-signed grasp confirmation.
             trace.append({"event": "release_blocked_unverified_grasp",
@@ -332,10 +337,54 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
         trace.append({"event": "tool_action", "decision": decision, "seq": seq,
                       "status": public_status, "t_s": round(elapsed(), 3)})
         history.append({"decision": decision, "status": public_status})
+        if skill == "grasp":
+            grasp_failed = status.get("state") == "failed"
+            if grasp_failed:
+                trace.append({"event": "grasp_failed", "seq": seq,
+                              "reason": public_status.get("reason")})
         if skill == "grasp" and status.get("state") == "done":
             # Gripper close alone cannot satisfy judge_grasp: the cube must
             # actually be lifted. The NEXT motion is still chosen by the model.
             grasp_pending_lift = True
+        if recovery_release:
+            # A failed grasp may leave the fingers closed. A model-selected
+            # release opens them for retry; it is NEVER a placement claim.
+            if status.get("state") != "done":
+                terminated_by = "recovery_release_failed"
+                break
+            grasp_failed = False
+            trace.append({"event": "recovery_release", "seq": seq})
+            continue
+        if grasp_failed and auto_recover_failed_grasp and managed_recoveries == 0:
+            # B2 only: one bounded, public-status-driven gripper reset. Same
+            # skill catalog and tool budget as B1; no privileged truth or
+            # additional model call, and no release/placement verification.
+            if tools >= budget["max_tool_actions"]:
+                terminated_by = "tool_action_budget_exhausted"
+                break
+            if elapsed() > budget["deadline_s"]:
+                terminated_by = "episode_deadline_exceeded"
+                break
+            seq += 1
+            tools += 1
+            try:
+                reset = link.execute({"skill": "release", "params": {}}, seq)
+            except (AttestationUnavailableError, HostLinkError) as e:
+                trace.append({"event": "HOST_FAIL_CLOSED", "detail": str(e)})
+                terminated_by = "host_fail_closed"
+                break
+            reset_status = project_public_status(reset.get("action_status", {}))
+            managed_recoveries += 1
+            trace.append({"event": "managed_grasp_recovery_release", "seq": seq,
+                          "status": reset_status})
+            history.append({"decision": {"skill": "release", "params": {},
+                                         "intent_key": "lfl-recovery-1"},
+                            "status": reset_status})
+            if reset_status.get("state") != "done":
+                terminated_by = "managed_recovery_failed"
+                break
+            grasp_failed = False
+            continue
         if skill == "move_to" and status.get("state") == "done" and grasp_pending_lift:
             public_last = observe_current()
             if terminated_by is not None:
@@ -383,6 +432,7 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
         "provider_attempts": attempts,
         "tool_actions": tools,
         "replans": replans,
+        "managed_recoveries": managed_recoveries,
         "elapsed_s": round(elapsed(), 3),
         "stop_receipts": stop_receipts,
         "host_claims": host_claims,

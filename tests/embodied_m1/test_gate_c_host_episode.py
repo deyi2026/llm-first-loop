@@ -331,6 +331,98 @@ def test_release_without_independent_lift_proof_is_blocked(wired):
                for t in result["trace"])
 
 
+def _fail_first_grasp(wired, monkeypatch):
+    """Mechanism-only fault injection at the public action receipt boundary."""
+    original = wired.request_attestation
+    failed = False
+
+    def dispatch(command, *, run_id, action_seq, timeout_s=30):
+        nonlocal failed
+        if command["skill"] == "grasp" and not failed:
+            failed = True
+            wired.events.append("grasp_failed")
+            wired.commands.append(command)
+            receipt = _action_receipt(run_id, action_seq, "failed")
+            receipt["action_status"]["reason"] = "no fingertip-cube contact"
+            return "c" * 32, receipt
+        return original(command, run_id=run_id, action_seq=action_seq,
+                        timeout_s=timeout_s)
+
+    monkeypatch.setattr(host_episode, "request_attestation", dispatch)
+
+
+def test_failed_grasp_can_release_for_recovery_but_never_claim_place(wired, monkeypatch):
+    _fail_first_grasp(wired, monkeypatch)
+    script = [
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"}),
+        json.dumps({"skill": "release", "params": {}, "intent_key": "k2"}),
+        json.dumps({"skill": "stop", "params": {"reason": "hold"}, "intent_key": "k3"}),
+    ]
+    result = host_episode.run_host_episode(
+        ScriptedStubProvider(script), host_episode.HostOracleLink(RUN))
+    assert result["terminated_by"] == "stop_requested_client_only"
+    assert result["tool_actions"] == 2
+    assert result["host_claims"] == {}
+    assert wired.events == ["grasp_failed", "release"]
+    assert any(t["event"] == "grasp_failed" for t in result["trace"])
+    assert any(t["event"] == "recovery_release" for t in result["trace"])
+
+
+def test_b2_recovers_failed_grasp_without_extra_provider_decision(wired, monkeypatch):
+    _fail_first_grasp(wired, monkeypatch)
+    script = [
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"}),
+        json.dumps({"skill": "stop", "params": {"reason": "hold"}, "intent_key": "k2"}),
+    ]
+    result = host_episode.run_host_episode(
+        ScriptedStubProvider(script), host_episode.HostOracleLink(RUN),
+        auto_recover_failed_grasp=True)
+    assert result["terminated_by"] == "stop_requested_client_only"
+    assert result["provider_attempts"] == 2
+    assert result["tool_actions"] == 2  # recovery release counts against 8
+    assert result["host_claims"] == {}
+    assert wired.events == ["grasp_failed", "release"]
+    assert any(t["event"] == "managed_grasp_recovery_release"
+               for t in result["trace"])
+
+
+def test_b2_never_exceeds_frozen_action_budget_for_recovery(wired, monkeypatch):
+    _fail_first_grasp(wired, monkeypatch)
+    provider = ScriptedStubProvider([
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"})])
+    result = host_episode.run_host_episode(
+        provider, host_episode.HostOracleLink(RUN),
+        budget={**host_episode.BUDGET, "max_tool_actions": 1},
+        auto_recover_failed_grasp=True)
+    assert result["terminated_by"] == "tool_action_budget_exhausted"
+    assert result["tool_actions"] == 1
+    assert wired.events == ["grasp_failed"]
+    assert result["host_claims"] == {}
+
+
+def test_b2_failed_reset_is_fail_closed_not_place(wired, monkeypatch):
+    _fail_first_grasp(wired, monkeypatch)
+    original = host_episode.request_attestation
+
+    def failed_reset(command, *, run_id, action_seq, timeout_s=30):
+        if command["skill"] == "release":
+            wired.events.append("release_failed")
+            return "c" * 32, _action_receipt(run_id, action_seq, "failed")
+        return original(command, run_id=run_id, action_seq=action_seq,
+                        timeout_s=timeout_s)
+
+    monkeypatch.setattr(host_episode, "request_attestation", failed_reset)
+    provider = ScriptedStubProvider([
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"})])
+    result = host_episode.run_host_episode(
+        provider, host_episode.HostOracleLink(RUN),
+        auto_recover_failed_grasp=True)
+    assert result["terminated_by"] == "managed_recovery_failed"
+    assert result["tool_actions"] == 2
+    assert result["host_claims"] == {}
+    assert wired.events == ["grasp_failed", "release_failed"]
+
+
 def test_non_lifting_move_does_not_prematurely_verify(wired):
     script = [
         json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"}),
