@@ -53,7 +53,9 @@ class _FrozenReview:
 
 
 _GIT_OUTPUT_LIMIT = 100_000
-_FROZEN_DIFF_LIMIT = 256_000
+# Host-only full frozen diff budget (Issue #76). Keep generic Git output bounded
+# separately; exceeding this cap still fails closed before reviewer admission.
+_FROZEN_DIFF_LIMIT = 400_000
 
 
 def _git(

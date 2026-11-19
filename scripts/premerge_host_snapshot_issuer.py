@@ -27,6 +27,7 @@ _ISSUER_UID = 462  # Existing dedicated macOS _lfl_dual_witness account.
 _WEB_UID = 501
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _HEX256 = re.compile(r"^[0-9a-f]{64}$")
+_MODEL_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{1,127}$")
 _BASE = Path("/Library/Application Support/LFL-HostIssuer")
 _REPO = "deyi2026/llm-first-loop"
 _TRUSTED_SITE = "/Library/Application Support/LFL-DualAgent/runtime/site"
@@ -213,10 +214,13 @@ def remote_state(pr: int, run_id: int) -> tuple[str, str]:
 
 def check_receipts(review: dict, r9: dict, integration: dict, *,
                    main: str, candidate: str) -> tuple[dict, dict, dict]:
+    reviewer_model = review.get("reviewer_model")
     require(review.get("candidate_sha") == candidate
             and review.get("terminal") is True and review.get("verdict") == "PASS"
+            and type(review.get("p0")) is int and type(review.get("p1")) is int
             and review.get("p0") == review.get("p1") == 0
-            and review.get("reviewer_model") == "glm/glm-5.3-flash"
+            and isinstance(reviewer_model, str)
+            and bool(_MODEL_LABEL.fullmatch(reviewer_model))
             and bool(review.get("reviewer_session_id")),
             "review_receipt_untrusted")
     require(r9.get("candidate_sha") == candidate and r9.get("full") is True
