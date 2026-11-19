@@ -374,22 +374,34 @@ def _git_verbs(
             # 可能携带隐藏 git 动词 → 保守哨兵（当 main 上的 commit 判定）。
             return [("commit", [], "")]
         if seg_start and tokens[i] == "cd":
-            # bash cd 选项（review subagent_f8b3178c6f57 P1-2、
-            # subagent_02c9e0493bb0 P1-1）：`cd -P/-L/-e/-@/-Pe <main>` 的真实
-            # 落点在选项之后；不跳过会把选项当落点、真实目标变"第二操作数"
-            # → 误判多操作数 → cwd 不变 → fail-open。任意选项形 token 一律
-            # 跳过：无效选项 bash 报错不改 cwd，跳过并跟踪落点属保守方向
-            # （误判成落点 = 过拦）。`--` 之后按字面（目录名可以叫 `-P`）。
-            while (
-                i + 1 < len(tokens)
-                and tokens[i + 1].startswith("-")
-                and len(tokens[i + 1]) > 1
+            # bash cd 选项处理（review subagent_f8b3178c6f57 P1-2、
+            # subagent_02c9e0493bb0 P1-1、subagent_36174c1824ec P1-1）：
+            # 有效性白名单只含跨 bash 版本确定的 `-P`/`-L`（3.2+ 与 5.x 一致，
+            # 本机 3.2 实证 [-L|-P]）；
+            # 其余选项形（-e/-@/-q/-Pe 组合…）有效性随 bash 版本变化——
+            # 5.x 执行、3.2 报错，静态无法裁决，且两种现实下任何单一静态
+            # 落点都单向 fail-open（跟踪→workdir=main 场景；不跟踪→
+            # workdir=lane 场景）→ 唯一一致安全解是哨兵（当 main 判定）。
+            # `--` 之后第一个词是字面目标（目录名可以叫 `-P`）。
+            _opt = i + 1
+            while _opt < len(tokens) and tokens[_opt] in ("-P", "-L"):
+                _opt += 1
+            if _opt < len(tokens) and tokens[_opt] == "--":
+                _opt += 1
+                nxt = tokens[_opt] if _opt < len(tokens) else ""
+                extra = tokens[_opt + 1] if _opt + 1 < len(tokens) else ""
+                seg_start = False
+            elif (
+                _opt < len(tokens)
+                and tokens[_opt].startswith("-")
+                and len(tokens[_opt]) > 1
             ):
-                i += 1
-            if i + 1 < len(tokens) and tokens[i + 1] == "--":
-                i += 1
-            seg_start = False
-            nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+                # 有效性不明的选项形：cd 语义不可静态裁决 → 保守哨兵
+                return [("commit", [], "")]
+            else:
+                nxt = tokens[_opt] if _opt < len(tokens) else ""
+                extra = tokens[_opt + 1] if _opt + 1 < len(tokens) else ""
+                seg_start = False
             if (
                 not nxt
                 or nxt in _SEG_PERSIST
@@ -400,9 +412,8 @@ def _git_verbs(
                 # cd 无参数（bash: cd → HOME，cwd 未知）或后随边界/重定向 → 保守
                 # （review 18c9ecb809a5 P1-2：先判无参/边界，再判多操作数）。
                 shell_cwd = ""
-                i += 1
+                i = _opt
                 continue
-            extra = tokens[i + 2] if i + 2 < len(tokens) else ""
             if (
                 extra
                 and extra not in _SEG_PERSIST
@@ -412,10 +423,10 @@ def _git_verbs(
             ):
                 # bash: cd 多操作数 → "too many arguments"，cwd 不变
                 # （review subagent_4289cf3401e0 P1-1：按成功 cd 跟踪是 fail-open）。
-                i += 2
+                i = _opt + 1
                 continue
             shell_cwd = _resolve_shell_cd(shell_cwd, nxt, workdir)
-            i += 2
+            i = _opt + 1
             continue
         seg_start = False
         if tokens[i] != "git":
@@ -610,6 +621,8 @@ def _strip_here_strings(text: str) -> str:
                 if k >= n:
                     return text  # 未闭合：保守原样（上游哨兵兜底）
                 word = text[j : k + 1]
+                _end = k + 1  # 含闭引号整体消费（P2-1：残留闭引号会被当开引号
+                # 重新扫描 → 引号奇偶错位 → 伪 ValueError → 误触哨兵）
             else:
                 k = j
                 while k < n and text[k] not in " \t\n;|&<>()":
@@ -618,9 +631,10 @@ def _strip_here_strings(text: str) -> str:
                         continue
                     k += 1
                 word = text[j:k]
+                _end = k
             if any(m in word for m in ("$(", "`", "<(", ">(", "$[")):
                 return text  # 数据词含执行向量：bash 会展开执行 → 保守原样
-            i = k
+            i = _end
             continue
         out.append(ch)
         i += 1

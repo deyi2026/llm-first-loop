@@ -1697,15 +1697,25 @@ def test_block_if_cd_into_main_repo(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_git_verbs_cd_arbitrary_options_tracked(tmp_path):
-    """P1-1：`cd -e/-@/-Pe main` 任意选项形之后才是真实落点。"""
-    main_dir = tmp_path / "main"
-    main_dir.mkdir()
-    for opt in ("-e", "-@", "-Pe", "-P", "-L"):
+def test_git_verbs_cd_env_ambiguous_options_sentinel(tmp_path):
+    """P1 回归（36174c1824ec）：`-e/-@/-Pe` 有效性随 bash 版本变化（3.2 无、
+    5.x 有）——静态无法裁决，任何单一落点都单向 fail-open → 哨兵当 main。"""
+    for opt in ("-e", "-@", "-Pe", "-q"):
         verbs = guard_module._git_verbs(
-            f"cd {opt} {main_dir} && git commit -m x", "/tmp"
+            f"cd {opt} /tmp && git commit -m x", "/tmp"
         )
-        assert verbs == [("commit", ["-m", "x"], str(main_dir))], opt
+        assert verbs == [("commit", [], "")], opt
+
+
+def test_git_verbs_here_string_quoted_word_consumed(tmp_path):
+    """P2-1（36174c1824ec）：引号包裹的数据词连同闭引号整体消费，
+    残留闭引号不再被当开引号 → 引号奇偶错位误触哨兵。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f'cd {wt} <<< "a b" && git commit -m x', str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
 
 
 def test_git_verbs_here_string_boundary(tmp_path):

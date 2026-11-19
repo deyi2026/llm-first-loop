@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "1435f5135",
+    "head_commit": "632c33b75",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1248,7 +1248,7 @@
     "src/llm_loop/subagent/runner.py::start": 394,
     "src/llm_loop/tools/builtin/browser_perceive.py::execute": 350,
     "src/llm_loop/web/routes.py::chat_stream": 381,
-    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 304
+    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 315
   },
   "local_imports": {
     "src/llm_loop/core/history.py": 30,
