@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import sys
 import time
 from pathlib import Path
@@ -73,13 +75,30 @@ class HostLinkError(RuntimeError):
     """Daemon/verifier contract violation: fail closed."""
 
 
-def load_run_identity() -> dict[str, Any]:
-    run = json.loads(RUN_INFO.read_text(encoding="utf-8"))
-    if RUN_INFO.stat().st_uid != 463:
-        raise HostLinkError("run identity not UID463-owned")
-    if len(run.get("run_id", "")) != 32 or run.get("experiment_id") != "M1-SIM-001":
+def validate_run_identity(run: Any) -> dict[str, Any]:
+    if not isinstance(run, dict):
+        raise HostLinkError("Host run identity is not an object")
+    run_id = run.get("run_id")
+    if (not isinstance(run_id, str) or len(run_id) != 32
+            or any(c not in "0123456789abcdef" for c in run_id)
+            or run.get("experiment_id") != "M1-SIM-001"):
         raise HostLinkError("invalid Host run identity")
+    if type(run.get("scene_epoch")) is not int or run["scene_epoch"] < 1:
+        raise HostLinkError("invalid Host scene_epoch")
+    if type(run.get("pid")) is not int or run["pid"] < 1:
+        raise HostLinkError("invalid Host process identity")
     return run
+
+
+def load_run_identity() -> dict[str, Any]:
+    # Inspect owner and parse bytes from the SAME no-follow file descriptor.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(RUN_INFO, flags)
+    with os.fdopen(fd, "r", encoding="utf-8") as source:
+        info = os.fstat(source.fileno())
+        if info.st_uid != 463 or not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+            raise HostLinkError("run identity not a bounded UID463-owned file")
+        return validate_run_identity(json.load(source))
 
 
 def project_public_obs(observation: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +245,7 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
                 "elapsed_s": 0.0, "stop_receipts": {}, "host_claims": {},
                 "model_used": getattr(provider, "model_used", "unknown"),
                 "learning": budget["learning"],
-                "oracle_binding": "host_uid463_managed (daemon-signed; client holds public key only)"}
+                "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified"}
 
     def elapsed() -> float:
         return now() - t0
@@ -267,6 +286,12 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
         attempts += 1
         try:
             decision = parse_decision(raw)
+            if (not isinstance(decision, dict)
+                    or not isinstance(decision.get("intent_key"), str)
+                    or not decision["intent_key"]
+                    or decision.get("skill") not in ("move_to", "grasp", "release", "stop")
+                    or not isinstance(decision.get("params"), dict)):
+                raise ValueError("malformed model decision")
         except Exception:
             replans += 1
             trace.append({"event": "decision_invalid", "attempts": attempts})
@@ -292,7 +317,7 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
             # before an independent Host-signed grasp confirmation.
             trace.append({"event": "release_blocked_unverified_grasp",
                           "intent_key": intent})
-            terminated_by = "host_fail_closed"
+            terminated_by = "client_guard_release_blocked"
             break
         seq += 1
         tools += 1
@@ -361,7 +386,7 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
         "elapsed_s": round(elapsed(), 3),
         "stop_receipts": stop_receipts,
         "host_claims": host_claims,
-        "oracle_binding": "host_uid463_managed (daemon-signed; client holds public key only)",
+        "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
         "trace": trace,
     }
 

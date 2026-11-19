@@ -171,9 +171,11 @@ def test_full_episode_place_host_verified_no_client_physics(wired):
     assert result["host_claims"]["grasp"]["status"] == "VERIFIED_BY_ORACLE"
     assert wired.events == ["move_to", "move_to", "grasp", "move_to",
                             "verify_grasp", "release", "verify_place"]
-    # client never advances physics: exactly ONE observe per loop pass (no settle loops)
-    observe_cmds = [c for c in [wired.commands] for c in c]
-    assert all(c.get("skill") != "stop" for c in observe_cmds)
+    # One initial observe, one per model decision, plus post-lift and
+    # post-release observations. No client physics or hidden settle loops.
+    assert wired.obs_calls == 8
+    assert [c["skill"] for c in wired.commands] == [
+        "move_to", "move_to", "grasp", "move_to", "release"]
     assert result["stop_receipts"] == {}
 
 
@@ -211,10 +213,22 @@ def test_main_hold_and_fresh_branches(wired, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(host_episode, "load_run_identity", lambda: dict(RUN))
     assert host_episode.main(["--check-fresh-only"]) == 0  # fresh gate passes
     assert "FRESH" in capsys.readouterr().out
-    # real provider path without a configured provider key => HOLD (exit 2)
+    # Never rely on ambient provider keys: force a constructor failure so
+    # this unit test cannot make paid calls or mutate real episode evidence.
+    fake_mod = types.ModuleType("m1_gate_c_episode")
+
+    class NoProvider:
+        def __init__(self):
+            raise RuntimeError("provider deliberately disabled in unit test")
+
+    setattr(fake_mod, "GLMHttpProvider", NoProvider)  # noqa: B010
+    monkeypatch.setitem(sys.modules, "m1_gate_c_episode", fake_mod)
+    evidence = tmp_path / "must_not_be_written.json"
+    monkeypatch.setattr(host_episode, "EPISODE_EVIDENCE_PATH", evidence)
     rc = host_episode.main([])
     out = capsys.readouterr().out
     assert rc == 2 and "HOLD" in out and "provider unavailable" in out
+    assert not evidence.exists()
 
 
 def test_main_wires_real_provider_bounded_evidence_no_secrets(
@@ -309,7 +323,7 @@ def test_release_without_independent_lift_proof_is_blocked(wired):
     ]
     result = host_episode.run_host_episode(
         ScriptedStubProvider(script), host_episode.HostOracleLink(RUN))
-    assert result["terminated_by"] == "host_fail_closed"
+    assert result["terminated_by"] == "client_guard_release_blocked"
     assert result["tool_actions"] == 1
     assert "release" not in wired.events
     assert "verify_grasp" not in wired.events
@@ -329,3 +343,30 @@ def test_non_lifting_move_does_not_prematurely_verify(wired):
     assert result["terminated_by"] == "stop_requested_client_only"
     assert result["host_claims"] == {}
     assert "verify_grasp" not in wired.events
+
+
+def test_missing_scene_epoch_and_pid_fail_closed_before_host_calls():
+    for field in ("scene_epoch", "pid"):
+        identity = {**RUN, "pid": 1234}
+        identity.pop(field)
+        with pytest.raises(host_episode.HostLinkError, match="invalid Host"):
+            host_episode.validate_run_identity(identity)
+    for bad_epoch in (None, 0, True, "1"):
+        with pytest.raises(host_episode.HostLinkError, match="scene_epoch"):
+            host_episode.validate_run_identity({**RUN, "pid": 1234,
+                                                "scene_epoch": bad_epoch})
+
+
+def test_malformed_parser_result_records_invalid_without_action(wired, monkeypatch):
+    monkeypatch.setattr(host_episode, "parse_decision", lambda _raw: {"skill": "grasp"})
+    provider = ScriptedStubProvider(["ignored"], model_used="stub/parser-malformed")
+    result = host_episode.run_host_episode(provider, host_episode.HostOracleLink(RUN),
+                                          budget={"max_provider_attempts": 1,
+                                                  "max_tool_actions": 8,
+                                                  "deadline_s": 180.0,
+                                                  "learning": "off"})
+    assert result["terminated_by"] == "provider_attempt_budget_exhausted"
+    assert result["provider_attempts"] == 1
+    assert result["tool_actions"] == 0
+    assert result["trace"][0]["event"] == "decision_invalid"
+    assert wired.commands == []
