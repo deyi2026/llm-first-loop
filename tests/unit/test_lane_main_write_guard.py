@@ -1227,6 +1227,15 @@ def test_git_verbs_args_stop_at_redirection(tmp_path):
     assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
 
 
+def test_git_verbs_redirect_after_cd_does_not_break_cd(tmp_path):
+    """cd 目标后的重定向不是第二操作数：cd 成功跟踪（61bbdabfee9d P1-1）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(f"cd {wt} > {log} && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
 def test_allow_commit_after_cd_into_branch_repo(tmp_path):
     """修复目标：无 workdir 参数 + `cd <feat 分支仓> && git commit` → 放行。"""
     wt = _git_repo(tmp_path / "wt", "feat/issue73")

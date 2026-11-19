@@ -46,11 +46,12 @@
   建模——子壳继承父壳视图、内部 ``cd`` 正常跟踪、``)`` 弹栈还原；不配对 ``)``
   弹空栈置未知（保守）。闭合 ``(cd wt && git commit)`` 内层 ``cd`` 逃过判定的
   fail-open 旁路；``$( )`` 命令替换中的命令同被跟踪。
-- **commenters 恢复 ``#``**（审查 fe01ff8da0cd P2-2 / ecc9877d2e93 P2-1）：词首
-  未加引号 ``#`` 起注释，消除 ``cd wt # note && …`` 形态假阳性；**词中** ``#``
-  （如 ``wt#note``）shlex 亦截断而 bash 视为目录名——两个方向都可能误解析
-  （截断路径恰为另一真实仓时甚至宽判），故含 ``#`` 目标一律保守 ""；引号内
-  ``#`` 不受影响。
+- **commenters ``#``**（fe01ff8da0cd P2-2 / ecc9877d2e93 P2-1 / 61bbdabfee9d
+  P2-2 三轮复核；本机 shlex 3.13 探针实证：``cd wt#note`` → ``[cd, wt]``
+  词中即截断、``cd 'wt#note'`` → 全名保留）：未加引号词中 ``#`` 在 lexer 层
+  截断，截断路径与 bash 字面路径分歧时两方向都可能误解析 → **引号形式含
+  ``#`` 的目标一律保守 ""**；未加引号形态属 shlex 边界，截断结果若通过
+  ``is_dir`` 则按其判定（残留已知风险，罕见路径名）。
 - **``cd`` 存在性校验**（审查 ecc9877d2e93 P1-1）：``cd`` 目标经 ``is_dir``
   校验，不存在/非目录 → ""（bash cd 失败时 shell 停留原处，字面落点不可
   信）；相对 ``cd`` 的基准目录同样校验。代价：对失效目录名的合法命令
@@ -188,7 +189,7 @@ def _git_verbs(
                 extra
                 and extra not in _SEG_PERSIST
                 and extra not in _SEG_SUBSHELL
-                and extra not in ("(", ")")
+                and extra not in ("(", ")", "<", ">", ">>")
             ):
                 # bash: cd 多操作数 → "too many arguments"，cwd 不变
                 # （review subagent_4289cf3401e0 P1-1：按成功 cd 跟踪是 fail-open）。

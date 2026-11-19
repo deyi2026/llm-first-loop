@@ -11,11 +11,12 @@
       "disposition": "modify",
       "declaration_id": "decl-guard-lexer-fail-closed",
       "evidence": [
-        "EVO-20261119-0fa86cab 建议落地（cd 链跟踪 + token 化收紧）后的四轮审查收敛：轮1 subagent_a645e424028c REVISE P0=2（陈旧基线伪影+括号子壳 fail-open）→轮2 subagent_fe01ff8da0cd REVISE P1=1（|& 穿透）→轮3 subagent_ecc9877d2e93 REVISE P1=1（cd 存在性未建模）→本轮全部以代码修复闭环；data/review_admission/ 各轮回执可查。",
-        "真实旁路闭环清单：括号子壳 (cd wt && git commit) 内层 cd 逃逸（P0）、|& 双流管道穿透（P1）、cd 目标不存在时字面落点误判（P1）、refspec 无界切片跨段吞噬、动词后 pathspec cd 误启跟踪、剥离空文本盲放行、未知 cd 链相对 -C 回落 workdir。",
-        "fail-closed 方向保持：未知 cd 链/不配对括号/词法失败/剥离空文本一律保守（未知目标当 main 或哨兵动词），不引入任何放行捷径。"
+        "审查链逐轮枚举（全部真实回执，data/review_admission/ 可查）：轮1 git_push a645e424028c REVISE P0=2（括号子壳 fail-open+陈旧基线伪影）；轮2 full_test ecc9877d2e93 REVISE P1=1 P2=3（cd 存在性未建模等）；轮3 git_push fe01ff8da0cd REVISE P1=1（|& 穿透）；轮4 full_test 4289cf3401e0 REVISE P1=1（cd 多操作数）；轮5 git_push 61bbdabfee9d REVISE P1=1（cd 后重定向误判为操作数）——每轮发现均以代码修复闭环，无跳过、无降级。",
+        "真实旁路闭环清单：括号子壳 (cd wt && git commit) 内层 cd 逃逸、|& 双流管道穿透、cd 目标不存在时字面落点误判、cd 多操作数误判成功、cd 后重定向误判操作数、refspec/参数无界切片跨段吞噬、动词后 pathspec cd 误启跟踪、剥离空文本盲放行、未知 cd 链相对 -C 回落 workdir。",
+        "fail-closed 方向保持：未知 cd 链/不配对括号/词法失败/剥离空文本/含 # 引号目标一律保守（未知目标当 main 或哨兵动词），不引入任何放行捷径。",
+        "最后一轮 full_test Reviewer 对同族前驱树 PASS（candidate=85e4bdc2 树摘要，2026-11-20 00:23）；successor SHA（本轮代码+清单修复后）的双通道 Reviewer/R9/push/PR CI 待跑，不复用旧 SHA 证据。"
       ],
-      "verification_level": "targeted_100_passed_exit0__ruff_clean__pyright_0_on_predecessor_6ef0e7a8__successor_reviewer_R9_push_pending",
+      "verification_level": "targeted_103_passed_exit0__ruff_clean__pyright_0_on_predecessor_2ed181821__successor_reviewer_R9_push_pending",
       "model_evidence_veto_recovery_exit": "model-evidence veto：无——守卫判定全部机器可验（live lane 台账 + 分支/workdir 解析），无模型自证输入。recovery：任一审查发现否决即回退对应修复提交并重走闸；exit：revert 修复提交即回到 EVO 前守卫行为。",
       "rollback_route": "git revert 本组件提交；守卫回退后 main 直写判定回到历史行为（该行为本身已有 lane 台账保护，非无保护状态）。"
     },
@@ -26,9 +27,9 @@
       "owning_subsystem": "host-governance",
       "disposition": "modify",
       "evidence": [
-        "守卫单测扩充：100 passed / 0 failed（前驱 6ef0e7a8 树，2026-11-19 23:34 宿主回执；Ruff 全过、Pyright 0 errors）。新增覆盖：括号子壳跟踪/继承/还原、不配对保守、|& 未知目标、动词后 pathspec cd 不误启、cd 存在性校验（不存在/文件/#目标）、未知链相对 -C、未闭合引号哨兵、相对落点存在性。"
+        "守卫单测扩充：103 passed / 0 failed（前驱 2ed181821 树，2026-11-20 00:09 宿主回执；Ruff 全过、Pyright 0 errors）。新增覆盖：括号子壳跟踪/继承/还原、不配对保守、|& 未知目标、动词后 pathspec cd 不误启、cd 存在性校验（不存在/文件/#目标）、未知链相对 -C、未闭合引号哨兵、相对落点存在性、cd 多操作数失败保持、重定向算子边界截断、cd 后重定向不破坏跟踪。"
       ],
-      "verification_level": "targeted_100_passed_exit0_on_predecessor__successor_rerun_pending",
+      "verification_level": "targeted_103_passed_exit0_on_predecessor_2ed181821__successor_rerun_pending",
       "model_evidence_veto_recovery_exit": "不适用（测试代码，非控制机器）。",
       "rollback_route": "随守卫组件一并 revert。"
     },
