@@ -4,18 +4,21 @@ Trust boundary (re-designed after P0 review):
 - The oracle daemon (oracle_daemon.py) must run as a HOST-OWNED separate
   process: it owns the live MuJoCoScene, executes ONLY whitelisted action
   commands, takes its own snapshots, and signs with an Ed25519 private key that
-  callers cannot read or write (production path: root-owned
+  callers cannot read or write (production path: UID463-owned, mode 0400
   /usr/local/etc/lfl-m1-oracle-ed25519.key).
 - Clients hold at most the PUBLIC key. Verification is asymmetric; a locally
   forged receipt can never verify.
 - The only client input channel is a strict action-command whitelist
-  (move_to/grasp/release/observe). Snapshots, file paths, stdin JSON and
+  (move_to/grasp/release/observe/verify_grasp/verify_place). Snapshots, file paths, stdin JSON and
   arbitrary scripts are not an input surface anywhere.
 - Receipts bind run_id, scene_epoch, action_seq, nonce and snapshot_hash.
   Verification checks expected bindings and a PERSISTENT replay ledger.
 - If no Host-owned daemon is reachable (current sandbox: true), every request
   raises AttestationUnavailable and the caller must stay HOLD / PENDING_ORACLE.
-  Nothing in this module can fabricate a VERIFIED_BY_ORACLE receipt.
+- The public verifier is ADVISORY and never upgrades a claim to VERIFIED.
+  Only the Host-owned verifier may consume the nonce and upgrade. Any local
+  Python return value is untrusted until the Host acceptance is independently
+  checked across the OS process boundary.
 """
 
 from __future__ import annotations
@@ -60,7 +63,8 @@ def snapshot_hash(snapshot: dict[str, Any]) -> str:
 def validate_command(command: dict[str, Any]) -> str:
     """Return the canonical skill name or raise AttestationUnavailable.
 
-    Strict whitelist: skill in {move_to, grasp, release, observe}; move_to
+    Strict whitelist: skill in {move_to, grasp, release, observe,
+    verify_grasp, verify_place}; move_to
     params must be numeric and inside the frozen workspace; grasp/release
     take no params; file paths, shell, python, snapshots are not accepted.
     """
@@ -77,10 +81,17 @@ def validate_command(command: dict[str, Any]) -> str:
             raise AttestationUnavailableError("move_to requires exactly x,y,z")
         for axis in ("x", "y", "z"):
             v = params.get(axis)
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise AttestationUnavailableError(f"move_to param {axis} missing/non-numeric")
+            try:
+                numeric = float(v)
+                valid = math.isfinite(numeric)
+            except (OverflowError, ValueError):
+                valid = False
+            if not valid:
                 raise AttestationUnavailableError(f"move_to param {axis} missing/non-numeric")
             lo, hi = WORKSPACE_BOUNDS[axis]
-            if not (lo <= float(v) <= hi):
+            if not (lo <= numeric <= hi):
                 raise AttestationUnavailableError(f"move_to {axis}={v} outside workspace")
     else:
         if params:
@@ -128,10 +139,11 @@ def request_attestation(
     receipts_dir: str = PROD_RECEIPTS_DIR,
     timeout_s: float = 5.0,
     poll_interval_s: float = 0.05,
-) -> dict[str, Any]:
+) -> tuple[str, dict[str, Any]]:
     """Drop a whitelisted action command as a job file for the Host-owned daemon.
 
     Pure file IPC (no sockets): jobs/{nonce}.job -> receipts/{nonce}.receipt.json.
+    Return the client-issued nonce SEPARATELY from the untrusted receipt.
     The daemon executes the action on ITS OWN live scene and returns a signed
     receipt binding run_id/scene_epoch/action_seq/nonce/snapshot_hash/uid463.
     Missing managed directories (any sandbox without the Host deployment)
@@ -149,8 +161,10 @@ def request_attestation(
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
-        fd = os.open(dest, flags, 0o600)
+        # Directory ACLs are installed by Host; 0644 permits cross-UID reads.
+        fd = os.open(dest, flags, 0o644)
         with os.fdopen(fd, "wb") as out:
+            os.fchmod(out.fileno(), 0o644)
             out.write(canonical(job) + b"\n")
     except OSError as exc:
         raise AttestationUnavailableError(f"host job submission failed: {exc}") from None
@@ -158,7 +172,13 @@ def request_attestation(
     deadline = time.monotonic() + float(timeout_s)
     while time.monotonic() < deadline:
         if receipt_path.exists():
-            return json.loads(receipt_path.read_text(encoding="utf-8"))
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                if not isinstance(receipt, dict):
+                    raise ValueError("receipt must be an object")
+                return nonce, receipt
+            except (OSError, ValueError) as exc:
+                raise AttestationUnavailableError(f"unreadable Host receipt: {exc}") from None
         time.sleep(poll_interval_s)
     raise AttestationUnavailableError("daemon did not process the request in time")
 
@@ -168,14 +188,16 @@ def load_public_key(pubkey_path: str) -> Ed25519PublicKey:
     return Ed25519PublicKey.from_public_bytes(raw)
 
 
-def _trusted_host_file(path: str, *, owner: int) -> bool:
+def _trusted_host_file(path: str, *, owner: int, private_key: bool = False) -> bool:
     """Reject caller-created trust anchors, symlinks, and writable parents."""
     try:
         p = Path(path)
         if p.is_symlink() or not p.is_file():
             return False
         st = p.stat()
-        if st.st_uid != owner or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        if st.st_uid != owner or st.st_mode & (
+            0o077 if private_key else (stat.S_IWGRP | stat.S_IWOTH)
+        ):
             return False
         parent = p.parent
         while parent != parent.parent:
@@ -196,7 +218,7 @@ def _trusted_host_file(path: str, *, owner: int) -> bool:
         return False
 
 
-def verify_attestation(
+def _verify_attestation_impl(
     receipt: dict[str, Any],
     *,
     pubkey_path: str = PROD_PUBLIC_KEY_PATH,
@@ -204,8 +226,10 @@ def verify_attestation(
     expected_epoch: int,
     expected_action_seq: int,
     expected_nonce: str,
+    expected_experiment_id: str,
     replay_ledger: ReplayLedger,
     expected_claim_kind: str = "place",
+    host_authority: bool = False,
 ) -> VerificationStatus:
     """Asymmetric verification with strict binding + persistent replay defence.
 
@@ -230,6 +254,8 @@ def verify_attestation(
     }
     if any(k not in receipt for k in required):
         return VerificationStatus.FAILED_CLAIM
+    if set(receipt) - required - {"daemon_public_key"}:
+        return VerificationStatus.FAILED_CLAIM
     # Only the Host-installed, root-owned key is an identity. A caller-chosen
     # Ed25519 key is not a Host signature, even when the cryptography verifies.
     if pubkey_path != PROD_PUBLIC_KEY_PATH or not _trusted_host_file(pubkey_path, owner=0):
@@ -248,6 +274,8 @@ def verify_attestation(
         return VerificationStatus.FAILED_CLAIM
     if str(receipt["run_id"]) != str(expected_run):
         return VerificationStatus.FAILED_CLAIM  # cross-run
+    if str(receipt["experiment_id"]) != str(expected_experiment_id):
+        return VerificationStatus.FAILED_CLAIM
     try:
         if int(receipt["scene_epoch"]) != int(expected_epoch):
             return VerificationStatus.FAILED_CLAIM
@@ -286,14 +314,71 @@ def verify_attestation(
         pubkey.verify(bytes.fromhex(str(receipt["signature"])), canonical(core))
     except (InvalidSignature, ValueError, OSError):
         return VerificationStatus.FAILED_CLAIM  # forged/tampered/wrong key
+    if str(receipt["verdict"]).lower() != "success":
+        return (
+            VerificationStatus.FAILED_CLAIM
+        )  # a genuine daemon-signed failure is not a success claim
+    if not host_authority:
+        return VerificationStatus.PENDING_ORACLE
     receipt_sha = hashlib.sha256(canonical(receipt)).hexdigest()
     try:
         if not replay_ledger.record(str(receipt["nonce"]), receipt_sha):
             return VerificationStatus.FAILED_CLAIM
     except (OSError, sqlite3.DatabaseError):
         return VerificationStatus.FAILED_CLAIM
-    if str(receipt["verdict"]).lower() != "success":
-        return (
-            VerificationStatus.FAILED_CLAIM
-        )  # a genuine daemon-signed failure is not a success claim
     return VerificationStatus.VERIFIED_BY_ORACLE
+
+
+def verify_attestation(
+    receipt: dict[str, Any],
+    *,
+    pubkey_path: str = PROD_PUBLIC_KEY_PATH,
+    expected_run: str,
+    expected_epoch: int,
+    expected_action_seq: int,
+    expected_nonce: str,
+    expected_experiment_id: str,
+    replay_ledger: ReplayLedger,
+    expected_claim_kind: str = "place",
+) -> VerificationStatus:
+    """Unprivileged advisory check. Never grants VERIFIED_BY_ORACLE."""
+    return _verify_attestation_impl(
+        receipt,
+        pubkey_path=pubkey_path,
+        expected_run=expected_run,
+        expected_epoch=expected_epoch,
+        expected_action_seq=expected_action_seq,
+        expected_nonce=expected_nonce,
+        expected_experiment_id=expected_experiment_id,
+        replay_ledger=replay_ledger,
+        expected_claim_kind=expected_claim_kind,
+    )
+
+
+def verify_attestation_host(
+    receipt: dict[str, Any],
+    *,
+    pubkey_path: str = PROD_PUBLIC_KEY_PATH,
+    expected_run: str,
+    expected_epoch: int,
+    expected_action_seq: int,
+    expected_nonce: str,
+    expected_experiment_id: str,
+    replay_ledger: ReplayLedger,
+    expected_claim_kind: str = "place",
+) -> VerificationStatus:
+    """Host-only verifier. The consuming safety gate MUST run out of process."""
+    if os.getuid() != ATTEST_UID:
+        return VerificationStatus.FAILED_CLAIM
+    return _verify_attestation_impl(
+        receipt,
+        pubkey_path=pubkey_path,
+        expected_run=expected_run,
+        expected_epoch=expected_epoch,
+        expected_action_seq=expected_action_seq,
+        expected_nonce=expected_nonce,
+        expected_experiment_id=expected_experiment_id,
+        replay_ledger=replay_ledger,
+        expected_claim_kind=expected_claim_kind,
+        host_authority=True,
+    )

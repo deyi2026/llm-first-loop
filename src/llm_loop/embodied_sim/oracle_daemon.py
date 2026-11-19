@@ -1,7 +1,7 @@
 """Host-owned oracle daemon for M1 (deployed by Host as a separate process).
 
 Owns the live MuJoCoScene and the Ed25519 private key. Clients can only send
-STRICTLY WHITELISTED action commands over a root-owned unix socket; the daemon
+STRICTLY WHITELISTED action commands over Host-managed file queues; the daemon
 executes them on ITS OWN scene (real mj_step physics), takes its own privileged
 snapshot, judges locally, and returns an Ed25519-signed receipt binding
 run_id/scene_epoch/action_seq/nonce/snapshot_hash/uid.
@@ -125,7 +125,7 @@ class OracleDaemon:
             if os.getuid() != ATTEST_UID:
                 raise ValueError("Host UID463 identity required for signing")
             if self._key_path != PROD_PRIVATE_KEY_PATH or not _trusted_host_file(
-                self._key_path, owner=ATTEST_UID
+                self._key_path, owner=ATTEST_UID, private_key=True
             ):
                 raise ValueError("Host-installed private key required for signing")
             snapshot = self.scene.oracle_snapshot()
@@ -196,8 +196,10 @@ class OracleDaemon:
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 if hasattr(os, "O_NOFOLLOW"):
                     flags |= os.O_NOFOLLOW
-                fd = os.open(dest, flags, 0o600)
+                # Host-installed directory ACLs restrict nonce visibility.
+                fd = os.open(dest, flags, 0o644)
                 with os.fdopen(fd, "w", encoding="utf-8") as out:
+                    os.fchmod(out.fileno(), 0o644)
                     out.write(json.dumps(receipt, sort_keys=True) + "\n")
                 count += 1
             except (OSError, ValueError, TypeError, json.JSONDecodeError):

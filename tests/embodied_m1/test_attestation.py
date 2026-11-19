@@ -75,6 +75,7 @@ def _verify(receipt, public, ledger, **overrides):
         "expected_epoch": 1,
         "expected_action_seq": 0,
         "expected_nonce": _nonce(10),
+        "expected_experiment_id": "M1-SIM-001",
         "replay_ledger": ledger,
     }
     args.update(overrides)
@@ -92,6 +93,25 @@ def test_no_host_queue_fails_closed(tmp_path):
         )
 
 
+def test_client_retains_issued_nonce_independently_of_receipt(daemon, tmp_path):
+    jobs, receipts = tmp_path / "jobs", tmp_path / "receipts"
+    jobs.mkdir()
+    receipts.mkdir()
+    timer = threading.Timer(0.05, lambda: daemon.process_pending(str(jobs), str(receipts)))
+    timer.start()
+    nonce, receipt = attestation.request_attestation(
+        {"skill": "observe"},
+        run_id="run-A",
+        action_seq=0,
+        jobs_dir=str(jobs),
+        receipts_dir=str(receipts),
+    )
+    timer.join()
+    assert len(nonce) == 32
+    assert receipt["oracle_execution"] == "observation_only"
+    assert "nonce" not in receipt  # cannot derive expected nonce from response
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -106,6 +126,7 @@ def test_no_host_queue_fails_closed(tmp_path):
         {"skill": "move_to", "params": {"x": 0.1, "y": 0, "z": float("inf")}},
         {"skill": "move_to", "params": {"x": True, "y": 0, "z": 0.1}},
         {"skill": "move_to", "params": {"x": 99, "y": 0, "z": 0.1}},
+        {"skill": "move_to", "params": {"x": 10**400, "y": 0, "z": 0.1}},
         {"skill": "move_to", "params": []},
     ],
 )
@@ -176,6 +197,7 @@ def test_mocked_trust_checks_signature_binding_and_replay(keys, ledger, monkeypa
         {"expected_epoch": 2},
         {"expected_action_seq": 1},
         {"expected_nonce": _nonce(11)},
+        {"expected_experiment_id": "M1-SIM-002"},
         {"expected_claim_kind": "grasp"},
     ):
         assert _verify(fake, keys[2], ledger, **kwargs) == VerificationStatus.FAILED_CLAIM
@@ -183,8 +205,25 @@ def test_mocked_trust_checks_signature_binding_and_replay(keys, ledger, monkeypa
     assert _verify(altered, keys[2], ledger) == VerificationStatus.FAILED_CLAIM
     altered_evidence = dict(fake, evidence={"check": "forged"})
     assert _verify(altered_evidence, keys[2], ledger) == VerificationStatus.FAILED_CLAIM
-    assert _verify(fake, keys[2], ledger) == VerificationStatus.VERIFIED_BY_ORACLE
-    assert _verify(fake, keys[2], ledger) == VerificationStatus.FAILED_CLAIM
+    altered_extra = dict(fake, extra_untrusted="value")
+    assert _verify(altered_extra, keys[2], ledger) == VerificationStatus.FAILED_CLAIM
+    # Client-side verification remains advisory, never an authority.
+    assert _verify(fake, keys[2], ledger) == VerificationStatus.PENDING_ORACLE
+    assert _verify(fake, keys[2], ledger) == VerificationStatus.PENDING_ORACLE
+    monkeypatch.setattr(os, "getuid", lambda: 463)
+    args = {
+        "pubkey_path": str(keys[2]),
+        "expected_run": "run-A",
+        "expected_epoch": 1,
+        "expected_action_seq": 0,
+        "expected_nonce": _nonce(10),
+        "expected_experiment_id": "M1-SIM-001",
+        "replay_ledger": ledger,
+    }
+    assert (
+        attestation.verify_attestation_host(fake, **args) == VerificationStatus.VERIFIED_BY_ORACLE
+    )
+    assert attestation.verify_attestation_host(fake, **args) == VerificationStatus.FAILED_CLAIM
     new_ledger = attestation.ReplayLedger(ledger.path)
     assert _verify(fake, keys[2], new_ledger) == VerificationStatus.FAILED_CLAIM
 
