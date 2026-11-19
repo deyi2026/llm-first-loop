@@ -1208,6 +1208,25 @@ def test_resolve_shell_cd_rules(tmp_path):
     assert f(None, "sub", "/tmp/lfl-nonexistent-base-zz") == ""
 
 
+def test_git_verbs_cd_extra_operand_keeps_cwd(tmp_path):
+    """bash 对 cd 多操作数报错且 cwd 不变（4289cf3401e0 P1-1）→ 不跟随字面目标。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} {other} && git commit -m x", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
+
+
+def test_git_verbs_args_stop_at_redirection(tmp_path):
+    """动词参数切片在重定向算子处截断（4289cf3401e0 P2-2）。"""
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(f"git commit -m x > {log}", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
+
+
 def test_allow_commit_after_cd_into_branch_repo(tmp_path):
     """修复目标：无 workdir 参数 + `cd <feat 分支仓> && git commit` → 放行。"""
     wt = _git_repo(tmp_path / "wt", "feat/issue73")

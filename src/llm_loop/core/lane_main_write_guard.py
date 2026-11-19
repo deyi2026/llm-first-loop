@@ -56,6 +56,12 @@
   信）；相对 ``cd`` 的基准目录同样校验。代价：对失效目录名的合法命令
   过拦（安全方向）。未知 cd 链后的相对 ``git -C`` 不回落 workdir 解析
   （P2-2）；词法失败（引号不配对）→ 保守哨兵而非盲放行（P2-3）。
+- **``cd`` 多操作数 = 失败**（审查 4289cf3401e0 P1-1）：bash 对
+  ``cd wt extra`` 报 "too many arguments" 且 cwd 不变——按成功跟踪是
+  fail-open，现按失败处理（cwd 保持）。
+- **已知边界（既有，非本批引入，4289cf3401e0 P2-1）**：``eval "…"``（整串
+  单 token）与反引号替换内的 git 命令不产生可识别动词 → 按"无 git 命令"
+  放行；属解析器表达力边界，暂以文档声明而非引入重量级 shell 语义解析。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -177,6 +183,17 @@ def _git_verbs(
         if seg_start and tokens[i] == "cd":
             seg_start = False
             nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+            extra = tokens[i + 2] if i + 2 < len(tokens) else ""
+            if (
+                extra
+                and extra not in _SEG_PERSIST
+                and extra not in _SEG_SUBSHELL
+                and extra not in ("(", ")")
+            ):
+                # bash: cd 多操作数 → "too many arguments"，cwd 不变
+                # （review subagent_4289cf3401e0 P1-1：按成功 cd 跟踪是 fail-open）。
+                i += 2
+                continue
             if nxt and nxt not in _SEG_PERSIST and nxt not in _SEG_SUBSHELL:
                 shell_cwd = _resolve_shell_cd(shell_cwd, nxt, workdir)
                 i += 2
@@ -226,16 +243,15 @@ def _git_verbs(
                 # 无任何重定向 → 以 shell 层 cd 链落点为判定 cwd；无 cd 段时即
                 # workdir 参数（None 保持 None，历史行为不变）。
                 target = shell_cwd
-            # 参数/refspec 只吃到本段边界（&& ; | & || ( )），不吞后续段——
-            # 旧的无界切片会把 `git push origin main && echo hi` 的 echo/hi
-            # 与括号闭合 `)` 误收进 refspec（punctuation_chars 粘写批次的
-            # 残留，审查 3 failed 定位后同批闭合）。
+            # 参数/refspec 只吃到本段边界（&& ; | & || |& ( ) < > >>），不吞后续段
+            # 与重定向——旧无界切片会把 `git commit -m x > log` 的重定向目标
+            # 误收进 refspec（review subagent_4289cf3401e0 P2-2）。
             k2 = j + 1
             while (
                 k2 < len(tokens)
                 and tokens[k2] not in _SEG_PERSIST
                 and tokens[k2] not in _SEG_SUBSHELL
-                and tokens[k2] not in ("(", ")")
+                and tokens[k2] not in ("(", ")", "<", ">", ">>")
             ):
                 k2 += 1
             out.append((tokens[j], tokens[j + 1 : k2], target))
