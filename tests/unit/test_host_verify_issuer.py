@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -415,7 +416,10 @@ def test_review_rejects_duplicate_json_keys(wrapped):
 
 @pytest.mark.parametrize("file_size,review_allowed", [
     (225_000, True),
-    (260_000, False),
+    (260_000, True),
+    (385_000, True),
+    (399_000, True),
+    (400_000, False),
 ])
 def test_host_frozen_diff_has_separate_bounded_large_patch_budget(
     host, file_size, review_allowed,
@@ -441,6 +445,12 @@ def test_host_frozen_diff_has_separate_bounded_large_patch_budget(
         assert len(runner.started["task"]) > 100_000
         assert runner.started["review_isolated"] is True
         assert runner.started["required_tools"] == ["read_file", "search_files"]
+        frozen_diff = _git(
+            worktree, "diff", "--no-ext-diff", "--no-color",
+            lane["base_main_sha"], head, output_limit=400_000,
+        )
+        assert f"<frozen_diff>\n{frozen_diff}\n</frozen_diff>" in runner.started["task"]
+        assert f"frozen_diff_sha256={hashlib.sha256(frozen_diff.encode()).hexdigest()}" in runner.started["task"]
     else:
         with pytest.raises(HostVerifyError, match="review_diff_too_large"):
             authority.start_review(lane_id)
