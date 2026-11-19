@@ -151,6 +151,14 @@ def test_host_private_key_requires_root_owned_parent(tmp_path, monkeypatch):
     assert not attestation._trusted_host_file(str(key), owner=463, private_key=True)
 
 
+def test_production_replay_ledger_avoids_group_writable_var_run():
+    # On macOS /private/var/run is root:daemon 0775; the trust checker
+    # deliberately rejects group-writable ancestors. Never loosen it.
+    assert attestation.PROD_REPLAY_LEDGER_PATH == (
+        "/private/var/db/lfl-m1-oracle/verified-nonces.sqlite3"
+    )
+
+
 def test_client_retains_issued_nonce_independently_of_receipt(daemon, tmp_path):
     jobs, receipts = tmp_path / "jobs", tmp_path / "receipts"
     jobs.mkdir()

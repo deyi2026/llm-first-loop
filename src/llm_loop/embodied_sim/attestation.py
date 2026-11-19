@@ -43,7 +43,10 @@ from llm_loop.embodied_sim.contract import VerificationStatus
 PROD_JOBS_DIR = "/private/var/run/lfl-m1-oracle/jobs"
 PROD_RECEIPTS_DIR = "/private/var/run/lfl-m1-oracle/receipts"
 PROD_PUBLIC_KEY_PATH = "/usr/local/etc/lfl-m1-oracle-ed25519.pub"
-PROD_REPLAY_LEDGER_PATH = "/private/var/run/lfl-m1-oracle/verified-nonces.sqlite3"
+# macOS /private/var/run is root:daemon 0775. It cannot satisfy the
+# trusted-host-file ancestor rule (no group-writable ancestors). Persist the
+# single-use ledger under root-owned /private/var/db instead.
+PROD_REPLAY_LEDGER_PATH = "/private/var/db/lfl-m1-oracle/verified-nonces.sqlite3"
 ATTEST_UID = 463
 ALLOWED_COMMANDS = {"move_to", "grasp", "release", "observe", "verify_grasp", "verify_place"}
 WORKSPACE_BOUNDS = {"x": (-0.25, 0.35), "y": (-0.25, 0.35), "z": (0.005, 0.30)}
