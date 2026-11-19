@@ -1,6 +1,6 @@
 # M1-SIM-003 DeepSeek switch — implementation receipt
 
-**State: SOURCE READY; HOST REFRESH NOT YET APPLIED; PAIRED 0/60; HOLD.**
+**State: SOURCE/REAL L3 PASS; BATCH GRANT NOT INSTALLED; PAIRED 0/60; HOLD.**
 
 The operator approved changing the M1 B1/B2 experiment to
 `deepseek/deepseek-v4-flash` on 2026-11-20. The previously frozen
@@ -29,13 +29,27 @@ Changing the model requires the separate `M1-SIM-003` experiment identity.
 - New source supports both frozen Host experiment IDs, requires independent
   signed Oracle trial binding, and includes a root-only, manifest-pinned
   v2-bundle refresh with rollback to the old Host on failure.
-- No root Host bundle refresh, new batch grant, formal B1/B2 trial, GitHub
-  merge or unified deployment has been executed for M1-SIM-003.
+- **Host-only refresh PASS**: frozen source `568836876459d263e9dcaf620708fd944d6559a4`,
+  offline bundle manifest SHA-256
+  `16ed817dc2e8cb8ffbf92b38a135601d413c46b1e2edf1f1a63e6376541b9c25`.
+  New UID463 run `28da1635dc3a3a3dbdb52435d9f53427`, PID 41579,
+  M1-SIM-003 B2 engineering smoke seed 5. Host public-key hash unchanged.
+  Previous v2 plist backed up in root-only stage; four other LFL services
+  were not restarted. Native root negative checks for stale run, invalid
+  paired refresh, wrong manifest, missing grant and same-trial replay PASS.
+- **Real L3 B2 recovery PASS**: a disclosed scripted first grasp fault was
+  followed by real DeepSeek decisions and one budgeted managed release.
+  `place_host_verified`, with grasp and place both
+  `VERIFIED_BY_ORACLE`; 5 real Provider attempts, 7 tool actions,
+  8,619 reported tokens, 18.66 seconds. This is diagnostic only,
+  **not** a paired trial or statistical effect estimate.
+  Evidence `experiments/embodied/m1/m1-sim-003/l3_probe_smoke_B2_05_28da1635dc3a3a3dbdb52435d9f53427.json`;
+  SHA-256 `95a16b4ab981a594952a0e9023026471a59d88df6ac1274425d8821eb85b6a74`.
+  Peak-tariff offline estimate is USD 0.004437, **not an invoice**.
+- No new batch grant, formal B1/B2 trial, GitHub merge or unified deployment
+  has been executed for M1-SIM-003.
 
-**Next gates:** freeze and test the precise source SHA; build a clean offline
-Host bundle and independently verify the manifest; obtain narrowly scoped
-Host-only refresh approval; execute one M1-SIM-003 engineering L3 failure/
-recovery smoke with both grasp and place `VERIFIED_BY_ORACLE`; independently
-install/verify the USD grant; then request a **separate approval** to start
+**Next gates:** independently install/verify a new candidate-SHA-pinned USD
+grant and its root/client negative checks; then request a **separate approval** to start
 the 30 B1/B2 pairs. Final Reviewer → full R9 → CI → protected `main` →
 unified deployment remains after the paired evidence is complete.
