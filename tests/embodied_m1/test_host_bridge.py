@@ -270,3 +270,41 @@ def test_client_only_accepts_host_signed_response(host, monkeypatch):
         receipts_dir=str(receipts),
     )
     assert result == VerificationStatus.VERIFIED_BY_ORACLE
+
+
+def test_real_host_scene_settles_before_grasp_and_place_verdicts(host):
+    """A command's terminal state is not a stationary physics observation."""
+    _key, daemon, _ledger, _public, _jobs, _receipts = host
+    obs = daemon.scene.observe()
+    cube = obs["cube"]["pos"]
+    tray = obs["tray_pos"]
+    seq = 0
+    for skill, params in (
+        ("move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + 0.07}),
+        ("move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + 0.010}),
+        ("grasp", {}),
+        ("move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + 0.13}),
+    ):
+        seq += 1
+        action = daemon.handle_command(
+            {"skill": skill, "params": params}, "run-A", seq, f"{seq:032x}"
+        )
+        assert action["action_status"]["state"] == "done"
+    grasp = daemon.handle_command({"skill": "verify_grasp"}, "run-A", seq, "a" * 32)
+    assert grasp["verdict"] == "success"
+    assert grasp["evidence"]["oracle_settle_steps"] == 30
+    off_target = daemon.handle_command({"skill": "verify_place"}, "run-A", seq, "b" * 32)
+    assert off_target["verdict"] == "failure"
+    assert off_target["evidence"]["oracle_settle_steps"] == 150
+    for skill, params in (
+        ("move_to", {"x": tray[0], "y": tray[1], "z": cube[2] + 0.15}),
+        ("release", {}),
+    ):
+        seq += 1
+        action = daemon.handle_command(
+            {"skill": skill, "params": params}, "run-A", seq, f"{seq:032x}"
+        )
+        assert action["action_status"]["state"] == "done"
+    place = daemon.handle_command({"skill": "verify_place"}, "run-A", seq, "c" * 32)
+    assert place["verdict"] == "success"
+    assert place["evidence"]["oracle_settle_steps"] == 150

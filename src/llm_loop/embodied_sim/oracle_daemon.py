@@ -128,6 +128,12 @@ class OracleDaemon:
                 self._key_path, owner=ATTEST_UID, private_key=True
             ):
                 raise ValueError("Host-installed private key required for signing")
+            # A completed arm command does not mean the cube is stationary.
+            # Observe a bounded, passive settling interval inside the
+            # independent Host scene before the physical Oracle snapshot.
+            # No client-selected wait duration or actuation is accepted.
+            settle_steps = 30 if skill == "verify_grasp" else 150
+            self.scene.step(settle_steps)
             snapshot = self.scene.oracle_snapshot()
             if skill == "verify_grasp":
                 ok, ev = judge_grasp(snapshot)
@@ -137,6 +143,7 @@ class OracleDaemon:
                 claim_kind = "place"
             else:
                 raise ValueError("unrecognized Oracle claim")
+            ev = {**ev, "oracle_settle_steps": settle_steps}
             core = {
                 "claim_kind": claim_kind,
                 "run_id": str(run_id),

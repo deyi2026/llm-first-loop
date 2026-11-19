@@ -123,6 +123,36 @@ def run() -> dict:
     if _verify(receipt, nonce, run, seq) != VerificationStatus.VERIFIED_BY_ORACLE:
         raise RuntimeError("Host did not sign/consume positive verification")
     negatives["replay"] = _verify(receipt, nonce, run, seq)
+
+    # A grasped cube is not yet in the tray. A real signed failure must
+    # remain FAILED_CLAIM, even when submitted through the Host verifier.
+    off_nonce, off_receipt = _run_command({"skill": "verify_place"}, run_id, seq)
+    if off_receipt.get("verdict") != "failure":
+        raise RuntimeError("off-target place unexpectedly accepted")
+    negatives["off_target_place"] = _verify(
+        off_receipt, off_nonce, run, seq, expected_claim_kind="place"
+    )
+
+    tray = obs["observation"]["tray_pos"]
+    for skill, params in (
+        ("move_to", {"x": tray[0], "y": tray[1], "z": cube[2] + 0.15}),
+        ("release", {}),
+    ):
+        seq += 1
+        _, action = _run_command({"skill": skill, "params": params}, run_id, seq)
+        if action.get("action_status", {}).get("state") != "done":
+            raise RuntimeError(f"real Host place stage failed: {skill}: {action}")
+    place_nonce, place_receipt = _run_command({"skill": "verify_place"}, run_id, seq)
+    if place_receipt.get("uid") != 463 or place_receipt.get("verdict") != "success":
+        raise RuntimeError("independent physics Oracle did not confirm placement")
+    if (
+        _verify(place_receipt, place_nonce, run, seq, expected_claim_kind="place")
+        != VerificationStatus.VERIFIED_BY_ORACLE
+    ):
+        raise RuntimeError("Host did not sign/consume positive placement verification")
+    negatives["place_replay"] = _verify(
+        place_receipt, place_nonce, run, seq, expected_claim_kind="place"
+    )
     if any(value != VerificationStatus.FAILED_CLAIM for value in negatives.values()):
         raise RuntimeError(f"Host failed negative binding tests: {negatives}")
     try:
@@ -145,7 +175,8 @@ def run() -> dict:
         "run_id": run_id,
         "scene_epoch": run["scene_epoch"],
         "action_seq": seq,
-        "positive": VerificationStatus.VERIFIED_BY_ORACLE.value,
+        "positive_grasp": VerificationStatus.VERIFIED_BY_ORACLE.value,
+        "positive_place": VerificationStatus.VERIFIED_BY_ORACLE.value,
         "negative_tests": {k: v.value for k, v in negatives.items()},
         "model_autonomy": "NOT_TESTED (deterministic infrastructure probe)",
     }
