@@ -91,6 +91,11 @@ def test_refresh_failed_seatbelt_probe_restores_original_without_restart(tmp_pat
     monkeypatch.setattr(mod, "STAGE", stage)
     monkeypatch.setattr(mod, "TRIAL_CONFIG", config_path)
     monkeypatch.setattr(mod, "PUBLIC", public)
+    # Keep this rollback fixture independent of the real root-owned batch
+    # grant, which may already be installed on the operator's Mac.
+    monkeypatch.setattr(mod, "PAIRED_GRANT", tmp_path / "absent-grant.json")
+    monkeypatch.setattr(mod, "PAIRED_ISSUED", tmp_path / "absent-issued.jsonl")
+    monkeypatch.setattr(mod, "PAIRED_LEDGER", tmp_path / "absent-cost-ledger.jsonl")
     monkeypatch.setattr(mod, "_root_stage", lambda: None)
     monkeypatch.setattr(mod, "_trusted", lambda *_a, **_k: True)
     monkeypatch.setattr(mod, "_current", lambda *_a, **_k:
