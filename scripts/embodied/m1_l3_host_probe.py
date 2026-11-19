@@ -53,12 +53,14 @@ class OneScriptedFaultThenLiveModel:
         self.live = live
         self.model_used = live.model_used
         self.scripted_decisions = 0
+        self.real_model_attempts = 0
 
     def decide(self, state_text: str) -> str:
         if self.scripted_decisions == 0:
             self.scripted_decisions = 1
             return json.dumps({"skill": "grasp", "params": {},
                                "intent_key": "l3-diagnostic-fault"})
+        self.real_model_attempts += 1
         return str(self.live.decide(state_text))
 
 
@@ -124,8 +126,21 @@ def main(argv: list[str]) -> int:
         return 2
 
     provider = OneScriptedFaultThenLiveModel(live)
+    # The scripted Host fault is NOT a Provider call. The unchanged executor
+    # counts decisions, so reserve one extra internal slot for that disclosed
+    # diagnostic action; still cap REAL model attempts at the frozen six.
+    internal_budget = {**BUDGET,
+                       "max_provider_attempts": BUDGET["max_provider_attempts"] + 1}
     result = run_host_episode(provider, link, fresh_receipt=fresh,
+                              budget=internal_budget,
                               auto_recover_failed_grasp=(arm == "B2"))
+    internal_attempts = result["provider_attempts"]
+    accounting_ok = (
+        internal_attempts == provider.scripted_decisions + provider.real_model_attempts
+        and provider.scripted_decisions == 1
+        and provider.real_model_attempts <= BUDGET["max_provider_attempts"]
+    )
+    result["provider_attempts"] = provider.real_model_attempts
     result["provider_calls_bounded"] = [
         {k: call.get(k) for k in ("latency_ms", "status", "finish_reason")}
         for call in live.calls]
@@ -134,17 +149,24 @@ def main(argv: list[str]) -> int:
         "not_a_frozen_paired_trial": True,
         "scripted_first_decision": "grasp without initial move_to",
         "scripted_decisions_counted_in_budget": provider.scripted_decisions,
-        "real_model_calls": len(live.calls),
-        "provider_attempts_including_scripted_decision": result["provider_attempts"],
-        "model_decisions_after_fault": bool(live.calls),
+        "real_model_attempts": provider.real_model_attempts,
+        "real_model_http_responses": len(live.calls),
+        "provider_attempts_including_scripted_decision": internal_attempts,
+        "real_model_attempt_budget": BUDGET["max_provider_attempts"],
+        "internal_decision_budget_including_scripted_probe": internal_budget["max_provider_attempts"],
+        "accounting_verified": accounting_ok,
+        "model_decisions_after_fault": provider.real_model_attempts > 0,
     }
     status, accepted = assess_probe(result, arm=arm)
+    if not accounting_ok:
+        status, accepted = "L3_PROBE_ACCOUNTING_HOLD", False
     result["l3_diagnostic"]["assessment"] = status
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as output:
         output.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"status": status, "model_used": live.model_used,
-                      "real_model_calls": len(live.calls),
+                      "real_model_attempts": provider.real_model_attempts,
+                      "real_model_http_responses": len(live.calls),
                       "tool_actions": result["tool_actions"],
                       "terminated_by": result["terminated_by"],
                       "evidence": str(path)}))

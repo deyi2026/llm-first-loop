@@ -64,6 +64,24 @@ def test_l3_probe_discloses_scripted_fault_and_uses_real_provider_afterward():
     assert json.loads(probe.decide("second"))["skill"] == "move_to"
     assert live.states == ["second"]
     assert probe.scripted_decisions == 1
+    assert probe.real_model_attempts == 1
+
+
+def test_l3_probe_counts_timeout_as_real_model_attempt_not_http_response():
+    class Live:
+        model_used = "glm/glm-5.3-flash"
+        calls = []
+
+        def decide(self, _state):
+            raise TimeoutError("simulated network timeout")
+
+    probe = OneScriptedFaultThenLiveModel(Live())
+    probe.decide("fault")
+    with pytest.raises(TimeoutError):
+        probe.decide("real-model-call")
+    assert probe.scripted_decisions == 1
+    assert probe.real_model_attempts == 1
+    assert probe.live.calls == []  # timeout has no HTTP response record
 
 
 def test_l3_b2_requires_actual_host_failure_reset_and_signed_success():
