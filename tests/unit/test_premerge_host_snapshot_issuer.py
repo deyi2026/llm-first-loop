@@ -142,9 +142,16 @@ def test_operator_owned_receipts_required_for_review_r9_integration():
     a, b, c = check_receipts(review, r9, integration,
                              main=MAIN, candidate=CANDIDATE)
     assert a["terminal"] and b["exit_code"] == 0 and c["clean"]
+    for model in ("deepseek/deepseek-v4-flash", "glm-5.3-flash"):
+        independent = dict(review, reviewer_model=model)
+        accepted, _, _ = check_receipts(independent, r9, integration,
+                                        main=MAIN, candidate=CANDIDATE)
+        assert accepted["reviewer_model"] == model
     for which, field, value in (
         (0, "verdict", "REVISE"), (0, "p1", 1),
-        (0, "reviewer_model", "deepseek/deepseek-v4-flash"),
+        (0, "p0", False), (0, "p1", False),
+        (0, "reviewer_model", ""), (0, "reviewer_model", "bad\nmodel"),
+        (0, "reviewer_model", "a" * 129), (0, "reviewer_model", 42),
         (1, "exit_code", 1), (1, "log_sha256", "0"),
         (2, "contracts_verified", False), (2, "main_sha", CANDIDATE),
     ):

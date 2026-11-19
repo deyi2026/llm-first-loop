@@ -1,0 +1,71 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261119-issue76-host-review-cap",
+  "summary": "Issue #76: raise only the bounded Host full frozen-diff review budget to 400000 characters so the exact PR #75 diff is reviewable; all independent approval, signing and merge gates remain fail-closed.",
+  "components": [
+    {
+      "component_id": "host-review-bounded-full-diff",
+      "paths": [
+        "src/llm_loop/introspection/host_verify_issuer.py",
+        "tests/unit/test_host_verify_issuer.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "HostVerifyAuthority frozen merge-review diff admission",
+      "disposition": "Increase the Host-only frozen diff limit from 256000 to 400000 Unicode characters. Keep the generic Git output limit at 100000 and preserve full-content SHA-256 evidence and review_diff_too_large HOLD above the bound.",
+      "evidence": [
+        "PR #75 exact frozen diff has 335668 characters after the existing Git output strip, and is read in full by the new bound without a binary marker or strong secret.",
+        "69 focused Host issuer tests passed before this declaration, including 225k, 260k, 385k and 399k admitted patches, 400k payload rejected, and exact full diff plus SHA-256 in the reviewer task.",
+        "Ruff and Pyright passed on the code-only candidate; independent Reviewer, original full R9 and remote CI must be revalidated for the final manifest-bearing SHA."
+      ],
+      "verification_level": "Focused tests and exact PR #75 diff read passed; final SHA gates pending.",
+      "model_evidence_veto_recovery_exit": "No reviewer admission for frozen diffs exceeding 400000 characters, binary metadata or sensitive content; identity and clean-tree checks, independent Reviewer, human-approved Host verify_ref, signed merge queue and protected main remain mandatory.",
+      "rollback_route": "Revert this code/test/declaration through a separately reviewed protected GitHub PR; no service restart or production Host installation is part of this change.",
+      "declaration_id": "host-review-cap-issue76"
+    },
+    {
+      "component_id": "a5-issue76-declaration",
+      "paths": [
+        "docs/governance/submissions/20261119-issue76-host-review-cap.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 G1-G4 architecture submission gate",
+      "disposition": "Declare exact changed paths and review, rollback and veto requirements; no runtime policy change.",
+      "evidence": [
+        "The manifest covers all three changed paths and is checked by the original A.5 gate before push."
+      ],
+      "verification_level": "Local and remote A.5 gate required.",
+      "model_evidence_veto_recovery_exit": "Missing path coverage or malformed G1-G4 declaration blocks PR integration.",
+      "rollback_route": "Revert this declaration together with its code change."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-review-cap-issue76",
+      "g1": {
+        "necessity": "PR #75 has a real 335668-character committed diff, above the previous 256000-character Host-only cap. A bounded increase is required to permit complete independent review rather than bypassing Host admission."
+      },
+      "g2": {
+        "authority_owner": "HostVerifyAuthority freezes exact lane/base/head and full diff; an isolated read-only Reviewer evaluates it; authenticated Web human approval and the Host issuer alone can issue verify_ref.",
+        "relationship": "reuse",
+        "non_duplication": "No new signer, no alternate approval or CI bypass. Only the existing Host-specific size budget changes; the generic Git limit and every existing veto remain unchanged."
+      },
+      "g3": {
+        "model_evidence": [
+          "Reproduced the PR #75 failure at 256000 characters and verified the exact full 335668-character frozen diff is admitted at 400000 without truncation.",
+          "Focused Host issuer tests cover accepted near-limit full-content review, exact SHA-256 and over-limit fail-closed rejection; Ruff and Pyright passed before this declaration.",
+          "Final candidate must independently repeat Reviewer PASS P0/P1=0, original full R9 exit0, A.5, privacy and remote CI."
+        ],
+        "recovery_or_reason": "Frozen diff over 400000 characters, binary metadata, strong secrets, identity drift or reviewer failure must remain HOLD. Do not truncate evidence, forge a signed receipt or use Actions status as a Host signature."
+      },
+      "g4": {
+        "rollback": "Use an independently reviewed protected revert PR. No data migration, Host installation, deployment or restart is authorized in this prerequisite.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0 on the final manifest-bearing SHA",
+          "Original complete bash scripts/ci_gate.sh exit0 on that exact SHA",
+          "A.5 structured declaration, privacy and all required GitHub PR CI successful",
+          "Real Host signer and protected merge checks, with explicit approval before integration"
+        ]
+      }
+    }
+  ]
+}
