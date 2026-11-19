@@ -78,9 +78,29 @@ Before any grant or paid paired run, an operator must independently approve:
    one-time Host installation/authorization scope.
 5. A **separate** affirmative approval to start the 30 B1/B2 paired trials.
 
-The new root helper is **source code only** until independently reviewed and
-installed through a separately approved Host-only operation. The active Host
-remains on engineering smoke; no batch grant, root ledger or paired run has
-been installed or started. Do not advance to final Reviewer/R9/remote CI/
+## Root-owned Host authorization helper installed; grant still HOLD
+
+- Installed through native macOS administrator authorization into
+  `/private/var/db/lfl-m1-oracle-upgrade-f73718baf/upgrade.py`.
+  Root-owned stage mode 0700, script root:wheel mode 0600.
+  SHA-256 of installed script verified during root installation:
+  `f73718baf04de4c124956b57d3b84447741bf465c101c8033e935ce6a139f994`.
+- Real privileged negative checks all **PASS**:
+  paired switch without grant denied; out-of-range paired index denied;
+  stale Host run identity denied; tampered batch-plan SHA denied;
+  `max_total_usd=20.01` grant denied. None created a batch grant or
+  cost ledger, and all root-only test artifacts were cleaned up.
+- Real configured Coding Plan route negative checks **PASS**:
+  no `LFL_M1_STANDARD_API_KEY` denied before Provider construction;
+  reuse of existing Coding Plan key denied before Provider construction.
+- Host UID463 remains on B2 smoke seed 6, run
+  `b7930805ddce8beb2636ad84c20b1a20`, PID 10338;
+  no Host restart, no paired trial. The four other services were untouched.
+
+**Remaining HOLD:** independently provision and qualify a standard API key,
+verify standard-API billing, then stage a valid candidate-SHA-pinned batch
+grant with native Host authorization and complete its positive/negative
+installation checks. A separate affirmative approval is still required
+to *start* the 30 B1/B2 pairs. Do not advance to final Reviewer/R9/remote CI/
 protected `main` merge/unified deployment before the paired results and
 all required gates pass.
