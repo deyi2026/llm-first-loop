@@ -1191,16 +1191,21 @@ def test_git_verbs_cd_then_relative_dash_c_chains_from_cd(tmp_path):
 def test_resolve_shell_cd_rules(tmp_path):
     base = tmp_path / "base"
     base.mkdir()
+    sub = base / "sub"
+    sub.mkdir()  # cd 存在性校验（ecc9877d2e93 P1-1）：相对落点也必须真实存在
     f = guard_module._resolve_shell_cd
     assert f(None, str(base), None) == str(base)
-    assert f(None, "sub", str(base)) == str(base / "sub")
-    assert f(str(base), "sub", None) == str(base / "sub")
+    assert f(None, "sub", str(base)) == str(sub)
+    assert f(str(base), "sub", None) == str(sub)
     assert f(None, "$VAR", str(base)) == ""
     assert f(None, "-", str(base)) == ""
     assert f(None, "sub", None) == ""
     assert f("", "sub", str(base)) == ""
     assert f(None, "~nosuchuser12345", str(base)) == ""  # expanduser 未解析 → 未知
     assert f(None, "~", str(base)) == str(Path("~").expanduser())
+    # 新增规则断言（P1-1）：目标不存在/非目录 → ""（cd 失败停留原处 → 未知）
+    assert f(None, str(tmp_path / "nope"), str(base)) == ""
+    assert f(None, "sub", "/tmp/lfl-nonexistent-base-zz") == ""
 
 
 def test_allow_commit_after_cd_into_branch_repo(tmp_path):
@@ -1301,6 +1306,7 @@ def test_block_cd_then_dash_c_back_to_main(tmp_path):
 def test_git_verbs_paren_subshell_cd_tracked(tmp_path):
     """(cd wt && git commit)：括号子壳内 cd 必须被跟踪（a645e424028c P0-2 修复）。"""
     wt = tmp_path / "wt"
+    wt.mkdir(parents=True)
     verbs = guard_module._git_verbs(f"(cd {wt} && git commit -m x)", "/tmp/main")
     assert verbs == [("commit", ["-m", "x"], str(wt))]
 
@@ -1308,6 +1314,7 @@ def test_git_verbs_paren_subshell_cd_tracked(tmp_path):
 def test_git_verbs_paren_inherits_parent_cd(tmp_path):
     """cd 进 wt 后再进括号子壳：git 落点仍是 wt（父壳视图继承）。"""
     wt = tmp_path / "wt"
+    wt.mkdir(parents=True)
     verbs = guard_module._git_verbs(f"cd {wt} && (git commit -m x)", None)
     assert verbs == [("commit", ["-m", "x"], str(wt))]
 
@@ -1315,6 +1322,7 @@ def test_git_verbs_paren_inherits_parent_cd(tmp_path):
 def test_git_verbs_paren_restore_after_close(tmp_path):
     """括号关闭后弹栈还原父壳视图：) 之后的 git 按原 workdir 判定。"""
     wt = tmp_path / "wt"
+    wt.mkdir(parents=True)
     verbs = guard_module._git_verbs(f"(cd {wt}) && git commit -m x", "/tmp/main")
     assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
 
@@ -1346,6 +1354,50 @@ def test_block_paren_subshell_cd_into_main_repo(tmp_path):
         workdir=str(tmp_path),
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_cd_nonexistent_conservative():
+    """cd 目标不存在 → bash cd 失败停留原处 → 未知（ecc9877d2e93 P1-1）。"""
+    verbs = guard_module._git_verbs(
+        "cd /tmp/lfl-nonexistent-zz && git commit -m x", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_cd_to_file_conservative(tmp_path):
+    """cd 目标是文件非目录 → bash cd 失败 → 未知。"""
+    f = tmp_path / "f"
+    f.write_text("x")
+    verbs = guard_module._git_verbs(f"cd {f} && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_cd_hash_target_conservative(tmp_path):
+    """带 # 的 cd 目标（引号形式）：shlex 词中截断 vs bash 字面名分歧 → 保守。
+
+    未加引号的词中 # 在 lexer 层即被截断（token 不含 #），属已文档化的
+    shlex 边界；引号形式 # 保留在 token 内，此处必须保守 ""。
+    """
+    (tmp_path / "wt").mkdir()
+    (tmp_path / "wt#note").mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd '{tmp_path}/wt#note' && git commit -m x", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_relative_dash_c_after_unknown_cd():
+    """未知 cd 链后的相对 -C 不回落 workdir 解析（ecc9877d2e93 P2-2）。"""
+    verbs = guard_module._git_verbs(
+        "cd /tmp/lfl-nonexistent-zz && git -C sub push origin x", "/tmp/main"
+    )
+    assert verbs == [("push", ["origin", "x"], "")]
+
+
+def test_lexer_error_conservative_sentinel():
+    """未闭合引号（strip 后为空/词法失败）→ 保守哨兵，不盲放行（ecc9877d2e93 P2-3）。"""
+    verbs = guard_module._git_verbs("git push origin 'main", "/tmp/main")
+    assert verbs == [("commit", [], "")]
 
 
 def test_git_verbs_double_amp_pipe_unknown_target():

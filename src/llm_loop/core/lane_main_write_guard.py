@@ -46,10 +46,16 @@
   建模——子壳继承父壳视图、内部 ``cd`` 正常跟踪、``)`` 弹栈还原；不配对 ``)``
   弹空栈置未知（保守）。闭合 ``(cd wt && git commit)`` 内层 ``cd`` 逃过判定的
   fail-open 旁路；``$( )`` 命令替换中的命令同被跟踪。
-- **commenters 恢复 ``#``**（审查 fe01ff8da0cd P2-2 措辞修正）：未加引号的词首
-  ``#`` 起注释，消除 ``cd wt # note && …`` 形态假阳性；已知偏差（shlex 边界）：
-  **词中** ``#``（如 ``wt#note``）同样被截断，bash 则视为目录名——罕见路径名
-  场景下 ``cd`` 目标可能解析到更短路径，非宽判方向；引号内 ``#`` 不受影响。
+- **commenters 恢复 ``#``**（审查 fe01ff8da0cd P2-2 / ecc9877d2e93 P2-1）：词首
+  未加引号 ``#`` 起注释，消除 ``cd wt # note && …`` 形态假阳性；**词中** ``#``
+  （如 ``wt#note``）shlex 亦截断而 bash 视为目录名——两个方向都可能误解析
+  （截断路径恰为另一真实仓时甚至宽判），故含 ``#`` 目标一律保守 ""；引号内
+  ``#`` 不受影响。
+- **``cd`` 存在性校验**（审查 ecc9877d2e93 P1-1）：``cd`` 目标经 ``is_dir``
+  校验，不存在/非目录 → ""（bash cd 失败时 shell 停留原处，字面落点不可
+  信）；相对 ``cd`` 的基准目录同样校验。代价：对失效目录名的合法命令
+  过拦（安全方向）。未知 cd 链后的相对 ``git -C`` 不回落 workdir 解析
+  （P2-2）；词法失败（引号不配对）→ 保守哨兵而非盲放行（P2-3）。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -120,16 +126,23 @@ def _git_verbs(
         from llm_loop.core.command_scope_guard import _strip_heredocs
 
         stripped, _reason = _strip_heredocs(command)
+        if not stripped.strip():
+            # 剥离后为空（如引号未闭合被判"跨行延续到命令末尾"）：命令的真实
+            # 执行形态不可解析（bash 对未闭合引号是语法错误、不执行任何命令）
+            # → 保守哨兵，不盲放行（ecc9877d2e93 P2-3 真实机制）。
+            return [("commit", [], "")]
         text = stripped
     except Exception:  # noqa: BLE001 — 剥离失败不阻断（按原串保守解析）
         text = command
     try:
         _lex = shlex.shlex(text, posix=True, punctuation_chars=True)
-        _lex.commenters = "#"  # 与 bash 一致：未加引号的 # 起注释；引号内不受影响
+        _lex.commenters = "#"  # 词首 # 起注释；词中 # 截断为已知偏差（见 _resolve_shell_cd）
         _lex.whitespace_split = True
         tokens = list(_lex)
     except ValueError:
-        return []
+        # 词法失败（引号不配对等，bash 语法错误本就不执行任何命令）→ 保守哨兵：
+        # 按 "" 目标上的 commit 判定（调用方当 main），不盲放行（ecc9877d2e93 P2-3）。
+        return [("commit", [], "")]
     out: list[tuple[str, list[str], str | None]] = []
     # EVO-20261119-0fa86cab：shell 层 ``cd`` 链跟踪。None=未见 cd（沿用 workdir
     # 参数判定，行为与历史一致）；""=不可解析/子壳语义（调用方保守当 main）。
@@ -185,13 +198,18 @@ def _git_verbs(
                 target = ""
                 break
             k -= 1
-        # -C 相对段基于 shell 层 cd 链落点（无 cd 时为 workdir 参数）。
+        # -C 相对段基于 shell 层 cd 链落点（无 cd 时为 workdir 参数）；cd 链
+        # 处于未知（""）时相对 -C 不得回落 workdir 解析 → 直接未知
+        # （ecc9877d2e93 P2-2：Path("")/seg 相对误解析方向）。
         cd_base = shell_cwd if shell_cwd is not None else workdir
+        cd_unknown = shell_cwd == ""
         while j < len(tokens) and tokens[j].startswith("-"):
             tok = tokens[j]
             if tok in _GIT_VALUE_OPTS:
                 if tok == "-C" and j + 1 < len(tokens):
-                    target = _chained_cwd(target, tokens[j + 1], cd_base)
+                    target = "" if cd_unknown else _chained_cwd(
+                        target, tokens[j + 1], cd_base
+                    )
                 elif tok in ("--git-dir", "--work-tree"):
                     # 仓库被选项重定向，且不做后续路径语义跟随（--git-dir 可指
                     # .git 目录或 bare 仓库）→ 标记"目标仓库不明"，调用方按
@@ -235,11 +253,18 @@ _SEG_SUBSHELL = frozenset({"|", "||", "&", "|&"})  # |& = bash 双流管道（pu
 
 
 def _resolve_shell_cd(cur: str | None, seg: str, workdir: str | None) -> str:
-    """解析段首 ``cd <literal>``：返回新 cwd；不可解析返回 ""（保守当 main）。"""
+    """解析段首 ``cd <literal>``：返回新 cwd；不可解析返回 ""（保守当 main）。
+
+    bash 语义对齐（review ecc9877d2e93 P1-1）：``cd`` 可能失败（目标不存在/
+    不是目录），失败时 shell 停留原 cwd——解析结果必须过 ``is_dir`` 校验，
+    不存在/非目录 → ""（未知，调用方保守当 main），绝不把字面路径当必然
+    成功的落点。含 ``#`` 的目标（review P2-1）：shlex 词中截断 vs bash 词首
+    注释语义分歧，两个方向都可能误解析 → 一律保守 ""。
+    """
     if cur == "":
         return ""
-    if not seg or seg.startswith(("-", "$", "`")):
-        return ""
+    if not seg or seg.startswith(("-", "$", "`")) or "#" in seg:
+        return ""  # 选项/命令替换/含 #（shlex 截断与 bash 注释语义分歧）
     try:
         path = Path(seg).expanduser()
     except (RuntimeError, OSError):
@@ -247,11 +272,15 @@ def _resolve_shell_cd(cur: str | None, seg: str, workdir: str | None) -> str:
     if str(path).startswith("~"):
         return ""  # expanduser 未解析 → 未知
     if path.is_absolute():
-        return str(path)
-    base = cur if cur is not None else workdir
-    if not base:
-        return ""
-    return str(Path(base) / path)
+        resolved = path
+    else:
+        base = cur if cur is not None else workdir
+        if not base or not Path(base).is_dir():
+            return ""  # 基准不存在 → cd 必失败 → 未知
+        resolved = Path(base) / path
+    if not resolved.is_dir():
+        return ""  # cd 目标不存在/非目录 → bash cd 失败、shell 停留原处 → 未知
+    return str(resolved)
 
 
 def _chained_cwd(current: str | None, seg: str, workdir: str | None) -> str:
