@@ -1127,3 +1127,170 @@ def test_resolve_commit_paths_helper(tmp_path):
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     assert guard_module._resolve_commit_paths(["x.py"], str(outside), str(repo)) is None
+
+
+# --- EVO-20261119-0fa86cab：shell 层 cd 链跟随 + token 化收紧（RULE-AI-35 双向实测） ---
+
+
+def test_git_verbs_cd_chain_target_resolved(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt} && git commit -m x", None)
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_glued_operator_verb_not_lost(tmp_path):
+    """粘写 `cd wt&&git commit` 曾使 git 动词整体逃过判定（既有旁路）→ 现应识别。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt}&&git commit -m x", None)
+    assert verbs and verbs[0][0] == "commit" and verbs[0][2] == str(wt)
+
+
+def test_git_verbs_semicolon_glued_verb_not_lost(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt};git commit -m y", None)
+    assert verbs and verbs[0][0] == "commit" and verbs[0][2] == str(wt)
+
+
+def test_git_verbs_cd_unknown_var_target_unknown():
+    assert guard_module._git_verbs("cd $WT && git commit -m x", "/tmp") == [
+        ("commit", ["-m", "x"], "")
+    ]
+
+
+def test_git_verbs_pipe_subshell_target_unknown(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    assert guard_module._git_verbs(f"cd {wt} | git commit -m x", str(wt)) == [
+        ("commit", ["-m", "x"], "")
+    ]
+
+
+def test_git_verbs_no_cd_keeps_workdir_fallback():
+    assert guard_module._git_verbs("git commit -m x", "/tmp/repo") == [
+        ("commit", ["-m", "x"], "/tmp/repo")
+    ]
+    assert guard_module._git_verbs("git commit -m x", None) == [
+        ("commit", ["-m", "x"], None)
+    ]
+
+
+def test_git_verbs_cd_then_relative_dash_c_chains_from_cd(tmp_path):
+    """cd 落点作为后续 `git -C` 相对段的基准（而非 workdir 参数）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    wt = _git_repo(tmp_path / "repo" / "nest" / "wt", "feat/x")
+    verbs = guard_module._git_verbs(f"cd {wt} && git -C ../.. commit -m x", None)
+    assert verbs and verbs[0][0] == "commit"
+    assert Path(verbs[0][2]).resolve() == repo  # -C ../.. 落回 main 仓
+
+
+def test_resolve_shell_cd_rules(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    f = guard_module._resolve_shell_cd
+    assert f(None, str(base), None) == str(base)
+    assert f(None, "sub", str(base)) == str(base / "sub")
+    assert f(str(base), "sub", None) == str(base / "sub")
+    assert f(None, "$VAR", str(base)) == ""
+    assert f(None, "-", str(base)) == ""
+    assert f(None, "sub", None) == ""
+    assert f("", "sub", str(base)) == ""
+    assert f(None, "~nosuchuser12345", str(base)) == ""  # expanduser 未解析 → 未知
+    assert f(None, "~", str(base)) == str(Path("~").expanduser())
+
+
+def test_allow_commit_after_cd_into_branch_repo(tmp_path):
+    """修复目标：无 workdir 参数 + `cd <feat 分支仓> && git commit` → 放行。"""
+    wt = _git_repo(tmp_path / "wt", "feat/issue73")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {wt} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is None
+
+
+def test_block_commit_after_cd_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：cd 链落点在 main 仓 → 仍拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(elsewhere),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_glued_cd_into_main_repo(tmp_path):
+    """粘写旁路闭合：`cd <main>&&git commit` 不得再逃过判定。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {repo}&&git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_cd_unknown_var_fail_closed(tmp_path):
+    """`cd $VAR` 不可解析 → 保守按 main（应拦输入，即使 workdir 指向 feat 仓）。"""
+    wt = _git_repo(tmp_path / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        "cd $WT && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(wt),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_pipe_subshell_after_cd(tmp_path):
+    """管道右臂在原 cwd 子壳执行，cd 语义不可靠 → 未知按 main（应拦输入）。"""
+    wt = _git_repo(tmp_path / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {wt} | git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(wt),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_relative_cd_chain_back_to_main(tmp_path):
+    """相对 cd 链 `cd sub && cd ..` 回到 main 仓 → 仍拒绝（链式不丢基准）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    (repo / "sub").mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        "cd sub && cd .. && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_cd_then_dash_c_back_to_main(tmp_path):
+    """cd 进嵌套 feat 仓后 `git -C ../..` 相对基准应落在 main 仓 → 拒绝。"""
+    _git_repo(tmp_path / "repo", "main")
+    wt = _git_repo(tmp_path / "repo" / "nest" / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {wt} && git -C ../.. commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
