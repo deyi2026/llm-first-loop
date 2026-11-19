@@ -150,22 +150,62 @@ def test_fresh_v2_apply_uses_same_manifest_pinned_target_throughout(tmp_path, mo
     installer = _load("m1_oracle_host_install")
     monkeypatch.setattr(installer, "PRIVILEGED_ROOT", tmp_path)
     monkeypatch.setattr(installer, "LEGACY_V1", tmp_path / "lfl-m1-oracle-v1")
-    for key in ("QUEUE", "STATE", "KEY", "PUB", "PLIST"):
+    for key in ("QUEUE", "STATE", "KEY", "PUB", "TRIAL_CONFIG", "PLIST"):
         monkeypatch.setattr(installer, key, tmp_path / key.lower())
     for name in ("_root_only", "_check_account", "_prepare_state"):
         monkeypatch.setattr(installer, name, lambda: None)
     monkeypatch.setattr(installer, "_trusted", lambda *_a, **_kw: True)
     monkeypatch.setattr(installer, "_manifest", lambda *_a: {})
     seen = []
+    target = tmp_path / ("lfl-m1-oracle-v2-" + "b" * 12)
     monkeypatch.setattr(installer, "_install_bundle", lambda _bundle, target: seen.append(("copy", target)))
     monkeypatch.setattr(installer, "_init_key", lambda target: seen.append(("key", target)))
+    monkeypatch.setattr(installer, "_write_trial_config", lambda: seen.append(("config", target)))
     monkeypatch.setattr(installer, "_probe_isolated_runtime", lambda target: seen.append(("probe", target)))
     monkeypatch.setattr(installer, "_write_plist", lambda target: seen.append(("plist", target)))
     monkeypatch.setattr(installer, "_service_health", lambda target: {"pid": 1, "target": str(target)})
     monkeypatch.setattr(installer.subprocess, "run", lambda *_a, **_kw: None)
     installer._apply(tmp_path / "bundle", "b" * 64)
-    target = tmp_path / ("lfl-m1-oracle-v2-" + "b" * 12)
-    assert seen == [(name, target) for name in ("copy", "key", "probe", "plist")]
+    assert seen == [(name, target) for name in ("copy", "key", "config", "probe", "plist")]
+
+
+def test_fresh_v2_config_is_exact_root_selected_smoke_and_no_overwrite(tmp_path, monkeypatch):
+    installer = _load("m1_oracle_host_install")
+    path = tmp_path / "trial.json"
+    monkeypatch.setattr(installer, "TRIAL_CONFIG", path)
+    monkeypatch.setattr(installer, "_trusted", lambda *_a, **_kw: True)
+    monkeypatch.setattr(installer.os, "fchown", lambda *_a: None)
+    installer._write_trial_config()
+    assert path.stat().st_mode & 0o777 == 0o644
+    from llm_loop.embodied_sim.trial import validate_host_config
+    config = json.loads(path.read_bytes())
+    assert config == {
+        "schema": "lfl.m1-oracle-host-trial/v1",
+        "experiment_id": "M1-SIM-002",
+        "trial": {"phase": "smoke", "arm": "B1", "trial_index": 0, "seed": 0},
+    }
+    assert validate_host_config(config) == config["trial"]
+    before = path.read_bytes()
+    with pytest.raises(FileExistsError):
+        installer._write_trial_config()
+    assert path.read_bytes() == before
+
+
+def test_fresh_v2_install_refuses_existing_trial_config_before_side_effects(tmp_path, monkeypatch):
+    installer = _load("m1_oracle_host_install")
+    monkeypatch.setattr(installer, "PRIVILEGED_ROOT", tmp_path)
+    monkeypatch.setattr(installer, "LEGACY_V1", tmp_path / "lfl-m1-oracle-v1")
+    for key in ("QUEUE", "STATE", "KEY", "PUB", "TRIAL_CONFIG", "PLIST"):
+        monkeypatch.setattr(installer, key, tmp_path / key.lower())
+    installer.TRIAL_CONFIG.write_text("existing root-selected trial")
+    for name in ("_root_only", "_check_account"):
+        monkeypatch.setattr(installer, name, lambda: None)
+    monkeypatch.setattr(installer, "_trusted", lambda *_a, **_kw: True)
+    monkeypatch.setattr(installer, "_manifest", lambda *_a: {})
+    monkeypatch.setattr(installer, "_install_bundle",
+                        lambda *_a: pytest.fail("existing config must block before installation"))
+    with pytest.raises(RuntimeError, match="paths already exist"):
+        installer._apply(tmp_path / "bundle", "c" * 64)
 
 
 def test_direct_host_verify_script_bootstraps_local_imports(tmp_path):

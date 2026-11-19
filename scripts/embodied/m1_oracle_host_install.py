@@ -29,6 +29,7 @@ PRIVILEGED_ROOT = Path("/Library/PrivilegedHelperTools")
 LEGACY_V1 = PRIVILEGED_ROOT / "lfl-m1-oracle-v1"
 KEY = Path("/usr/local/etc/lfl-m1-oracle-ed25519.key")
 PUB = Path("/usr/local/etc/lfl-m1-oracle-ed25519.pub")
+TRIAL_CONFIG = Path("/usr/local/etc/lfl-m1-oracle-trial.json")
 QUEUE = Path("/private/var/run/lfl-m1-oracle")
 STATE = Path("/private/var/db/lfl-m1-oracle")
 PLIST = Path("/Library/LaunchDaemons/com.lfl.m1-oracle.plist")
@@ -205,6 +206,26 @@ def _init_key(target: Path) -> None:
         raise RuntimeError(f"Host key initialization failed: exit={proc.returncode}")
 
 
+def _write_trial_config() -> None:
+    """Root-select one fixed M1-SIM-002 engineering smoke trial for fresh v2."""
+    if not _trusted(TRIAL_CONFIG.parent, directory=True):
+        raise RuntimeError("untrusted Host trial configuration parent")
+    data = {
+        "schema": "lfl.m1-oracle-host-trial/v1",
+        "experiment_id": "M1-SIM-002",
+        "trial": {"phase": "smoke", "arm": "B1", "trial_index": 0, "seed": 0},
+    }
+    payload = (json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(TRIAL_CONFIG, flags, 0o644)
+    with os.fdopen(fd, "wb") as out:
+        os.fchown(out.fileno(), 0, 0)
+        os.fchmod(out.fileno(), 0o644)
+        out.write(payload)
+        out.flush()
+        os.fsync(out.fileno())
+
+
 def _probe_isolated_runtime(target: Path) -> None:
     command = [
         "/usr/bin/sudo",
@@ -304,13 +325,15 @@ def _service_health(expected_target: Path | None = None) -> dict:
     ):
         raise RuntimeError("Host daemon PID not running as UID463")
     allowed_experiments = (
-        {"M1-SIM-001"} if expected_target is not None
+        {"M1-SIM-002"} if expected_target is not None
         else {"M1-SIM-001", "M1-SIM-002", "M1-SIM-003"}
     )
     if (
         not isinstance(info.get("run_id"), str)
         or len(info["run_id"]) != 32
         or info.get("experiment_id") not in allowed_experiments
+        or (expected_target is not None and info.get("trial") !=
+            {"phase": "smoke", "arm": "B1", "trial_index": 0, "seed": 0})
     ):
         raise RuntimeError("invalid Host run identity")
     return {"pid": pid, "uid": UID, "run_id": info.get("run_id")}
@@ -325,13 +348,14 @@ def _apply(bundle: Path, expected_sha: str) -> None:
     target = _target_from_manifest(expected_sha)
     # A fresh v2 installation must never coexist with an old v1 or stale v2.
     if (any(p.exists() or p.is_symlink() for p in
-            (LEGACY_V1, target, QUEUE, STATE, KEY, PUB, PLIST))
+            (LEGACY_V1, target, QUEUE, STATE, KEY, PUB, TRIAL_CONFIG, PLIST))
             or any(PRIVILEGED_ROOT.glob("lfl-m1-oracle-v2-*"))):
         raise RuntimeError("M1 Oracle paths already exist; refusing overwrite")
     _install_bundle(bundle, target)
     _manifest(target, expected_sha)  # verify the root-owned copy before key creation
     _prepare_state()
     _init_key(target)
+    _write_trial_config()
     _probe_isolated_runtime(target)
     _write_plist(target)
     subprocess.run(
