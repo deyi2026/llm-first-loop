@@ -237,6 +237,15 @@
         "status": "observe",
         "tier": "T2"
       },
+      "embodied_sim_unknown_ledger": {
+        "owner": "embodied-sim",
+        "paths": [
+          "src/llm_loop/embodied_sim/contract.py"
+        ],
+        "rationale": "M1 隔离仿真 FrozenLedger 为 UNKNOWN/动作不确定性追加审计 JSONL，尚无 fsync/跨进程单写者/断电恢复证明；登记为 T1 partial，不宣称 durable SoT 或独立 Host Oracle 已验收。Gate C 保持 HOLD/PENDING_ORACLE。",
+        "status": "partial",
+        "tier": "T1"
+      },
       "episode_store": {
         "owner": "memory",
         "paths": [
@@ -1102,6 +1111,7 @@
     "src/llm_loop/core/provider_transport_usage_stats.py::summarize_physical_provider_usage": 142,
     "src/llm_loop/core/recent_continuity.py::apply_recent_continuity_suffix": 150,
     "src/llm_loop/core/tool_execution_journal.py::recover": 169,
+    "src/llm_loop/embodied_sim/episode.py::run_episode": 138,
     "src/llm_loop/eval/oracle_1210.py::run_oracle": 236,
     "src/llm_loop/event_log/fork.py::fork_session": 118,
     "src/llm_loop/event_log/inventory.py::run_inventory": 131,
@@ -1282,6 +1292,7 @@
       "cognitive": "Evaluation（cache-tagging 机械辅助，原 Cognitive Runtime 已退役）",
       "core": "kernel-candidate（跨面聚合根）",
       "desktop": "Action（M3 桌面只读感知：CG/AX/截屏 ctypes 通道 + privacy/see 名单 + §6.4 审计；无 M4 动作面，DESIGN-20261027 §5.3/D0-A′）",
+      "embodied_sim": "Action/Evaluation（M0/M1 隔离 MuJoCo 物理仿真与安全合同；非真实机器人硬件入口；独立 UID463 Oracle Gate C 尚未完成 Host 验收）",
       "eval": "Evaluation",
       "event_log": "kernel-candidate",
       "experiences": "Learning",
