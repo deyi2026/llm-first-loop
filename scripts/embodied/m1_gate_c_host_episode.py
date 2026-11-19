@@ -216,6 +216,7 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
     terminated_by: str | None = None
     stop_receipts: dict[str, str] = {}
     host_claims: dict[str, Any] = {}
+    grasp_pending_lift = False
     try:
         public_last = project_public_obs((fresh_receipt or link.observe(0))["observation"])
     except (AttestationUnavailableError, HostLinkError) as e:
@@ -286,6 +287,13 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
                           "reason": decision["params"].get("reason")})
             terminated_by = "stop_requested_client_only"
             break
+        if skill == "release" and "grasp" not in host_claims:
+            # A closed gripper is not a proven lifted grasp. Do not release
+            # before an independent Host-signed grasp confirmation.
+            trace.append({"event": "release_blocked_unverified_grasp",
+                          "intent_key": intent})
+            terminated_by = "host_fail_closed"
+            break
         seq += 1
         tools += 1
         try:
@@ -300,14 +308,25 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
                       "status": public_status, "t_s": round(elapsed(), 3)})
         history.append({"decision": decision, "status": public_status})
         if skill == "grasp" and status.get("state") == "done":
-            try:
-                # Host-side verify_grasp advances ~30 physics steps on the daemon
-                # scene; the client never advances physics itself.
-                host_claims["grasp"] = link.verify("grasp", seq)
-            except (AttestationUnavailableError, HostLinkError) as e:
-                trace.append({"event": "HOST_FAIL_CLOSED", "detail": str(e)})
-                terminated_by = "host_fail_closed"
+            # Gripper close alone cannot satisfy judge_grasp: the cube must
+            # actually be lifted. The NEXT motion is still chosen by the model.
+            grasp_pending_lift = True
+        if skill == "move_to" and status.get("state") == "done" and grasp_pending_lift:
+            public_last = observe_current()
+            if terminated_by is not None:
                 break
+            cube_pos = public_last.get("cube", {}).get("pos", [])
+            # Public cube height only TRIGGERS a check; it is never the verdict.
+            # UID463 Host independently checks contact, weld, lift and speed.
+            if len(cube_pos) == 3 and float(cube_pos[2]) > 0.05:
+                try:
+                    host_claims["grasp"] = link.verify("grasp", seq)
+                    grasp_pending_lift = False
+                    trace.append({"event": "grasp_host_verified", "seq": seq})
+                except (AttestationUnavailableError, HostLinkError) as e:
+                    trace.append({"event": "HOST_FAIL_CLOSED", "detail": str(e)})
+                    terminated_by = "host_fail_closed"
+                    break
         if skill == "release" and status.get("state") == "done":
             public_last = observe_current()
             if terminated_by is not None:

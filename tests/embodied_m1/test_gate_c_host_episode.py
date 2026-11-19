@@ -66,6 +66,8 @@ class _FakeQueue:
         self.obs_t = obs_t
         self.obs_calls = 0
         self.cube_pos = [0.18, 0.0, 0.02]
+        self.grasped = False
+        self.events: list[str] = []
         self.commands: list[dict] = []
         self.verify_kwargs: list[dict] = []
         self.verify_status = VerificationStatus.VERIFIED_BY_ORACLE
@@ -78,11 +80,21 @@ class _FakeQueue:
             receipt["observation"]["cube"]["pos"] = list(self.cube_pos)
             return "ignored", receipt
         if skill in ("verify_grasp", "verify_place"):
+            self.events.append(skill)
             nonce = ("a" if skill == "verify_grasp" else "b") * 32
             return nonce, _claim_receipt(run_id, action_seq, nonce, 1, skill)
+        if skill == "grasp":
+            self.grasped = True
+        if skill == "move_to" and self.grasped:
+            # Public observation reflects the cube following the gripper.
+            params = command["params"]
+            self.cube_pos = [params["x"], params["y"],
+                             max(0.02, params["z"] - 0.01)]
         if skill == "release":
             # daemon physics: after a release the cube rests in the tray
             self.cube_pos = [0.0, 0.18, 0.02]
+            self.grasped = False
+        self.events.append(skill)
         self.commands.append(command)
         return "c" * 32, _action_receipt(run_id, action_seq)
 
@@ -157,6 +169,8 @@ def test_full_episode_place_host_verified_no_client_physics(wired):
     assert result["terminated_by"] == "place_host_verified"
     assert result["host_claims"]["place"]["status"] == "VERIFIED_BY_ORACLE"
     assert result["host_claims"]["grasp"]["status"] == "VERIFIED_BY_ORACLE"
+    assert wired.events == ["move_to", "move_to", "grasp", "move_to",
+                            "verify_grasp", "release", "verify_place"]
     # client never advances physics: exactly ONE observe per loop pass (no settle loops)
     observe_cmds = [c for c in [wired.commands] for c in c]
     assert all(c.get("skill") != "stop" for c in observe_cmds)
@@ -274,3 +288,44 @@ def test_model_status_projection_hides_privileged_contact_truth():
     public = host_episode.project_public_status(private)
     assert public == {"state": "done", "action_id": "act-000003"}
     assert "weld" not in json.dumps(public)
+
+
+def test_grasp_close_alone_does_not_claim_oracle_success(wired):
+    script = [
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"}),
+        json.dumps({"skill": "stop", "params": {"reason": "pause"}, "intent_key": "k2"}),
+    ]
+    result = host_episode.run_host_episode(
+        ScriptedStubProvider(script), host_episode.HostOracleLink(RUN))
+    assert result["terminated_by"] == "stop_requested_client_only"
+    assert result["host_claims"] == {}
+    assert "verify_grasp" not in wired.events
+
+
+def test_release_without_independent_lift_proof_is_blocked(wired):
+    script = [
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"}),
+        json.dumps({"skill": "release", "params": {}, "intent_key": "k2"}),
+    ]
+    result = host_episode.run_host_episode(
+        ScriptedStubProvider(script), host_episode.HostOracleLink(RUN))
+    assert result["terminated_by"] == "host_fail_closed"
+    assert result["tool_actions"] == 1
+    assert "release" not in wired.events
+    assert "verify_grasp" not in wired.events
+    assert any(t["event"] == "release_blocked_unverified_grasp"
+               for t in result["trace"])
+
+
+def test_non_lifting_move_does_not_prematurely_verify(wired):
+    script = [
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k1"}),
+        json.dumps({"skill": "move_to", "params": {"x": 0.18, "y": 0.0,
+                                                   "z": 0.035}, "intent_key": "k2"}),
+        json.dumps({"skill": "stop", "params": {"reason": "pause"}, "intent_key": "k3"}),
+    ]
+    result = host_episode.run_host_episode(
+        ScriptedStubProvider(script), host_episode.HostOracleLink(RUN))
+    assert result["terminated_by"] == "stop_requested_client_only"
+    assert result["host_claims"] == {}
+    assert "verify_grasp" not in wired.events
