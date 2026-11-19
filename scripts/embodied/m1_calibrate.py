@@ -39,7 +39,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.6.4"
+BASELINE_VERSION = "M1-baseline-v1.6.5"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -381,11 +381,11 @@ def main() -> int:
                             "wrist_rod<->floor and any arm-body floor contact), per-stage "
                             "attribution and first-contact geometry retained; cube-only filter "
                             "was a P1 calibration gap identified by independent Host QA"),
-        "cold_start_scope_note": ("v1.6.2-v1.6.4 include all 100 initial gravity-settle steps "
+        "cold_start_scope_note": ("v1.6.2-v1.6.5 include all 100 initial gravity-settle steps "
                                   "in the full-trajectory contact gate; earlier receipts start after settle. "
-                                  "v1.6.3 revalidated Gate C progress feedback; v1.6.4 hardens "
-                                  "place truth to require release and real tray contact, and "
-                                  "grasp truth to require fingertip contact. Physics unchanged."),
+                                  "v1.6.3 revalidated Gate C progress feedback; v1.6.4 hardened "
+                                  "place and grasp truth; v1.6.5 revalidates public release hint "
+                                  "after episode_008 empty finish=length. Physics unchanged."),
         "metadata_correction_disclosure": ("v1.6 (pre-metadata-fix) contained stale v1.2-era "
                                            "scene_revision_reason text; QA read it before this "
                                            "correction, so the original bytes are preserved as "

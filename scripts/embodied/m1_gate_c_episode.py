@@ -34,6 +34,7 @@ from llm_loop.llm.providers import load_registry  # noqa: E402
 OUT = ROOT / ("experiments/embodied/m1/gate_c/" + (sys.argv[1] if len(sys.argv) > 1
                else "episode_glm_002.json"))
 MODEL_REF = "glm/glm-5.3-flash"
+DECISION_MAX_TOKENS = 4096  # engineering iteration after 008 empty content/finish=length
 
 
 class GLMHttpProvider:
@@ -62,7 +63,7 @@ class GLMHttpProvider:
                 {"role": "user", "content": state_text},
             ],
             "temperature": 0,
-            "max_tokens": 2000,
+            "max_tokens": DECISION_MAX_TOKENS,
             "stream": False,
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -117,7 +118,11 @@ def measure_t_stop(iface: EmbodiedInterface) -> dict[str, Any]:
 def main() -> int:
     started = time.time()
     report: dict[str, Any] = {"experiment_id": "M1-SIM-001", "scenario": "L1 place",
-                              "model_required_by_prereg": MODEL_REF}
+                              "model_required_by_prereg": MODEL_REF,
+                              "decision_max_tokens": DECISION_MAX_TOKENS,
+                              "decision_token_change_note": "Gate C engineering iteration 009: "
+                              "2000->4096 after 008 two empty finish=length outputs; "
+                              "prereg 6/8/180/learning-off limits unchanged"}
     try:
         provider = GLMHttpProvider()
         report["model_used"] = provider.model_used

@@ -209,6 +209,24 @@ def test_tool_action_budget_enforced():
     assert r["tool_actions"] <= r["budget"]["max_tool_actions"]
 
 
+def test_release_hint_uses_only_model_history_and_public_geometry():
+    iface = _iface()
+    obs = iface.observe()
+    obs["observation"]["tool_pos"] = [0.0, 0.18, 0.09]
+    history = [
+        {"decision": {"skill": "grasp", "intent_key": "k3"},
+         "status": {"state": "done"}},
+        {"decision": {"skill": "move_to", "intent_key": "k4"},
+         "status": {"state": "done"}},
+    ]
+    prompt = build_prompt(obs, history)
+    assert "release_attempt_ready=yes" in prompt
+    assert "weld_active" not in prompt and "contact_pairs" not in prompt
+    history.append({"decision": {"skill": "release", "intent_key": "k5"},
+                    "status": {"state": "done"}})
+    assert "release_attempt_ready=no" in build_prompt(obs, history)
+
+
 def test_runner_does_not_finish_while_cube_still_welded_over_tray():
     iface = _iface()
     cube = _cube(iface)

@@ -34,6 +34,11 @@ TASK_BRIEF = (
     "completed down move_to, try grasp next; grasp itself checks real contact. "
     "A move_to returning done already met servo tolerance: NEVER repeat the "
     "identical target with a new intent_key; that no-op is rejected. "
+    "The state includes release_attempt_ready, derived only from your own "
+    "completed grasp action and the public tool/tray positions (NOT Oracle "
+    "truth). When release_attempt_ready=yes, choose release NEXT; holding "
+    "a cube over the tray is NOT placement. After release, the physics and "
+    "independent Oracle will check actual tray contact. "
     "move_to targets the gripper tool site. grasp closes the fingers (only "
     "succeeds with a real fingertip-cube contact). release opens them. "
     "Approach note: if a previous move_to pushed the cube, use the NEW cube "
@@ -68,11 +73,26 @@ def build_prompt(obs: dict[str, Any], history: list[dict[str, Any]] | None = Non
     approach_ready = ("yes" if abs(tool[0] - cube[0]) < 0.025
                       and abs(tool[1] - cube[1]) < 0.025
                       and 0.010 <= tool[2] - cube[2] <= 0.045 else "no")
+    # This is only the model's own successful skill history, not the hidden
+    # weld state. A real release may still fail and must be judged by Oracle.
+    carrying_by_history = False
+    for h in history or []:
+        decision = h.get("decision", h)
+        status = h.get("status") or {}
+        if status.get("state") == "done" and decision.get("skill") == "grasp":
+            carrying_by_history = True
+        if status.get("state") == "done" and decision.get("skill") == "release":
+            carrying_by_history = False
+    tray = o["tray_pos"]
+    release_ready = ("yes" if carrying_by_history
+                     and abs(tool[0] - tray[0]) < 0.06
+                     and abs(tool[1] - tray[1]) < 0.06 else "no")
     return (
         f"state: tool={ [round(v, 4) for v in tool] } "
         f"cube={ [round(v, 4) for v in cube] } "
         f"tool_cube_delta={ [round(t - c, 4) for t, c in zip(tool, cube, strict=True)] } "
         f"dist={ dist } aligned={ aligned } grasp_attempt_ready={ approach_ready } "
+        f"release_attempt_ready={ release_ready } "
         f"tray={ [round(v, 4) for v in o['tray_pos']] } "
         f"fingers={ [round(v, 4) for v in o['finger_qpos']] } "
         f"pre_grasp_hint={ [round(v, 4) for v in o.get('pre_grasp_point', [0, 0, 0])] } "
