@@ -14,12 +14,13 @@ import os
 import re
 import secrets
 import stat
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from llm_loop.embodied_sim.usage import estimate_usd
+from llm_loop.timekeeping import system_local_now
 
 GRANT_PATH = Path("/usr/local/etc/lfl-m1-paired-grant.json")
 LEDGER_DIR = Path("/usr/local/var/lfl-m1-paired-budget")
@@ -100,7 +101,7 @@ def validate_plan(plan: Any, *, prereg_sha: str, candidate_sha: str,
         checked = datetime.fromisoformat(str(plan["pricing_checked_at_utc"]).replace("Z", "+00:00"))
     except ValueError as exc:
         raise PairedCostHold("GRANT_TIMESTAMP_INVALID") from exc
-    clock = now or datetime.now(UTC)
+    clock = now or system_local_now()
     if (expiry.tzinfo is None or checked.tzinfo is None
             or expiry <= clock or checked > clock):
         raise PairedCostHold("GRANT_EXPIRED_OR_UNQUALIFIED")
