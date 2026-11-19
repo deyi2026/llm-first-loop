@@ -63,6 +63,20 @@
 - **已知边界（既有，非本批引入，4289cf3401e0 P2-1）**：``eval "…"``（整串
   单 token）与反引号替换内的 git 命令不产生可识别动词 → 按"无 git 命令"
   放行；属解析器表达力边界，暂以文档声明而非引入重量级 shell 语义解析。
+- **cd 后重定向不是操作数**（审查 61bbdabfee9d P1-1）：``<``/``>``/``>>`` 不
+  计入多操作数判定——``cd wt > log && git push`` 的 cd 在 bash 中成功，
+  误判失败会放行真实落点。
+- **数字 fd 重定向与判定顺序**（审查 18c9ecb809a5 P1-1/P1-2）：``2>``/``2>&1``
+  等 fd 前缀重定向经裸数字拆分（``2``+``>``），先合并为单 token 再判定；
+  ``cd`` 的"无参数/边界/多操作数"按序判定，避免把 ``cd && git commit`` 的
+  下一命令词误当第二操作数。
+- **引号内命令替换 = 保守哨兵**（审查 18c9ecb809a5 P1-3）：``"$( … git … )"``
+  或反引号整串单 token 内的 git 动词不可见，而 bash 会真实执行 → 任一
+  token 含 ``$(`` 或 `` ` `` 即返回保守哨兵（当 main 上的 commit 判定）。
+  代价：``git commit -m "$(date)"`` 类合法形态被过拦（安全方向）。
+- **已知边界补充（既有，18c9ecb809a5 P2-1）**：``pushd``/``popd`` 与命令位
+  前缀 ``command cd``/``time cd`` 暂不进入 cd 链跟踪，属文档声明的解析
+  表达力边界。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -94,6 +108,10 @@ STALE_AFTER_S = 4 * 3600.0
 # verifying/merging 超过该时长仍未终态 → 不再阻断 push。只豁免 push；commit
 # 仍被任意 live lane 挡（共享 worktree 直写会落错分支）。0 或负数=关闭豁免。
 CLOSING_BLOCK_MAX_S = 30 * 60.0
+# 数字 fd 重定向算子（bash）：`2>` / `2>>` / `2>&1` / `>&2` 等——shlex
+# punctuation_chars 会把 `2>/dev/null` 拆成裸数字 `2` + `>` + 路径，
+# 需先合并为单 token 再参与段边界判定（review 18c9ecb809a5 P1-1）。
+_FD_REDIRECT_RE = re.compile(r"^[0-9]*[<>]{1,2}&?[0-9]*$")
 # 回执/证据窄通道（审查残余①，2026-11-09 收紧）：`git commit ... -- <paths>`
 # 显式列出且全部落在这些前缀下时，不受他人 live lane 阻挡（只追加证据，改不到
 # 代码）。原 `docs/` 整树过宽——`docs/ai_rules.md` 这类行为性文档也能借道；
@@ -150,6 +168,27 @@ def _git_verbs(
         # 词法失败（引号不配对等，bash 语法错误本就不执行任何命令）→ 保守哨兵：
         # 按 "" 目标上的 commit 判定（调用方当 main），不盲放行（ecc9877d2e93 P2-3）。
         return [("commit", [], "")]
+    # 数字 fd 重定向合并（18c9ecb809a5 P1-1）：`2>/dev/null` → ["2", ">", "/dev/null"]
+    # → ["2>", "/dev/null"]，段边界判定不再把裸数字误当操作数。
+    merged: list[str] = []
+    _mk = 0
+    while _mk < len(tokens):
+        _tok = tokens[_mk]
+        if (
+            _tok.isdigit()
+            and _mk + 1 < len(tokens)
+            and _FD_REDIRECT_RE.match(tokens[_mk + 1] or "")
+        ):
+            merged.append(_tok + tokens[_mk + 1])
+            _mk += 2
+            continue
+        merged.append(_tok)
+        _mk += 1
+    tokens = merged
+    # 引号内命令替换（18c9ecb809a5 P1-3）：`"$( … git … )"` / 反引号整串单
+    # token，内部 git 动词不可见而 bash 会真实执行 → 保守哨兵（当 main 判定）。
+    if any("$(" in _tok or "`" in _tok for _tok in tokens):
+        return [("commit", [], "")]
     out: list[tuple[str, list[str], str | None]] = []
     # EVO-20261119-0fa86cab：shell 层 ``cd`` 链跟踪。None=未见 cd（沿用 workdir
     # 参数判定，行为与历史一致）；""=不可解析/子壳语义（调用方保守当 main）。
@@ -184,22 +223,32 @@ def _git_verbs(
         if seg_start and tokens[i] == "cd":
             seg_start = False
             nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if (
+                not nxt
+                or nxt in _SEG_PERSIST
+                or nxt in _SEG_SUBSHELL
+                or nxt in ("(", ")", "<", ">", ">>")
+                or _FD_REDIRECT_RE.match(nxt)
+            ):
+                # cd 无参数（bash: cd → HOME，cwd 未知）或后随边界/重定向 → 保守
+                # （review 18c9ecb809a5 P1-2：先判无参/边界，再判多操作数）。
+                shell_cwd = ""
+                i += 1
+                continue
             extra = tokens[i + 2] if i + 2 < len(tokens) else ""
             if (
                 extra
                 and extra not in _SEG_PERSIST
                 and extra not in _SEG_SUBSHELL
                 and extra not in ("(", ")", "<", ">", ">>")
+                and not _FD_REDIRECT_RE.match(extra)
             ):
                 # bash: cd 多操作数 → "too many arguments"，cwd 不变
                 # （review subagent_4289cf3401e0 P1-1：按成功 cd 跟踪是 fail-open）。
                 i += 2
                 continue
-            if nxt and nxt not in _SEG_PERSIST and nxt not in _SEG_SUBSHELL:
-                shell_cwd = _resolve_shell_cd(shell_cwd, nxt, workdir)
-                i += 2
-            else:
-                shell_cwd = ""  # cd 无参数（回 HOME）等 → 未知
+            shell_cwd = _resolve_shell_cd(shell_cwd, nxt, workdir)
+            i += 2
             continue
         seg_start = False
         if tokens[i] != "git":
@@ -253,6 +302,7 @@ def _git_verbs(
                 and tokens[k2] not in _SEG_PERSIST
                 and tokens[k2] not in _SEG_SUBSHELL
                 and tokens[k2] not in ("(", ")", "<", ">", ">>")
+                and not _FD_REDIRECT_RE.match(tokens[k2])
             ):
                 k2 += 1
             out.append((tokens[j], tokens[j + 1 : k2], target))
