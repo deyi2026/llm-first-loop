@@ -1,0 +1,60 @@
+{
+  "elapsed_s": 0.056,
+  "free_fall": {
+    "cube_contacts_midfall": 0,
+    "fell": true,
+    "isolated_no_contacts": true,
+    "sim_time_advanced": true,
+    "vz_strictly_negative": true,
+    "z0": 0.15,
+    "z1": 0.11782319999999999
+  },
+  "ledger_reconcile": {
+    "chain_ok": true,
+    "records": 0
+  },
+  "mujoco_version": "4.0.1",
+  "oracle_verdicts_measured": {
+    "grasp": {
+      "evidence": {
+        "both_fingertips_contacting": false,
+        "cube_speed": 1.0619263619444123e-09,
+        "cube_z": 0.019892244562803904,
+        "n_contacts": 8
+      },
+      "ok": false
+    },
+    "oracle_execution": "in_process_pending_host_uid",
+    "place": {
+      "evidence": {
+        "cube_speed": 1.7647106226654848e-10,
+        "cube_z": 0.0198922445797838,
+        "height_ok": true,
+        "inside_tray_xy": false
+      },
+      "ok": false
+    }
+  },
+  "probe": "m1-gate-a-physics",
+  "python": "3.11.15",
+  "seed_determinism": {
+    "diff_seed_digest_differs": true,
+    "same_seed_digest_equal": true
+  },
+  "skill_errors_m": {
+    "lift": 0.012096349046119855,
+    "move_above": 0.0120606221836739,
+    "move_to_cube": 0.016036587442394633,
+    "move_to_tray": 0.012028172150638257
+  },
+  "skill_trace": {
+    "grasp": "done",
+    "lift": "done",
+    "move_above": "done",
+    "move_to_cube": "failed",
+    "move_to_tray": "failed",
+    "release": "done"
+  },
+  "started_at": 1795047986.432406,
+  "tool_action_count": 6
+}
