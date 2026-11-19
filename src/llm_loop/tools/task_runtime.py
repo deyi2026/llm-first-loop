@@ -10,11 +10,15 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
+from llm_loop.core.task_capabilities import TaskLeaseClaims
+from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.task_store import TaskStore
 from llm_loop.tools.task_authority import RootOwnedTaskAuthority, TaskAuthorityError
-from llm_loop.tools.task_execution import TrustedTaskExecution
+from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
 
 _MAC_AUTHORITY = Path("/Library/Application Support/LFL-HostIssuer/task-authority")
 _LINUX_AUTHORITY = Path("/var/lib/lfl-host-issuer/task-authority")
@@ -24,6 +28,37 @@ class TaskRuntimeActivationError(RuntimeError):
     def __init__(self, reason_code: str) -> None:
         self.reason_code = reason_code
         super().__init__(reason_code)
+
+
+def _task_lifecycle_validator(
+    audit: Path, claims: TaskLeaseClaims,
+) -> Callable[[], None]:
+    """Check real Goal/Task status at activation AND every physical effect."""
+    goal_store = GoalStore(audit)
+    task_store = TaskStore(audit)
+
+    def check() -> None:
+        try:
+            goal = goal_store.get(claims.goal_id)
+            task = task_store.get(claims.goal_id, claims.task_id)
+        except Exception as exc:  # noqa: BLE001 - corrupted/unavailable ledger denies
+            raise TaskExecutionError("task_ledger_unavailable") from exc
+        if (
+            not goal
+            or goal.get("id") != claims.goal_id
+            or goal.get("status") != "active"
+            or goal.get("session_id") != claims.owner_session_id
+        ):
+            raise TaskExecutionError("task_goal_inactive_or_mismatch")
+        if (
+            task is None
+            or task.goal_id != claims.goal_id
+            or task.task_id != claims.task_id
+            or task.status != "in_progress"
+        ):
+            raise TaskExecutionError("task_not_in_progress")
+
+    return check
 
 
 def _installed_authority_root() -> Path | None:
@@ -52,10 +87,14 @@ def resolve_task_execution_for_run(
         return None
     if not root.is_absolute() or os.path.realpath(root) != str(root):
         raise TaskRuntimeActivationError("task_authority_root_untrusted")
-    # A staged Host installation must not interrupt ordinary Web Runs.
-    # Without the trust anchor and binding directory there is no grant.
-    if not (root / "trust.json").is_file() or not (root / "bindings").is_dir():
+    # An empty staged Host directory grants nothing. Once either anchor
+    # exists, losing its counterpart is suspicious: HOLD, never downgrade.
+    has_trust = os.path.lexists(root / "trust.json")
+    has_bindings = os.path.lexists(root / "bindings")
+    if not has_trust and not has_bindings:
         return None
+    if not has_trust or not has_bindings:
+        raise TaskRuntimeActivationError("task_authority_bootstrap_incomplete")
     authority = RootOwnedTaskAuthority(root)
     try:
         claims = authority.discover_for_session(session_id)
@@ -120,6 +159,11 @@ def resolve_task_execution_for_run(
         raise TaskRuntimeActivationError("task_git_head_unavailable") from exc
     if head.returncode != 0 or head.stdout.strip() != lane["head_sha"]:
         raise TaskRuntimeActivationError("task_git_head_cas_conflict")
+    validator = _task_lifecycle_validator(audit, claims)
+    try:
+        validator()
+    except TaskExecutionError as exc:
+        raise TaskRuntimeActivationError(exc.reason_code) from exc
     return TrustedTaskExecution(
         authority=authority,
         lanes=lanes,
@@ -133,4 +177,5 @@ def resolve_task_execution_for_run(
         lane_version=lane["version"],
         expected_head=lane["head_sha"],
         protected_roots=(str(audit), str(root)),
+        task_state_validator=validator,
     )

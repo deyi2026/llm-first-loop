@@ -112,6 +112,7 @@ def tool_env(tmp_path, monkeypatch):
         lane_version=row["version"],
         expected_head=row["head_sha"],
         protected_roots=(str(audit), str(host)),
+        task_state_validator=lambda: None,
     )
     journal = FakeJournal(b, authority)
     binding = SimpleNamespace(

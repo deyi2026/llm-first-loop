@@ -14,7 +14,9 @@ from llm_loop.core.run_context import (
     current_workspace_root,
 )
 from llm_loop.core.task_capabilities import CapabilityResource, TaskLeaseClaims
+from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.task_store import TaskStore
 from llm_loop.tools.task_execution import TaskExecutionError
 from llm_loop.tools.task_runtime import (
     TaskRuntimeActivationError,
@@ -59,20 +61,24 @@ def active_binding(tmp_path, monkeypatch):
     head = _git(a, "rev-parse", "HEAD")
     audit = data / "audit"
     audit.mkdir()
+    goal = GoalStore(audit).create("Task capability test", session_id="owner-1")
+    tasks = TaskStore(audit)
+    task = tasks.create(goal.id, "Test Task", acceptance=["bounded edit"])
+    tasks.update(goal.id, task.task_id, status="in_progress")
     lanes = LaneStore(audit, lock_strict=True, enforce_cross_goal=True, repo_root=tmp_path)
     lane = lanes.create(
         branch="task",
         worktree=str(a),
         base_main_sha=head,
-        goal_id="GOAL-test",
+        goal_id=goal.id,
         owner_session_id="owner-1",
         paths=["source.txt"],
     )
     row = lanes.update(lane.lane_id, expected_version=1, status="active", head_sha=head)
     claims = TaskLeaseClaims(
         "lease-12345678",
-        "GOAL-test",
-        "TASK-test",
+        goal.id,
+        task.task_id,
         "owner-1",
         "agent-1",
         lane.lane_id,
@@ -124,6 +130,24 @@ def test_partially_installed_host_keeps_legacy_without_grant(tmp_path):
         )
         is None
     )
+
+
+def test_partial_host_anchor_never_downgrades_to_legacy(tmp_path):
+    root = tmp_path / "host-partial"
+    root.mkdir()
+    (root / "trust.json").write_text("incomplete")
+    with pytest.raises(TaskRuntimeActivationError, match="task_authority_bootstrap_incomplete"):
+        resolve_task_execution_for_run(
+            session_id="owner-1", workspace_root=str(tmp_path),
+            data_dir=str(tmp_path), authority_root=root,
+        )
+    (root / "trust.json").unlink()
+    (root / "bindings").mkdir()
+    with pytest.raises(TaskRuntimeActivationError, match="task_authority_bootstrap_incomplete"):
+        resolve_task_execution_for_run(
+            session_id="owner-1", workspace_root=str(tmp_path),
+            data_dir=str(tmp_path), authority_root=root,
+        )
 
 
 def test_signed_session_binding_activates_only_matching_lane_and_head(active_binding):
@@ -204,6 +228,50 @@ def test_signed_exact_app_requires_tcc_and_fresh_lane(active_binding):
         current_task_execution.reset(task)
         current_workspace_root.reset(ws)
         current_session_id.reset(sid)
+
+
+def test_task_terminal_transition_denies_all_new_effects(active_binding):
+    a, b, host, data, _lanes, claims, _row = active_binding
+    ctx = resolve_task_execution_for_run(
+        session_id="owner-1", workspace_root=str(a),
+        data_dir=str(data), authority_root=host,
+    )
+    assert ctx is not None
+    sid = current_session_id.set("owner-1")
+    ws = current_workspace_root.set(str(a))
+    token = current_task_execution.set(ctx)
+    try:
+        TaskStore(data / "audit").update(
+            claims.goal_id, claims.task_id, status="done",
+        )
+        with pytest.raises(TaskExecutionError, match="task_not_in_progress"):
+            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True)
+        with pytest.raises(TaskExecutionError, match="task_not_in_progress"):
+            ctx.authorize_file(str(b / "file.txt"), "write")
+        with pytest.raises(TaskExecutionError, match="task_not_in_progress"):
+            ctx.preflight("true", str(a), "sandbox-exec")
+    finally:
+        current_task_execution.reset(token)
+        current_workspace_root.reset(ws)
+        current_session_id.reset(sid)
+
+
+def test_goal_blocked_or_task_done_denies_new_activation(active_binding):
+    a, _b, host, data, _lanes, claims, _row = active_binding
+    TaskStore(data / "audit").update(claims.goal_id, claims.task_id, status="done")
+    with pytest.raises(TaskRuntimeActivationError, match="task_not_in_progress"):
+        resolve_task_execution_for_run(
+            session_id="owner-1", workspace_root=str(a),
+            data_dir=str(data), authority_root=host,
+        )
+    GoalStore(data / "audit").update(
+        claims.goal_id, "blocked", reason="Owner paused the Goal",
+    )
+    with pytest.raises(TaskRuntimeActivationError, match="task_goal_inactive_or_mismatch"):
+        resolve_task_execution_for_run(
+            session_id="owner-1", workspace_root=str(a),
+            data_dir=str(data), authority_root=host,
+        )
 
 
 def test_loop_generator_resumes_with_task_context_and_resets(build_test_engine, monkeypatch):

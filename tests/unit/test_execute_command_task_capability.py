@@ -89,6 +89,7 @@ def task_context(tmp_path):
         lane_version=row["version"],
         expected_head=row["head_sha"],
         protected_roots=(str(audit), str(authority_root)),
+        task_state_validator=lambda: None,
     )
     token_session = current_session_id.set("owner-1")
     token_root = current_workspace_root.set(str(a))

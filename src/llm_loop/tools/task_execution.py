@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from llm_loop.core.run_context import (
@@ -49,6 +50,7 @@ class TrustedTaskExecution:
     lane_version: int
     expected_head: str
     protected_roots: tuple[str, ...]
+    task_state_validator: Callable[[], None]
 
     def authorize_app(
         self,
@@ -72,6 +74,7 @@ class TrustedTaskExecution:
             or any(char in bundle_id for char in ("/", "\\", "*"))
         ):
             raise TaskExecutionError("task_app_identity_invalid")
+        self.task_state_validator()
         if verb == "edit":
             parent_scope = current_write_scope.get()
             if parent_scope is not None and parent_scope.declared:
@@ -164,6 +167,7 @@ class TrustedTaskExecution:
             or os.path.realpath(target) != target
         ):
             raise TaskExecutionError("task_file_identity_or_path_invalid")
+        self.task_state_validator()
         lane = self.lanes.get(self.lane_id)
         if (
             not lane
@@ -258,6 +262,7 @@ class TrustedTaskExecution:
         """Verify signed lease, parent/Lane/OS facts and compile exact multi-root plan."""
         if current_task_execution.get() is not self:
             raise TaskExecutionError("task_context_not_active")
+        self.task_state_validator()
         if current_session_id.get() != self.owner_session_id:
             raise TaskExecutionError("task_owner_session_mismatch")
         parent_scope = current_write_scope.get()

@@ -131,6 +131,7 @@ def cross_project(tmp_path):
         lane_version=row["version"],
         expected_head=row["head_sha"],
         protected_roots=(str(audit), str(authroot)),
+        task_state_validator=lambda: None,
     )
     service = FileService(lock_root=audit / "file-locks")
     adapter = TaskFileAdapter(task=ctx, service=service)
