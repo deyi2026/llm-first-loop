@@ -81,6 +81,32 @@ def _provider():
     return provider
 
 
+def test_paired_provider_requires_separate_standard_api_key(monkeypatch):
+    class Registry:
+        def resolve(self, _ref):
+            return "glm", "glm-5.3-flash"
+
+        def client_params(self, _pid, _mid):
+            return {"model": "glm-5.3-flash", "api_key": "coding-plan-key",
+                    "base_url": "https://open.bigmodel.cn/api/coding/paas/v4"}
+
+    monkeypatch.setattr(gate_c, "load_settings", lambda: object())
+    monkeypatch.setattr(gate_c, "load_registry", lambda _settings: Registry())
+    monkeypatch.delenv("LFL_M1_STANDARD_API_KEY", raising=False)
+    gate = _FakeCostGate()
+    with pytest.raises(PairedCostHold, match="PAIRED_STANDARD_API_KEY_REQUIRED"):
+        gate_c.GLMHttpProvider(cost_gate=gate)
+    monkeypatch.setenv("LFL_M1_STANDARD_API_KEY", "coding-plan-key")
+    with pytest.raises(PairedCostHold, match="PAIRED_STANDARD_API_KEY_NOT_SEPARATE"):
+        gate_c.GLMHttpProvider(cost_gate=gate)
+    assert gate.reserved == 0
+    monkeypatch.setenv("LFL_M1_STANDARD_API_KEY", "separate-standard-key")
+    provider = gate_c.GLMHttpProvider(cost_gate=gate)
+    assert provider._base_url == "https://open.bigmodel.cn/api/paas/v4"
+    assert provider._api_key == "separate-standard-key"
+    assert gate.reserved == 0
+
+
 def test_real_provider_records_response_usage_without_raw_request(monkeypatch):
     body = {"choices": [{"message": {"content": '{"skill":"stop"}'},
                          "finish_reason": "stop"}],

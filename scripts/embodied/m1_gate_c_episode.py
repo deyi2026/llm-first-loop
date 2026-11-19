@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -57,6 +58,20 @@ class GLMHttpProvider:
         self._base_url = str(params["base_url"]).rstrip("/")
         self._timeout_s = timeout_s
         self._cost_gate = cost_gate
+        if cost_gate is not None:
+            # Coding Plan is restricted to eligible coding tools. These paired
+            # robot simulations use a separately provisioned standard API key;
+            # never mutate the shared LFL registry or consume Coding quota.
+            if self.model_used != MODEL_REF or self.wire_model != "glm-5.3-flash":
+                raise PairedCostHold("PAIRED_STANDARD_MODEL_REQUIRED")
+            standard_key = os.environ.get("LFL_M1_STANDARD_API_KEY", "").strip()
+            if not standard_key:
+                raise PairedCostHold("PAIRED_STANDARD_API_KEY_REQUIRED")
+            if ("/api/coding/" in self._base_url
+                    and standard_key == self._api_key):
+                raise PairedCostHold("PAIRED_STANDARD_API_KEY_NOT_SEPARATE")
+            self._api_key = standard_key
+            self._base_url = "https://open.bigmodel.cn/api/paas/v4"
         self.calls: list[dict[str, Any]] = []
 
     def decide(self, state_text: str) -> str:

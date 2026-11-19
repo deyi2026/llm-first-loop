@@ -28,10 +28,26 @@ This is an operational gate record, not a change to the frozen preregistration.
 - Reference GLM-5.3-Flash list tariff: USD 0.15 / 1M uncached input tokens,
   USD 0.50 / 1M output tokens; cached input USD 0.03 / 1M.
   Source checked 2026-11-20: https://docs.z.ai/guides/overview/pricing .
-  The Host grant must not use lower input/output rates without an explicit
-  subsequent reviewed policy change. Confirm the *actual* API endpoint,
-  account-specific billing and key type before installation; a highest-tier
-  subscription does not by itself prove zero API charges.
+  These USD rates are a conservative **proxy**, not an assertion of the
+  China account's invoice or a live FX conversion. The Host grant must not
+  use lower input/output USD estimates without a reviewed policy change.
+- **Real billing-channel audit, 2026-11-20:** the currently configured
+  `glm/glm-5.3-flash` resolves to
+  `https://open.bigmodel.cn/api/coding/paas/v4`, a **Coding Plan** route.
+  Its configured `LLM_API_KEY` and `GLM_API_KEY` are the same credential.
+  The highest-tier subscription is not an authorization to consume Coding
+  Plan quota in a custom robotics simulator. Official FAQ:
+  https://docs.bigmodel.cn/cn/coding-plan/faq .
+  Standard China API list rates are **CNY 0.8 input / CNY 2.8 output
+  per 1M tokens** (cached CNY 0.23); authoritative source:
+  https://docs.bigmodel.cn/cn/guide/start/pricing .
+- **Paired-only safety isolation:** `GLMHttpProvider(cost_gate=...)` now
+  requires a separately provisioned `LFL_M1_STANDARD_API_KEY` in its
+  *own* execution environment, refuses reuse of the Coding Plan key, and
+  sends only to `https://open.bigmodel.cn/api/paas/v4`.
+  Smoke and the four existing LFL services keep their configured route.
+  No standard API key is currently configured. No credential was printed,
+  copied, created or charged during this audit.
 - Client records Provider-reported input/output/total tokens. Missing usage,
   timeout or unqualified tariff is **unknown**, never zero or free.
 - USD is a **tariff-based estimate**, not the Provider's final invoice.
@@ -52,8 +68,9 @@ Before any grant or paid paired run, an operator must independently approve:
 
 1. Exact frozen candidate SHA and scoped Host installation security preflight;
    the **final** independent Reviewer remains after the paired experiment.
-2. Authoritative GLM tariff source/date and USD input/output rates; any
-   applicable currency conversion or cache pricing must be qualified.
+2. Provision a separate China **standard API** key through a protected
+   credential channel; confirm actual billing, the CNY invoice and
+   conversion/proxy policy before any paired admission.
 3. Approved upper bounds are now `max_total_usd <= 20.00` and
    `reserve_per_call_usd <= 0.05`; the precise signed Host grant and
    request-size suitability are still **NOT INSTALLED / NOT VERIFIED**.
