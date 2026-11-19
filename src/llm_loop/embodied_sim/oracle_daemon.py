@@ -193,14 +193,23 @@ class OracleDaemon:
                     payload.get("command") or {}, payload.get("run_id", ""), seq, nonce
                 )
                 dest = Path(receipts_dir) / f"{nonce}.receipt.json"
+                temp = Path(receipts_dir) / f".{nonce}.{os.getpid()}.tmp"
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 if hasattr(os, "O_NOFOLLOW"):
                     flags |= os.O_NOFOLLOW
-                # Host-installed directory ACLs restrict nonce visibility.
-                fd = os.open(dest, flags, 0o644)
-                with os.fdopen(fd, "w", encoding="utf-8") as out:
-                    os.fchmod(out.fileno(), 0o644)
-                    out.write(json.dumps(receipt, sort_keys=True) + "\n")
+                # Publish only complete receipts: a client must never read
+                # a partially written final filename under concurrent xdist.
+                try:
+                    fd = os.open(temp, flags, 0o644)
+                    with os.fdopen(fd, "w", encoding="utf-8") as out:
+                        os.fchmod(out.fileno(), 0o644)
+                        out.write(json.dumps(receipt, sort_keys=True) + "\n")
+                        out.flush()
+                        os.fsync(out.fileno())
+                    os.link(temp, dest)  # atomic create-if-absent; no overwrite
+                finally:
+                    with contextlib.suppress(FileNotFoundError):
+                        temp.unlink()
                 count += 1
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 # Malformed/untrusted job cannot terminate the Host daemon.

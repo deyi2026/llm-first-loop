@@ -195,9 +195,8 @@ def _trusted_host_file(path: str, *, owner: int, private_key: bool = False) -> b
         if p.is_symlink() or not p.is_file():
             return False
         st = p.stat()
-        if st.st_uid != owner or st.st_mode & (
-            0o077 if private_key else (stat.S_IWGRP | stat.S_IWOTH)
-        ):
+        forbidden_mode = 0o077 if private_key else (stat.S_IWGRP | stat.S_IWOTH)
+        if st.st_uid != owner or st.st_mode & forbidden_mode:
             return False
         parent = p.parent
         while parent != parent.parent:
