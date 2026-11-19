@@ -20,7 +20,7 @@ from llm_loop.embodied_sim.contract import (
 from llm_loop.embodied_sim.episode import EpisodeBudget, run_episode
 from llm_loop.embodied_sim.oracle import verify_receipt
 from llm_loop.embodied_sim.oracle_worker import ORACLE_EXECUTION_STDIN, judge_from_stdin
-from llm_loop.embodied_sim.policy import FlakyStubProvider, ScriptedStubProvider
+from llm_loop.embodied_sim.policy import FlakyStubProvider, ScriptedStubProvider, build_prompt
 from llm_loop.embodied_sim.skills import EmbodiedInterface
 
 
@@ -106,6 +106,73 @@ def test_duplicate_intent_key_not_double_counted():
     dup_events = [e for e in r["trace"] if e["event"] == "duplicate_intent_key"]
     assert len(dup_events) == 1
     assert r["tool_actions"] == 2  # duplicate did not consume tool budget
+
+
+def test_repeated_completed_move_rejected_and_feedback_reaches_model():
+    iface = _iface()
+    cube = _cube(iface)
+
+    class RecordingProvider(ScriptedStubProvider):
+        def __init__(self):
+            super().__init__([
+                _mv(cube, dz=0.07, key="k1"),
+                _mv(cube, dz=0.07, key="k2"),  # fresh key, same reached target
+                json.dumps({"skill": "stop", "params": {"reason": "hold"},
+                            "intent_key": "k3"}),
+            ])
+            self.states: list[str] = []
+
+        def decide(self, state_text: str) -> str:
+            self.states.append(state_text)
+            return super().decide(state_text)
+
+    provider = RecordingProvider()
+    r = run_episode(iface, provider)
+    assert r["terminated_by"] == "stop_confirmed"
+    assert r["provider_attempts"] == 3
+    assert r["tool_actions"] == iface.tool_action_count == 1
+    assert r["replans"] == 1
+    rejected = [e for e in r["trace"] if e["event"] == "execute_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0]["error"] == "REDUNDANT_MOVE_TARGET"
+    assert "REDUNDANT_MOVE_TARGET" in provider.states[2]
+
+
+def test_redundant_move_never_bypasses_grant_or_stop():
+    iface = _iface()
+    cube = _cube(iface)
+    params = {"x": cube[0], "y": cube[1], "z": cube[2] + 0.07}
+    action = iface.execute_skill("move_to", params, "k1", 1)
+    while action["state"] == "running":
+        iface.advance(60)
+        action = iface.get_action_status(action["action_id"])
+    assert action["state"] == "done"
+    iface.grants.revoke("move_to")
+    from llm_loop.embodied_sim.contract import GrantRevokedError
+    with pytest.raises(GrantRevokedError):
+        iface.execute_skill("move_to", params, "k2", 1)
+    request = iface.stop("safety")
+    iface.confirm_stop(request["stop_id"])
+    assert iface.execute_skill("move_to", params, "k3", 1)["error"] == "STOP_CONFIRMED"
+
+
+def test_observable_grasp_affordance_without_oracle_truth():
+    iface = _iface()
+    cube = _cube(iface)
+    assert "grasp_attempt_ready=no" in build_prompt(iface.observe())
+    for idx, dz in enumerate((0.07, 0.012), 1):
+        action = iface.execute_skill(
+            "move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + dz},
+            intent_key=f"approach{idx}", grant_version=1,
+        )
+        while action["state"] == "running":
+            iface.advance(60)
+            action = iface.get_action_status(action["action_id"])
+        assert action["state"] == "done"
+    prompt = build_prompt(iface.observe())
+    assert "grasp_attempt_ready=yes" in prompt
+    assert "contact_pairs" not in prompt
+    assert "weld_active" not in prompt
 
 
 def test_stop_requires_request_before_confirm():

@@ -39,7 +39,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.6.2"
+BASELINE_VERSION = "M1-baseline-v1.6.3"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -381,8 +381,10 @@ def main() -> int:
                             "wrist_rod<->floor and any arm-body floor contact), per-stage "
                             "attribution and first-contact geometry retained; cube-only filter "
                             "was a P1 calibration gap identified by independent Host QA"),
-        "cold_start_scope_note": ("v1.6.2 includes all 100 initial gravity-settle steps in the "
-                                  "full-trajectory contact gate; earlier receipts start after settle."),
+        "cold_start_scope_note": ("v1.6.2 and v1.6.3 include all 100 initial gravity-settle steps "
+                                  "in the full-trajectory contact gate; earlier receipts start after settle. "
+                                  "v1.6.3 revalidates unchanged physics after Gate C repeated-move "
+                                  "feedback/observable-affordance changes, without tolerance changes."),
         "metadata_correction_disclosure": ("v1.6 (pre-metadata-fix) contained stale v1.2-era "
                                            "scene_revision_reason text; QA read it before this "
                                            "correction, so the original bytes are preserved as "
@@ -433,7 +435,7 @@ def main() -> int:
             r["instrumented_steps_by_stage"].get("cold_start_settle") == 100
             for r in seeds),
     }
-    evidence["independent_oracle"] = "PENDING_ORACLE (uid463 Host acceptance HOLD)"
+    evidence["independent_oracle"] = "PENDING_ORACLE (uid463 Host Worker accepted; trusted signer NOT_INSTALLED)"
     if (all_pass and neg_ok and det_ok and structural_ok
             and evidence["cold_start_contact_gate"]["all_seeds_instrumented"]):
         evidence["verdict"] = "LOCAL_PHYSICS_BASELINE_PASS"

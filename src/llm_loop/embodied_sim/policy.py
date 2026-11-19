@@ -29,9 +29,11 @@ TASK_BRIEF = (
     "counter every time; a repeated key is rejected as a duplicate and wastes "
     "your budget. Typical solution: move_to above the cube, move_to down to the "
     "cube, grasp, move_to above tray-A, release. "
-    "The state line includes tool_cube_delta and aligned: once aligned=yes, "
-    "execute grasp IMMEDIATELY as your next action - do not issue more move_to "
-    "corrections, the ~10mm servo residual is already within grasp tolerance. "
+    "The state includes grasp_attempt_ready, a geometric approach hint (NOT "
+    "proof of fingertip contact or Oracle success). When it is yes after a "
+    "completed down move_to, try grasp next; grasp itself checks real contact. "
+    "A move_to returning done already met servo tolerance: NEVER repeat the "
+    "identical target with a new intent_key; that no-op is rejected. "
     "move_to targets the gripper tool site. grasp closes the fingers (only "
     "succeeds with a real fingertip-cube contact). release opens them. "
     "Approach note: if a previous move_to pushed the cube, use the NEW cube "
@@ -61,11 +63,16 @@ def build_prompt(obs: dict[str, Any], history: list[dict[str, Any]] | None = Non
     cube = o["cube"]["pos"]
     dist = round(sum((t - c) ** 2 for t, c in zip(tool, cube, strict=True)) ** 0.5, 4)
     aligned = "yes" if dist < 0.015 else "no"
+    # Geometry-only approach affordance: uses the SAME public tool/cube pose
+    # available to the model, never Oracle contact pairs or weld truth.
+    approach_ready = ("yes" if abs(tool[0] - cube[0]) < 0.025
+                      and abs(tool[1] - cube[1]) < 0.025
+                      and 0.010 <= tool[2] - cube[2] <= 0.045 else "no")
     return (
         f"state: tool={ [round(v, 4) for v in tool] } "
         f"cube={ [round(v, 4) for v in cube] } "
         f"tool_cube_delta={ [round(t - c, 4) for t, c in zip(tool, cube, strict=True)] } "
-        f"dist={ dist } aligned={ aligned } "
+        f"dist={ dist } aligned={ aligned } grasp_attempt_ready={ approach_ready } "
         f"tray={ [round(v, 4) for v in o['tray_pos']] } "
         f"fingers={ [round(v, 4) for v in o['finger_qpos']] } "
         f"pre_grasp_hint={ [round(v, 4) for v in o.get('pre_grasp_point', [0, 0, 0])] } "

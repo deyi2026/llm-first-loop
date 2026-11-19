@@ -113,8 +113,14 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             break
         if "error" in result:
             trace.append({"event": "execute_rejected", "error": result["error"],
-                          "detail": result})
-            continue  # replan: model sees rejection in next state
+                          "decision": decision, "detail": result})
+            # A rejected action must be visible in the next model observation.
+            # Otherwise the model repeats the same invalid decision indefinitely.
+            history.append({"decision": decision,
+                            "status": {"state": "rejected", "error": result["error"],
+                                       "reason": result.get("reason")}})
+            replans += 1
+            continue
         if result.get("idempotent"):
             trace.append({"event": "duplicate_intent_key", "action_id": result["action_id"]})
             continue

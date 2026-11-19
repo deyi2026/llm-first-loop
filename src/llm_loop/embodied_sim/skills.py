@@ -102,19 +102,34 @@ class EmbodiedInterface:
         action_id, fresh = self.intents.submit(str(intent_key), lambda: self._new_action_id())
         if not fresh:
             return {"action_id": action_id, "state": "duplicate_intent_key", "idempotent": True}
-        self.tool_action_count += 1
-
         if name == "move_to":
             bounds = SCENE_CONSTANTS["workspace_bounds"]
             target = [float(params[k]) for k in ("x", "y", "z")]
             for axis_i, axis in enumerate(("x", "y", "z")):
                 lo, hi = bounds[axis]
                 if not (lo <= target[axis_i] <= hi):
+                    self.tool_action_count += 1
                     self.freeze_unknown("TARGET_OUT_OF_WORKSPACE", {"target": target, "axis": axis})
                     self._actions[action_id] = self._failed_action(action_id, name,
                                                                    "target outside workspace bounds")
                     return {"action_id": action_id, "state": "failed",
                             "reason": "target outside workspace bounds"}
+            previous = next(reversed(self._actions.values()), None)
+            if (previous is not None and previous["skill"] == "move_to"
+                    and previous["state"] == "done"
+                    and previous["target_xyz"] is not None
+                    and all(abs(a - b) < 1e-4 for a, b in
+                            zip(target, previous["target_xyz"], strict=True))):
+                # A new intent key does not justify re-executing a servo target
+                # already accepted as done. This is a no-op guard, NOT a
+                # prescribed next skill or a privileged grasp judgement.
+                reason = "same move_to target already reached within servo tolerance"
+                self._actions[action_id] = self._failed_action(action_id, name, reason)
+                return {"action_id": action_id, "state": "failed",
+                        "error": "REDUNDANT_MOVE_TARGET", "reason": reason}
+        self.tool_action_count += 1
+
+        if name == "move_to":
             obs = self.scene.observe()
             q_target = solve_ik_site(self.scene.model, obs["arm_qpos"], (target[0], target[1], target[2]))
             self._actions[action_id] = {
