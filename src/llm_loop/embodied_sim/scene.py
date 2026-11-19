@@ -48,7 +48,7 @@ _XML_TEMPLATE = """<mujoco model="embodied-m1">
           <body name="link3" pos="0 0 0.14">
             <joint name="elbow" type="hinge" axis="0 1 0" range="-2.4 2.4"/>
             <geom name="l3" type="capsule" fromto="0 0 0 0 0 0.12" size="0.016" rgba="0.3 0.6 1.0 1"/>
-            <geom name="wrist_rod" type="capsule" fromto="0 0 0.12 0 0 0.18" size="0.006" rgba="0.2 0.2 0.2 1"/>
+            <geom name="wrist_rod" type="capsule" fromto="0 0 0.14 0 0 0.18" size="0.004" rgba="0.2 0.2 0.2 1"/>
               <body name="gripper" pos="0 0 0.18">
               <joint name="wrist_roll" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
               <geom name="palm" type="box" size="0.035 0.035 0.012" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>

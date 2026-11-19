@@ -115,6 +115,10 @@ class MuJoCoScene:
             "tray_pos": [float(v) for v in self.data.xpos[tray_id]],
             "n_contacts": int(self.data.ncon),
             "workspace_bounds": dict(SCENE_CONSTANTS["workspace_bounds"]),
+            # pure-geometry approach hint derived from cube pose (no privileged truth):
+            # descending straight down from above avoids pushing the cube sideways.
+            "pre_grasp_point": [float(cube["pos"][0]), float(cube["pos"][1]),
+                                float(cube["pos"][2]) + 0.07],
             # NOTE: no privileged truth here (grasp verdicts live only in Oracle).
         }
 

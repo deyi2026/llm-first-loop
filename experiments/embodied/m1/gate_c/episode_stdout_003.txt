@@ -1,0 +1,36 @@
+{
+  "elapsed_s": 123.288,
+  "local_verdict": {
+    "evidence": {
+      "cube_speed": 0.05921617313916495,
+      "cube_z": 0.02363373747656856,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "ok": false
+  },
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_execution": "in_process_pending_host_uid",
+  "provider_attempts": 6,
+  "replans": 1,
+  "t_stop_provenance": {
+    "backfill_for": "M0 P2 prereg gap; old prereg untouched (frozen sha 56f79674...)",
+    "request_confirm_ms": 0.031,
+    "settle_ms": 1222.0,
+    "settle_steps": 611,
+    "source": "gate_c measured (m1_gate_c_episode.py), timestep=2ms",
+    "stop_confirmation": {
+      "state": "confirmed",
+      "stop_id": "stop-000001"
+    },
+    "stop_request": {
+      "reason": "t_stop provenance measurement",
+      "state": "requested",
+      "stop_id": "stop-000001"
+    },
+    "t_stop_max_ms": 1222.0
+  },
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 5
+}
+EXIT=0
