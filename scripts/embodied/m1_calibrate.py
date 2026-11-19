@@ -39,11 +39,35 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.2-restored"
+BASELINE_VERSION = "M1-baseline-v1.5"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
 EXPECTED_CUBE_PARTNERS = {"fingertip_left", "fingertip_right", "palm", "tray_floor", "floor"}
+
+# v1.5 (TASK-009 QA correction): hard gate now covers ALL unexpected contacts,
+# not only cube-involving pairs. The independent Host QA measurement proved the
+# v1.3 46mm servo stall was wrist_rod<->floor dynamic obstruction (rod-floor:
+# 581 contact steps with cube removed, vs 808 rod-cube + 462 rod-floor steps in
+# the original scene) - the old cube-only filter missed exactly that.
+_EXPECTED_PAIRS = {
+    frozenset(("floor", "cube_geom")),
+    frozenset(("floor", "tray_floor")),
+    frozenset(("floor", "tray_wall_n")),
+    frozenset(("floor", "tray_wall_s")),
+    frozenset(("floor", "tray_wall_w")),
+    frozenset(("cube_geom", "fingertip_left")),
+    frozenset(("cube_geom", "fingertip_right")),
+    frozenset(("cube_geom", "palm")),
+    frozenset(("cube_geom", "tray_floor")),
+    frozenset(("cube_geom", "tray_wall_n")),
+    frozenset(("cube_geom", "tray_wall_s")),
+    frozenset(("cube_geom", "tray_wall_w")),
+}
+
+
+def is_unexpected_contact(g1: str, g2: str) -> bool:
+    return frozenset((g1, g2)) not in _EXPECTED_PAIRS
 
 
 def _run(iface, name, params, key):
@@ -101,8 +125,7 @@ class TrajectoryRecorder:
                 c = scene.data.contact[i]
                 g1 = mujoco.mj_id2name(scene.model, mujoco.mjtObj.mjOBJ_GEOM, int(c.geom1))
                 g2 = mujoco.mj_id2name(scene.model, mujoco.mjtObj.mjOBJ_GEOM, int(c.geom2))
-                if (g1 == "cube_geom" and g2 not in EXPECTED_CUBE_PARTNERS) or (
-                        g2 == "cube_geom" and g1 not in EXPECTED_CUBE_PARTNERS):
+                if is_unexpected_contact(str(g1), str(g2)):
                     key = tuple(sorted((str(g1), str(g2))))
                     self.unexpected_steps[key] = self.unexpected_steps.get(key, 0) + 1
                     per = self.by_stage.setdefault(self.stage, {})
@@ -202,8 +225,7 @@ def run_calibrated_episode(seed: int) -> dict[str, Any]:
         "unexpected_collisions_final_snapshot_only": (
             [
                 [a, b] for a, b, _ in snap["contact_pairs"]
-                if (a == "cube_geom" and b not in EXPECTED_CUBE_PARTNERS)
-                or (b == "cube_geom" and a not in EXPECTED_CUBE_PARTNERS)
+                if is_unexpected_contact(str(a), str(b))
             ] if snap is not None else None),
         "physics_time_s": round(float(scene.data.time), 3),
         "wall_s": round(time.monotonic() - t_wall0, 3),
@@ -339,6 +361,10 @@ def main() -> int:
                                   "collision remains enabled; v1.2 BASELINE_FAIL 0/10 root cause "
                                   "was rod scuffing cube in approach_down then welded into a "
                                   "constant rigid contact"),
+        "hard_gate_scope": ("v1.5: ALL unexpected contacts are hard-gated (including "
+                            "wrist_rod<->floor and any arm-body floor contact), per-stage "
+                            "attribution and first-contact geometry retained; cube-only filter "
+                            "was a P1 calibration gap identified by independent Host QA"),
         "revision_note": ("v1.2: unexpected non-gripper cube contacts promoted to a HARD verdict "
                           "gate (no_unexpected_contacts); per-stage attribution and first-contact "
                           "geometry added. Tolerances and oracle thresholds remain UNCHANGED. "

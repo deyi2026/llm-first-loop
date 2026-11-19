@@ -32,3 +32,29 @@ scene_xml_sha256=f64d0cb0ea84843b0412a6913c8bd3798d19e4b8f98c6385af63457ecea79df
 - BASELINE 未 PASS 前不启动 GLM 新一轮真实 A/B（Gate D），不申请 merge/CI/部署。
 - 沙箱内 git index 写 EPERM：本轮 scene.py 恢复用内容级 sed 完成（与 HEAD 5598fdb2 的 scene.py 内容一致），
   受管 commit 由 Host 执行。
+
+## Independent QA correction (2026-11-19, Host measurement) — supersedes prior root-cause wording
+
+The earlier "IK/joint-limit unreachable" claim in this file was an **inference error** and is
+hereby corrected by independent Host measurements (isolated MuJoCo 4.0.1, seed 7, descent
+target xyz=(0.18000369, 0.00089624, 0.031)):
+
+| Variant | tool err after 600 steps | rod↔cube steps | rod↔floor steps |
+|---|---|---|---|
+| original rod + cube present | 0.008494 m | 808 | 462 |
+| original rod + cube temporarily removed (diagnostic only) | 0.008344 m | 0 | 512 |
+| rear rod (v1.3) + cube present | 0.045564 m | 38 | 581 |
+| rear rod + cube temporarily removed (diagnostic only) | 0.045543 m | 0 | 581 |
+
+Corrected statement: the approach_down target is **kinematically reachable** (pure-IK
+residual ≈ 2.7–3.0 mm; reproduced locally by scripts/embodied/m1_kinematic_probe.py).
+The v1.3 46 mm servo stall is a **dynamic obstruction by wrist_rod↔floor contact**
+(581 steps with/without cube — identical, proving the cube is not the cause).
+The original scene also exhibits heavy rod↔floor contact (462–512 steps). The cube
+relocation rows are a pure diagnostic control (NOT task execution, NOT success).
+
+Calibration hard-gate P1 gap fixed in M1-baseline-v1.5: TrajectoryRecorder now
+hard-gates ALL unexpected contacts (including wrist_rod↔floor and any arm↔floor)
+with per-stage attribution; the previous cube-only filter missed the decisive pair.
+Local read-only probe (m1_kinematic_probe.py) reproduces the Host numbers:
+rod↔floor 460 steps vs Host 462; FK residual 2.99 mm vs Host 2.75 mm.
