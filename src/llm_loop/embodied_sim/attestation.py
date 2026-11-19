@@ -39,7 +39,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from llm_loop.embodied_sim.contract import VerificationStatus
-from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial
+from llm_loop.embodied_sim.trial import TRIAL_EXPERIMENT_IDS, validate_trial
 
 PROD_JOBS_DIR = "/private/var/run/lfl-m1-oracle/jobs"
 PROD_RECEIPTS_DIR = "/private/var/run/lfl-m1-oracle/receipts"
@@ -270,7 +270,7 @@ def _verify_attestation_impl(
         "oracle_impl",
         "evidence",
     }
-    trial_bound = expected_experiment_id == EXPERIMENT_ID
+    trial_bound = expected_experiment_id in TRIAL_EXPERIMENT_IDS
     if trial_bound:
         try:
             if validate_trial(receipt.get("trial")) != validate_trial(expected_trial):

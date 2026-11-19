@@ -1,4 +1,4 @@
-"""Frozen M1-SIM-002 trial identity, never selected by the model/client.
+"""Frozen M1 Host trial identities, never selected by the model/client.
 
 An isolated Host process reads this identity from a root-owned configuration.
 No dynamic skill, seed override, or arbitrary action is exposed over IPC.
@@ -10,6 +10,8 @@ from __future__ import annotations
 from typing import Any
 
 EXPERIMENT_ID = "M1-SIM-002"
+DEEPSEEK_EXPERIMENT_ID = "M1-SIM-003"
+TRIAL_EXPERIMENT_IDS = frozenset({EXPERIMENT_ID, DEEPSEEK_EXPERIMENT_ID})
 CONFIG_SCHEMA = "lfl.m1-oracle-host-trial/v1"
 PAIRED_SEED_START = 20261117
 PAIRED_TRIALS = 30
@@ -37,6 +39,7 @@ def validate_trial(trial: Any) -> dict[str, Any]:
 def validate_host_config(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict) or set(data) != {"schema", "experiment_id", "trial"}:
         raise ValueError("Host trial configuration has unknown/missing fields")
-    if data["schema"] != CONFIG_SCHEMA or data["experiment_id"] != EXPERIMENT_ID:
+    if (data["schema"] != CONFIG_SCHEMA
+            or data["experiment_id"] not in TRIAL_EXPERIMENT_IDS):
         raise ValueError("Host trial schema or experiment identity mismatch")
     return validate_trial(data["trial"])

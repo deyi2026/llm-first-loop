@@ -33,7 +33,7 @@ from llm_loop.embodied_sim.attestation import (
 )
 from llm_loop.embodied_sim.contract import VerificationStatus
 from llm_loop.embodied_sim.oracle_daemon import PROD_PRIVATE_KEY_PATH, OracleDaemon
-from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial
+from llm_loop.embodied_sim.trial import TRIAL_EXPERIMENT_IDS, validate_trial
 
 PROD_VERIFY_JOBS_DIR = "/private/var/run/lfl-m1-oracle/verify-jobs"
 PROD_VERIFY_RECEIPTS_DIR = "/private/var/run/lfl-m1-oracle/verify-receipts"
@@ -183,7 +183,7 @@ def request_host_verification(
             binding["expected_trial"] = validate_trial(expected_trial)
         except (ValueError, TypeError) as exc:
             raise AttestationUnavailableError(f"invalid Host trial binding: {exc}") from None
-    elif expected_experiment_id == EXPERIMENT_ID:
+    elif expected_experiment_id in TRIAL_EXPERIMENT_IDS:
         raise AttestationUnavailableError("new Host experiment requires trial binding")
     request_nonce = secrets.token_hex(16)
     job = {"request_nonce": request_nonce, "receipt": receipt, **binding}

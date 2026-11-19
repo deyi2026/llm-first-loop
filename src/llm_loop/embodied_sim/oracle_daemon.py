@@ -35,7 +35,7 @@ from llm_loop.embodied_sim.attestation import (
 )
 from llm_loop.embodied_sim.oracle import judge_grasp, judge_place
 from llm_loop.embodied_sim.skills import EmbodiedInterface
-from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial
+from llm_loop.embodied_sim.trial import EXPERIMENT_ID, TRIAL_EXPERIMENT_IDS, validate_trial
 
 
 class DaemonUnavailableError(Exception):
@@ -61,7 +61,7 @@ class OracleDaemon:
         self.scene = iface.scene
         self.run_id = str(run_id)
         if (trial is None and experiment_id != "M1-SIM-001") or (
-            trial is not None and experiment_id != EXPERIMENT_ID
+            trial is not None and experiment_id not in TRIAL_EXPERIMENT_IDS
         ):
             raise ValueError("trial binding and experiment identity disagree")
         self.trial = validate_trial(trial) if trial is not None else None
@@ -254,6 +254,7 @@ class OracleDaemon:
 def build_daemon_from_scene_seed(
     seed: int, run_id: str, private_key_path: str,
     trial: dict[str, Any] | None = None,
+    experiment_id: str | None = None,
 ) -> OracleDaemon:
     """Host-side bootstrap helper: the daemon constructs its OWN interface.
 
@@ -269,6 +270,7 @@ def build_daemon_from_scene_seed(
     iface = EmbodiedInterface(scene)
     return OracleDaemon(
         iface, run_id=run_id, private_key_path=private_key_path,
-        experiment_id=EXPERIMENT_ID if trial is not None else "M1-SIM-001",
+        experiment_id=(experiment_id or EXPERIMENT_ID) if trial is not None
+        else "M1-SIM-001",
         trial=trial,
     )

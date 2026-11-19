@@ -107,6 +107,61 @@ def test_paired_provider_requires_separate_standard_api_key(monkeypatch):
     assert gate.reserved == 0
 
 
+def _deepseek_provider(monkeypatch, *, gate=None, base_url="https://api.deepseek.com/v1"):
+    class Registry:
+        def resolve(self, _ref):
+            return "deepseek", "deepseek-v4-flash"
+
+        def client_params(self, _pid, _mid):
+            return {"model": "deepseek-v4-flash", "api_key": "deepseek-test-only",
+                    "base_url": base_url}
+
+    monkeypatch.setattr(gate_c, "load_settings", lambda: object())
+    monkeypatch.setattr(gate_c, "load_registry", lambda _settings: Registry())
+    return gate_c.GLMHttpProvider(model_ref=gate_c.DEEPSEEK_MODEL_REF, cost_gate=gate)
+
+
+def test_deepseek_route_and_effective_response_model_are_pinned(monkeypatch):
+    with pytest.raises(PairedCostHold, match="DEEPSEEK_ROUTE_OR_MODEL_UNTRUSTED"):
+        _deepseek_provider(monkeypatch, base_url="https://untrusted.example/v1")
+    provider = _deepseek_provider(monkeypatch)
+    assert provider.model_used == "deepseek/deepseek-v4-flash"
+    body = {"model": "deepseek-flash",
+            "choices": [{"message": {"content": '{"skill":"stop"}'},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 37, "completion_tokens": 13,
+                      "total_tokens": 50, "prompt_cache_hit_tokens": 0}}
+    def fake_post(url, **kwargs):
+        assert url == "https://api.deepseek.com/v1/chat/completions"
+        assert kwargs["json"]["model"] == "deepseek-v4-flash"
+        return SimpleNamespace(status_code=200, json=lambda: body)
+
+    monkeypatch.setattr(gate_c.httpx, "post", fake_post)
+    assert provider.decide("public observation") == '{"skill":"stop"}'
+    assert provider.calls[0]["response_model"] == "deepseek-flash"
+    assert provider.calls[0]["total_tokens"] == 50
+    assert "deepseek-test-only" not in str(provider.calls)
+
+
+def test_deepseek_alias_drift_and_oversized_input_fail_closed(monkeypatch):
+    gate = _FakeCostGate()
+    provider = _deepseek_provider(monkeypatch, gate=gate)
+    with pytest.raises(PairedCostHold, match="PAIRED_INPUT_TOO_LARGE"):
+        provider.decide("x" * 21_000)
+    assert gate.reserved == 0
+    body = {"model": "deepseek-v4-pro",
+            "choices": [{"message": {"content": "wrong model"},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 37, "completion_tokens": 13,
+                      "total_tokens": 50}}
+    monkeypatch.setattr(gate_c.httpx, "post",
+                        lambda *_a, **_kw: SimpleNamespace(status_code=200,
+                                                          json=lambda: body))
+    with pytest.raises(PairedCostHold, match="DEEPSEEK_RESPONSE_MODEL_MISMATCH"):
+        provider.decide("public observation")
+    assert gate.reserved == 1 and gate.unknown == 1 and gate.settled == 0
+
+
 def test_real_provider_records_response_usage_without_raw_request(monkeypatch):
     body = {"choices": [{"message": {"content": '{"skill":"stop"}'},
                          "finish_reason": "stop"}],

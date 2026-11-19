@@ -31,7 +31,7 @@ from m1_gate_c_host_episode import (
 )
 
 from llm_loop.embodied_sim.attestation import AttestationUnavailableError
-from llm_loop.embodied_sim.trial import EXPERIMENT_ID
+from llm_loop.embodied_sim.trial import DEEPSEEK_EXPERIMENT_ID, TRIAL_EXPERIMENT_IDS
 from llm_loop.embodied_sim.usage import summarize_usage
 
 DIAGNOSTIC_LIFT_HINT = (
@@ -46,7 +46,7 @@ DIAGNOSTIC_LIFT_HINT = (
 def validate_probe_trial(run: dict[str, Any]) -> str:
     validate_run_identity(run)
     trial = run.get("trial")
-    if (run["experiment_id"] != EXPERIMENT_ID
+    if (run["experiment_id"] not in TRIAL_EXPERIMENT_IDS
             or not isinstance(trial, dict)
             or trial.get("phase") != "smoke"
             or trial.get("arm") not in ("B1", "B2")):
@@ -117,16 +117,18 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"status": "HOLD", "reason": str(exc)}))
         return 2
     trial = run["trial"]
-    path = ROOT / "experiments/embodied/m1/m1-sim-002" / (
+    path = ROOT / "experiments/embodied/m1" / run["experiment_id"].lower() / (
         f"l3_probe_{trial['phase']}_{arm}_{trial['trial_index']:02d}_{run['run_id']}.json")
     if path.exists() or path.is_symlink():
         print(json.dumps({"status": "HOLD", "reason": "diagnostic evidence already exists"}))
         return 2
 
     try:
-        from m1_gate_c_episode import GLMHttpProvider
-        live = GLMHttpProvider()
-        if live.model_used != "glm/glm-5.3-flash":
+        from m1_gate_c_episode import DEEPSEEK_MODEL_REF, GLMHttpProvider
+        model_ref = (DEEPSEEK_MODEL_REF if run["experiment_id"] == DEEPSEEK_EXPERIMENT_ID
+                     else "glm/glm-5.3-flash")
+        live = GLMHttpProvider(model_ref=model_ref)
+        if live.model_used != model_ref:
             raise ValueError("wrong live model identity")
     except Exception as exc:
         print(json.dumps({"status": "HOLD",

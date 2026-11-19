@@ -161,6 +161,15 @@ def test_v2_client_rejects_missing_or_changed_seed():
         host_episode.assert_runtime_binding(_observe_receipt(RUN_ID, 9, 0.2), run_id=RUN_ID, seq=6, expected_kind="observe")
 
 
+def test_deepseek_run_identity_requires_trial_and_preserves_glm_history():
+    run = {**RUN, "experiment_id": "M1-SIM-003", "pid": 123, "trial": TRIAL}
+    assert host_episode.validate_run_identity(run)["experiment_id"] == "M1-SIM-003"
+    with pytest.raises(host_episode.HostLinkError, match="trial"):
+        host_episode.validate_run_identity({**run, "trial": {**TRIAL, "seed": 8}})
+    assert host_episode.validate_run_identity(
+        {**run, "experiment_id": "M1-SIM-002"})["experiment_id"] == "M1-SIM-002"
+
+
 def test_fresh_precheck_uses_init_baseline_not_t_zero(wired):
     link = host_episode.HostOracleLink(RUN)
     ok = host_episode.fresh_precheck(link)  # t=0.2 == deterministic init baseline
@@ -284,7 +293,7 @@ def test_paired_cost_hold_never_dispatches_a_tool_or_retries_provider(wired):
 
 def test_paired_main_blocks_before_provider_without_root_grant(
         wired, monkeypatch, capsys):
-    run = {**RUN, "experiment_id": "M1-SIM-002", "pid": 123,
+    run = {**RUN, "experiment_id": "M1-SIM-003", "pid": 123,
            "trial": {"phase": "paired", "arm": "B2", "trial_index": 0,
                      "seed": 20261117}}
     monkeypatch.setattr(host_episode, "load_run_identity", lambda: run)

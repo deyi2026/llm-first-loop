@@ -24,10 +24,10 @@ def _plan(tmp_path: Path) -> dict:
     return {
         "schema": "lfl.m1-paired-cost-grant/v1",
         "batch_id": "a" * 32,
-        "experiment_id": "M1-SIM-002",
+        "experiment_id": "M1-SIM-003",
         "prereg_sha256": "b" * 64,
         "candidate_sha": "c" * 40,
-        "model": "glm/glm-5.3-flash",
+        "model": "deepseek/deepseek-v4-flash",
         "currency": "USD",
         "max_episodes": 60,
         "max_provider_attempts": 360,
@@ -55,15 +55,15 @@ def test_valid_plan_requires_exact_frozen_limits_and_tariff(tmp_path):
     assert Decimal("0.05") == CALL_RESERVE_USD_LIMIT
     assert validate_plan(
         {**plan, "max_total_usd": "20.00", "reserve_per_call_usd": "0.05",
-         "input_per_million_usd": "0.15", "output_per_million_usd": "0.50"},
+         "input_per_million_usd": "0.30", "output_per_million_usd": "1.20"},
         prereg_sha="b" * 64, candidate_sha="c" * 40,
     )
     for key, bad in (("model", "another"), ("max_episodes", 61),
                      ("max_provider_attempts", 361), ("max_tool_actions", 481),
                      ("max_total_usd", "NaN"), ("input_per_million_usd", "NaN"),
                      ("max_total_usd", "20.01"), ("reserve_per_call_usd", "0.05000001"),
-                     ("input_per_million_usd", "0.149"),
-                     ("output_per_million_usd", "0.499"),
+                     ("input_per_million_usd", "0.299"),
+                     ("output_per_million_usd", "1.199"),
                      ("pricing_source", ""), ("candidate_sha", "d" * 40)):
         changed = {**plan, key: bad}
         with pytest.raises(PairedCostHold):

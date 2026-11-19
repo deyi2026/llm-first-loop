@@ -58,7 +58,7 @@ def _bootstrap() -> None:
     sys.path.insert(0, str(SRC))
 
 
-def _load_trial() -> dict:
+def _load_trial_config() -> dict:
     """Read a bounded root-owned config; client queues cannot choose seeds."""
     from llm_loop.embodied_sim.trial import validate_host_config
 
@@ -71,7 +71,14 @@ def _load_trial() -> dict:
                 or stat.S_IMODE(info.st_mode) != 0o644 or info.st_nlink != 1
                 or not 0 < info.st_size <= 512):
             raise RuntimeError("Host trial configuration ownership/mode/size invalid")
-        return validate_host_config(json.loads(inp.read(513)))
+        config = json.loads(inp.read(513))
+        validate_host_config(config)
+        return config
+
+
+def _load_trial() -> dict:
+    """Compatibility entrypoint for old Host config negative tests."""
+    return _load_trial_config()["trial"]
 
 
 def _write_key(path: Path, raw: bytes, uid: int, mode: int) -> None:
@@ -160,9 +167,8 @@ def _check_host_state() -> None:
             raise RuntimeError(f"Host queue ownership/mode mismatch: {name}")
 
 
-def _publish_run_info(run_id: str, scene_epoch: int, trial: dict) -> None:
-    from llm_loop.embodied_sim.trial import EXPERIMENT_ID
-
+def _publish_run_info(run_id: str, scene_epoch: int, trial: dict,
+                      experiment_id: str) -> None:
     directory = QUEUE_ROOT / "runtime"
     if not _trusted(directory, uid=463, directory=True):
         raise RuntimeError("untrusted runtime metadata directory")
@@ -177,7 +183,7 @@ def _publish_run_info(run_id: str, scene_epoch: int, trial: dict) -> None:
                 {
                     "run_id": run_id,
                     "scene_epoch": scene_epoch,
-                    "experiment_id": EXPERIMENT_ID,
+                    "experiment_id": experiment_id,
                     "pid": os.getpid(),
                     "trial": trial,
                 },
@@ -195,11 +201,14 @@ def _run(*, serve: bool) -> int:
     from llm_loop.embodied_sim.attestation import ReplayLedger
     from llm_loop.embodied_sim.host_bridge import process_verification_jobs
     from llm_loop.embodied_sim.oracle_daemon import build_daemon_from_scene_seed
-    from llm_loop.embodied_sim.trial import EXPERIMENT_ID
 
-    trial = _load_trial()
+    config = _load_trial_config()
+    trial = config["trial"]
+    experiment_id = config["experiment_id"]
     run_id = secrets.token_hex(16)
-    daemon = build_daemon_from_scene_seed(trial["seed"], run_id, str(PRIVATE), trial=trial)
+    daemon = build_daemon_from_scene_seed(
+        trial["seed"], run_id, str(PRIVATE), trial=trial,
+        experiment_id=experiment_id)
     ledger = ReplayLedger(STATE_ROOT / "verified-nonces.sqlite3")
     if not serve:
         print(
@@ -208,7 +217,7 @@ def _run(*, serve: bool) -> int:
                     "HOST_ORACLE_PROBE": "PASS",
                     "uid": os.getuid(),
                     "scene_epoch": daemon.scene.scene_epoch,
-                    "experiment_id": EXPERIMENT_ID,
+                    "experiment_id": experiment_id,
                     "trial": trial,
                     "public_sha256": hashlib.sha256(
                         bytes.fromhex(daemon.public_key_hex)
@@ -218,7 +227,7 @@ def _run(*, serve: bool) -> int:
             )
         )
         return 0
-    _publish_run_info(run_id, daemon.scene.scene_epoch, trial)
+    _publish_run_info(run_id, daemon.scene.scene_epoch, trial, experiment_id)
     while True:
         daemon.process_pending(str(QUEUE_ROOT / "jobs"), str(QUEUE_ROOT / "receipts"))
         process_verification_jobs(

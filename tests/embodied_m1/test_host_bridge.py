@@ -334,6 +334,32 @@ def test_v2_signed_trial_binding_positive_and_replay(host):
         pubkey_path=str(public)) == VerificationStatus.FAILED_CLAIM
 
 
+def test_deepseek_experiment_host_signature_cannot_be_reused_as_glm(host):
+    key, legacy, ledger, public, jobs, receipts = host
+    trial = {"phase": "smoke", "arm": "B2", "trial_index": 5, "seed": 5}
+    daemon = oracle_daemon.build_daemon_from_scene_seed(
+        5, "run-A", legacy._key_path, trial=trial, experiment_id="M1-SIM-003")
+    assert daemon.experiment_id == "M1-SIM-003"
+    new_host = (key, daemon, ledger, public, jobs, receipts)
+    nonce = "1" * 32
+    core = {k: v for k, v in _signed_receipt(key, nonce).items() if k != "signature"}
+    core.update(experiment_id="M1-SIM-003", trial=trial)
+    signed = {**core, "signature": key.sign(attestation.canonical(core)).hex()}
+    wrong = {**_binding(nonce), "expected_experiment_id": "M1-SIM-002",
+             "expected_trial": trial}
+    rejected = _process(new_host, signed, wrong, "2" * 32)
+    assert host_bridge.verify_host_response(
+        rejected, request_nonce="2" * 32, receipt=signed, binding=wrong,
+        pubkey_path=str(public)) == VerificationStatus.FAILED_CLAIM
+    assert not ledger.seen(nonce)
+    correct = {**wrong, "expected_experiment_id": "M1-SIM-003"}
+    accepted = _process(new_host, signed, correct, "3" * 32)
+    assert host_bridge.verify_host_response(
+        accepted, request_nonce="3" * 32, receipt=signed, binding=correct,
+        pubkey_path=str(public)) == VerificationStatus.VERIFIED_BY_ORACLE
+    assert ledger.seen(nonce)
+
+
 @pytest.mark.parametrize("mutation", ["wrong_arm", "wrong_seed", "forged_receipt"])
 def test_v2_trial_tampering_never_consumes_nonce(host, mutation):
     key, legacy, ledger, public, jobs, receipts = host

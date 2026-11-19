@@ -19,6 +19,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -37,6 +38,8 @@ from llm_loop.llm.providers import load_registry  # noqa: E402
 OUT = ROOT / ("experiments/embodied/m1/gate_c/" + (sys.argv[1] if len(sys.argv) > 1
                else "episode_glm_002.json"))
 MODEL_REF = "glm/glm-5.3-flash"
+DEEPSEEK_MODEL_REF = "deepseek/deepseek-v4-flash"
+DEEPSEEK_RESPONSE_MODEL = "deepseek-flash"
 DECISION_MAX_TOKENS = 4096  # engineering iteration after 008 empty content/finish=length
 
 
@@ -58,7 +61,14 @@ class GLMHttpProvider:
         self._base_url = str(params["base_url"]).rstrip("/")
         self._timeout_s = timeout_s
         self._cost_gate = cost_gate
-        if cost_gate is not None:
+        if model_ref == DEEPSEEK_MODEL_REF:
+            url = urlsplit(self._base_url)
+            if (self.model_used != DEEPSEEK_MODEL_REF
+                    or self.wire_model != "deepseek-v4-flash"
+                    or url.scheme != "https" or url.hostname != "api.deepseek.com"
+                    or url.path not in ("", "/v1") or not self._api_key.strip()):
+                raise PairedCostHold("DEEPSEEK_ROUTE_OR_MODEL_UNTRUSTED")
+        elif cost_gate is not None:
             # Coding Plan is restricted to eligible coding tools. These paired
             # robot simulations use a separately provisioned standard API key;
             # never mutate the shared LFL registry or consume Coding quota.
@@ -75,6 +85,8 @@ class GLMHttpProvider:
         self.calls: list[dict[str, Any]] = []
 
     def decide(self, state_text: str) -> str:
+        if self._cost_gate is not None and len(TASK_BRIEF) + len(state_text) > 20_000:
+            raise PairedCostHold("PAIRED_INPUT_TOO_LARGE")
         payload = {
             "model": self.wire_model,
             "messages": [
@@ -118,8 +130,21 @@ class GLMHttpProvider:
                     raise PairedCostHold("PROVIDER_RESPONSE_BILLING_UNKNOWN",
                                          provider_attempted=True) from exc
                 raise
+            response_model = body.get("model")
+            if (self.model_used == DEEPSEEK_MODEL_REF
+                    and response_model != DEEPSEEK_RESPONSE_MODEL):
+                self.calls.append({"latency_ms": latency_ms, "status": 200,
+                                   "response_model": str(response_model)[:80],
+                                   "model_identity": "mismatch", **extract_usage(body.get("usage"))})
+                if reservation is not None:
+                    assert gate is not None
+                    gate.mark_unknown(reservation)
+                    raise PairedCostHold("DEEPSEEK_RESPONSE_MODEL_MISMATCH",
+                                         provider_attempted=True)
+                raise RuntimeError("DeepSeek response model differs from preregistered alias")
             self.calls.append({"latency_ms": latency_ms, "status": 200,
                                "finish_reason": finish,
+                               "response_model": str(response_model)[:80],
                                "content_len": len(content),
                                "content_head": content[:300],
                                **extract_usage(body.get("usage"))})

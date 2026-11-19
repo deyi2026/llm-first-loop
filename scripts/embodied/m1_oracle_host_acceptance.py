@@ -26,7 +26,7 @@ from llm_loop.embodied_sim.attestation import (  # noqa: E402
 )
 from llm_loop.embodied_sim.contract import VerificationStatus  # noqa: E402
 from llm_loop.embodied_sim.host_bridge import request_host_verification  # noqa: E402
-from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial  # noqa: E402
+from llm_loop.embodied_sim.trial import TRIAL_EXPERIMENT_IDS, validate_trial  # noqa: E402
 
 RUN_INFO = Path("/private/var/run/lfl-m1-oracle/runtime/run.json")
 PRIVATE = Path("/usr/local/etc/lfl-m1-oracle-ed25519.key")
@@ -79,7 +79,7 @@ def _verify(receipt: dict, nonce: str, run: dict, seq: int, **overrides: Any):
         "expected_experiment_id": run["experiment_id"],
         "expected_claim_kind": "grasp",
     }
-    if run["experiment_id"] == EXPERIMENT_ID:
+    if run["experiment_id"] in TRIAL_EXPERIMENT_IDS:
         binding["expected_trial"] = run["trial"]
     binding.update(overrides)
     return request_host_verification(receipt, **binding, timeout_s=30)
@@ -89,12 +89,12 @@ def run() -> dict:
     _assert_isolation()
     run = json.loads(RUN_INFO.read_text(encoding="utf-8"))
     run_id = run["run_id"]
-    if len(run_id) != 32 or run["experiment_id"] not in ("M1-SIM-001", EXPERIMENT_ID):
+    if len(run_id) != 32 or run["experiment_id"] not in ("M1-SIM-001", *TRIAL_EXPERIMENT_IDS):
         raise RuntimeError("invalid Host run identity")
-    if run["experiment_id"] == EXPERIMENT_ID:
+    if run["experiment_id"] in TRIAL_EXPERIMENT_IDS:
         validate_trial(run.get("trial"))
     _, obs = _run_command({"skill": "observe"}, run_id, 0)
-    if run["experiment_id"] == EXPERIMENT_ID and obs.get("trial") != run["trial"]:
+    if run["experiment_id"] in TRIAL_EXPERIMENT_IDS and obs.get("trial") != run["trial"]:
         raise RuntimeError("Host observation trial binding mismatch")
     cube = obs["observation"]["cube"]["pos"]
     seq = 0
@@ -124,7 +124,7 @@ def run() -> dict:
     negatives["wrong_experiment"] = _verify(
         receipt, nonce, run, seq, expected_experiment_id="wrong-experiment"
     )
-    if run["experiment_id"] == EXPERIMENT_ID:
+    if run["experiment_id"] in TRIAL_EXPERIMENT_IDS:
         other_arm = "B1" if run["trial"]["arm"] == "B2" else "B2"
         negatives["wrong_trial_arm"] = _verify(
             receipt, nonce, run, seq,
@@ -192,7 +192,7 @@ def run() -> dict:
         "negative_tests": {k: v.value for k, v in negatives.items()},
         "model_autonomy": "NOT_TESTED (deterministic infrastructure probe)",
     }
-    if run["experiment_id"] == EXPERIMENT_ID:
+    if run["experiment_id"] in TRIAL_EXPERIMENT_IDS:
         result["trial"] = run["trial"]
     return result
 

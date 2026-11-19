@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Root-staged, manifest-pinned M1-only Host v1->v2 upgrade and trial switch.
+"""Root-staged, manifest-pinned M1-only Host upgrade, refresh and trial switch.
 
 Never run from a user-writable worktree as root. No new key, ledger, sudoers,
 robot, or existing LFL Web/Feishu/Learning/WeCom service is touched.
@@ -40,11 +40,13 @@ PAIRED_GRANT = Path("/usr/local/etc/lfl-m1-paired-grant.json")
 PAIRED_LEDGER_DIR = Path("/usr/local/var/lfl-m1-paired-budget")
 PAIRED_LEDGER = PAIRED_LEDGER_DIR / "m1-paired-cost-ledger.jsonl"
 PAIRED_ISSUED = Path("/usr/local/etc/lfl-m1-paired-issued.jsonl")
-PREREG_SHA256 = "e4aefedd413874c547c6ab01aebb8c2019491b07b1a887bf7266621fa0c1b5ae"
+PREREG_SHA256 = "d77a2550b17c71630bee1bdaddaf733cc240ac3bb67c662837d4f5f3b3f163d6"
+PAIRED_EXPERIMENT = "M1-SIM-003"
+PAIRED_MODEL = "deepseek/deepseek-v4-flash"
 BATCH_USD_LIMIT = Decimal("20.00")
 CALL_RESERVE_USD_LIMIT = Decimal("0.05")
-MIN_INPUT_PER_MILLION_USD = Decimal("0.15")
-MIN_OUTPUT_PER_MILLION_USD = Decimal("0.50")
+MIN_INPUT_PER_MILLION_USD = Decimal("0.30")
+MIN_OUTPUT_PER_MILLION_USD = Decimal("1.20")
 BATCH_REQUIRED = frozenset({
     "schema", "batch_id", "experiment_id", "prereg_sha256", "candidate_sha",
     "model", "currency", "max_episodes", "max_provider_attempts",
@@ -59,8 +61,8 @@ def _validate_batch_plan(plan: dict, *, now: datetime | None = None) -> None:
     if not isinstance(plan, dict) or set(plan) != BATCH_REQUIRED:
         raise RuntimeError("paired grant fields mismatch")
     if (plan["schema"] != "lfl.m1-paired-cost-grant/v1"
-            or plan["experiment_id"] != "M1-SIM-002"
-            or plan["model"] != "glm/glm-5.3-flash"
+            or plan["experiment_id"] != PAIRED_EXPERIMENT
+            or plan["model"] != PAIRED_MODEL
             or plan["currency"] != "USD"
             or plan["prereg_sha256"] != PREREG_SHA256
             or re.fullmatch(r"[0-9a-f]{40}", str(plan["candidate_sha"])) is None
@@ -159,23 +161,26 @@ def _manifest(bundle: Path, expected_sha: str) -> dict:
     return info
 
 
-def _config(phase: str, arm: str, index: int) -> tuple[dict, bytes]:
+def _config(phase: str, arm: str, index: int,
+            experiment_id: str = "M1-SIM-002") -> tuple[dict, bytes]:
     # The installed Host validates the SAME frozen rules independently.
     if phase not in ("smoke", "paired") or arm not in ("B1", "B2"):
         raise RuntimeError("unknown experiment phase or comparison arm")
+    if experiment_id not in ("M1-SIM-002", PAIRED_EXPERIMENT):
+        raise RuntimeError("unknown frozen experiment identity")
     count, start = (10, 0) if phase == "smoke" else (30, 20261117)
     if type(index) is not int or not 0 <= index < count:
         raise RuntimeError("trial index outside frozen range")
     trial = {"phase": phase, "arm": arm, "trial_index": index, "seed": start + index}
     payload = {"schema": "lfl.m1-oracle-host-trial/v1",
-               "experiment_id": "M1-SIM-002", "trial": trial}
+               "experiment_id": experiment_id, "trial": trial}
     return trial, (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 def _authorize_batch(expected_run: str, plan_path: Path, expected_sha: str) -> dict:
     """Separate administrator action: stage one root-owned 60-episode grant."""
     _root_stage()
-    current = _current(expected_run, experiment="M1-SIM-002")
+    current = _current(expected_run, experiment=PAIRED_EXPERIMENT)
     if current.get("trial", {}).get("phase") != "smoke":
         raise RuntimeError("batch authorization requires an idle smoke Host")
     if (plan_path.parent != STAGE or not _trusted(plan_path)
@@ -223,7 +228,7 @@ def _authorize_batch(expected_run: str, plan_path: Path, expected_sha: str) -> d
 def _paired_issue(expected_run: str, trial: dict):
     """Root-only, non-replayable paired trial issuance; failure consumes identity."""
     _root_stage()
-    _current(expected_run, experiment="M1-SIM-002")
+    _current(expected_run, experiment=PAIRED_EXPERIMENT)
     if (trial.get("phase") != "paired" or trial.get("arm") not in ("B1", "B2")
             or type(trial.get("trial_index")) is not int
             or not 0 <= trial["trial_index"] < 30
@@ -343,14 +348,16 @@ def _launch(*args: str) -> None:
     subprocess.run(["/bin/launchctl", *args], check=True, timeout=25)
 
 
-def _health(previous_run: str, trial: dict | None, target: Path) -> dict:
+def _health(previous_run: str, trial: dict | None, target: Path,
+            experiment_id: str | None = None) -> dict:
     for _ in range(40):
         try:
             if not _trusted(RUN_INFO, owner=463):
                 raise RuntimeError("UID463 run file missing")
             info = json.loads(RUN_INFO.read_text())
+            expected_experiment = experiment_id or ("M1-SIM-002" if trial else "M1-SIM-001")
             if (info.get("run_id") == previous_run or info.get("trial") != trial
-                    or info.get("experiment_id") != ("M1-SIM-002" if trial else "M1-SIM-001")
+                    or info.get("experiment_id") != expected_experiment
                     or type(info.get("scene_epoch")) is not int or info["scene_epoch"] != 1):
                 raise RuntimeError("Host run identity not yet refreshed")
             proc = subprocess.run(["/bin/ps", "-p", str(info["pid"]), "-o", "uid=", "-o", "command="],
@@ -415,29 +422,102 @@ def _upgrade(bundle: Path, sha: str, expected_run: str, trial: dict, config: byt
             "public_key_sha256": public_sha, "rollback_plist": str(backup)}
 
 
+def _refresh_bundle(bundle: Path, sha: str, expected_run: str,
+                    trial: dict, config: bytes) -> dict:
+    """One Host-only v2 refresh from GLM smoke to DeepSeek smoke, with rollback."""
+    _root_stage()
+    if (json.loads(config)["experiment_id"] != PAIRED_EXPERIMENT
+            or trial["phase"] != "smoke"):
+        raise RuntimeError("Host refresh requires M1-SIM-003 engineering smoke only")
+    old = _current(expected_run, experiment="M1-SIM-002")
+    if old.get("trial", {}).get("phase") != "smoke" or not _trusted(TRIAL_CONFIG):
+        raise RuntimeError("Host refresh requires trusted idle M1-SIM-002 smoke")
+    plist, original_plist = _plist()
+    old_target = Path(plist["WorkingDirectory"])
+    if (old_target.parent != ROOT or not old_target.name.startswith("lfl-m1-oracle-v2-")
+            or not _trusted(old_target, directory=True)
+            or str(old_target / "m1_oracle_host_service.py") not in plist["ProgramArguments"]):
+        raise RuntimeError("Host refresh requires trusted installed v2")
+    old_config = TRIAL_CONFIG.read_bytes()
+    if json.loads(old_config) != {"schema": "lfl.m1-oracle-host-trial/v1",
+                                  "experiment_id": "M1-SIM-002", "trial": old["trial"]}:
+        raise RuntimeError("active Host config mismatch before refresh")
+    if any(p.exists() or p.is_symlink() for p in (PAIRED_GRANT, PAIRED_ISSUED, PAIRED_LEDGER)):
+        raise RuntimeError("Host refresh refuses existing paired grant/ledger")
+    _manifest(bundle, sha)
+    backup = STAGE / "old-v2.plist"
+    if backup.exists() or backup.is_symlink():
+        raise RuntimeError("Host refresh backup already exists")
+    public_sha = hashlib.sha256(PUBLIC.read_bytes()).hexdigest()
+    target = _install(bundle, sha)
+    _atomic(backup, original_plist, 0o600)
+    _atomic(TRIAL_CONFIG, config)
+    try:
+        probe = subprocess.run([
+            "/usr/bin/sudo", "-n", "-u", "_lfl_oracle", "/usr/bin/sandbox-exec",
+            "-f", str(target / "oracle.sb"), str(target / "runtime/bin/python3.13"),
+            "-I", "-S", "-B", str(target / "m1_oracle_host_service.py"), "--probe",
+        ], capture_output=True, text=True, timeout=45,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/var/empty"})
+        result = json.loads(probe.stdout) if probe.returncode == 0 else {}
+        if (probe.returncode or result.get("uid") != 463
+                or result.get("trial") != trial
+                or result.get("experiment_id") != PAIRED_EXPERIMENT):
+            raise RuntimeError("new DeepSeek UID463 Seatbelt Host probe failed")
+    except BaseException:
+        _atomic(TRIAL_CONFIG, old_config)
+        raise
+    try:
+        _launch("bootout", f"system/{LABEL}")
+        _atomic(PLIST, _new_plist(plist, target))
+        _launch("bootstrap", "system", str(PLIST))
+        new = _health(expected_run, trial, target, PAIRED_EXPERIMENT)
+        if (new["pid"] == old["pid"]
+                or hashlib.sha256(PUBLIC.read_bytes()).hexdigest() != public_sha):
+            raise RuntimeError("Host refresh PID or public-key verification failed")
+    except BaseException:
+        subprocess.run(["/bin/launchctl", "bootout", f"system/{LABEL}"], capture_output=True)
+        _atomic(PLIST, original_plist)
+        _atomic(TRIAL_CONFIG, old_config)
+        _launch("bootstrap", "system", str(PLIST))
+        _health(expected_run, old["trial"], old_target, "M1-SIM-002")
+        raise
+    return {"HOST_REFRESH": "PASS", "old_run": old["run_id"],
+            "new_run": new["run_id"], "uid": 463,
+            "experiment_id": PAIRED_EXPERIMENT, "trial": trial,
+            "target": str(target), "rollback_plist": str(backup),
+            "public_key_sha256": public_sha}
+
+
 def _switch_host_only(expected_run: str, trial: dict, config: bytes) -> dict:
     _root_stage()
-    old = _current(expected_run, experiment="M1-SIM-002")
+    if not _trusted(TRIAL_CONFIG):
+        raise RuntimeError("installed Host trial config untrusted")
+    new_experiment = json.loads(config)["experiment_id"]
+    old_experiment = json.loads(TRIAL_CONFIG.read_bytes())["experiment_id"]
+    old = _current(expected_run, experiment=old_experiment)
     plist, _ = _plist()
     target = Path(plist["WorkingDirectory"])
     if (target.parent != ROOT or not target.name.startswith("lfl-m1-oracle-v2-")
             or not _trusted(target, directory=True) or not _trusted(TRIAL_CONFIG)):
         raise RuntimeError("Host v2 target/config untrusted")
     original = TRIAL_CONFIG.read_bytes()
-    if json.loads(original).get("trial") != old.get("trial"):
+    if (json.loads(original).get("trial") != old.get("trial")
+            or old_experiment not in ("M1-SIM-002", PAIRED_EXPERIMENT)
+            or new_experiment not in ("M1-SIM-002", PAIRED_EXPERIMENT)):
         raise RuntimeError("installed trial config differs from active Host run")
-    if old["trial"] == trial:
+    if old["trial"] == trial and old_experiment == new_experiment:
         raise RuntimeError("refuse same-trial restart without explicit new identity")
     _atomic(TRIAL_CONFIG, config)
     try:
         _launch("kickstart", "-k", f"system/{LABEL}")
-        new = _health(expected_run, trial, target)
+        new = _health(expected_run, trial, target, new_experiment)
         if new["pid"] == old["pid"]:
             raise RuntimeError("Host PID unchanged after trial switch")
     except BaseException:
         _atomic(TRIAL_CONFIG, original)
         _launch("kickstart", "-k", f"system/{LABEL}")
-        _health(expected_run, old["trial"], target)
+        _health(expected_run, old["trial"], target, old_experiment)
         raise
     return {"HOST_TRIAL_SWITCH": "PASS", "old_run": old["run_id"],
             "new_run": new["run_id"], "uid": 463, "trial": trial}
@@ -446,13 +526,16 @@ def _switch_host_only(expected_run: str, trial: dict, config: bytes) -> dict:
 def _switch(expected_run: str, trial: dict, config: bytes) -> dict:
     if trial["phase"] != "paired":
         return _switch_host_only(expected_run, trial, config)
+    if json.loads(config)["experiment_id"] != PAIRED_EXPERIMENT:
+        raise RuntimeError("paired Host trial requires DeepSeek frozen experiment")
     with _paired_issue(expected_run, trial):
         return _switch_host_only(expected_run, trial, config)
 
 
 def _rollback(expected_run: str) -> dict:
     _root_stage()
-    _current(expected_run, experiment="M1-SIM-002")
+    old_experiment = json.loads(TRIAL_CONFIG.read_bytes())["experiment_id"]
+    _current(expected_run, experiment=old_experiment)
     old_plist = STAGE / "old.plist"
     if not _trusted(old_plist) or stat.S_IMODE(old_plist.stat().st_mode) != 0o600:
         raise RuntimeError("trusted original v1 plist backup missing")
@@ -469,8 +552,8 @@ def _rollback(expected_run: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("upgrade", "switch", "rollback",
-                                          "authorize-batch"))
+    parser.add_argument("action", choices=("upgrade", "refresh-bundle", "switch",
+                                          "rollback", "authorize-batch"))
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--manifest-sha256")
     parser.add_argument("--batch-plan", type=Path)
@@ -479,6 +562,8 @@ def main() -> int:
     parser.add_argument("--phase", choices=("smoke", "paired"))
     parser.add_argument("--arm", choices=("B1", "B2"))
     parser.add_argument("--trial-index", type=int)
+    parser.add_argument("--experiment-id", choices=("M1-SIM-002", PAIRED_EXPERIMENT),
+                        default="M1-SIM-002")
     args = parser.parse_args()
     if re.fullmatch(r"[0-9a-f]{32}", args.expected_run_id) is None:
         raise RuntimeError("expected run ID must be exact 32-character hex")
@@ -494,13 +579,20 @@ def main() -> int:
     else:
         if args.phase is None or args.arm is None or args.trial_index is None:
             raise RuntimeError("trial phase, arm and index are mandatory")
-        trial, config = _config(args.phase, args.arm, args.trial_index)
-        if args.action == "upgrade":
+        trial, config = _config(args.phase, args.arm, args.trial_index,
+                                experiment_id=args.experiment_id)
+        if args.action in ("upgrade", "refresh-bundle"):
             if (args.bundle is None or not args.bundle.is_absolute()
                     or re.fullmatch(r"[0-9a-f]{64}", args.manifest_sha256 or "") is None):
                 raise RuntimeError("upgrade requires root-owned bundle and reviewed manifest SHA")
-            result = _upgrade(args.bundle, args.manifest_sha256, args.expected_run_id,
-                              trial, config)
+            if args.action == "refresh-bundle":
+                result = _refresh_bundle(args.bundle, args.manifest_sha256,
+                                         args.expected_run_id, trial, config)
+            else:
+                if args.experiment_id != "M1-SIM-002":
+                    raise RuntimeError("legacy Host v1 upgrade must retain M1-SIM-002")
+                result = _upgrade(args.bundle, args.manifest_sha256, args.expected_run_id,
+                                  trial, config)
         else:
             result = _switch(args.expected_run_id, trial, config)
     print(json.dumps(result, sort_keys=True))

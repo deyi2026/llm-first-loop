@@ -23,13 +23,13 @@ from llm_loop.embodied_sim.usage import estimate_usd
 
 GRANT_PATH = Path("/usr/local/etc/lfl-m1-paired-grant.json")
 LEDGER_DIR = Path("/usr/local/var/lfl-m1-paired-budget")
-PREREG_RELATIVE = Path("experiments/embodied/prereg-m1-sim-002.json")
-# Operator-selected ceilings for this one M1-SIM-002 batch. They do not issue
+PREREG_RELATIVE = Path("experiments/embodied/prereg-m1-sim-003.json")
+# Operator-selected ceilings for this one M1-SIM-003 batch. They do not issue
 # a Host grant or authorize any paired Provider request.
 BATCH_USD_LIMIT = Decimal("20.00")
 CALL_RESERVE_USD_LIMIT = Decimal("0.05")
-MIN_INPUT_PER_MILLION_USD = Decimal("0.15")
-MIN_OUTPUT_PER_MILLION_USD = Decimal("0.50")
+MIN_INPUT_PER_MILLION_USD = Decimal("0.30")
+MIN_OUTPUT_PER_MILLION_USD = Decimal("1.20")
 REQUIRED = frozenset({
     "schema", "batch_id", "experiment_id", "prereg_sha256", "candidate_sha",
     "model", "currency", "max_episodes", "max_provider_attempts",
@@ -65,8 +65,8 @@ def validate_plan(plan: Any, *, prereg_sha: str, candidate_sha: str,
     if not isinstance(plan, dict) or set(plan) != REQUIRED:
         raise PairedCostHold("GRANT_SCHEMA_FIELDS")
     if (plan["schema"] != "lfl.m1-paired-cost-grant/v1"
-            or plan["experiment_id"] != "M1-SIM-002"
-            or plan["model"] != "glm/glm-5.3-flash"
+            or plan["experiment_id"] != "M1-SIM-003"
+            or plan["model"] != "deepseek/deepseek-v4-flash"
             or plan["currency"] != "USD"
             or plan["prereg_sha256"] != prereg_sha
             or plan["candidate_sha"] != candidate_sha
@@ -125,7 +125,7 @@ class PairedCostGate:
     def load(cls, repo: Path, *, candidate_sha: str,
              run: dict[str, Any]) -> PairedCostGate:
         trial = run.get("trial", {})
-        if (run.get("experiment_id") != "M1-SIM-002"
+        if (run.get("experiment_id") != "M1-SIM-003"
                 or trial.get("phase") != "paired"
                 or trial.get("arm") not in ("B1", "B2")
                 or type(trial.get("trial_index")) is not int

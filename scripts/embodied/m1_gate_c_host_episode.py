@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate C: Host-linked autonomous episode (real glm/glm-5.3-flash decisions).
+"""Gate C: Host-linked autonomous episode (frozen GLM or DeepSeek decisions).
 
 The client holds NO scene. Observations and actions go through the Host-owned
 UID463 oracle daemon file queue (request_attestation). Two distinct receipt
@@ -52,7 +52,11 @@ from llm_loop.embodied_sim.host_bridge import (  # noqa: E402
 )
 from llm_loop.embodied_sim.paired_budget import PairedCostGate, PairedCostHold  # noqa: E402
 from llm_loop.embodied_sim.policy import TASK_BRIEF, build_prompt, parse_decision  # noqa: E402
-from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial  # noqa: E402
+from llm_loop.embodied_sim.trial import (  # noqa: E402
+    DEEPSEEK_EXPERIMENT_ID,
+    TRIAL_EXPERIMENT_IDS,
+    validate_trial,
+)
 from llm_loop.embodied_sim.usage import summarize_usage  # noqa: E402
 
 RUN_INFO = Path("/private/var/run/lfl-m1-oracle/runtime/run.json")
@@ -85,9 +89,9 @@ def validate_run_identity(run: Any) -> dict[str, Any]:
     run_id = run.get("run_id")
     if (not isinstance(run_id, str) or len(run_id) != 32
             or any(c not in "0123456789abcdef" for c in run_id)
-            or run.get("experiment_id") not in ("M1-SIM-001", EXPERIMENT_ID)):
+            or run.get("experiment_id") not in ("M1-SIM-001", *TRIAL_EXPERIMENT_IDS)):
         raise HostLinkError("invalid Host run identity")
-    if run["experiment_id"] == EXPERIMENT_ID:
+    if run["experiment_id"] in TRIAL_EXPERIMENT_IDS:
         try:
             validate_trial(run.get("trial"))
         except (ValueError, TypeError) as exc:
@@ -502,9 +506,13 @@ def main(argv: list[str]) -> int:
                 cost_gate = PairedCostGate.load(ROOT, candidate_sha=sha, run=run)
             except FileNotFoundError as exc:
                 raise PairedCostHold("PAIRED_BATCH_GRANT_OR_LEDGER_MISSING") from exc
-        provider = (GLMHttpProvider(cost_gate=cost_gate) if cost_gate is not None
-                    else GLMHttpProvider())
-        if cost_gate is not None and provider.model_used != "glm/glm-5.3-flash":
+        if run["experiment_id"] == DEEPSEEK_EXPERIMENT_ID:
+            from m1_gate_c_episode import DEEPSEEK_MODEL_REF  # type: ignore
+            provider = GLMHttpProvider(model_ref=DEEPSEEK_MODEL_REF, cost_gate=cost_gate)
+        else:
+            provider = (GLMHttpProvider(cost_gate=cost_gate) if cost_gate is not None
+                        else GLMHttpProvider())
+        if cost_gate is not None and provider.model_used != cost_gate.plan["model"]:
             raise PairedCostHold("PAIRED_MODEL_IDENTITY_MISMATCH")
     except PairedCostHold as e:
         print(json.dumps({"status": "HOLD", "reason": e.code}))
@@ -522,17 +530,17 @@ def main(argv: list[str]) -> int:
         {k: c.get(k) for k in ("latency_ms", "status", "finish_reason",
                               "usage_status", "prompt_tokens", "completion_tokens",
                               "total_tokens", "cached_prompt_tokens",
-                              "cost_usd_estimate")}
+                              "cost_usd_estimate", "response_model", "model_identity")}
         for c in calls][: result["provider_attempts"]]
     result["provider_usage"] = summarize_usage(calls, result["provider_attempts"])
     evidence_path = EPISODE_EVIDENCE_PATH
-    if run.get("experiment_id") == EXPERIMENT_ID:
+    if run.get("experiment_id") in TRIAL_EXPERIMENT_IDS:
         trial = run["trial"]
-        evidence_path = ROOT / "experiments/embodied/m1/m1-sim-002" / (
+        evidence_path = ROOT / "experiments/embodied/m1" / run["experiment_id"].lower() / (
             f"episode_{trial['phase']}_{trial['arm']}_"
             f"{trial['trial_index']:02d}_{run['run_id']}.json")
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    if run.get("experiment_id") == EXPERIMENT_ID:
+    if run.get("experiment_id") in TRIAL_EXPERIMENT_IDS:
         with evidence_path.open("x", encoding="utf-8") as output:
             output.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     else:
@@ -542,6 +550,9 @@ def main(argv: list[str]) -> int:
                 and result.get("elapsed_s", 999) <= BUDGET["deadline_s"]
                 and result.get("host_claims", {}).get("place", {}).get("status")
                 == "VERIFIED_BY_ORACLE")
+    if run["experiment_id"] == DEEPSEEK_EXPERIMENT_ID:
+        verified = (verified and result.get("host_claims", {}).get("grasp", {}).get("status")
+                    == "VERIFIED_BY_ORACLE")
     print(json.dumps({"status": "PLACE_HOST_VERIFIED" if verified else "NOT_VERIFIED",
                       "terminated_by": result["terminated_by"],
                       "provider_attempts": result["provider_attempts"],
