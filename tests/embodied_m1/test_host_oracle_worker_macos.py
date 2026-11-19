@@ -85,6 +85,8 @@ def test_fixed_installation_contract():
     assert '(deny file-read* (subpath "/Users"))' in profile
     assert "NOPASSWD:NOSETENV:" in installer
     assert "sudoers_file=/private/etc/sudoers.d/lfl-oracle-v1" in installer
+    assert "/usr/bin/cat" not in installer  # macOS cat lives in /bin
+    assert "/bin/cat" in installer
     assert b"oracle_uid" in worker
     assert "root_dir=/Library/PrivilegedHelperTools/lfl-oracle-v1" in installer
 

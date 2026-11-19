@@ -39,7 +39,7 @@ check_installed() {
     test -f "$sudoers_file" && test ! -L "$sudoers_file" || fail no_exact_sudoers_rule
     test "$(/usr/bin/stat -f %u "$sudoers_file")" = 0 || fail sudoers_not_root_owned
     test "$(/usr/bin/stat -f %Lp "$sudoers_file")" = 440 || fail sudoers_mode_not_0440
-    test "$(/usr/bin/cat "$sudoers_file")" = "$rule" || fail sudoers_rule_mismatch
+    test "$(/bin/cat "$sudoers_file")" = "$rule" || fail sudoers_rule_mismatch
     /usr/sbin/visudo -cf "$sudoers_file" >/dev/null || fail sudoers_syntax_invalid
     printf 'ORACLE_HOST_INSTALL=PASS uid=463 exact_command=true root_owned=true sha256=%s\n' "$worker_sha"
 }
@@ -55,7 +55,7 @@ case "${1:-}" in
         test "$(/usr/bin/id -u)" = 0 || fail root_required
         if test -e "$sudoers_file" || test -L "$sudoers_file"; then
             test -f "$sudoers_file" && test ! -L "$sudoers_file" || fail unsafe_sudoers_file
-            test "$(/usr/bin/cat "$sudoers_file")" = "$rule" || fail refuse_remove_modified_sudoers
+            test "$(/bin/cat "$sudoers_file")" = "$rule" || fail refuse_remove_modified_sudoers
             /bin/rm -- "$sudoers_file"
         fi
         printf 'ORACLE_HOST_INSTALL=REVOKED sudoers_rule_removed=true\n'
@@ -97,7 +97,7 @@ if test -e "$profile_dest" || test -L "$profile_dest"; then
 fi
 if test -e "$sudoers_file" || test -L "$sudoers_file"; then
     test -f "$sudoers_file" && test ! -L "$sudoers_file" || fail unsafe_existing_sudoers
-    test "$(/usr/bin/cat "$sudoers_file")" = "$rule" || fail existing_sudoers_conflict
+    test "$(/bin/cat "$sudoers_file")" = "$rule" || fail existing_sudoers_conflict
 fi
 
 /usr/bin/install -d -o root -g wheel -m 0755 "$root_dir"
