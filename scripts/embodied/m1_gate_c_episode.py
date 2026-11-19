@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from llm_loop.config import load_settings  # noqa: E402
 from llm_loop.embodied_sim import MuJoCoScene  # noqa: E402
 from llm_loop.embodied_sim.episode import EpisodeBudget, run_episode  # noqa: E402
+from llm_loop.embodied_sim.paired_budget import PairedCostGate, PairedCostHold  # noqa: E402
 from llm_loop.embodied_sim.policy import TASK_BRIEF  # noqa: E402
 from llm_loop.embodied_sim.skills import EmbodiedInterface  # noqa: E402
 from llm_loop.embodied_sim.usage import extract_usage  # noqa: E402
@@ -45,7 +46,8 @@ class GLMHttpProvider:
     free string; raw content per call is kept for honest traces.
     """
 
-    def __init__(self, model_ref: str = MODEL_REF, timeout_s: float = 60.0):
+    def __init__(self, model_ref: str = MODEL_REF, timeout_s: float = 60.0,
+                 cost_gate: PairedCostGate | None = None):
         registry = load_registry(load_settings())
         pid, mid = registry.resolve(model_ref)
         params = registry.client_params(pid, mid)
@@ -54,6 +56,7 @@ class GLMHttpProvider:
         self._api_key = str(params["api_key"])
         self._base_url = str(params["base_url"]).rstrip("/")
         self._timeout_s = timeout_s
+        self._cost_gate = cost_gate
         self.calls: list[dict[str, Any]] = []
 
     def decide(self, state_text: str) -> str:
@@ -68,6 +71,8 @@ class GLMHttpProvider:
             "stream": False,
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
+        gate = self._cost_gate
+        reservation = gate.reserve() if gate is not None else None
         t0 = time.monotonic()
         try:
             resp = httpx.post(f"{self._base_url}/chat/completions", json=payload,
@@ -76,6 +81,11 @@ class GLMHttpProvider:
             self.calls.append({"latency_ms": round((time.monotonic() - t0) * 1000, 1),
                                "status": "transport_error", "error_type": type(exc).__name__,
                                **extract_usage(None)})
+            if reservation is not None:
+                assert gate is not None
+                gate.mark_unknown(reservation)
+                raise PairedCostHold("PROVIDER_TRANSPORT_BILLING_UNKNOWN",
+                                     provider_attempted=True) from exc
             raise
         latency_ms = round((time.monotonic() - t0) * 1000, 1)
         if resp.status_code == 200:
@@ -87,15 +97,29 @@ class GLMHttpProvider:
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 self.calls.append({"latency_ms": latency_ms, "status": 200,
                                    "error_type": type(exc).__name__, **extract_usage(None)})
+                if reservation is not None:
+                    assert gate is not None
+                    gate.mark_unknown(reservation)
+                    raise PairedCostHold("PROVIDER_RESPONSE_BILLING_UNKNOWN",
+                                         provider_attempted=True) from exc
                 raise
             self.calls.append({"latency_ms": latency_ms, "status": 200,
                                "finish_reason": finish,
                                "content_len": len(content),
                                "content_head": content[:300],
                                **extract_usage(body.get("usage"))})
+            if reservation is not None:
+                assert gate is not None
+                self.calls[-1]["cost_usd_estimate"] = gate.settle(
+                    reservation, self.calls[-1])
         else:
             self.calls.append({"latency_ms": latency_ms, "status": resp.status_code,
                                "body_head": resp.text[:200], **extract_usage(None)})
+            if reservation is not None:
+                assert gate is not None
+                gate.mark_unknown(reservation)
+                raise PairedCostHold("PROVIDER_HTTP_BILLING_UNKNOWN",
+                                     provider_attempted=True)
             raise RuntimeError(f"provider HTTP {resp.status_code}")
         return content
 

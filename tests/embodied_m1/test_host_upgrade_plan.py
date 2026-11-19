@@ -5,11 +5,16 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import plistlib
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from llm_loop.embodied_sim.paired_budget import REQUIRED
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,6 +48,123 @@ def test_upgrade_config_preserves_frozen_seeds():
                               ("paired", "B3", 0), ("paired", "B1", True)):
         with pytest.raises(RuntimeError):
             mod._config(phase, arm, index)
+
+
+def _batch_plan(mod, tmp_path):
+    now = datetime.now(UTC)
+    return {
+        "schema": "lfl.m1-paired-cost-grant/v1", "batch_id": "b" * 32,
+        "experiment_id": "M1-SIM-002", "prereg_sha256": mod.PREREG_SHA256,
+        "candidate_sha": "c" * 40, "model": "glm/glm-5.3-flash",
+        "currency": "USD", "max_episodes": 60, "max_provider_attempts": 360,
+        "max_tool_actions": 480, "max_total_usd": "1.00",
+        "reserve_per_call_usd": "0.01", "input_per_million_usd": "1",
+        "output_per_million_usd": "2", "pricing_source": "approved provider tariff",
+        "pricing_checked_at_utc": (now - timedelta(minutes=1)).isoformat(),
+        "expires_at_utc": (now + timedelta(hours=1)).isoformat(),
+        "ledger_path": str(mod.PAIRED_LEDGER),
+    }
+
+
+def test_root_batch_plan_matches_client_schema_and_rejects_drift(tmp_path):
+    mod = _upgrade_module()
+    plan = _batch_plan(mod, tmp_path)
+    assert mod.BATCH_REQUIRED == REQUIRED
+    mod._validate_batch_plan(plan)
+    for key, bad in (("max_episodes", 61), ("max_provider_attempts", 361),
+                     ("max_tool_actions", 481), ("model", "another"),
+                     ("max_total_usd", "NaN"), ("ledger_path", "/tmp/elsewhere"),
+                     ("prereg_sha256", "0" * 64)):
+        with pytest.raises(RuntimeError):
+            mod._validate_batch_plan({**plan, key: bad})
+    with pytest.raises(RuntimeError):
+        mod._validate_batch_plan({**plan, "extra": True})
+
+
+def test_batch_authorization_is_separate_and_refuses_reissue(tmp_path, monkeypatch):
+    mod = _upgrade_module()
+    stage, etc, parent = (tmp_path / name for name in ("stage", "etc", "var"))
+    for directory in (stage, etc, parent):
+        directory.mkdir()
+    monkeypatch.setattr(mod, "STAGE", stage)
+    monkeypatch.setattr(mod, "PAIRED_GRANT", etc / "grant.json")
+    monkeypatch.setattr(mod, "PAIRED_ISSUED", stage / "issued.jsonl")
+    monkeypatch.setattr(mod, "PAIRED_LEDGER_DIR", parent / "budget")
+    monkeypatch.setattr(mod, "PAIRED_LEDGER", parent / "budget/m1-paired-cost-ledger.jsonl")
+    monkeypatch.setattr(mod, "_root_stage", lambda: None)
+    monkeypatch.setattr(mod, "_current", lambda *_a, **_k:
+                        {"trial": {"phase": "smoke", "arm": "B2"}})
+    monkeypatch.setattr(mod, "_trusted", lambda *_a, **_k: True)
+    monkeypatch.setattr(mod, "_atomic", lambda path, data, mode=0o644:
+                        path.write_bytes(data))
+    monkeypatch.setattr(mod.os, "fchown", lambda *_a: None)
+    monkeypatch.setenv("SUDO_UID", "501")
+    raw = json.dumps(_batch_plan(mod, tmp_path)).encode()
+    plan_file = stage / "plan.json"
+    plan_file.write_bytes(raw)
+    result = mod._authorize_batch("a" * 32, plan_file, hashlib.sha256(raw).hexdigest())
+    assert result["HOST_BATCH_AUTH"] == "READY_NOT_STARTED"
+    assert mod.PAIRED_GRANT.read_bytes() == raw
+    assert mod.PAIRED_ISSUED.exists() and mod.PAIRED_LEDGER.exists()
+    with pytest.raises(RuntimeError, match="already exists"):
+        mod._authorize_batch("a" * 32, plan_file, hashlib.sha256(raw).hexdigest())
+
+
+def test_paired_switch_refuses_missing_grant_without_host_restart(monkeypatch):
+    mod = _upgrade_module()
+    switched = []
+    monkeypatch.setattr(mod, "_switch_host_only", lambda *_a:
+                        switched.append(True) or {"HOST_TRIAL_SWITCH": "PASS"})
+
+    @contextmanager
+    def no_grant(*_a):
+        raise RuntimeError("independent paired Host grant not installed")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(mod, "_paired_issue", no_grant)
+    trial, config = mod._config("paired", "B2", 0)
+    with pytest.raises(RuntimeError, match="grant"):
+        mod._switch("a" * 32, trial, config)
+    assert switched == []
+    smoke, smoke_config = mod._config("smoke", "B2", 7)
+    assert mod._switch("a" * 32, smoke, smoke_config)["HOST_TRIAL_SWITCH"] == "PASS"
+    assert switched == [True]
+
+
+def test_root_paired_issue_is_one_time_per_arm_and_index(tmp_path, monkeypatch):
+    mod = _upgrade_module()
+    grant = tmp_path / "grant.json"
+    issued = tmp_path / "issued.jsonl"
+    ledger = tmp_path / "m1-paired-cost-ledger.jsonl"
+    monkeypatch.setattr(mod, "PAIRED_GRANT", grant)
+    monkeypatch.setattr(mod, "PAIRED_ISSUED", issued)
+    monkeypatch.setattr(mod, "PAIRED_LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(mod, "PAIRED_LEDGER", ledger)
+    monkeypatch.setattr(mod, "_root_stage", lambda: None)
+    monkeypatch.setattr(mod, "_current", lambda *_a, **_k: {})
+    monkeypatch.setattr(mod, "_trusted", lambda *_a, **_k: True)
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    grant.write_text(json.dumps(_batch_plan(mod, tmp_path)))
+    issued.write_text("")
+    ledger.write_text("")
+    issued.chmod(0o600)
+    ledger.chmod(0o600)
+    trial, _ = mod._config("paired", "B2", 0)
+    with mod._paired_issue("a" * 32, trial):
+        pass
+    with pytest.raises(RuntimeError, match="replay"), mod._paired_issue("a" * 32, trial):
+        pass
+    another, _ = mod._config("paired", "B1", 0)
+    with mod._paired_issue("a" * 32, another):
+        pass
+    assert len(issued.read_text().splitlines()) == 2
+    grant_sha = hashlib.sha256(grant.read_bytes()).hexdigest()
+    issued.write_text("".join(
+        json.dumps({"grant_sha256": grant_sha, "arm": "historical",
+                    "trial_index": i}) + "\n" for i in range(60)))
+    third, _ = mod._config("paired", "B2", 1)
+    with pytest.raises(RuntimeError, match="batch cap"), mod._paired_issue("a" * 32, third):
+        pass
 
 
 def test_upgrade_plist_rewrites_only_m1_service():

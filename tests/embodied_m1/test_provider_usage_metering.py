@@ -15,6 +15,7 @@ if SCRIPTS not in sys.path:
 
 import m1_gate_c_episode as gate_c  # noqa: E402
 
+from llm_loop.embodied_sim.paired_budget import PairedCostHold  # noqa: E402
 from llm_loop.embodied_sim.usage import (  # noqa: E402
     estimate_usd,
     extract_usage,
@@ -33,6 +34,7 @@ def test_provider_usage_preserves_exact_reported_numbers():
         "status": "provider_reported", "attempts": 2,
         "metered_attempts": 2, "unmetered_or_missing_attempts": 0,
         "prompt_tokens": 240, "completion_tokens": 48, "total_tokens": 288,
+        "estimated_usd": None,
     }
 
 
@@ -74,6 +76,7 @@ def _provider():
     provider._api_key = "test-only"
     provider._base_url = "https://invalid.example"
     provider._timeout_s = 1.0
+    provider._cost_gate = None
     provider.calls = []
     return provider
 
@@ -118,3 +121,54 @@ def test_non_200_is_unmetered_and_keeps_attempt(monkeypatch):
         provider.decide("public observation")
     assert len(provider.calls) == 1
     assert provider.calls[0]["usage_status"] == "unreported"
+
+
+class _FakeCostGate:
+    def __init__(self):
+        self.reserved = 0
+        self.settled = 0
+        self.unknown = 0
+
+    def reserve(self):
+        self.reserved += 1
+        return "reservation-id"
+
+    def settle(self, call_id, usage):
+        assert call_id == "reservation-id"
+        assert usage["usage_status"] == "reported"
+        self.settled += 1
+        return "0.00200000"
+
+    def mark_unknown(self, call_id):
+        assert call_id == "reservation-id"
+        self.unknown += 1
+
+
+def test_paired_provider_settles_before_returning_model_decision(monkeypatch):
+    body = {"choices": [{"message": {"content": '{"skill":"stop"}'},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 500,
+                      "total_tokens": 1500}}
+    monkeypatch.setattr(gate_c.httpx, "post",
+                        lambda *_a, **_kw: SimpleNamespace(status_code=200,
+                                                          json=lambda: body))
+    provider = _provider()
+    gate = _FakeCostGate()
+    provider._cost_gate = gate
+    assert provider.decide("public observation") == '{"skill":"stop"}'
+    assert gate.reserved == 1 and gate.settled == 1 and gate.unknown == 0
+    assert provider.calls[0]["cost_usd_estimate"] == "0.00200000"
+
+
+def test_paired_transport_timeout_holds_and_marks_unknown(monkeypatch):
+    def timeout(*_a, **_kw):
+        raise httpx.ReadTimeout("simulated")
+
+    monkeypatch.setattr(gate_c.httpx, "post", timeout)
+    provider = _provider()
+    gate = _FakeCostGate()
+    provider._cost_gate = gate
+    with pytest.raises(PairedCostHold, match="PROVIDER_TRANSPORT_BILLING_UNKNOWN") as exc:
+        provider.decide("public observation")
+    assert exc.value.provider_attempted
+    assert gate.reserved == 1 and gate.unknown == 1 and gate.settled == 0

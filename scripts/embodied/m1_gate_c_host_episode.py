@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -49,6 +50,7 @@ from llm_loop.embodied_sim.attestation import (  # noqa: E402
 from llm_loop.embodied_sim.host_bridge import (  # noqa: E402
     request_host_verification,
 )
+from llm_loop.embodied_sim.paired_budget import PairedCostGate, PairedCostHold  # noqa: E402
 from llm_loop.embodied_sim.policy import TASK_BRIEF, build_prompt, parse_decision  # noqa: E402
 from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial  # noqa: E402
 from llm_loop.embodied_sim.usage import summarize_usage  # noqa: E402
@@ -298,6 +300,11 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
             {"observation": public_last}, history)
         try:
             raw = provider.decide(state_text)
+        except PairedCostHold as exc:
+            attempts += int(exc.provider_attempted)
+            trace.append({"event": "COST_GUARD_HOLD", "code": exc.code})
+            terminated_by = "cost_guard_hold"
+            break
         except Exception as e:
             attempts += 1
             replans += 1
@@ -479,10 +486,29 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"status": "FRESH"}))
         return 0
 
-    # Real provider + bounded evidence. Secrets never logged.
+    # Paired trials require a separate root-owned grant and an exact frozen
+    # candidate; smoke/legacy trials do not inherit this authorization.
     try:
         from m1_gate_c_episode import GLMHttpProvider  # type: ignore
-        provider = GLMHttpProvider()
+        cost_gate = None
+        if run.get("trial", {}).get("phase") == "paired":
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"],
+                                          cwd=ROOT, text=True, timeout=5).strip()
+            for args in (["git", "diff", "--quiet"],
+                         ["git", "diff", "--cached", "--quiet"]):
+                if subprocess.run(args, cwd=ROOT, timeout=5).returncode:
+                    raise PairedCostHold("PAIRED_CANDIDATE_NOT_FROZEN")
+            try:
+                cost_gate = PairedCostGate.load(ROOT, candidate_sha=sha, run=run)
+            except FileNotFoundError as exc:
+                raise PairedCostHold("PAIRED_BATCH_GRANT_OR_LEDGER_MISSING") from exc
+        provider = (GLMHttpProvider(cost_gate=cost_gate) if cost_gate is not None
+                    else GLMHttpProvider())
+        if cost_gate is not None and provider.model_used != "glm/glm-5.3-flash":
+            raise PairedCostHold("PAIRED_MODEL_IDENTITY_MISMATCH")
+    except PairedCostHold as e:
+        print(json.dumps({"status": "HOLD", "reason": e.code}))
+        return 2
     except Exception as e:
         print(json.dumps({"status": "HOLD",
                           "reason": f"provider unavailable: {type(e).__name__}"}))
@@ -495,7 +521,8 @@ def main(argv: list[str]) -> int:
     result["provider_calls_bounded"] = [
         {k: c.get(k) for k in ("latency_ms", "status", "finish_reason",
                               "usage_status", "prompt_tokens", "completion_tokens",
-                              "total_tokens", "cached_prompt_tokens")}
+                              "total_tokens", "cached_prompt_tokens",
+                              "cost_usd_estimate")}
         for c in calls][: result["provider_attempts"]]
     result["provider_usage"] = summarize_usage(calls, result["provider_attempts"])
     evidence_path = EPISODE_EVIDENCE_PATH

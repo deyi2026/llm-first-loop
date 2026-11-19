@@ -38,13 +38,17 @@ def summarize_usage(calls: list[dict[str, Any]], expected_attempts: int) -> dict
                 "metered_attempts": len(calls) - unknown,
                 "unmetered_or_missing_attempts": unknown + max(0, expected_attempts - len(calls)),
                 "prompt_tokens": None, "completion_tokens": None,
-                "total_tokens": None}
+                "total_tokens": None, "estimated_usd": None}
+    estimates = [c.get("cost_usd_estimate") for c in calls]
+    estimated = (str(sum((Decimal(str(v)) for v in estimates), Decimal(0)))
+                 if all(isinstance(v, str) for v in estimates) else None)
     return {"status": "provider_reported", "attempts": expected_attempts,
             "metered_attempts": expected_attempts,
             "unmetered_or_missing_attempts": 0,
             "prompt_tokens": sum(c["prompt_tokens"] for c in calls),
             "completion_tokens": sum(c["completion_tokens"] for c in calls),
-            "total_tokens": sum(c["total_tokens"] for c in calls)}
+            "total_tokens": sum(c["total_tokens"] for c in calls),
+            "estimated_usd": estimated}
 
 
 def estimate_usd(usage: dict[str, Any], *, input_per_million: str,

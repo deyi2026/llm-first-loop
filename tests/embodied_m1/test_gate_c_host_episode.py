@@ -25,6 +25,7 @@ if _scripts not in sys.path:
 import m1_gate_c_host_episode as host_episode  # noqa: E402
 
 from llm_loop.embodied_sim.attestation import VerificationStatus  # noqa: E402
+from llm_loop.embodied_sim.paired_budget import PairedCostHold  # noqa: E402
 from llm_loop.embodied_sim.policy import ScriptedStubProvider  # noqa: E402
 
 RUN_ID = "a" * 32
@@ -262,6 +263,56 @@ def test_main_hold_and_fresh_branches(wired, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 2 and "HOLD" in out and "provider unavailable" in out
     assert not evidence.exists()
+
+
+def test_paired_cost_hold_never_dispatches_a_tool_or_retries_provider(wired):
+    class BlockedProvider:
+        model_used = "glm/glm-5.3-flash"
+
+        def decide(self, _state):
+            raise PairedCostHold("TOTAL_USD_STOP_THRESHOLD")
+
+    result = host_episode.run_host_episode(
+        BlockedProvider(), host_episode.HostOracleLink(RUN))
+    assert result["terminated_by"] == "cost_guard_hold"
+    assert result["provider_attempts"] == 0
+    assert result["tool_actions"] == 0
+    assert result["trace"][-1] == {"event": "COST_GUARD_HOLD",
+                                   "code": "TOTAL_USD_STOP_THRESHOLD"}
+    assert wired.commands == []
+
+
+def test_paired_main_blocks_before_provider_without_root_grant(
+        wired, monkeypatch, capsys):
+    run = {**RUN, "experiment_id": "M1-SIM-002", "pid": 123,
+           "trial": {"phase": "paired", "arm": "B2", "trial_index": 0,
+                     "seed": 20261117}}
+    monkeypatch.setattr(host_episode, "load_run_identity", lambda: run)
+    monkeypatch.setattr(host_episode, "fresh_precheck",
+                        lambda _link: _observe_receipt(RUN_ID, 0, 0.2))
+    monkeypatch.setattr(host_episode.subprocess, "check_output",
+                        lambda *_a, **_k: "a" * 40)
+    monkeypatch.setattr(host_episode.subprocess, "run",
+                        lambda *_a, **_k: types.SimpleNamespace(returncode=0))
+
+    def missing(_cls, _repo, *, candidate_sha, run):
+        raise FileNotFoundError("root grant not installed")
+
+    monkeypatch.setattr(host_episode.PairedCostGate, "load", classmethod(missing))
+    fake_mod = types.ModuleType("m1_gate_c_episode")
+    constructed = []
+
+    class ForbiddenProvider:
+        def __init__(self, **_kwargs):
+            constructed.append(True)
+            raise AssertionError("provider must not initialize")
+
+    setattr(fake_mod, "GLMHttpProvider", ForbiddenProvider)  # noqa: B010
+    monkeypatch.setitem(sys.modules, "m1_gate_c_episode", fake_mod)
+    assert host_episode.main([]) == 2
+    assert "PAIRED_BATCH_GRANT_OR_LEDGER_MISSING" in capsys.readouterr().out
+    assert constructed == []
+    assert wired.commands == []
 
 
 def test_main_wires_real_provider_bounded_evidence_no_secrets(

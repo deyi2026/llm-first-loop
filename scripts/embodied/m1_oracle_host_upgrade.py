@@ -9,6 +9,7 @@ The old v1 bundle and root-owned plist backup remain for rollback.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -19,6 +20,9 @@ import stat
 import subprocess
 import sys
 import time
+from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 LABEL = "com.lfl.m1-oracle"
@@ -32,6 +36,64 @@ PRIVATE = Path("/usr/local/etc/lfl-m1-oracle-ed25519.key")
 PUBLIC = Path("/usr/local/etc/lfl-m1-oracle-ed25519.pub")
 LEDGER = Path("/private/var/db/lfl-m1-oracle/verified-nonces.sqlite3")
 STAGE = Path(__file__).absolute().parent
+PAIRED_GRANT = Path("/usr/local/etc/lfl-m1-paired-grant.json")
+PAIRED_LEDGER_DIR = Path("/usr/local/var/lfl-m1-paired-budget")
+PAIRED_LEDGER = PAIRED_LEDGER_DIR / "m1-paired-cost-ledger.jsonl"
+PAIRED_ISSUED = Path("/usr/local/etc/lfl-m1-paired-issued.jsonl")
+PREREG_SHA256 = "e4aefedd413874c547c6ab01aebb8c2019491b07b1a887bf7266621fa0c1b5ae"
+BATCH_REQUIRED = frozenset({
+    "schema", "batch_id", "experiment_id", "prereg_sha256", "candidate_sha",
+    "model", "currency", "max_episodes", "max_provider_attempts",
+    "max_tool_actions", "max_total_usd", "reserve_per_call_usd",
+    "input_per_million_usd", "output_per_million_usd", "pricing_source",
+    "pricing_checked_at_utc", "expires_at_utc", "ledger_path",
+})
+
+
+def _validate_batch_plan(plan: dict, *, now: datetime | None = None) -> None:
+    """Independent root-side frozen identity, USD and expiry validation."""
+    if not isinstance(plan, dict) or set(plan) != BATCH_REQUIRED:
+        raise RuntimeError("paired grant fields mismatch")
+    if (plan["schema"] != "lfl.m1-paired-cost-grant/v1"
+            or plan["experiment_id"] != "M1-SIM-002"
+            or plan["model"] != "glm/glm-5.3-flash"
+            or plan["currency"] != "USD"
+            or plan["prereg_sha256"] != PREREG_SHA256
+            or re.fullmatch(r"[0-9a-f]{40}", str(plan["candidate_sha"])) is None
+            or re.fullmatch(r"[0-9a-f]{32}", str(plan["batch_id"])) is None
+            or plan["ledger_path"] != str(PAIRED_LEDGER)):
+        raise RuntimeError("paired grant identity mismatch")
+    if (type(plan["max_episodes"]) is not int or plan["max_episodes"] != 60
+            or type(plan["max_provider_attempts"]) is not int
+            or plan["max_provider_attempts"] != 360
+            or type(plan["max_tool_actions"]) is not int
+            or plan["max_tool_actions"] != 480):
+        raise RuntimeError("paired grant frozen limits mismatch")
+    try:
+        values = [Decimal(plan[k]) for k in (
+            "max_total_usd", "reserve_per_call_usd",
+            "input_per_million_usd", "output_per_million_usd")]
+    except (InvalidOperation, TypeError) as exc:
+        raise RuntimeError("paired grant USD tariff invalid") from exc
+    cap, reserve, rate_in, rate_out = values
+    if (not all(isinstance(plan[k], str) for k in (
+            "max_total_usd", "reserve_per_call_usd",
+            "input_per_million_usd", "output_per_million_usd"))
+            or not all(v.is_finite() for v in values)
+            or cap <= 0 or not 0 < reserve <= cap
+            or min(rate_in, rate_out) < 0 or max(rate_in, rate_out) == 0):
+        raise RuntimeError("paired grant USD limits invalid")
+    if not isinstance(plan["pricing_source"], str) or not plan["pricing_source"].strip():
+        raise RuntimeError("paired grant pricing provenance missing")
+    try:
+        checked = datetime.fromisoformat(str(plan["pricing_checked_at_utc"]).replace("Z", "+00:00"))
+        expiry = datetime.fromisoformat(str(plan["expires_at_utc"]).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError("paired grant timestamp invalid") from exc
+    clock = now or datetime.now(UTC)
+    if (checked.tzinfo is None or expiry.tzinfo is None
+            or checked > clock or expiry <= clock):
+        raise RuntimeError("paired grant expired or pricing unqualified")
 
 
 def _trusted(path: Path, *, owner: int = 0, directory: bool = False) -> bool:
@@ -100,6 +162,97 @@ def _config(phase: str, arm: str, index: int) -> tuple[dict, bytes]:
     payload = {"schema": "lfl.m1-oracle-host-trial/v1",
                "experiment_id": "M1-SIM-002", "trial": trial}
     return trial, (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def _authorize_batch(expected_run: str, plan_path: Path, expected_sha: str) -> dict:
+    """Separate administrator action: stage one root-owned 60-episode grant."""
+    _root_stage()
+    current = _current(expected_run, experiment="M1-SIM-002")
+    if current.get("trial", {}).get("phase") != "smoke":
+        raise RuntimeError("batch authorization requires an idle smoke Host")
+    if (plan_path.parent != STAGE or not _trusted(plan_path)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None):
+        raise RuntimeError("batch plan must be root-staged and SHA-pinned")
+    raw = plan_path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_sha:
+        raise RuntimeError("batch grant SHA mismatch")
+    plan = json.loads(raw)
+    _validate_batch_plan(plan)
+    if any(p.exists() or p.is_symlink() for p in (
+            PAIRED_GRANT, PAIRED_ISSUED, PAIRED_LEDGER, PAIRED_LEDGER_DIR)):
+        raise RuntimeError("batch grant or ledger already exists; refuse overwrite")
+    uid = int(os.environ.get("SUDO_UID", "0"))
+    if uid < 500 or uid == 463:
+        raise RuntimeError("interactive administrator's non-Oracle UID required")
+    PAIRED_LEDGER_DIR.parent.mkdir(mode=0o755, exist_ok=True)
+    if not _trusted(PAIRED_LEDGER_DIR.parent, directory=True):
+        raise RuntimeError("paired ledger parent not root-controlled")
+    PAIRED_LEDGER_DIR.mkdir(mode=0o755)
+    try:
+        fd = os.open(PAIRED_LEDGER, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.fchown(fd, uid, 0)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _atomic(PAIRED_ISSUED, b"", 0o600)
+        _atomic(PAIRED_GRANT, raw, 0o644)
+    except BaseException:
+        if not PAIRED_GRANT.exists():
+            PAIRED_ISSUED.unlink(missing_ok=True)
+            PAIRED_LEDGER.unlink(missing_ok=True)
+            with suppress(OSError):
+                PAIRED_LEDGER_DIR.rmdir()
+        raise
+    return {"HOST_BATCH_AUTH": "READY_NOT_STARTED", "grant_sha256": expected_sha,
+            "batch_id": plan["batch_id"], "max_episodes": 60,
+            "max_provider_attempts": 360, "max_tool_actions": 480,
+            "max_total_usd": plan["max_total_usd"]}
+
+
+@contextmanager
+def _paired_issue(expected_run: str, trial: dict):
+    """Root-only, non-replayable paired trial issuance; failure consumes identity."""
+    _root_stage()
+    _current(expected_run, experiment="M1-SIM-002")
+    if (trial.get("phase") != "paired" or trial.get("arm") not in ("B1", "B2")
+            or type(trial.get("trial_index")) is not int
+            or not 0 <= trial["trial_index"] < 30
+            or trial.get("seed") != 20261117 + trial["trial_index"]):
+        raise RuntimeError("paired Host trial identity outside frozen range")
+    if (not _trusted(PAIRED_GRANT) or not _trusted(PAIRED_ISSUED)
+            or stat.S_IMODE(PAIRED_ISSUED.stat().st_mode) != 0o600
+            or not _trusted(PAIRED_LEDGER_DIR, directory=True)):
+        raise RuntimeError("independent paired Host grant not installed")
+    ledger_info = PAIRED_LEDGER.lstat()
+    caller_uid = int(os.environ.get("SUDO_UID", "0"))
+    if (not stat.S_ISREG(ledger_info.st_mode) or ledger_info.st_uid != caller_uid
+            or ledger_info.st_uid < 500
+            or ledger_info.st_uid == 463 or ledger_info.st_nlink != 1
+            or ledger_info.st_mode & 0o077):
+        raise RuntimeError("paired cost ledger not a protected operator file")
+    raw = PAIRED_GRANT.read_bytes()
+    _validate_batch_plan(json.loads(raw))
+    grant_sha = hashlib.sha256(raw).hexdigest()
+    with PAIRED_ISSUED.open("r+", encoding="utf-8") as issued:
+        fcntl.flock(issued, fcntl.LOCK_EX)
+        entries = [json.loads(line) for line in issued if line.strip()]
+        if (len(entries) >= 60
+                or any(entry.get("grant_sha256") != grant_sha for entry in entries)
+                or any(entry.get("arm") == trial["arm"]
+                       and entry.get("trial_index") == trial["trial_index"]
+                       for entry in entries)):
+            raise RuntimeError("paired Host trial replay or batch cap")
+        issued.seek(0, os.SEEK_END)
+        issued.write(json.dumps({
+            "grant_sha256": grant_sha, "arm": trial["arm"],
+            "trial_index": trial["trial_index"], "seed": trial["seed"],
+            "expected_run": expected_run, "issued_at_utc": datetime.now(UTC).isoformat(),
+        }, sort_keys=True) + "\n")
+        issued.flush()
+        os.fsync(issued.fileno())
+        yield
 
 
 def _atomic(path: Path, data: bytes, mode: int = 0o644) -> None:
@@ -254,7 +407,7 @@ def _upgrade(bundle: Path, sha: str, expected_run: str, trial: dict, config: byt
             "public_key_sha256": public_sha, "rollback_plist": str(backup)}
 
 
-def _switch(expected_run: str, trial: dict, config: bytes) -> dict:
+def _switch_host_only(expected_run: str, trial: dict, config: bytes) -> dict:
     _root_stage()
     old = _current(expected_run, experiment="M1-SIM-002")
     plist, _ = _plist()
@@ -282,6 +435,13 @@ def _switch(expected_run: str, trial: dict, config: bytes) -> dict:
             "new_run": new["run_id"], "uid": 463, "trial": trial}
 
 
+def _switch(expected_run: str, trial: dict, config: bytes) -> dict:
+    if trial["phase"] != "paired":
+        return _switch_host_only(expected_run, trial, config)
+    with _paired_issue(expected_run, trial):
+        return _switch_host_only(expected_run, trial, config)
+
+
 def _rollback(expected_run: str) -> dict:
     _root_stage()
     _current(expected_run, experiment="M1-SIM-002")
@@ -301,9 +461,12 @@ def _rollback(expected_run: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("upgrade", "switch", "rollback"))
+    parser.add_argument("action", choices=("upgrade", "switch", "rollback",
+                                          "authorize-batch"))
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--manifest-sha256")
+    parser.add_argument("--batch-plan", type=Path)
+    parser.add_argument("--batch-sha256")
     parser.add_argument("--expected-run-id", required=True)
     parser.add_argument("--phase", choices=("smoke", "paired"))
     parser.add_argument("--arm", choices=("B1", "B2"))
@@ -313,6 +476,13 @@ def main() -> int:
         raise RuntimeError("expected run ID must be exact 32-character hex")
     if args.action == "rollback":
         result = _rollback(args.expected_run_id)
+    elif args.action == "authorize-batch":
+        if (args.batch_plan is None or not args.batch_plan.is_absolute()
+                or re.fullmatch(r"[0-9a-f]{64}", args.batch_sha256 or "") is None
+                or any(v is not None for v in (args.phase, args.arm, args.trial_index))):
+            raise RuntimeError("separate batch authorization needs pinned root plan only")
+        result = _authorize_batch(args.expected_run_id, args.batch_plan,
+                                  args.batch_sha256)
     else:
         if args.phase is None or args.arm is None or args.trial_index is None:
             raise RuntimeError("trial phase, arm and index are mandatory")
