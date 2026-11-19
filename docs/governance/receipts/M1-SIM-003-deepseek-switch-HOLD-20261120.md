@@ -1,5 +1,13 @@
 # M1-SIM-003 DeepSeek switch — implementation receipt
 
+**Historical checkpoint (before Host batch-grant installation and before the
+60 formal paired episodes).** The HOLD and `0/60` statements below describe
+the state **when this implementation receipt was written**, not the final
+experiment state. The subsequent authorized run and its 60/60 evidence,
+cost audit, and negative B2 result are recorded in
+`M1-SIM-003-paired-audit-20261120.md`. Neither checkpoint claims that the
+GitHub PR was merged or that unified deployment had occurred.
+
 **State: SOURCE/REAL L3 PASS; BATCH GRANT NOT INSTALLED; PAIRED 0/60; HOLD.**
 
 The operator approved changing the M1 B1/B2 experiment to
@@ -12,7 +20,7 @@ Changing the model requires the separate `M1-SIM-003` experiment identity.
 - DeepSeek official docs state the legacy request alias `deepseek-v4-flash`
   currently serves `deepseek-flash` (V4.1-Flash-1017). The actual response
   model must be recorded and any other response identity must fail closed.
-  https://api-docs.deepseek.com/quick/_start/pricing/
+  https://api-docs.deepseek.com/quick_start/pricing/
 - Existing LFL DeepSeek credential and `https://api.deepseek.com/v1` route
   were verified without displaying or copying the secret. A real, bounded
   `deepseek-v4-flash` probe returned HTTP 200, response model
@@ -53,3 +61,10 @@ Changing the model requires the separate `M1-SIM-003` experiment identity.
 grant and its root/client negative checks; then request a **separate approval** to start
 the 30 B1/B2 pairs. Final Reviewer → full R9 → CI → protected `main` →
 unified deployment remains after the paired evidence is complete.
+
+**Later-state reconciliation (2026-11-20):** This earlier HOLD was lifted
+only for the separately approved Host grant and paired execution. The later
+frozen audit reports 30 B1 and 30 B2 episodes (60/60), with 27/30 versus
+23/30 Oracle-verified placements and **no demonstrated B2 benefit**.
+Independent Reviewer, remote CI, protected `main` merge, and deployment are
+separate subsequent gates, not achievements of this historical checkpoint.

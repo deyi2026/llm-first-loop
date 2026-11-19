@@ -16,7 +16,7 @@
 | Managed recovery releases | 0 | 0 |
 | Replans | 7 | 3 |
 | Estimated USD | 0.19899840 | 0.19725510 |
-| Estimated USD per verified task | 0.007370311111111111111111111111 | 0.008576308695652173913043478261 |
+| Estimated USD per verified task | 0.00737031 | 0.00857631 |
 | Latency p50 seconds | 25.648 | 23.108 |
 | Latency p95 seconds | 44.472 | 48.083 |
 
@@ -42,5 +42,14 @@ This is a reproducibility note for future installers, not a change to the
 frozen experiment or a reason to widen all-user permissions.
 
 **Interpretation constraints:** This is the preregistered 30-pair simulator comparison. The engineering smoke was excluded. No physical robot was used. Model identity was checked on each HTTP response. Costs are peak-tariff estimates and must not be represented as invoice totals. All signed Oracle claims were verified at execution time; this audit reconciles their persisted verdicts and evidence SHA-256.
+
+**Receipt chronology:** `M1-SIM-003-deepseek-switch-HOLD-20261120.md`
+documents the earlier pre-grant, pre-trial `0/60` state; this audit documents
+the later authorized `60/60` completion. They are sequential checkpoints,
+not contradictory simultaneous claims. The 49-test count in the earlier
+`M1-calibration-hold-20261119.md` predates the added evidence-hash tests;
+the subsequent Host-trial submission reports 174 M1 tests in its expanded
+scope. The frozen v1.3 calibration JSON retains a carried-forward
+`revision_note`; its `scene_revision_reason` specifies the v1.3 change.
 
 **Next gates:** fix isolated test fixture after freeze, independent Host Reviewer PASS P0/P1=0, original full R9 exit 0, exact-SHA remote CI, protected main merge, unified managed deployment. No bypass.

@@ -88,6 +88,12 @@ rod↔floor 460 steps vs Host 462; FK residual 2.99 mm vs Host 2.75 mm.
   evidence-hash pinning test additions; Ruff PASS and Pyright 0 errors.
   A subsequent final test run is required after those additions.
 
+  **Later-scope clarification:** This 49-test count is a pre-additions
+  historical checkpoint. The subsequent
+  `docs/governance/submissions/20261119-embodied-m1-host-trial-v2.json`
+  reports 174 M1 tests after the signed-trial and negative-case additions;
+  the two counts do not describe the same test suite at the same time.
+
 ### Evidence-integrity incident and correction
 
 During this QA cycle, an early local `v1.6.1` run was repeated before the
