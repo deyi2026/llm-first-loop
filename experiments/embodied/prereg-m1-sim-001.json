@@ -1,0 +1,53 @@
+{
+  "schema": "lfl.embodied.prereg/v1",
+  "experiment_id": "M1-SIM-001",
+  "preregistered_at_utc": "2026-11-17T09:27:00Z",
+  "status": "frozen_before_first_real_simulator_run",
+  "model_required": "glm/glm-5.3-flash",
+  "scenario": "one simulated robot arm, one red cube, one tray-A target; no real hardware",
+  "simulator_selection": "MuJoCo (installation and capability probe required before M1)",
+  "task_levels": ["L0", "L1", "L3-grasp-failure-recovery"],
+  "comparison": {
+    "B1": "same LLM and skill catalog without LFL goal/recovery management",
+    "B2": "same LLM, skill catalog, seeds and limits with LFL goal/evidence/recovery management",
+    "learning": "off",
+    "paired_seed_start": 20261117,
+    "engineering_smoke_trials": 10,
+    "paired_trials_per_arm": 30,
+    "max_provider_attempts_per_episode": 6,
+    "max_tool_actions_per_episode": 8,
+    "max_precheck_resubmits_per_intent": 2,
+    "max_reconcile_polls": 3,
+    "episode_deadline_seconds": 180
+  },
+  "primary_endpoint": "independent Oracle end-to-end placement success; executor claims do not count",
+  "secondary_endpoints": [
+    "safe action count",
+    "UNKNOWN duplicate dispatches",
+    "replans backed by new observations",
+    "provider tokens and USD per verified task",
+    "operator interventions",
+    "latency p50/p95",
+    "contract drift against M0"
+  ],
+  "analysis": {
+    "paired_ci_method": "95% paired bootstrap interval, 1000 resamples, seed 20261117",
+    "success_and_cost_reported_together": true,
+    "max_cost_ratio_B2_over_B1": 1.5,
+    "minimum_sample_for_directional_comparison": 30,
+    "no_statistical_significance_claim_from_single_demo": true
+  },
+  "safety": {
+    "stop_margin_ms": 100,
+    "max_attempts_per_intent": 2,
+    "stop_rules": [
+      "any real device or production robot contact",
+      "any Oracle canary or privileged truth in model-visible data",
+      "any unauthorized action or unknown-action duplicate dispatch",
+      "any physical simulator motion after unconfirmed stop",
+      "any change of frozen model/skills/budget/seeds without new experiment ID"
+    ],
+    "real_hardware_authorized": false
+  },
+  "change_policy": "Any post-freeze protocol change creates a new experiment_id; never rewrite prior trial results"
+}
