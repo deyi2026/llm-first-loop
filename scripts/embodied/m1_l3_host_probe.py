@@ -32,6 +32,7 @@ from m1_gate_c_host_episode import (
 
 from llm_loop.embodied_sim.attestation import AttestationUnavailableError
 from llm_loop.embodied_sim.trial import EXPERIMENT_ID
+from llm_loop.embodied_sim.usage import summarize_usage
 
 DIAGNOSTIC_LIFT_HINT = (
     " | Engineering L3 smoke-only public geometry reminder: after grasp "
@@ -149,15 +150,19 @@ def main(argv: list[str]) -> int:
     )
     result["provider_attempts"] = provider.real_model_attempts
     result["provider_calls_bounded"] = [
-        {k: call.get(k) for k in ("latency_ms", "status", "finish_reason")}
+        {k: call.get(k) for k in ("latency_ms", "status", "finish_reason",
+                                 "usage_status", "prompt_tokens", "completion_tokens",
+                                 "total_tokens", "cached_prompt_tokens")}
         for call in live.calls]
+    result["provider_usage"] = summarize_usage(live.calls, provider.real_model_attempts)
     result["l3_diagnostic"] = {
         "diagnostic_only": True,
         "not_a_frozen_paired_trial": True,
         "scripted_first_decision": "grasp without initial move_to",
         "scripted_decisions_counted_in_budget": provider.scripted_decisions,
         "real_model_attempts": provider.real_model_attempts,
-        "real_model_http_responses": len(live.calls),
+        "real_model_http_responses": sum(isinstance(c.get("status"), int)
+                                         for c in live.calls),
         "provider_attempts_including_scripted_decision": internal_attempts,
         "real_model_attempt_budget": BUDGET["max_provider_attempts"],
         "internal_decision_budget_including_scripted_probe": internal_budget["max_provider_attempts"],

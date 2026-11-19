@@ -29,6 +29,7 @@ from llm_loop.embodied_sim import MuJoCoScene  # noqa: E402
 from llm_loop.embodied_sim.episode import EpisodeBudget, run_episode  # noqa: E402
 from llm_loop.embodied_sim.policy import TASK_BRIEF  # noqa: E402
 from llm_loop.embodied_sim.skills import EmbodiedInterface  # noqa: E402
+from llm_loop.embodied_sim.usage import extract_usage  # noqa: E402
 from llm_loop.llm.providers import load_registry  # noqa: E402
 
 OUT = ROOT / ("experiments/embodied/m1/gate_c/" + (sys.argv[1] if len(sys.argv) > 1
@@ -68,22 +69,33 @@ class GLMHttpProvider:
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
         t0 = time.monotonic()
-        resp = httpx.post(f"{self._base_url}/chat/completions", json=payload,
-                          headers=headers, timeout=self._timeout_s)
+        try:
+            resp = httpx.post(f"{self._base_url}/chat/completions", json=payload,
+                              headers=headers, timeout=self._timeout_s)
+        except Exception as exc:
+            self.calls.append({"latency_ms": round((time.monotonic() - t0) * 1000, 1),
+                               "status": "transport_error", "error_type": type(exc).__name__,
+                               **extract_usage(None)})
+            raise
         latency_ms = round((time.monotonic() - t0) * 1000, 1)
-        content = ""
         if resp.status_code == 200:
-            body = resp.json()
-            msg = body["choices"][0].get("message", {})
-            content = str(msg.get("content") or "")
-            finish = str(body["choices"][0].get("finish_reason", ""))
+            try:
+                body = resp.json()
+                msg = body["choices"][0].get("message", {})
+                content = str(msg.get("content") or "")
+                finish = str(body["choices"][0].get("finish_reason", ""))
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                self.calls.append({"latency_ms": latency_ms, "status": 200,
+                                   "error_type": type(exc).__name__, **extract_usage(None)})
+                raise
             self.calls.append({"latency_ms": latency_ms, "status": 200,
                                "finish_reason": finish,
                                "content_len": len(content),
-                               "content_head": content[:300]})
+                               "content_head": content[:300],
+                               **extract_usage(body.get("usage"))})
         else:
             self.calls.append({"latency_ms": latency_ms, "status": resp.status_code,
-                               "body_head": resp.text[:200]})
+                               "body_head": resp.text[:200], **extract_usage(None)})
             raise RuntimeError(f"provider HTTP {resp.status_code}")
         return content
 

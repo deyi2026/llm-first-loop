@@ -51,6 +51,7 @@ from llm_loop.embodied_sim.host_bridge import (  # noqa: E402
 )
 from llm_loop.embodied_sim.policy import TASK_BRIEF, build_prompt, parse_decision  # noqa: E402
 from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial  # noqa: E402
+from llm_loop.embodied_sim.usage import summarize_usage  # noqa: E402
 
 RUN_INFO = Path("/private/var/run/lfl-m1-oracle/runtime/run.json")
 BUDGET = {"max_provider_attempts": 6, "max_tool_actions": 8,
@@ -490,9 +491,13 @@ def main(argv: list[str]) -> int:
         provider, link, fresh_receipt=fresh_receipt,
         auto_recover_failed_grasp=(run.get("trial", {}).get("arm") == "B2"),
     )
+    calls = getattr(provider, "calls", [])
     result["provider_calls_bounded"] = [
-        {k: c.get(k) for k in ("latency_ms", "status", "finish_reason")}
-        for c in getattr(provider, "calls", [])][: result["provider_attempts"]]
+        {k: c.get(k) for k in ("latency_ms", "status", "finish_reason",
+                              "usage_status", "prompt_tokens", "completion_tokens",
+                              "total_tokens", "cached_prompt_tokens")}
+        for c in calls][: result["provider_attempts"]]
+    result["provider_usage"] = summarize_usage(calls, result["provider_attempts"])
     evidence_path = EPISODE_EVIDENCE_PATH
     if run.get("experiment_id") == EXPERIMENT_ID:
         trial = run["trial"]
