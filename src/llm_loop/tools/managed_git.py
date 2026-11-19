@@ -231,6 +231,16 @@ class ManagedGitAdapter:
             raise ManagedGitError(exc.reason_code) from exc
         if claims.parent_lease_id is not None:
             raise ManagedGitError("git_parent_lease_chain_unverified")
+        # Git is a separate Host adapter (not a TrustedTaskExecution method).
+        # It must independently enforce the same live Goal/Task lifecycle
+        # fence before stage/commit and at each under-lock preflight.
+        from llm_loop.tools.task_execution import TaskExecutionError
+        from llm_loop.tools.task_runtime import _task_lifecycle_validator
+
+        try:
+            _task_lifecycle_validator(self._lanes._dir, claims)()
+        except TaskExecutionError as exc:
+            raise ManagedGitError(exc.reason_code) from exc
         gitdir, common = _git_metadata(worktree)
         if (
             not os.path.isabs(item.expected_gitdir)

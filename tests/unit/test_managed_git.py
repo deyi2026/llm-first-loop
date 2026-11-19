@@ -17,7 +17,9 @@ from llm_loop.core.run_context import (
 )
 from llm_loop.core.task_capabilities import CapabilityRequest, CapabilityResource, TaskLeaseClaims
 from llm_loop.core.write_scope import WriteScope
+from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.task_store import TaskStore
 from llm_loop.tools.managed_git import GitCommitRequest, ManagedGitAdapter, ManagedGitError
 
 
@@ -65,12 +67,16 @@ def setup_git(tmp_path):
     audit.mkdir(mode=0o700)
     locks = audit / "git-locks"
     locks.mkdir(mode=0o700)
+    goal = GoalStore(audit).create("Git broker test", session_id="owner-1")
+    tasks = TaskStore(audit)
+    task = tasks.create(goal.id, "Commit bounded file", acceptance=["safe commit"])
+    tasks.update(goal.id, task.task_id, status="in_progress")
     store = LaneStore(audit, lock_strict=True, enforce_cross_goal=True, repo_root=linked)
     lane = store.create(
         branch="task",
         worktree=str(linked),
         base_main_sha=git(linked, "rev-parse", "HEAD"),
-        goal_id="GOAL-test",
+        goal_id=goal.id,
         owner_session_id="owner-1",
         paths=["hello.txt"],
     )
@@ -78,8 +84,8 @@ def setup_git(tmp_path):
         lane.lane_id, expected_version=1, status="active", head_sha=git(linked, "rev-parse", "HEAD")
     )
     req = CapabilityRequest(
-        "GOAL-test",
-        "TASK-test",
+        goal.id,
+        task.task_id,
         "owner-1",
         "agent-1",
         lane.lane_id,
@@ -217,6 +223,22 @@ def test_wrong_session_denied(setup_git):
             adapter.commit_paths(item)
     finally:
         current_session_id.reset(token)
+
+
+def test_git_broker_denies_done_task_or_blocked_goal_before_stage(setup_git):
+    _main, linked, audit, _store, _authority, adapter, item = setup_git
+    TaskStore(audit).update(
+        item.capability.goal_id, item.capability.task_id, status="done",
+    )
+    with pytest.raises(ManagedGitError, match="task_not_in_progress"):
+        adapter.commit_paths(item)
+    GoalStore(audit).update(
+        item.capability.goal_id, "blocked", reason="Owner paused",
+    )
+    with pytest.raises(ManagedGitError, match="task_goal_inactive_or_mismatch"):
+        adapter.commit_paths(item)
+    assert git(linked, "rev-parse", "HEAD") == item.expected_head
+    assert not git(linked, "diff", "--cached", "--name-only")
 
 
 def test_unverified_parent_lease_denies_git_effect(setup_git):
