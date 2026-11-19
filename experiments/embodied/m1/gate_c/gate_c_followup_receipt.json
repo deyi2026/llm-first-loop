@@ -1,0 +1,49 @@
+{
+  "base_commit": "0036653b6b47eb4d420a6372efd3e12d1cc373a1",
+  "episode_005": {
+    "local_placement_success": false,
+    "model_used": "glm/glm-5.3-flash",
+    "oracle_independent_verified": false,
+    "provider_attempts": 6,
+    "provider_calls_after_005": 0,
+    "terminated_by": "provider_attempt_budget_exhausted",
+    "tool_actions": 5
+  },
+  "file_sha256": {
+    "experiments/embodied/m1/gate_c/episode_glm_005.json": "7c74ce291655d2ea0a81c427eb013d532e70e6b101e2feb482d0a4cb837a350b",
+    "experiments/embodied/m1/gate_c/episode_stdout_005.txt": "5b81fa602e938240f59eede6ecad174a78327b350fa3ba4a26b56e7871f6f655",
+    "src/llm_loop/embodied_sim/policy.py": "028e1696faec063c290ba055293193e1223536f0cb11070133506b8b855c2eb3"
+  },
+  "generated_at_utc": "2026-11-19T01:28:07.914471+00:00",
+  "goal": "GOAL-20261119-9887ca71",
+  "host_qa": {
+    "pyright": {
+      "exit_code": 0,
+      "summary": "0 errors, 0 warnings"
+    },
+    "pytest": {
+      "exit_code": 0,
+      "log_sha256": "9d02a969f490cec086b9fe3d6c84efcc89b6d33ffaf07099db8bf8017309274e",
+      "summary": "33 passed in 0.30s"
+    },
+    "ruff": {
+      "exit_code": 0,
+      "summary": "All checks passed"
+    }
+  },
+  "lane": "lane-66faa2db",
+  "offline_followup": {
+    "change": "policy prompt adds tool_cube_delta/dist/aligned and grasp affordance; no executor hardcoded sequence",
+    "real_provider_validation_after_change": "not_run"
+  },
+  "oracle_host_hold": {
+    "reason": "Cross-UID managed Host execution/attestation unavailable; no NOPASSWD sudoers change authorized",
+    "snapshot_request_sha256": "bcd3b55a0389f7eb96c24424afe3a408d5645785449d2b810351ed4812ea6adb",
+    "snapshot_storage": "Host-only ignored data/oracle_pending; privileged truth excluded from Git",
+    "status": "HOLD",
+    "uid": 463
+  },
+  "receipt": "M1-GATE-C-FOLLOWUP-20261119",
+  "release_state": "not_pushed_not_merged_not_deployed",
+  "status": "PARTIAL_HOLD"
+}

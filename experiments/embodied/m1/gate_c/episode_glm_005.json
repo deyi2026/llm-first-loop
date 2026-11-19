@@ -1,0 +1,225 @@
+{
+  "budget": {
+    "deadline_s": 180.0,
+    "max_provider_attempts": 6,
+    "max_tool_actions": 8
+  },
+  "elapsed_s": 81.857,
+  "elapsed_wall_s": 81.896,
+  "experiment_id": "M1-SIM-001",
+  "learning": "off",
+  "local_verdict": {
+    "evidence": {
+      "cube_speed": 0.003073226044848723,
+      "cube_z": 0.018601861170018868,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "ok": false
+  },
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_channel_hold": {
+    "independent_verification": "PENDING_ORACLE",
+    "reason": "uid 463 (_lfl_oracle) exists but non-interactive sudo requires a password; no cross-UID oracle execution without formal Host authorization. Worker entrypoint ready: python -m llm_loop.embodied_sim.oracle_worker.",
+    "status": "HOLD"
+  },
+  "oracle_execution": "in_process_pending_host_uid",
+  "oracle_receipt": {
+    "claim_kind": "place",
+    "evidence": {
+      "cube_speed": 0.003073226044848723,
+      "cube_z": 0.018601861170018868,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "experiment_id": "M1-SIM-001",
+    "oracle_execution": "in_process_pending_host_uid",
+    "oracle_impl": "embodied-m1-oracle-local-v0",
+    "scene_epoch": 1,
+    "snapshot_sha256": "5f334c0bc79b5a809256b644de9b9f58b3f2215cb554d5c4a1c27b07158c7040",
+    "verdict": "failure"
+  },
+  "provider_attempts": 6,
+  "provider_calls": [
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.0899}, \"intent_key\": \"k1\"}",
+      "content_len": 89,
+      "finish_reason": "stop",
+      "latency_ms": 4354.9,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.0319}, \"intent_key\": \"k2\"}",
+      "content_len": 89,
+      "finish_reason": "stop",
+      "latency_ms": 3926.6,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.1727, \"y\": 0.001, \"z\": 0.03}, \"intent_key\": \"k3\"}",
+      "content_len": 88,
+      "finish_reason": "stop",
+      "latency_ms": 26559.4,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.1699, \"y\": 0.001, \"z\": 0.0305}, \"intent_key\": \"k4\"}",
+      "content_len": 90,
+      "finish_reason": "stop",
+      "latency_ms": 4369.1,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.1623, \"y\": 0.001, \"z\": 0.0316}, \"intent_key\": \"k5\"}",
+      "content_len": 90,
+      "finish_reason": "stop",
+      "latency_ms": 6182.6,
+      "status": 200
+    },
+    {
+      "content_head": "",
+      "content_len": 0,
+      "finish_reason": "length",
+      "latency_ms": 36435.2,
+      "status": 200
+    }
+  ],
+  "replans": 1,
+  "status": "ok",
+  "stop_receipts": {},
+  "t_stop_provenance": {
+    "backfill_for": "M0 P2 prereg gap; old prereg untouched (frozen sha 56f79674...)",
+    "request_confirm_ms": 0.07,
+    "settle_ms": 1142.0,
+    "settle_steps": 571,
+    "source": "gate_c measured (m1_gate_c_episode.py), timestep=2ms",
+    "stop_confirmation": {
+      "state": "confirmed",
+      "stop_id": "stop-000001"
+    },
+    "stop_request": {
+      "reason": "t_stop provenance measurement",
+      "state": "requested",
+      "stop_id": "stop-000001"
+    },
+    "t_stop_max_ms": 1142.1
+  },
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 5,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000001",
+        "grasp_mechanism": null,
+        "last_err_m": 0.01325382520933112,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 150
+      },
+      "t_s": 4.36
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000002",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013046245825166199,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 121
+      },
+      "t_s": 8.29
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {
+          "x": 0.1727,
+          "y": 0.001,
+          "z": 0.03
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000003",
+        "grasp_mechanism": null,
+        "last_err_m": 0.01302491256988135,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 40
+      },
+      "t_s": 34.851
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.1699,
+          "y": 0.001,
+          "z": 0.0305
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000004",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013000842268826066,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 176
+      },
+      "t_s": 39.225
+    },
+    {
+      "decision": {
+        "intent_key": "k5",
+        "params": {
+          "x": 0.1623,
+          "y": 0.001,
+          "z": 0.0316
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000005",
+        "grasp_mechanism": null,
+        "last_err_m": 0.01344943015369079,
+        "reason": "timeout after 600 physics steps (last_err_m=0.01344943015369079)",
+        "skill": "move_to",
+        "state": "failed",
+        "steps": 600
+      },
+      "t_s": 45.422
+    },
+    {
+      "attempts": 6,
+      "event": "decision_invalid"
+    }
+  ]
+}

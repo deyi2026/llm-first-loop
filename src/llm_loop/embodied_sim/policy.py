@@ -29,6 +29,9 @@ TASK_BRIEF = (
     "counter every time; a repeated key is rejected as a duplicate and wastes "
     "your budget. Typical solution: move_to above the cube, move_to down to the "
     "cube, grasp, move_to above tray-A, release. "
+    "The state line includes tool_cube_delta and aligned: once aligned=yes, "
+    "execute grasp IMMEDIATELY as your next action - do not issue more move_to "
+    "corrections, the ~10mm servo residual is already within grasp tolerance. "
     "move_to targets the gripper tool site. grasp closes the fingers (only "
     "succeeds with a real fingertip-cube contact). release opens them. "
     "Approach note: if a previous move_to pushed the cube, use the NEW cube "
@@ -54,9 +57,15 @@ def build_prompt(obs: dict[str, Any], history: list[dict[str, Any]] | None = Non
     o = obs["observation"]
     decisions = [h.get("decision", h) for h in (history or [])]
     last_status = (history or [{}])[-1].get("status") if history else None
+    tool = o["tool_pos"]
+    cube = o["cube"]["pos"]
+    dist = round(sum((t - c) ** 2 for t, c in zip(tool, cube, strict=True)) ** 0.5, 4)
+    aligned = "yes" if dist < 0.015 else "no"
     return (
-        f"state: tool={ [round(v, 4) for v in o['tool_pos']] } "
-        f"cube={ [round(v, 4) for v in o['cube']['pos']] } "
+        f"state: tool={ [round(v, 4) for v in tool] } "
+        f"cube={ [round(v, 4) for v in cube] } "
+        f"tool_cube_delta={ [round(t - c, 4) for t, c in zip(tool, cube, strict=True)] } "
+        f"dist={ dist } aligned={ aligned } "
         f"tray={ [round(v, 4) for v in o['tray_pos']] } "
         f"fingers={ [round(v, 4) for v in o['finger_qpos']] } "
         f"pre_grasp_hint={ [round(v, 4) for v in o.get('pre_grasp_point', [0, 0, 0])] } "
