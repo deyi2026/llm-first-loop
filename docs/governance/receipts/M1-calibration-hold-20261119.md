@@ -1,5 +1,11 @@
 # M1 Calibration HOLD — 2026-11-19 (TASK-008 close-out)
 
+> **Current status (TASK-009, 2026-11-19):** Local physics calibration
+> `M1-baseline-v1.6.2` is **LOCAL_PHYSICS_BASELINE_PASS (10/10)**.
+> Independent Oracle uid463 remains **PENDING_ORACLE / HOLD**. The historical
+> TASK-008 failure analysis below is retained as an audit trail and is superseded
+> by the subsequent independent QA correction and TASK-009 results.
+
 ## Verdict
 M1-baseline 标定 **BASELINE_FAIL 维持**（安全硬门：全轨迹无非预期腕杆-cube 接触）。
 scene.py 已恢复至已验收基线几何（rod axial z[0.14,0.18] r0.004，
@@ -58,3 +64,47 @@ hard-gates ALL unexpected contacts (including wrist_rod↔floor and any arm↔fl
 with per-stage attribution; the previous cube-only filter missed the decisive pair.
 Local read-only probe (m1_kinematic_probe.py) reproduces the Host numbers:
 rod↔floor 460 steps vs Host 462; FK residual 2.99 mm vs Host 2.75 mm.
+
+
+## TASK-009 current local physics result (2026-11-19)
+
+- Frozen candidate: `M1-baseline-v1.6.2.json`, SHA-256
+  `9ae1b7eeed11cde8e6039492e7a36725051ea00671001fbf53ccaa17bede6ff2`;
+  the corresponding `.json.sha256` is retained.
+- Collision-enabled geometry: `l3` capsule end z=0.11 instead of 0.12;
+  `wrist_rod` z=[0.12,0.13] instead of [0.14,0.18]. No collision disable,
+  no 13 mm tolerance relaxation, and no Oracle threshold relaxation.
+- The `move_to` budget is 750 rather than 600 physics steps (2 ms per step);
+  the 20-step settle criterion and 180-second episode budget remain unchanged.
+- 10/10 fixed engineering seeds passed in-process physics grasp/lift/place.
+  The collision hard gate now instruments **all 100 cold-start settle steps**
+  as well as the remaining trajectory. No unexpected contacts in those seeds.
+  The sole non-cube structural whitelist `base_geom/l1` is checked against
+  actual MuJoCo body/geom/joint ownership; failure is a verdict blocker.
+- Empty grasp and off-target placement were rejected, and same-seed
+  determinism passed. These are **local** checks, not independent uid463
+  Oracle acceptance and not a real GLM autonomous episode.
+- Host verification: `tests/embodied_m1` **49 passed** before the final
+  evidence-hash pinning test additions; Ruff PASS and Pyright 0 errors.
+  A subsequent final test run is required after those additions.
+
+### Evidence-integrity incident and correction
+
+During this QA cycle, an early local `v1.6.1` run was repeated before the
+exclusive-create guard was added. The original pre-rerun JSON SHA-256 was
+`84043c4adf0a9bc294e744025f16d6e02e1d06aaa3cbb470e859fed0a0130a1c`;
+the current re-run JSON SHA-256 is
+`167c63560d346f74067381341e20427822350f0e4dcbb814575b4667d760590d`.
+The original bytes were not recovered. This is an **acknowledged pre-freeze
+evidence overwrite**, not an unchanged historical record. No other historical
+receipt changed in the before/after audit. The `v1.6.2` generator now
+refuses to reuse any existing JSON or SHA-sidecar version, creates files
+exclusively, and tests pin fixed expected hashes (not merely JSON/sidecar
+self-consistency). Older `v1.6` pre-metadata-fix receipts remain preserved.
+
+### Remaining gates
+
+Independent Oracle uid463 cross-UID Host acceptance is still on HOLD pending
+a separately authorized, least-privilege Host installation. No GLM autonomous
+B1/B2 evaluation, independent Reviewer PASS, full R9, remote CI, protected
+main merge, or unified deployment has been claimed for this M1 candidate.

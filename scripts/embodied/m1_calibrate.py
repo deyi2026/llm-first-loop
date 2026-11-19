@@ -39,7 +39,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.5"
+BASELINE_VERSION = "M1-baseline-v1.6.2"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -63,6 +63,10 @@ _EXPECTED_PAIRS = {
     frozenset(("cube_geom", "tray_wall_n")),
     frozenset(("cube_geom", "tray_wall_s")),
     frozenset(("cube_geom", "tray_wall_w")),
+    # TASK-009: the ONLY whitelisted non-cube pair - adjacent-joint shoulder
+    # assembly (base cylinder + link1 capsule share the shoulder_pan geometry).
+    # Runtime-verified each run in main(): link1.parent_body == arm_base.
+    frozenset(("base_geom", "l1")),
 }
 
 
@@ -106,6 +110,7 @@ class TrajectoryRecorder:
         self.stage = "cold_start_settle"
         self.by_stage: dict[str, dict[tuple[str, ...], int]] = {}
         self.unexpected_steps: dict[tuple[str, ...], int] = {}
+        self.stage_steps: dict[str, int] = {}
         self.first_contact_geometry: dict[str, Any] | None = None
         self._orig_step = scene.step
         scene.step = self._step  # measurement hook
@@ -117,6 +122,7 @@ class TrajectoryRecorder:
         scene = self.scene
         np = self._np
         for _ in range(int(n)):
+            self.stage_steps[self.stage] = self.stage_steps.get(self.stage, 0) + 1
             a = scene.data.qpos[scene._cube_qadr:scene._cube_qadr + 3].copy()
             self._orig_step(1)
             b = scene.data.qpos[scene._cube_qadr:scene._cube_qadr + 3]
@@ -148,8 +154,8 @@ def run_calibrated_episode(seed: int) -> dict[str, Any]:
     """Cold-start one seed through the Gate-B-proven sequence; measure everything."""
     t_wall0 = time.monotonic()
     scene = MuJoCoScene(seed=seed)
-    scene.step(100)  # cold-start settle (gravity)
     recorder = TrajectoryRecorder(scene)
+    scene.step(100)  # cold-start settle (gravity), now inside the contact gate
     iface = EmbodiedInterface(scene)
     obs = iface.observe()["observation"]
     cube = obs["cube"]["pos"]
@@ -220,6 +226,7 @@ def run_calibrated_episode(seed: int) -> dict[str, Any]:
                                and 0.015 <= final["cube"]["pos"][2] <= 0.09
                                and float(sum(v * v for v in final["cube"]["vel"])) ** 0.5 < 0.01),
         "max_single_step_cube_displacement_m_full_trajectory": round(recorder.max_step_d, 6),
+        "instrumented_steps_by_stage": dict(recorder.stage_steps),
         "unexpected_collisions_full_trajectory": [
             {"geoms": list(k), "steps_present": v} for k, v in recorder.unexpected_steps.items()],
         "unexpected_collisions_final_snapshot_only": (
@@ -342,29 +349,45 @@ def code_shas() -> dict[str, str]:
 
 
 def main() -> int:
+    # Fail closed: once a receipt exists, only a NEW version may run.
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = OUT_DIR / f"{BASELINE_VERSION}.json"
+    sidecar_path = OUT_DIR / f"{BASELINE_VERSION}.json.sha256"
+    if out_path.exists() or sidecar_path.exists():
+        raise FileExistsError(f"immutable calibration receipt exists: {BASELINE_VERSION}")
     t0 = time.monotonic()
     evidence: dict[str, Any] = {
         "baseline_version": BASELINE_VERSION,
         "scene_xml_sha256": hashlib.sha256(build_scene_xml().encode()).hexdigest(),
-        "scene_revision_reason": ("restored original v1.2 axial rod geometry "
-                                  "(z[0.14,0.18], r0.004); v1.3 rear-rod and v1.4 lateral-rod "
-                                  "attempts both failed 0/10 and are preserved as "
-                                  "M1-baseline-v1.3-fail-rod-rear.json / M1-baseline-v1.4.json. "
-                                  "True root cause: with the wrist-rod contact removed, the "
-                                  "approach_down servo target is unreachable in the limit-pose "
-                                  "and the grasp loses fingertip contact - next phase must "
-                                  "re-calibrate the descent IK/joint limits and fingertip "
-                                  "contact, not relax tolerances."),
+        "scene_revision_reason": ("v1.6.2 approved geometry (collision ENABLED on both changed "
+                                  "geoms): l3 capsule end z0.12->0.11 and wrist_rod "
+                                  "z[0.14,0.18]->z[0.12,0.13]; move_to physics-step budget "
+                                  "600->750 (same 2ms timestep); _MOVE_TOL_M 13mm, 20-step "
+                                  "settle, oracle thresholds and 180s episode budget unchanged. "
+                                  "IK reachability is kinematically fine - the prior blockers "
+                                  "were DYNAMIC CONTACTS (rod-cube scuffing then rod-floor "
+                                  "obstruction), not pose unreachability. Failed candidates "
+                                  "preserved: M1-baseline-v1.3-fail-rod-rear.json (0/10, "
+                                  "approach_down 46.7mm), M1-baseline-v1.4.json (0/10, grasp "
+                                  "miss), M1-baseline-v1.6-pre-metadata-fix.json (10/10 physics "
+                                  "PASS but stale v1.2-era metadata, corrected here)."),
         "legacy_note_v13": ("TASK-008 approved minimal geometry fix: wrist_rod relocated "
                                   "from link3 z[0.14,0.18] (overlapping tool作用区 z~0.123..0.163 "
                                   "incl. tool_site 0.143) to wrist-rear conduit z[0.18,0.22]; "
                                   "collision remains enabled; v1.2 BASELINE_FAIL 0/10 root cause "
                                   "was rod scuffing cube in approach_down then welded into a "
                                   "constant rigid contact"),
-        "hard_gate_scope": ("v1.5: ALL unexpected contacts are hard-gated (including "
+        "hard_gate_scope": ("v1.5+: ALL unexpected contacts are hard-gated (including "
                             "wrist_rod<->floor and any arm-body floor contact), per-stage "
                             "attribution and first-contact geometry retained; cube-only filter "
                             "was a P1 calibration gap identified by independent Host QA"),
+        "cold_start_scope_note": ("v1.6.2 includes all 100 initial gravity-settle steps in the "
+                                  "full-trajectory contact gate; earlier receipts start after settle."),
+        "metadata_correction_disclosure": ("v1.6 (pre-metadata-fix) contained stale v1.2-era "
+                                           "scene_revision_reason text; QA read it before this "
+                                           "correction, so the original bytes are preserved as "
+                                           "M1-baseline-v1.6-pre-metadata-fix.json and the "
+                                           "corrected receipt is issued as v1.6.1."),
         "revision_note": ("v1.2: unexpected non-gripper cube contacts promoted to a HARD verdict "
                           "gate (no_unexpected_contacts); per-stage attribution and first-contact "
                           "geometry added. Tolerances and oracle thresholds remain UNCHANGED. "
@@ -386,23 +409,52 @@ def main() -> int:
     neg_ok = (evidence["negative_checks"]["grasp_empty"]["rejected"]
               and evidence["negative_checks"]["place_off_target"]["fake_success_rejected"])
     det_ok = evidence["determinism_check"]["deterministic"]
-    evidence["verdict"] = "BASELINE_PASS" if (all_pass and neg_ok and det_ok) else "BASELINE_FAIL"
+    # runtime structural verification for the only whitelisted non-cube pair
+    _probe = MuJoCoScene(seed=0).model
+    _bid = mujoco.mj_name2id(_probe, mujoco.mjtObj.mjOBJ_BODY, "link1")
+    _parent = mujoco.mj_id2name(_probe, mujoco.mjtObj.mjOBJ_BODY, int(_probe.body_parentid[_bid]))
+    _base_geom = mujoco.mj_name2id(_probe, mujoco.mjtObj.mjOBJ_GEOM, "base_geom")
+    _l1_geom = mujoco.mj_name2id(_probe, mujoco.mjtObj.mjOBJ_GEOM, "l1")
+    _shoulder = mujoco.mj_name2id(_probe, mujoco.mjtObj.mjOBJ_JOINT, "shoulder_pan")
+    _base_body = mujoco.mj_name2id(_probe, mujoco.mjtObj.mjOBJ_BODY, "arm_base")
+    structural_ok = (_parent == "arm_base"
+                     and int(_probe.geom_bodyid[_base_geom]) == _base_body
+                     and int(_probe.geom_bodyid[_l1_geom]) == _bid
+                     and int(_probe.jnt_bodyid[_shoulder]) == _bid)
+    evidence["structural_whitelist_verification"] = {
+        "pair": ["base_geom", "l1"],
+        "link1_parent_body": _parent,
+        "shared_joint": "shoulder_pan",
+        "adjacent_assembly_confirmed": structural_ok,
+    }
+    evidence["cold_start_contact_gate"] = {
+        "expected_steps": 100,
+        "all_seeds_instrumented": all(
+            r["instrumented_steps_by_stage"].get("cold_start_settle") == 100
+            for r in seeds),
+    }
+    evidence["independent_oracle"] = "PENDING_ORACLE (uid463 Host acceptance HOLD)"
+    if (all_pass and neg_ok and det_ok and structural_ok
+            and evidence["cold_start_contact_gate"]["all_seeds_instrumented"]):
+        evidence["verdict"] = "LOCAL_PHYSICS_BASELINE_PASS"
+    else:
+        evidence["verdict"] = "BASELINE_FAIL"
     evidence["failures"] = [ {"seed": r["seed"], "stage": r["failure_stage"],
                               "reason": r["failure_reason"]}
                              for r in seeds if not r["passed"] ]
     evidence["wall_total_s"] = round(time.monotonic() - t0, 3)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUT_DIR / f"{BASELINE_VERSION}.json"
     blob = json.dumps(evidence, indent=2, sort_keys=True) + "\n"
-    out_path.write_text(blob, encoding="utf-8")
+    with out_path.open("x", encoding="utf-8") as f:
+        f.write(blob)
     sha = hashlib.sha256(blob.encode()).hexdigest()
-    (OUT_DIR / f"{BASELINE_VERSION}.json.sha256").write_text(sha + "\n", encoding="utf-8")
+    with sidecar_path.open("x", encoding="utf-8") as f:
+        f.write(sha + "\n")
     print(json.dumps({"verdict": evidence["verdict"],
                       "seeds_passed": sum(1 for r in seeds if r["passed"]),
                       "deterministic": det_ok, "negatives_fail_closed": neg_ok,
                       "failures": evidence["failures"],
                       "evidence_sha256": sha}, indent=2))
-    return 0 if evidence["verdict"] == "BASELINE_PASS" else 1
+    return 0 if evidence["verdict"] == "LOCAL_PHYSICS_BASELINE_PASS" else 1
 
 
 if __name__ == "__main__":
