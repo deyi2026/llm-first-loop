@@ -20,6 +20,18 @@ This is an operational gate record, not a change to the frozen preregistration.
 - B1/B2: 30 each, paired seeds `20261117..20261146`, learning off.
 - Maximum **60** episodes, **360** real Provider attempts, **480** tool actions;
   each episode retains 6 Provider attempts, 8 actions and 180-second deadline.
+- **Operator-approved budget ceiling (2026-11-20): USD 20.00 total**,
+  **USD 0.05 per-call reservation ceiling**. At 360 reservations the
+  nominal reserved allowance is USD 18.00, leaving USD 2.00 headroom.
+  Both the root Host grant validator and the client cost gate reject higher
+  ceilings. A smaller separately authorized grant remains valid.
+- Reference GLM-5.3-Flash list tariff: USD 0.15 / 1M uncached input tokens,
+  USD 0.50 / 1M output tokens; cached input USD 0.03 / 1M.
+  Source checked 2026-11-20: https://docs.z.ai/guides/overview/pricing .
+  The Host grant must not use lower input/output rates without an explicit
+  subsequent reviewed policy change. Confirm the *actual* API endpoint,
+  account-specific billing and key type before installation; a highest-tier
+  subscription does not by itself prove zero API charges.
 - Client records Provider-reported input/output/total tokens. Missing usage,
   timeout or unqualified tariff is **unknown**, never zero or free.
 - USD is a **tariff-based estimate**, not the Provider's final invoice.
@@ -42,8 +54,9 @@ Before any grant or paid paired run, an operator must independently approve:
    the **final** independent Reviewer remains after the paired experiment.
 2. Authoritative GLM tariff source/date and USD input/output rates; any
    applicable currency conversion or cache pricing must be qualified.
-3. Explicit total stop amount `max_total_usd` and conservative per-call
-   reservation `reserve_per_call_usd` (both currently **UNSET**).
+3. Approved upper bounds are now `max_total_usd <= 20.00` and
+   `reserve_per_call_usd <= 0.05`; the precise signed Host grant and
+   request-size suitability are still **NOT INSTALLED / NOT VERIFIED**.
 4. Expiration, root-staged grant manifest SHA, protected cost ledger and
    one-time Host installation/authorization scope.
 5. A **separate** affirmative approval to start the 30 B1/B2 paired trials.

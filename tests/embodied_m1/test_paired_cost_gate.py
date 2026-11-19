@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from llm_loop.embodied_sim.paired_budget import (
+    BATCH_USD_LIMIT,
+    CALL_RESERVE_USD_LIMIT,
     PairedCostGate,
     PairedCostHold,
     validate_plan,
@@ -48,9 +51,19 @@ def _usage() -> dict:
 def test_valid_plan_requires_exact_frozen_limits_and_tariff(tmp_path):
     plan = _plan(tmp_path)
     assert validate_plan(plan, prereg_sha="b" * 64, candidate_sha="c" * 40) == plan
+    assert BATCH_USD_LIMIT == 20
+    assert Decimal("0.05") == CALL_RESERVE_USD_LIMIT
+    assert validate_plan(
+        {**plan, "max_total_usd": "20.00", "reserve_per_call_usd": "0.05",
+         "input_per_million_usd": "0.15", "output_per_million_usd": "0.50"},
+        prereg_sha="b" * 64, candidate_sha="c" * 40,
+    )
     for key, bad in (("model", "another"), ("max_episodes", 61),
                      ("max_provider_attempts", 361), ("max_tool_actions", 481),
                      ("max_total_usd", "NaN"), ("input_per_million_usd", "NaN"),
+                     ("max_total_usd", "20.01"), ("reserve_per_call_usd", "0.05000001"),
+                     ("input_per_million_usd", "0.149"),
+                     ("output_per_million_usd", "0.499"),
                      ("pricing_source", ""), ("candidate_sha", "d" * 40)):
         changed = {**plan, key: bad}
         with pytest.raises(PairedCostHold):

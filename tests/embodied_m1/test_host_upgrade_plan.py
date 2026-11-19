@@ -14,7 +14,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from llm_loop.embodied_sim.paired_budget import REQUIRED
+from llm_loop.embodied_sim.paired_budget import (
+    BATCH_USD_LIMIT,
+    CALL_RESERVE_USD_LIMIT,
+    REQUIRED,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -70,10 +74,18 @@ def test_root_batch_plan_matches_client_schema_and_rejects_drift(tmp_path):
     mod = _upgrade_module()
     plan = _batch_plan(mod, tmp_path)
     assert mod.BATCH_REQUIRED == REQUIRED
+    assert mod.BATCH_USD_LIMIT == BATCH_USD_LIMIT
+    assert mod.CALL_RESERVE_USD_LIMIT == CALL_RESERVE_USD_LIMIT
     mod._validate_batch_plan(plan)
+    mod._validate_batch_plan(
+        {**plan, "max_total_usd": "20.00", "reserve_per_call_usd": "0.05",
+         "input_per_million_usd": "0.15", "output_per_million_usd": "0.50"})
     for key, bad in (("max_episodes", 61), ("max_provider_attempts", 361),
                      ("max_tool_actions", 481), ("model", "another"),
                      ("max_total_usd", "NaN"), ("ledger_path", "/tmp/elsewhere"),
+                     ("max_total_usd", "20.01"), ("reserve_per_call_usd", "0.05000001"),
+                     ("input_per_million_usd", "0.149"),
+                     ("output_per_million_usd", "0.499"),
                      ("prereg_sha256", "0" * 64)):
         with pytest.raises(RuntimeError):
             mod._validate_batch_plan({**plan, key: bad})

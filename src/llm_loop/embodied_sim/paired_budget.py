@@ -24,6 +24,12 @@ from llm_loop.embodied_sim.usage import estimate_usd
 GRANT_PATH = Path("/usr/local/etc/lfl-m1-paired-grant.json")
 LEDGER_DIR = Path("/usr/local/var/lfl-m1-paired-budget")
 PREREG_RELATIVE = Path("experiments/embodied/prereg-m1-sim-002.json")
+# Operator-selected ceilings for this one M1-SIM-002 batch. They do not issue
+# a Host grant or authorize any paired Provider request.
+BATCH_USD_LIMIT = Decimal("20.00")
+CALL_RESERVE_USD_LIMIT = Decimal("0.05")
+MIN_INPUT_PER_MILLION_USD = Decimal("0.15")
+MIN_OUTPUT_PER_MILLION_USD = Decimal("0.50")
 REQUIRED = frozenset({
     "schema", "batch_id", "experiment_id", "prereg_sha256", "candidate_sha",
     "model", "currency", "max_episodes", "max_provider_attempts",
@@ -76,12 +82,17 @@ def validate_plan(plan: Any, *, prereg_sha: str, candidate_sha: str,
     reserve = _positive_usd(plan["reserve_per_call_usd"])
     if reserve > cap:
         raise PairedCostHold("CALL_RESERVE_EXCEEDS_TOTAL")
+    if cap > BATCH_USD_LIMIT or reserve > CALL_RESERVE_USD_LIMIT:
+        raise PairedCostHold("PAIRED_APPROVED_USD_CEILING_EXCEEDED")
     try:
         estimate_usd({"usage_status": "reported", "prompt_tokens": 1,
                       "completion_tokens": 1}, input_per_million=plan["input_per_million_usd"],
                      output_per_million=plan["output_per_million_usd"])
     except (ValueError, TypeError) as exc:
         raise PairedCostHold("GRANT_TARIFF_INVALID") from exc
+    if (Decimal(plan["input_per_million_usd"]) < MIN_INPUT_PER_MILLION_USD
+            or Decimal(plan["output_per_million_usd"]) < MIN_OUTPUT_PER_MILLION_USD):
+        raise PairedCostHold("GRANT_TARIFF_UNDER_REFERENCE")
     if not isinstance(plan["pricing_source"], str) or not plan["pricing_source"].strip():
         raise PairedCostHold("GRANT_PRICING_SOURCE_MISSING")
     try:

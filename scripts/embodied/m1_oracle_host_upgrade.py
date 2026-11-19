@@ -41,6 +41,10 @@ PAIRED_LEDGER_DIR = Path("/usr/local/var/lfl-m1-paired-budget")
 PAIRED_LEDGER = PAIRED_LEDGER_DIR / "m1-paired-cost-ledger.jsonl"
 PAIRED_ISSUED = Path("/usr/local/etc/lfl-m1-paired-issued.jsonl")
 PREREG_SHA256 = "e4aefedd413874c547c6ab01aebb8c2019491b07b1a887bf7266621fa0c1b5ae"
+BATCH_USD_LIMIT = Decimal("20.00")
+CALL_RESERVE_USD_LIMIT = Decimal("0.05")
+MIN_INPUT_PER_MILLION_USD = Decimal("0.15")
+MIN_OUTPUT_PER_MILLION_USD = Decimal("0.50")
 BATCH_REQUIRED = frozenset({
     "schema", "batch_id", "experiment_id", "prereg_sha256", "candidate_sha",
     "model", "currency", "max_episodes", "max_provider_attempts",
@@ -83,6 +87,10 @@ def _validate_batch_plan(plan: dict, *, now: datetime | None = None) -> None:
             or cap <= 0 or not 0 < reserve <= cap
             or min(rate_in, rate_out) < 0 or max(rate_in, rate_out) == 0):
         raise RuntimeError("paired grant USD limits invalid")
+    if (cap > BATCH_USD_LIMIT or reserve > CALL_RESERVE_USD_LIMIT
+            or rate_in < MIN_INPUT_PER_MILLION_USD
+            or rate_out < MIN_OUTPUT_PER_MILLION_USD):
+        raise RuntimeError("paired grant exceeds approved USD ceiling or understates tariff")
     if not isinstance(plan["pricing_source"], str) or not plan["pricing_source"].strip():
         raise RuntimeError("paired grant pricing provenance missing")
     try:
