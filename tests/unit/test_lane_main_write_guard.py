@@ -1701,7 +1701,7 @@ def test_git_verbs_transparent_prefix_flags_cd_tracked(tmp_path):
     """P1-1：`time -p cd` / `command -p cd` 的旗标词不终结命令位。"""
     main_dir = tmp_path / "main"
     main_dir.mkdir()
-    for head in ("time -p", "command -p", "builtin --"):
+    for head in ("time -p", "command -p"):
         verbs = guard_module._git_verbs(
             f"{head} cd {main_dir} && git commit -m x", "/tmp"
         )
@@ -1717,6 +1717,30 @@ def test_git_verbs_cd_physical_option_tracked(tmp_path):
             f"cd {opt} {main_dir} && git commit -m x", "/tmp"
         )
         assert verbs == [("commit", ["-m", "x"], str(main_dir))], opt
+
+
+def test_git_verbs_invalid_prefix_flag_fail_closed(tmp_path):
+    """P1 回归（6c60321fd479）：无效旗标使前缀调用失败 → cd 链不可信 → 保守 ""。
+
+    bash 事实：`command -x cd wt` 前缀调用失败，cd 不执行，`;` 后的
+    git commit 落在未变的 cwd——旧旗标跳过会误跟踪 cd → 放行真实落点。
+    """
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for head in ("command -x", "! -z", "time -q", "{ -x"):
+        cmd = f"{head} cd {main_dir}; git commit -m y"
+        verbs = guard_module._git_verbs(cmd, "/tmp")
+        assert verbs == [("commit", ["-m", "y"], "")], cmd
+
+
+def test_git_verbs_clobber_target_not_in_refs(tmp_path):
+    """P2-1（6c60321fd479）：`git commit 2>|log -- docs/x` 的重定向目标不入 refs。"""
+    p = tmp_path / "receipts" / "r.md"
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"git commit 2>|{log} -- {p}", "/tmp"
+    )
+    assert verbs == [("commit", ["--", str(p)], "/tmp")]
 
 
 def test_git_verbs_clobber_redirect_after_cd_tracked(tmp_path):

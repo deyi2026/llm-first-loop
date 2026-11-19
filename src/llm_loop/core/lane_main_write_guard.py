@@ -306,12 +306,29 @@ def _git_verbs(
             # bash 仍执行后续命令且 cd 语义不变（`! cd wt`/`time cd wt` 照常改
             # cwd，必须跟踪；`{ cd wt; }` 花括号组在当前 shell 执行、cwd 持续
             # 生效）→ 跳过、命令位保持（review subagent_cde453f77b91 P1-2、
-            # subagent_3eab63eb5e61 P1-1）。前缀自身的旗标（`time -p cd`、
-            # `command -p cd`）也一并跳过——旗标词若按普通词处理会终结命令位，
-            # 使 cd 失踪（review subagent_f8b3178c6f57 P1-1）。
+            # subagent_3eab63eb5e61 P1-1）。
+            _prefix = tokens[i]
             i += 1
-            while i < len(tokens) and tokens[i].startswith("-") and len(tokens[i]) > 1:
-                i += 1
+            _conservative = False
+            while (
+                i < len(tokens)
+                and tokens[i].startswith("-")
+                and len(tokens[i]) > 1
+            ):
+                if tokens[i] in _TRANSPARENT_PREFIX_FLAGS.get(_prefix, set()):
+                    # 前缀接受的旗标（time -p / command -p）：透明跳过
+                    # （review subagent_f8b3178c6f57 P1-1）。
+                    i += 1
+                else:
+                    # 未被接受的旗标形 token（review subagent_6c60321fd479
+                    # P1-1）：bash 中前缀调用失败或该词是命令名——cd 链
+                    # 不可信 → 保守置未知（fail-closed），命令位终结。
+                    shell_cwd = ""
+                    seg_start = False
+                    _conservative = True
+                    break
+            if _conservative:
+                continue
             continue
         if seg_start and tokens[i] in _CMD_POS_CWD_UNKNOWABLE:
             # eval/pushd/popd/source/.：可能改 cwd 且参数不可静态解析 → 置未知
@@ -449,7 +466,7 @@ def _git_verbs(
                     _after = tokens[k2 + 1] if k2 + 1 < len(tokens) else ""
                     if (
                         _after
-                        and tok.endswith(("<", ">"))
+                        and tok.endswith(("<", ">", "|"))
                         and not _FD_REDIRECT_RE.match(_after)
                         and _after not in _SEG_PERSIST
                         and _after not in _SEG_SUBSHELL
@@ -510,6 +527,17 @@ _CMD_POS_TRANSPARENT = frozenset({
     "esac",
     "select",
 })
+# 透明前缀接受的旗标白名单（审查 subagent_6c60321fd479 P1-1）：无效旗标
+# 使前缀调用失败、cd 不执行（`command -x cd wt; git commit` 真实落点是
+# 未变的 cwd）——旗标跳过不能无验证放行。`command -v/-V` 只查找不执行，
+# 也不在白名单；`builtin`/`!` 无旗标；`{`/`}` 与复合关键字后旗标形词是
+# 命令名，一律保守。
+_TRANSPARENT_PREFIX_FLAGS = {
+    "time": {"-p"},
+    "command": {"-p"},
+    "builtin": set(),
+    "!": set(),
+}
 _CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", "."})
 
 

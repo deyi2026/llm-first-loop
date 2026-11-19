@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "3cfa0db23",
+    "head_commit": "ead6fad6d",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1209,7 +1209,7 @@
     "src/llm_loop/tools/builtin/execute_command.py::execute": 234,
     "src/llm_loop/tools/review_host_admission.py::_consume_joint_push_batches": 131,
     "src/llm_loop/tools/review_host_admission.py::_target": 170,
-    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 281
+    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 298
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
