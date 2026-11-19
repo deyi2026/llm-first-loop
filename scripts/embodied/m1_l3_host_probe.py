@@ -7,9 +7,10 @@ come from the real GLM provider through the unchanged Host episode executor.
 The Host performs the actual grasp and returns its actual failure status;
 no action receipt, Oracle verdict, or simulator state is forged.
 
-The scripted decision consumes one of the same six decision attempts and one
-of the same eight tool actions. Both B1 and B2 use smoke seed 9 only. The
-result discloses the injected decision and the number of REAL model calls.
+The scripted decision consumes one tool action but is not counted as a real
+Provider attempt. The root-owned Host selects an engineering smoke seed 0..9;
+paired seeds are never accepted. The result discloses the injected decision,
+real model attempts, and any smoke-only guidance.
 """
 from __future__ import annotations
 
@@ -47,10 +48,8 @@ def validate_probe_trial(run: dict[str, Any]) -> str:
     if (run["experiment_id"] != EXPERIMENT_ID
             or not isinstance(trial, dict)
             or trial.get("phase") != "smoke"
-            or trial.get("trial_index") != 9
-            or trial.get("seed") != 9
             or trial.get("arm") not in ("B1", "B2")):
-        raise HostLinkError("L3 diagnostic requires root-selected smoke seed 9")
+        raise HostLinkError("L3 diagnostic requires a root-selected smoke trial")
     return str(trial["arm"])
 
 

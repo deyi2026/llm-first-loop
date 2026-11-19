@@ -28,14 +28,16 @@ def _run(arm="B2", phase="smoke", index=9, seed=9):
 
 
 @pytest.mark.parametrize("arm", ["B1", "B2"])
-def test_l3_probe_accepts_only_root_selected_smoke_seed_nine(arm):
-    assert validate_probe_trial(_run(arm)) == arm
+@pytest.mark.parametrize("seed", [0, 3, 6, 9])
+def test_l3_probe_accepts_root_selected_engineering_smoke_seed(arm, seed):
+    assert validate_probe_trial(_run(arm, index=seed, seed=seed)) == arm
 
 
 @pytest.mark.parametrize("run", [
     _run(phase="paired", index=0, seed=20261117),
-    _run(index=8, seed=8),
     _run(index=9, seed=8),
+    _run(index=10, seed=10),
+    _run(index=-1, seed=-1),
     _run(arm="B3"),
     {"run_id": "a" * 32, "pid": 463, "scene_epoch": 1,
      "experiment_id": "M1-SIM-001"},
