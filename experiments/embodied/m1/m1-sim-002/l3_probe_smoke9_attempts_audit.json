@@ -56,14 +56,51 @@
       "managed_release_observed": true,
       "run_id": "7d7343c9a94e833edb70b98310284547",
       "terminated_by": "client_guard_release_blocked"
+    },
+    {
+      "actual_glm_attempts": 5,
+      "arm": "B2",
+      "attempt": "attempt3_with_disclosed_diagnostic_public_lift_hint",
+      "diagnostic_lift_hint_used": true,
+      "elapsed_s": 80.829,
+      "evidence_path": "experiments/embodied/m1/m1-sim-002/l3_probe_smoke_B2_09_3032e6aba9ddb9d78eb73c1a62d56dc9.json",
+      "evidence_sha256": "b3cc01c8349f5681f299f1ce68c79f2dc522bc61ae8a986e9c4fda4e8db7a41d",
+      "host_grasp_failure_observed": true,
+      "host_signed_grasp_verified": true,
+      "host_signed_place_verified": true,
+      "http_responses": 5,
+      "http_timeouts": 0,
+      "managed_recoveries": 1,
+      "managed_release_observed": true,
+      "run_id": "3032e6aba9ddb9d78eb73c1a62d56dc9",
+      "terminated_by": "place_host_verified",
+      "tool_actions": 7
     }
   ],
   "diagnostic_only": true,
   "experiment_id": "M1-SIM-002",
+  "final_result": {
+    "diagnostic_only": true,
+    "elapsed_s": 80.829,
+    "independent_host_ed25519_grasp_and_place_verified": true,
+    "managed_recoveries": 1,
+    "model_used": "glm/glm-5.3-flash",
+    "paired_results_unaffected": true,
+    "provider_attempts": 5,
+    "requires_extra_public_lift_hint_not_used_in_frozen_paired_prompt": true,
+    "status": "REAL_L3_DIAGNOSTIC_END_TO_END_PASS",
+    "tool_actions": 7,
+    "trial": {
+      "arm": "B2",
+      "phase": "smoke",
+      "seed": 9,
+      "trial_index": 9
+    }
+  },
   "frozen_deadline_seconds": 180,
   "frozen_model_attempt_budget": 6,
   "frozen_tool_action_budget": 8,
-  "interpretation": "L3 physical failed grasp and managed reset verified; attempt1 B2 independent Host-signed grasp verified, but no signed place. Attempt2 release correctly blocked without signed lifted grasp. B1 outcome confounded by ReadTimeout. No end-to-end L3 success or B2 superiority claim.",
+  "interpretation": "B2 actual UID463 Host grasp failure, managed release, live GLM continuation, and independently Ed25519-signed grasp/place achieved on attempt3 using an explicit public lift-height hint in the engineering diagnostic only. Attempts1/2 and B1 timeouts remain retained; cannot infer B2 statistical superiority, and formal paired prompt is unchanged. No paired seed consumed.",
   "model_used": "glm/glm-5.3-flash",
   "not_part_of_30_paired_trials": true,
   "phase": "smoke",
@@ -71,5 +108,6 @@
   "scripted_first_grasp_disclosed": true,
   "seed": 9,
   "source_code_first_attempt": "16d22d06832532940c5ee168261e80d304e41a15",
-  "source_code_second_attempt": "cca2a6ff66d1f75338c777e56b87f6f73e36b105"
+  "source_code_second_attempt": "cca2a6ff66d1f75338c777e56b87f6f73e36b105",
+  "source_code_third_attempt": "9278170e7417d4633d99116c08ebaf4e0a512f9c"
 }
