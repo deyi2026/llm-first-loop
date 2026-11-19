@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "ead6fad6d",
+    "head_commit": "1435f5135",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1208,8 +1208,7 @@
     "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 186,
     "src/llm_loop/tools/builtin/execute_command.py::execute": 234,
     "src/llm_loop/tools/review_host_admission.py::_consume_joint_push_batches": 131,
-    "src/llm_loop/tools/review_host_admission.py::_target": 170,
-    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 298
+    "src/llm_loop/tools/review_host_admission.py::_target": 170
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
@@ -1248,7 +1247,8 @@
     "src/llm_loop/subagent/runner.py::_execute_subagent": 619,
     "src/llm_loop/subagent/runner.py::start": 394,
     "src/llm_loop/tools/builtin/browser_perceive.py::execute": 350,
-    "src/llm_loop/web/routes.py::chat_stream": 381
+    "src/llm_loop/web/routes.py::chat_stream": 381,
+    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 304
   },
   "local_imports": {
     "src/llm_loop/core/history.py": 30,

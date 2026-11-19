@@ -60,6 +60,15 @@
 - **``cd`` 多操作数 = 失败**（审查 4289cf3401e0 P1-1）：bash 对
   ``cd wt extra`` 报 "too many arguments" 且 cwd 不变——按成功跟踪是
   fail-open，现按失败处理（cwd 保持）。
+- **cd 任意选项形 / here-string（审查 subagent_02c9e0493bb0 P1-1/2 修复）**：
+  ``cd -e/-@/-Pe <main>`` 等任意选项形 token 一律跳过、真实落点跟踪其后
+  （无效选项 bash 报错不改 cwd → 跳过并跟踪属保守过拦方向）；
+  ``<<<``（here-string）并入操作数边界集与 fd 重定向正则（``[<>]{1,2}``
+  匹配不了三个 ``<``）。环境边界（审查 P2-4 建议记录）：相对 ``cd`` 的
+  ``CDPATH`` 语义未建模——``CDPATH`` 首组件非空/非 ``.`` 时 bash 可能落
+  CDPATH 目录，静态解析无法感知该环境变量，属声明边界（外层执行闸兜底）。
+  词中 ``#`` 截断残留经实测复核（shlex 3.13 punctuation_chars 模式下
+  ``wt#note``→``wt`` 截断成立、bash 保持整词），docstring 记录准确。
 - **已知边界（既有，非本批引入，4289cf3401e0 P2-1；2026-11-20 修订，审查
   subagent_3eab63eb5e61 P2-1/P2-2）**：反引号替换与 ``$( … )`` 内的 git 命令
   按上文"引号内命令替换 = 保守哨兵"拦截（任一 token 含 ``$(`` 或反引号即
@@ -163,7 +172,10 @@ CLOSING_BLOCK_MAX_S = 30 * 60.0
 # `&>` 误当 cd 第二操作数 → 误判 cd 失败 → 放行真实落点
 # （review subagent_cde453f77b91 P1-3）。`>|`/`2>|`（clobber 重定向）
 # 同理（review subagent_f8b3178c6f57 P1-3）。
-_FD_REDIRECT_RE = re.compile(r"^(?:[0-9]*[<>]{1,2}&?[0-9]*|&(?:>>|>)|[0-9]*>[|])$")
+_FD_REDIRECT_RE = re.compile(r"^(?:[0-9]*[<>]{1,2}&?[0-9]*|&(?:>>|>)|[0-9]*>[|]|<{3})$")
+# 操作数边界 token 集：cd 落点判定与 git refs 切片共用（含 here-string
+# `<<<`，review subagent_02c9e0493bb0 P1-2——`[<>]{1,2}` 匹配不了三个 `<`）。
+_TOK_OPERAND_BOUNDARY = ("(", ")", "<", ">", ">>", "<<<")
 # 回执/证据窄通道（审查残余①，2026-11-09 收紧）：`git commit ... -- <paths>`
 # 显式列出且全部落在这些前缀下时，不受他人 live lane 阻挡（只追加证据，改不到
 # 代码）。原 `docs/` 整树过宽——`docs/ai_rules.md` 这类行为性文档也能借道；
@@ -202,7 +214,7 @@ def _git_verbs(
     try:
         from llm_loop.core.command_scope_guard import _strip_heredocs
 
-        stripped, _reason = _strip_heredocs(command)
+        stripped, _reason = _strip_heredocs(_strip_here_strings(command))
         if not stripped.strip():
             # 剥离后为空（如引号未闭合被判"跨行延续到命令末尾"）：命令的真实
             # 执行形态不可解析（bash 对未闭合引号是语法错误、不执行任何命令）
@@ -362,11 +374,17 @@ def _git_verbs(
             # 可能携带隐藏 git 动词 → 保守哨兵（当 main 上的 commit 判定）。
             return [("commit", [], "")]
         if seg_start and tokens[i] == "cd":
-            # bash cd 选项（review subagent_f8b3178c6f57 P1-2）：`cd -P <main>`/
-            # `cd -L <main>`/`cd -- <main>` 的真实落点在选项之后；不跳过会把
-            # 选项当落点、真实目标变"第二操作数" → 误判多操作数 → cwd 不变
-            # → fail-open。`--` 之后一切按字面（目录名可以叫 `-P`）。
-            while i + 1 < len(tokens) and tokens[i + 1] in ("-P", "-L"):
+            # bash cd 选项（review subagent_f8b3178c6f57 P1-2、
+            # subagent_02c9e0493bb0 P1-1）：`cd -P/-L/-e/-@/-Pe <main>` 的真实
+            # 落点在选项之后；不跳过会把选项当落点、真实目标变"第二操作数"
+            # → 误判多操作数 → cwd 不变 → fail-open。任意选项形 token 一律
+            # 跳过：无效选项 bash 报错不改 cwd，跳过并跟踪落点属保守方向
+            # （误判成落点 = 过拦）。`--` 之后按字面（目录名可以叫 `-P`）。
+            while (
+                i + 1 < len(tokens)
+                and tokens[i + 1].startswith("-")
+                and len(tokens[i + 1]) > 1
+            ):
                 i += 1
             if i + 1 < len(tokens) and tokens[i + 1] == "--":
                 i += 1
@@ -376,7 +394,7 @@ def _git_verbs(
                 not nxt
                 or nxt in _SEG_PERSIST
                 or nxt in _SEG_SUBSHELL
-                or nxt in ("(", ")", "<", ">", ">>")
+                or nxt in _TOK_OPERAND_BOUNDARY
                 or _FD_REDIRECT_RE.match(nxt)
             ):
                 # cd 无参数（bash: cd → HOME，cwd 未知）或后随边界/重定向 → 保守
@@ -389,7 +407,7 @@ def _git_verbs(
                 extra
                 and extra not in _SEG_PERSIST
                 and extra not in _SEG_SUBSHELL
-                and extra not in ("(", ")", "<", ">", ">>")
+                and extra not in _TOK_OPERAND_BOUNDARY
                 and not _FD_REDIRECT_RE.match(extra)
             ):
                 # bash: cd 多操作数 → "too many arguments"，cwd 不变
@@ -452,7 +470,7 @@ def _git_verbs(
                 if (
                     tok in _SEG_PERSIST
                     or tok in _SEG_SUBSHELL
-                    or tok in ("(", ")", "<", ">", ">>")
+                    or tok in _TOK_OPERAND_BOUNDARY
                     or _FD_REDIRECT_RE.match(tok)
                 ):
                     if not _FD_REDIRECT_RE.match(tok):
@@ -470,7 +488,7 @@ def _git_verbs(
                         and not _FD_REDIRECT_RE.match(_after)
                         and _after not in _SEG_PERSIST
                         and _after not in _SEG_SUBSHELL
-                        and _after not in ("(", ")", "<", ">", ">>")
+                        and _after not in _TOK_OPERAND_BOUNDARY
                         and not _after.startswith("-")
                     ):
                         k2 += 2
@@ -539,6 +557,74 @@ _TRANSPARENT_PREFIX_FLAGS = {
     "!": set(),
 }
 _CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", "."})
+
+
+def _strip_here_strings(text: str) -> str:
+    """移除 bash here-string（``<<< word``）的算子与数据词（审查
+    subagent_02c9e0493bb0 P1-2）。
+
+    ``_strip_heredocs`` 把 ``<<<`` 判"暂不支持"整体失败 → 本模块收到空串
+    触发哨兵（过拦）。here-string 的数据词是 stdin 数据不是命令，纯数据词
+    移除不影响 git 动词判定。引号内的 ``<<<`` 是数据不动；数据词含 ``$(``
+    /反引号/进程替换/算术展开时**保留原串**（bash 会对数据词做展开，其中
+    可藏 ``$(cd /main && git commit)`` 类执行向量 → 上游哨兵兜底，fail-closed）；
+    未闭合引号同样保守保留原串。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote: str | None = None
+    while i < n:
+        ch = text[i]
+        if quote is None and ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if quote is None and ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if quote == ch:
+            quote = None
+            out.append(ch)
+            i += 1
+            continue
+        if quote is None and text.startswith("<<<", i):
+            j = i + 3
+            while j < n and text[j] in " \t":
+                j += 1
+            if j >= n:
+                i = j  # 句尾裸 <<<：bash 语法错误不执行，移除无妨
+                continue
+            if text[j] in ("'", '"'):
+                q = text[j]
+                k = j + 1
+                while k < n:
+                    if text[k] == "\\" and k + 1 < n:
+                        k += 2
+                        continue
+                    if text[k] == q:
+                        break
+                    k += 1
+                if k >= n:
+                    return text  # 未闭合：保守原样（上游哨兵兜底）
+                word = text[j : k + 1]
+            else:
+                k = j
+                while k < n and text[k] not in " \t\n;|&<>()":
+                    if text[k] == "\\" and k + 1 < n:
+                        k += 2
+                        continue
+                    k += 1
+                word = text[j:k]
+            if any(m in word for m in ("$(", "`", "<(", ">(", "$[")):
+                return text  # 数据词含执行向量：bash 会展开执行 → 保守原样
+            i = k
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _split_logical_lines(text: str) -> list[str]:

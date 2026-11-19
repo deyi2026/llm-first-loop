@@ -1693,6 +1693,53 @@ def test_block_if_cd_into_main_repo(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# review subagent_02c9e0493bb0 修复回归（P1-1 cd 任意选项形 + P1-2 <<<，r14）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_cd_arbitrary_options_tracked(tmp_path):
+    """P1-1：`cd -e/-@/-Pe main` 任意选项形之后才是真实落点。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for opt in ("-e", "-@", "-Pe", "-P", "-L"):
+        verbs = guard_module._git_verbs(
+            f"cd {opt} {main_dir} && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", ["-m", "x"], str(main_dir))], opt
+
+
+def test_git_verbs_here_string_boundary(tmp_path):
+    """P1-2：`cd wt <<< data && git commit` 的 here-string 不算第二操作数。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} <<< data && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_here_string_with_substitution_conservative(tmp_path):
+    """P1-2 保守面：here-string 数据词含 ``$(`` 会展开执行 → 保留原串走哨兵。"""
+    verbs = guard_module._git_verbs(
+        'cd /tmp/wt <<< "$(cd /main && git commit)" && git push', "/tmp/wt"
+    )
+    assert verbs == [("commit", [], "")]
+
+
+def test_block_cd_option_form_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`cd -Pe main && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd -Pe {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# ---------------------------------------------------------------------------
 # review subagent_f8b3178c6f57 修复回归（P1-1/2/3：旗标/cd 选项/clobber，r12）
 # ---------------------------------------------------------------------------
 
