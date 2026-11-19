@@ -1,0 +1,282 @@
+{
+  "elapsed_s": 68.956,
+  "experiment_id": "M1-SIM-002",
+  "host_claims": {
+    "grasp": {
+      "action_seq": 6,
+      "claim_kind": "grasp",
+      "nonce": "c62aaacfc1334001a90a4b8f4b82c267",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 6,
+        "claim_kind": "grasp",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 0.021807106645900305,
+          "cube_z": 0.10693532702638366,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "oracle_settle_steps": 30,
+          "weld_active": true
+        },
+        "experiment_id": "M1-SIM-002",
+        "nonce": "c62aaacfc1334001a90a4b8f4b82c267",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "b7930805ddce8beb2636ad84c20b1a20",
+        "scene_epoch": 1,
+        "signature": "cec83bab5861027cbe8ebe73abccc380420fd1061482f7d5a7f4801a1c428c31c57edc74531918a9e60d60de7c612b9df6f6eaa888914f56b0b1596471137a01",
+        "snapshot_hash": "cb341bef44b56baa8c63810c8aa93fe76abc0edac28daec41f09ac8db24b7379",
+        "trial": {
+          "arm": "B2",
+          "phase": "smoke",
+          "seed": 6,
+          "trial_index": 6
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "336cda9b4b9e99bf70fbc3781969b2b501e8b5f5f453c3873748a641ac77b770",
+      "status": "VERIFIED_BY_ORACLE"
+    },
+    "place": {
+      "action_seq": 7,
+      "claim_kind": "place",
+      "nonce": "5c192b1febb3a106122cb7ac9a24d93d",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 7,
+        "claim_kind": "place",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 1.277279554665979e-06,
+          "cube_z": 0.039892209626684355,
+          "height_ok": true,
+          "inside_tray_xy": true,
+          "oracle_settle_steps": 150,
+          "released": true,
+          "tray_contact": true
+        },
+        "experiment_id": "M1-SIM-002",
+        "nonce": "5c192b1febb3a106122cb7ac9a24d93d",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "b7930805ddce8beb2636ad84c20b1a20",
+        "scene_epoch": 1,
+        "signature": "21271213392a3ac0e98f87cd0ed4c64c9383cde634546accb92e30b2a950d007bb18813dd8e7d40c892d180f72277e3908c164eb37470e3982befe0d37623b05",
+        "snapshot_hash": "bd73853e597262c911aa839c347ac66feb03866bb730d5873db6e6622201c774",
+        "trial": {
+          "arm": "B2",
+          "phase": "smoke",
+          "seed": 6,
+          "trial_index": 6
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "5181a5883a7f06869febeb09637bffdb09836dfff4e8ec3b8a27e9d365c06fd0",
+      "status": "VERIFIED_BY_ORACLE"
+    }
+  },
+  "l3_diagnostic": {
+    "accounting_verified": true,
+    "assessment": "L3_B2_HOST_RECOVERY_VERIFIED",
+    "diagnostic_only": true,
+    "diagnostic_only_public_lift_hint": "| Engineering L3 smoke-only public geometry reminder: after grasp returns done, move_to over tray-A with tool z >= 0.10 meters so the cube can visibly lift above z=0.05 meters before release. Do not release merely because the fingers closed; the independent Host must verify a lifted grasp. This hint is NOT used in paired trials.",
+    "internal_decision_budget_including_scripted_probe": 7,
+    "model_decisions_after_fault": true,
+    "not_a_frozen_paired_trial": true,
+    "provider_attempts_including_scripted_decision": 6,
+    "real_model_attempt_budget": 6,
+    "real_model_attempts": 5,
+    "real_model_http_responses": 5,
+    "scripted_decisions_counted_in_budget": 1,
+    "scripted_first_decision": "grasp without initial move_to"
+  },
+  "learning": "off",
+  "managed_recoveries": 1,
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
+  "provider_attempts": 5,
+  "provider_calls_bounded": [
+    {
+      "finish_reason": "stop",
+      "latency_ms": 7664.8,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 5915.7,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 11650.2,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 31890.2,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 6670.6,
+      "status": 200
+    }
+  ],
+  "replans": 0,
+  "stop_receipts": {},
+  "terminated_by": "place_host_verified",
+  "tool_actions": 7,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "l3-diagnostic-fault",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 1,
+      "status": {
+        "action_id": "act-000001",
+        "last_err_m": 6.924925960739847e-05,
+        "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+        "skill": "grasp",
+        "state": "failed",
+        "steps": 200
+      },
+      "t_s": 0.529
+    },
+    {
+      "event": "grasp_failed",
+      "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+      "seq": 1
+    },
+    {
+      "event": "managed_grasp_recovery_release",
+      "seq": 2,
+      "status": {
+        "action_id": "act-000002",
+        "last_err_m": 0.003012344953394397,
+        "reason": null,
+        "skill": "release",
+        "state": "done",
+        "steps": 94
+      }
+    },
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.1832,
+          "y": 0.0053,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 3,
+      "status": {
+        "action_id": "act-000003",
+        "last_err_m": 0.013288930214829658,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 151
+      },
+      "t_s": 8.992
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.1832,
+          "y": 0.0053,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 4,
+      "status": {
+        "action_id": "act-000004",
+        "last_err_m": 0.013307328495099515,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 87
+      },
+      "t_s": 15.34
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 5,
+      "status": {
+        "action_id": "act-000005",
+        "last_err_m": 0.005182429057494491,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 75
+      },
+      "t_s": 27.371
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.0,
+          "y": 0.18,
+          "z": 0.12
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 6,
+      "status": {
+        "action_id": "act-000006",
+        "last_err_m": 0.013009195231178607,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 602
+      },
+      "t_s": 59.957
+    },
+    {
+      "event": "grasp_host_verified",
+      "seq": 6
+    },
+    {
+      "decision": {
+        "intent_key": "k5",
+        "params": {},
+        "skill": "release"
+      },
+      "event": "tool_action",
+      "seq": 7,
+      "status": {
+        "action_id": "act-000007",
+        "last_err_m": 0.0030146387267113452,
+        "reason": null,
+        "skill": "release",
+        "state": "done",
+        "steps": 91
+      },
+      "t_s": 67.988
+    }
+  ],
+  "trial": {
+    "arm": "B2",
+    "phase": "smoke",
+    "seed": 6,
+    "trial_index": 6
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "candidate_sha": "e0e118544e50fa5e11585c797e23cdcb23cf3f53",
+  "gate_c_episode": "NOT_RECLASSIFIED",
+  "generated_at_utc": "2026-11-19T04:05:30.957753+00:00",
+  "goal": "GOAL-20261119-9887ca71",
+  "hardware_access": "not_attempted",
+  "host_os": "macOS",
+  "host_uid463_e2e": {
+    "host_trust_signer": "NOT_INSTALLED",
+    "oracle_verification_status": "PENDING_ORACLE",
+    "profile_sha256": "b3ed2b80cd5ec6201a8a10627461fc82a2c1e7275d505c0cff1a6f34cc869c76",
+    "schema": "lfl.embodied.m1-host-uid463-acceptance/v1",
+    "status": "PASS",
+    "tests": {
+      "arbitrary_command_denied": true,
+      "extra_worker_arg_denied": true,
+      "grasp_empty": {
+        "pass": true,
+        "uid": 463,
+        "verdict": "failure"
+      },
+      "grasp_forged_weld_without_contact": {
+        "pass": true,
+        "uid": 463,
+        "verdict": "failure"
+      },
+      "grasp_positive": {
+        "pass": true,
+        "uid": 463,
+        "verdict": "success"
+      },
+      "malformed_json_rejected": true,
+      "no_self_promotion": true,
+      "oversized_input_rejected": true,
+      "place_off_target": {
+        "pass": true,
+        "uid": 463,
+        "verdict": "failure"
+      },
+      "place_positive": {
+        "pass": true,
+        "uid": 463,
+        "verdict": "success"
+      },
+      "root_command_denied": true
+    },
+    "worker_sha256": "a25e95617869697021609d1fe35b70b6aa07e74ff88866f674074a3f063c5b7b"
+  },
+  "host_uid463_e2e_original_sha256": "8524de9e7129de5590ba3638da6b03eef4584cc63cd268fa816c8f6d4dc36c84",
+  "independent_oracle_verification": "PENDING_ORACLE",
+  "installation": {
+    "exact_uid463_rule": "PASS",
+    "file_metadata": {
+      "directory": {
+        "mode": "0o755",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/Library/PrivilegedHelperTools/lfl-oracle-v1"
+      },
+      "profile": {
+        "mode": "0o444",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/Library/PrivilegedHelperTools/lfl-oracle-v1/oracle.sb"
+      },
+      "sudoers": {
+        "mode": "0o440",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/private/etc/sudoers.d/lfl-oracle-v1"
+      },
+      "worker": {
+        "mode": "0o555",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "path": "/Library/PrivilegedHelperTools/lfl-oracle-v1/oracle_worker.py"
+      }
+    },
+    "installer_sha256": "49152a5d83af5d9bfc07404b8baf05ca5a05e0ae9e0970395085699eac070700",
+    "root_owned_files": "PASS"
+  },
+  "lane": "lane-66faa2db",
+  "provider_access": "not_attempted_during_host_install",
+  "release_state": "not_pushed_not_merged_not_deployed",
+  "root_uid_canary": {
+    "ran_during_privileged_install": true,
+    "raw_canary_receipt_persisted": false,
+    "root_script_reached_final_print_step": true,
+    "wrapper_exit_code": 1,
+    "wrapper_failure": "final diagnostic print used nonexistent /usr/bin/cat; installer and independent non-root E2E passed"
+  },
+  "schema": "lfl.embodied.m1-host-install-acceptance/v1",
+  "trusted_host_attestation": "NOT_INSTALLED"
+}

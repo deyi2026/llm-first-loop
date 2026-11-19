@@ -1,0 +1,6 @@
+M1 Gate A pytest — sanitized committed summary
+command: LFL_SKIP_ENV_PREFLIGHT=1 PYTHONPATH=src data/.venv-m1/bin/python -m pytest -q tests/embodied_m1
+exit_code: 0
+result: 20 passed in 0.35s
+host_raw_log_sha256: ebacc285684398591692b555cc2f447a2e077681ad3a4c8fa74dbf245acc8a8c
+note: Full raw test log is retained on Host; machine-local warning paths are excluded from committed evidence.

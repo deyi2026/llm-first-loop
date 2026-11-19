@@ -1,0 +1,31 @@
+{
+  "candidate_sha": "f0c299936946682ecd98115ba561d1e22a262fed",
+  "elapsed_s": 17.338,
+  "file_sha256": {
+    "episode_glm_007.json": "9f82d3f95da15b8a0ec33c6dc9df950ef636f9fde7c56657aba7c3af87b1f36b",
+    "episode_stdout_007.txt": "ff250a7294f8f45ea1148e8ae0756391cfb56eaf69c7e3dfc1344bcdc3334e67"
+  },
+  "finding": "P1: judge_place prematurely returned success while weld_active=true, cube suspended above tray, no release action. Must not count as a completed placement.",
+  "generated_at_utc": "2026-11-19T07:29:35.494598+00:00",
+  "goal": "GOAL-20261119-9887ca71",
+  "host_upgrade": "PENDING_EXPLICIT_ADMIN_AUTHORIZATION",
+  "host_worker_new_source_sha256": "e83e3d837ca18bf5622f66f954e9c2be7c7b35132afc6f8c060c442e3b8f8f98",
+  "host_worker_old_sha256": "a25e95617869697021609d1fe35b70b6aa07e74ff88866f674074a3f063c5b7b",
+  "lane": "lane-66faa2db",
+  "local_oracle_claimed_success": true,
+  "model_decisions": [
+    "move_to",
+    "move_to",
+    "grasp",
+    "move_to"
+  ],
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_independent_verified": false,
+  "provider_attempts": 4,
+  "release_state": "not_pushed_not_merged_not_deployed",
+  "remediation": "Require weld inactive, real cube-tray_floor contact and tray-relative rest height in both local and root-owned UID463 Oracle; preserve historical episode as false positive.",
+  "schema": "lfl.embodied.m1-gate-c-episode-007-p1-disclosure/v1",
+  "tool_actions": 4,
+  "true_placement_success": false,
+  "trusted_host_signer": "NOT_INSTALLED"
+}

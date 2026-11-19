@@ -1,0 +1,2497 @@
+{
+  "baseline_version": "M1-baseline-v1.2",
+  "calibration_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "code_sha256": {
+    "scripts/embodied/m1_calibrate.py": "a8e71aa79acab48a223ca9ef634ca458b18e6de9c88d11c2d3d04cbe10720d26",
+    "src/llm_loop/embodied_sim/contract.py": "51232f770873ec4fe387a7f536b6d8f7ce8ae8940b9bfb22fc38a579f6629d5d",
+    "src/llm_loop/embodied_sim/episode.py": "0a70777e0bfeb05cf7e537599b395e3af281204cd10d7ab44e92304311e378fd",
+    "src/llm_loop/embodied_sim/oracle.py": "861ae368c807d59d90fcfdb627afb0b1c767d5e08fe2c3e0d52da4ce4c780cd4",
+    "src/llm_loop/embodied_sim/policy.py": "028e1696faec063c290ba055293193e1223536f0cb11070133506b8b855c2eb3",
+    "src/llm_loop/embodied_sim/scene.py": "e7609f1be888f8932393e553fa7ef945f4a1d2aee9ef8865741566c9d629d02b",
+    "src/llm_loop/embodied_sim/sim.py": "6288a4fc446b9bb615a79233352248c76484b1b96d21283b4066abe2bd603bde",
+    "src/llm_loop/embodied_sim/skills.py": "d7942f7346ea16e70f28d906fef2cc39ed19e5d32c056f1dcd6fb135da66c37e"
+  },
+  "determinism_check": {
+    "deterministic": true,
+    "digest_equal": true,
+    "seed": 7,
+    "stage_trace_equal": true
+  },
+  "failures": [
+    {
+      "reason": "timeout after 600 physics steps (last_err_m=0.013008393608048636)",
+      "seed": 0,
+      "stage": "move_to_tray"
+    },
+    {
+      "reason": null,
+      "seed": 1,
+      "stage": null
+    },
+    {
+      "reason": "timeout after 600 physics steps (last_err_m=0.013052602502815376)",
+      "seed": 2,
+      "stage": "move_to_tray"
+    },
+    {
+      "reason": "timeout after 600 physics steps (last_err_m=0.013048326390271231)",
+      "seed": 3,
+      "stage": "move_to_tray"
+    },
+    {
+      "reason": null,
+      "seed": 4,
+      "stage": null
+    },
+    {
+      "reason": "timeout after 600 physics steps (last_err_m=0.013018101255944403)",
+      "seed": 5,
+      "stage": "move_to_tray"
+    },
+    {
+      "reason": null,
+      "seed": 6,
+      "stage": null
+    },
+    {
+      "reason": null,
+      "seed": 7,
+      "stage": null
+    },
+    {
+      "reason": "timeout after 600 physics steps (last_err_m=0.013038093449342356)",
+      "seed": 8,
+      "stage": "move_to_tray"
+    },
+    {
+      "reason": null,
+      "seed": 9,
+      "stage": null
+    }
+  ],
+  "mujoco_version": "4.0.1",
+  "negative_checks": {
+    "grasp_empty": {
+      "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+      "rejected": true,
+      "state": "failed",
+      "weld_active": false
+    },
+    "place_off_target": {
+      "evidence": {
+        "cube_speed": 3.7890312611725794e-06,
+        "cube_z": 0.019892145572503062,
+        "height_ok": true,
+        "inside_tray_xy": false
+      },
+      "fake_success_rejected": true,
+      "local_place_ok": false,
+      "receipt_verdict": "failure",
+      "sequence_completed": true
+    }
+  },
+  "prereg_note": "engineering baseline seeds 0..9; prereg paired_seed_start=20261117 is reserved for the Gate D B1/B2 comparison and untouched",
+  "revision_note": "v1.2: unexpected non-gripper cube contacts promoted to a HARD verdict gate (no_unexpected_contacts); per-stage attribution and first-contact geometry added. Tolerances and oracle thresholds remain UNCHANGED. v1 initial-fail preserved as M1-baseline-v1-initial-fail.json; v1.1 (pre-safety-gate) preserved as M1-baseline-v1.1-pre-safety-gate.json",
+  "scene_constants_digest": "bf4224d8b7100831746564a04d601f269fb4d98d7ae5381040853dcc535e7a21",
+  "seed_results": [
+    {
+      "failure_reason": "timeout after 600 physics steps (last_err_m=0.013008393608048636)",
+      "failure_stage": "move_to_tray",
+      "final_arm_qvel": [
+        0.000264,
+        -1.5e-05,
+        -4e-06,
+        -1e-06
+      ],
+      "final_cube_pos": [
+        0.000226,
+        0.148509,
+        0.039892
+      ],
+      "final_cube_speed": 6e-06,
+      "final_state_digest": "12768512192465f03d8383adbcfb552e55027f648ccf698bbe784251113c9645",
+      "final_tool_error_m": 0.002979,
+      "final_tool_pos": [
+        5.3e-05,
+        0.177022,
+        0.169842
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          -0.0011,
+          1.1616,
+          1.5585,
+          -0.0
+        ],
+        "cube_pos": [
+          0.1804,
+          -0.0004,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00073,
+        "stage": "approach_down",
+        "t": 0.534,
+        "tool_pos": [
+          0.187,
+          -0.0002,
+          0.0763
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.03603079271048963,
+          "cube_z": 0.12199731529287706,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002859,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 5.268,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 6.4439008468802105e-06,
+          "cube_z": 0.03989206831778157,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 0,
+      "stages": [
+        {
+          "err_m": 0.013249950695813757,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 150
+        },
+        {
+          "err_m": 0.013016315628508473,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 119
+        },
+        {
+          "err_m": 0.004684110537138277,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 83
+        },
+        {
+          "err_m": 0.013145112157571935,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013008393608048636,
+          "mechanism": null,
+          "reason": "timeout after 600 physics steps (last_err_m=0.013008393608048636)",
+          "stage": "move_to_tray",
+          "state": "failed",
+          "steps": 600
+        },
+        {
+          "err_m": 0.003045323391904008,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 90
+        }
+      ],
+      "steady_state_probe": {
+        "note": "measurement only; move_to_tray stage result unchanged (still failed at Gate-B tolerance)",
+        "residual_by_steps": [
+          {
+            "err_m": 0.008119,
+            "step": 100
+          },
+          {
+            "err_m": 0.005736,
+            "step": 200
+          },
+          {
+            "err_m": 0.004366,
+            "step": 300
+          },
+          {
+            "err_m": 0.003641,
+            "step": 400
+          },
+          {
+            "err_m": 0.003289,
+            "step": 500
+          },
+          {
+            "err_m": 0.003129,
+            "step": 600
+          },
+          {
+            "err_m": 0.003058,
+            "step": 700
+          },
+          {
+            "err_m": 0.003027,
+            "step": 800
+          },
+          {
+            "err_m": 0.003014,
+            "step": 900
+          },
+          {
+            "err_m": 0.003008,
+            "step": 1000
+          },
+          {
+            "err_m": 0.003005,
+            "step": 1100
+          },
+          {
+            "err_m": 0.003004,
+            "step": 1200
+          }
+        ],
+        "target": [
+          0.0,
+          0.18,
+          0.169889
+        ]
+      },
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 4275
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 191
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 166
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 3600
+        },
+        "release": {
+          "cube_geom/wrist_rod": 34
+        }
+      },
+      "wall_s": 0.089
+    },
+    {
+      "failure_reason": null,
+      "failure_stage": null,
+      "final_arm_qvel": [
+        0.049741,
+        -1.5e-05,
+        -4e-06,
+        8e-06
+      ],
+      "final_cube_pos": [
+        0.006654,
+        0.149829,
+        0.039892
+      ],
+      "final_cube_speed": 5e-06,
+      "final_state_digest": "da6597b4a88f7b4218d90b501ba837f3a8a65eb64df7129a8036d4a430e4d47d",
+      "final_tool_error_m": 0.005028,
+      "final_tool_pos": [
+        0.004076,
+        0.177056,
+        0.169824
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          0.0069,
+          1.1634,
+          1.5525,
+          0.0
+        ],
+        "cube_pos": [
+          0.181,
+          0.0025,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00058,
+        "stage": "approach_down",
+        "t": 0.534,
+        "tool_pos": [
+          0.1876,
+          0.0013,
+          0.0763
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.036090944211468245,
+          "cube_z": 0.12213499775532789,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002795,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 2.854,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 4.8670975811862795e-06,
+          "cube_z": 0.03989211141725257,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 1,
+      "stages": [
+        {
+          "err_m": 0.01333835825532001,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 150
+        },
+        {
+          "err_m": 0.013121671176115532,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 118
+        },
+        {
+          "err_m": 0.005115517335626631,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 79
+        },
+        {
+          "err_m": 0.013177393560500251,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013044013832812139,
+          "mechanism": null,
+          "reason": null,
+          "stage": "move_to_tray",
+          "state": "done",
+          "steps": 598
+        },
+        {
+          "err_m": 0.0030909382479412176,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 90
+        }
+      ],
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 1859
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 186
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 158
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 1196
+        },
+        "release": {
+          "cube_geom/wrist_rod": 35
+        }
+      },
+      "wall_s": 0.049
+    },
+    {
+      "failure_reason": "timeout after 600 physics steps (last_err_m=0.013052602502815376)",
+      "failure_stage": "move_to_tray",
+      "final_arm_qvel": [
+        0.000264,
+        -1.5e-05,
+        -4e-06,
+        -5e-06
+      ],
+      "final_cube_pos": [
+        0.000658,
+        0.148451,
+        0.039892
+      ],
+      "final_cube_speed": 6e-06,
+      "final_state_digest": "9407095ac7e74b87b0e947532418798293991059b4d9d373fb05975d5b93c78f",
+      "final_tool_error_m": 0.003,
+      "final_tool_pos": [
+        5.3e-05,
+        0.177001,
+        0.169846
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          -0.0044,
+          1.1621,
+          1.5567,
+          -0.0
+        ],
+        "cube_pos": [
+          0.1806,
+          -0.0016,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00069,
+        "stage": "approach_down",
+        "t": 0.534,
+        "tool_pos": [
+          0.1872,
+          -0.0008,
+          0.0763
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.036055566736858856,
+          "cube_z": 0.12204384848491773,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002858,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 5.264,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 6.074093576844706e-06,
+          "cube_z": 0.03989207927997258,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 2,
+      "stages": [
+        {
+          "err_m": 0.013283585920947086,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 150
+        },
+        {
+          "err_m": 0.013030490505171768,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 119
+        },
+        {
+          "err_m": 0.004927993064413633,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 81
+        },
+        {
+          "err_m": 0.013155527990254278,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013052602502815376,
+          "mechanism": null,
+          "reason": "timeout after 600 physics steps (last_err_m=0.013052602502815376)",
+          "stage": "move_to_tray",
+          "state": "failed",
+          "steps": 600
+        },
+        {
+          "err_m": 0.0030703175361792056,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 90
+        }
+      ],
+      "steady_state_probe": {
+        "note": "measurement only; move_to_tray stage result unchanged (still failed at Gate-B tolerance)",
+        "residual_by_steps": [
+          {
+            "err_m": 0.008149,
+            "step": 100
+          },
+          {
+            "err_m": 0.00576,
+            "step": 200
+          },
+          {
+            "err_m": 0.004388,
+            "step": 300
+          },
+          {
+            "err_m": 0.003662,
+            "step": 400
+          },
+          {
+            "err_m": 0.00331,
+            "step": 500
+          },
+          {
+            "err_m": 0.003149,
+            "step": 600
+          },
+          {
+            "err_m": 0.003079,
+            "step": 700
+          },
+          {
+            "err_m": 0.003048,
+            "step": 800
+          },
+          {
+            "err_m": 0.003034,
+            "step": 900
+          },
+          {
+            "err_m": 0.003029,
+            "step": 1000
+          },
+          {
+            "err_m": 0.003026,
+            "step": 1100
+          },
+          {
+            "err_m": 0.003025,
+            "step": 1200
+          }
+        ],
+        "target": [
+          0.0,
+          0.18,
+          0.169889
+        ]
+      },
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 4271
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 191
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 162
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 3600
+        },
+        "release": {
+          "cube_geom/wrist_rod": 34
+        }
+      },
+      "wall_s": 0.079
+    },
+    {
+      "failure_reason": "timeout after 600 physics steps (last_err_m=0.013048326390271231)",
+      "failure_stage": "move_to_tray",
+      "final_arm_qvel": [
+        0.000265,
+        -1.5e-05,
+        -4e-06,
+        -2.5e-05
+      ],
+      "final_cube_pos": [
+        0.002891,
+        0.143654,
+        0.039892
+      ],
+      "final_cube_speed": 5e-06,
+      "final_state_digest": "06e603c4671d970387aee79c543f6d48b203286751a055d66c346e01924087cb",
+      "final_tool_error_m": 0.002983,
+      "final_tool_pos": [
+        5.5e-05,
+        0.177018,
+        0.169843
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          -0.0212,
+          1.1861,
+          1.502,
+          -0.0
+        ],
+        "cube_pos": [
+          0.1861,
+          -0.0077,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00076,
+        "stage": "approach_down",
+        "t": 0.542,
+        "tool_pos": [
+          0.1924,
+          -0.0041,
+          0.0751
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.036596615448867456,
+          "cube_z": 0.12292815239191954,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002829,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 5.252,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 5.289478562293328e-06,
+          "cube_z": 0.03989210000983241,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 3,
+      "stages": [
+        {
+          "err_m": 0.013096348714334983,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 153
+        },
+        {
+          "err_m": 0.013039991547325424,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 120
+        },
+        {
+          "err_m": 0.006540209617432194,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 70
+        },
+        {
+          "err_m": 0.013207803824921352,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013048326390271231,
+          "mechanism": null,
+          "reason": "timeout after 600 physics steps (last_err_m=0.013048326390271231)",
+          "stage": "move_to_tray",
+          "state": "failed",
+          "steps": 600
+        },
+        {
+          "err_m": 0.0030902530365182306,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 91
+        }
+      ],
+      "steady_state_probe": {
+        "note": "measurement only; move_to_tray stage result unchanged (still failed at Gate-B tolerance)",
+        "residual_by_steps": [
+          {
+            "err_m": 0.008267,
+            "step": 100
+          },
+          {
+            "err_m": 0.005825,
+            "step": 200
+          },
+          {
+            "err_m": 0.004418,
+            "step": 300
+          },
+          {
+            "err_m": 0.00367,
+            "step": 400
+          },
+          {
+            "err_m": 0.003305,
+            "step": 500
+          },
+          {
+            "err_m": 0.003138,
+            "step": 600
+          },
+          {
+            "err_m": 0.003064,
+            "step": 700
+          },
+          {
+            "err_m": 0.003032,
+            "step": 800
+          },
+          {
+            "err_m": 0.003018,
+            "step": 900
+          },
+          {
+            "err_m": 0.003012,
+            "step": 1000
+          },
+          {
+            "err_m": 0.003009,
+            "step": 1100
+          },
+          {
+            "err_m": 0.003008,
+            "step": 1200
+          }
+        ],
+        "target": [
+          0.0,
+          0.18,
+          0.169889
+        ]
+      },
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 4249
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 187
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 140
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 3600
+        },
+        "release": {
+          "cube_geom/wrist_rod": 38
+        }
+      },
+      "wall_s": 0.071
+    },
+    {
+      "failure_reason": null,
+      "failure_stage": null,
+      "final_arm_qvel": [
+        0.049964,
+        -1.5e-05,
+        -4e-06,
+        -2e-06
+      ],
+      "final_cube_pos": [
+        0.008196,
+        0.15269,
+        0.039892
+      ],
+      "final_cube_speed": 6e-06,
+      "final_state_digest": "433bf0e5e03387708fc9d0361397ad3d97da7e51a8c90a3d0805279ec9681491",
+      "final_tool_error_m": 0.004874,
+      "final_tool_pos": [
+        0.00409,
+        0.177352,
+        0.16976
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          -0.0015,
+          1.1485,
+          1.5827,
+          -0.0
+        ],
+        "cube_pos": [
+          0.178,
+          -0.0005,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -7e-05,
+        "stage": "approach_down",
+        "t": 0.532,
+        "tool_pos": [
+          0.1848,
+          -0.0003,
+          0.0774
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.03589923062660109,
+          "cube_z": 0.12186193371018088,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002838,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 2.862,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 5.599563655801998e-06,
+          "cube_z": 0.03989209206217159,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 4,
+      "stages": [
+        {
+          "err_m": 0.013222438118033922,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 150
+        },
+        {
+          "err_m": 0.013042006420611247,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 117
+        },
+        {
+          "err_m": 0.004714223877915431,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 83
+        },
+        {
+          "err_m": 0.013058935013773155,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013038057504488713,
+          "mechanism": null,
+          "reason": null,
+          "stage": "move_to_tray",
+          "state": "done",
+          "steps": 599
+        },
+        {
+          "err_m": 0.00304703315344227,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 90
+        }
+      ],
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 1865
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 184
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 166
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 1198
+        },
+        "release": {
+          "cube_geom/wrist_rod": 33
+        }
+      },
+      "wall_s": 0.05
+    },
+    {
+      "failure_reason": "timeout after 600 physics steps (last_err_m=0.013018101255944403)",
+      "failure_stage": "move_to_tray",
+      "final_arm_qvel": [
+        0.000265,
+        -1.5e-05,
+        -4e-06,
+        -1.3e-05
+      ],
+      "final_cube_pos": [
+        0.001577,
+        0.150994,
+        0.039892
+      ],
+      "final_cube_speed": 5e-06,
+      "final_state_digest": "bf2d510d2ff1a3c75413e29d96140aa97a9d86c422a7998bc94c2971e8f0b1a9",
+      "final_tool_error_m": 0.002678,
+      "final_tool_pos": [
+        4.2e-05,
+        0.177325,
+        0.169777
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          -0.0113,
+          1.1479,
+          1.5867,
+          -0.0
+        ],
+        "cube_pos": [
+          0.1776,
+          -0.004,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00029,
+        "stage": "approach_down",
+        "t": 0.534,
+        "tool_pos": [
+          0.1843,
+          -0.0021,
+          0.0772
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.03592808452648015,
+          "cube_z": 0.12199653106053973,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002825,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 5.264,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 5.176425817973292e-06,
+          "cube_z": 0.039892102942719505,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 5,
+      "stages": [
+        {
+          "err_m": 0.013083095798008539,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 151
+        },
+        {
+          "err_m": 0.013090216334532542,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 122
+        },
+        {
+          "err_m": 0.005612639391393302,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 76
+        },
+        {
+          "err_m": 0.013069915189800576,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013018101255944403,
+          "mechanism": null,
+          "reason": "timeout after 600 physics steps (last_err_m=0.013018101255944403)",
+          "stage": "move_to_tray",
+          "state": "failed",
+          "steps": 600
+        },
+        {
+          "err_m": 0.0030276346382803587,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 91
+        }
+      ],
+      "steady_state_probe": {
+        "note": "measurement only; move_to_tray stage result unchanged (still failed at Gate-B tolerance)",
+        "residual_by_steps": [
+          {
+            "err_m": 0.008084,
+            "step": 100
+          },
+          {
+            "err_m": 0.005625,
+            "step": 200
+          },
+          {
+            "err_m": 0.004186,
+            "step": 300
+          },
+          {
+            "err_m": 0.003408,
+            "step": 400
+          },
+          {
+            "err_m": 0.003022,
+            "step": 500
+          },
+          {
+            "err_m": 0.002845,
+            "step": 600
+          },
+          {
+            "err_m": 0.002766,
+            "step": 700
+          },
+          {
+            "err_m": 0.002732,
+            "step": 800
+          },
+          {
+            "err_m": 0.002717,
+            "step": 900
+          },
+          {
+            "err_m": 0.002711,
+            "step": 1000
+          },
+          {
+            "err_m": 0.002708,
+            "step": 1100
+          },
+          {
+            "err_m": 0.002707,
+            "step": 1200
+          }
+        ],
+        "target": [
+          0.0,
+          0.18,
+          0.169889
+        ]
+      },
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 4285
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 214
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 152
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 3600
+        },
+        "release": {
+          "cube_geom/wrist_rod": 35
+        }
+      },
+      "wall_s": 0.08
+    },
+    {
+      "failure_reason": null,
+      "failure_stage": null,
+      "final_arm_qvel": [
+        0.049537,
+        -1.5e-05,
+        -3e-06,
+        1.7e-05
+      ],
+      "final_cube_pos": [
+        0.005135,
+        0.148286,
+        0.039892
+      ],
+      "final_cube_speed": 4e-06,
+      "final_state_digest": "d216f28f9c87e125123baef212e39dcd791d3bb261d3bd4430f15fbf1c16cb21",
+      "final_tool_error_m": 0.004952,
+      "final_tool_pos": [
+        0.00406,
+        0.177166,
+        0.1698
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          0.0148,
+          1.1695,
+          1.5334,
+          0.0
+        ],
+        "cube_pos": [
+          0.1831,
+          0.0053,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00025,
+        "stage": "approach_down",
+        "t": 0.536,
+        "tool_pos": [
+          0.1896,
+          0.0028,
+          0.0763
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.03631165762225808,
+          "cube_z": 0.12254830091713821,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002791,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 2.846,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 4.333071450486984e-06,
+          "cube_z": 0.0398921260108017,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 6,
+      "stages": [
+        {
+          "err_m": 0.01331673988916398,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 151
+        },
+        {
+          "err_m": 0.013106168246609309,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 119
+        },
+        {
+          "err_m": 0.0058156592273576405,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 74
+        },
+        {
+          "err_m": 0.013029349714527745,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013026050421393067,
+          "mechanism": null,
+          "reason": null,
+          "stage": "move_to_tray",
+          "state": "done",
+          "steps": 596
+        },
+        {
+          "err_m": 0.0030511019604989387,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 91
+        }
+      ],
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 1846
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 186
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 148
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 1192
+        },
+        "release": {
+          "cube_geom/wrist_rod": 36
+        }
+      },
+      "wall_s": 0.046
+    },
+    {
+      "failure_reason": null,
+      "failure_stage": null,
+      "final_arm_qvel": [
+        0.049551,
+        -1.5e-05,
+        -4e-06,
+        3e-06
+      ],
+      "final_cube_pos": [
+        0.007288,
+        0.15008,
+        0.039892
+      ],
+      "final_cube_speed": 5e-06,
+      "final_state_digest": "9486c167f9d214e7a6ae09492df9e48fccc0024cf32af7b44e294477544de742",
+      "final_tool_error_m": 0.005052,
+      "final_tool_pos": [
+        0.00406,
+        0.176994,
+        0.169838
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          0.0025,
+          1.1606,
+          1.5618,
+          0.0
+        ],
+        "cube_pos": [
+          0.18,
+          0.0009,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00081,
+        "stage": "approach_down",
+        "t": 0.534,
+        "tool_pos": [
+          0.1866,
+          0.0005,
+          0.0763
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.03601768948145271,
+          "cube_z": 0.12199205984056916,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002833,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 2.866,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 5.374673806685128e-06,
+          "cube_z": 0.039892098497129234,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 7,
+      "stages": [
+        {
+          "err_m": 0.013254066441972618,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 150
+        },
+        {
+          "err_m": 0.013006989540697298,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 119
+        },
+        {
+          "err_m": 0.004791364718962882,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 82
+        },
+        {
+          "err_m": 0.013131302269368763,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013009720522029594,
+          "mechanism": null,
+          "reason": null,
+          "stage": "move_to_tray",
+          "state": "done",
+          "steps": 600
+        },
+        {
+          "err_m": 0.0030570895926375435,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 90
+        }
+      ],
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 1873
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 191
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 164
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 1200
+        },
+        "release": {
+          "cube_geom/wrist_rod": 34
+        }
+      },
+      "wall_s": 0.05
+    },
+    {
+      "failure_reason": "timeout after 600 physics steps (last_err_m=0.013038093449342356)",
+      "failure_stage": "move_to_tray",
+      "final_arm_qvel": [
+        0.000266,
+        -1.4e-05,
+        -5e-06,
+        -1.3e-05
+      ],
+      "final_cube_pos": [
+        0.001515,
+        0.16973,
+        0.039892
+      ],
+      "final_cube_speed": 4e-06,
+      "final_state_digest": "dd89f80eaa5832e09d5c798e9d425da74afaec3be488ee510bb45edb690c6fbc",
+      "final_tool_error_m": 0.002744,
+      "final_tool_pos": [
+        4.2e-05,
+        0.177258,
+        0.169791
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          -0.0116,
+          1.1404,
+          1.6123,
+          -0.0
+        ],
+        "cube_pos": [
+          0.1748,
+          -0.004,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00078,
+        "stage": "approach_down",
+        "t": 0.534,
+        "tool_pos": [
+          0.1815,
+          -0.0021,
+          0.0772
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.036942065186877045,
+          "cube_z": 0.12169097991173877,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002816,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 5.27,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 4.475007768868769e-06,
+          "cube_z": 0.039892122279064586,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 8,
+      "stages": [
+        {
+          "err_m": 0.013055153785476286,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 151
+        },
+        {
+          "err_m": 0.013073558828737735,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 126
+        },
+        {
+          "err_m": 0.005434705291658494,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 76
+        },
+        {
+          "err_m": 0.013239355109532952,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 111
+        },
+        {
+          "err_m": 0.013038093449342356,
+          "mechanism": null,
+          "reason": "timeout after 600 physics steps (last_err_m=0.013038093449342356)",
+          "stage": "move_to_tray",
+          "state": "failed",
+          "steps": 600
+        },
+        {
+          "err_m": 0.0030324620606103,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 91
+        }
+      ],
+      "steady_state_probe": {
+        "note": "measurement only; move_to_tray stage result unchanged (still failed at Gate-B tolerance)",
+        "residual_by_steps": [
+          {
+            "err_m": 0.00811,
+            "step": 100
+          },
+          {
+            "err_m": 0.005659,
+            "step": 200
+          },
+          {
+            "err_m": 0.00423,
+            "step": 300
+          },
+          {
+            "err_m": 0.003461,
+            "step": 400
+          },
+          {
+            "err_m": 0.003081,
+            "step": 500
+          },
+          {
+            "err_m": 0.002907,
+            "step": 600
+          },
+          {
+            "err_m": 0.00283,
+            "step": 700
+          },
+          {
+            "err_m": 0.002797,
+            "step": 800
+          },
+          {
+            "err_m": 0.002783,
+            "step": 900
+          },
+          {
+            "err_m": 0.002776,
+            "step": 1000
+          },
+          {
+            "err_m": 0.002774,
+            "step": 1100
+          },
+          {
+            "err_m": 0.002772,
+            "step": 1200
+          }
+        ],
+        "target": [
+          0.0,
+          0.18,
+          0.169889
+        ]
+      },
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 4125
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 222
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 152
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 214
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 3507
+        },
+        "release": {
+          "cube_geom/wrist_rod": 30
+        }
+      },
+      "wall_s": 0.08
+    },
+    {
+      "failure_reason": null,
+      "failure_stage": null,
+      "final_arm_qvel": [
+        0.050003,
+        -1.5e-05,
+        -4e-06,
+        2e-06
+      ],
+      "final_cube_pos": [
+        0.007593,
+        0.152125,
+        0.039892
+      ],
+      "final_cube_speed": 5e-06,
+      "final_state_digest": "f6f114e4d2bdbb7f496670f067aebd36f71d73bbc884387abb63b5be015fe418",
+      "final_tool_error_m": 0.00487,
+      "final_tool_pos": [
+        0.004093,
+        0.177364,
+        0.169758
+      ],
+      "final_tool_target": [
+        0.0,
+        0.18,
+        0.169889
+      ],
+      "finger_contacts": [
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_left",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ],
+        [
+          "fingertip_right",
+          "cube_geom"
+        ]
+      ],
+      "first_unexpected_contact_geometry": {
+        "arm_qpos": [
+          0.0021,
+          1.1474,
+          1.5866,
+          0.0
+        ],
+        "cube_pos": [
+          0.1776,
+          0.0007,
+          0.0198
+        ],
+        "pair": [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        "penetration_m": -0.00016,
+        "stage": "approach_down",
+        "t": 0.532,
+        "tool_pos": [
+          0.1843,
+          0.0004,
+          0.0773
+        ],
+        "weld_active": false
+      },
+      "grasp_local_oracle": {
+        "evidence": {
+          "cube_speed": 0.03588886262794265,
+          "cube_z": 0.12186777409653854,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "weld_active": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "grasp_mechanism": "contact_confirmed_weld (disclosed simplification; NOT friction-only unconstrained grasp)",
+      "in_tray_stable": true,
+      "initial_arm_qpos": [
+        0.0,
+        -0.0,
+        -0.0,
+        0.0
+      ],
+      "max_single_step_cube_displacement_m_full_trajectory": 0.002836,
+      "mujoco_version": "4.0.1",
+      "no_unexpected_contacts": false,
+      "passed": false,
+      "physics_time_s": 2.858,
+      "place_local_oracle": {
+        "evidence": {
+          "cube_speed": 5.318787948337841e-06,
+          "cube_z": 0.03989210006543284,
+          "height_ok": true,
+          "inside_tray_xy": true
+        },
+        "ok": true,
+        "verification": "PENDING_ORACLE (in-process; uid463 channel HOLD)"
+      },
+      "seed": 9,
+      "stages": [
+        {
+          "err_m": 0.013220297788944424,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_above",
+          "state": "done",
+          "steps": 150
+        },
+        {
+          "err_m": 0.013026199013122861,
+          "mechanism": null,
+          "reason": null,
+          "stage": "approach_down",
+          "state": "done",
+          "steps": 117
+        },
+        {
+          "err_m": 0.004776185495193291,
+          "mechanism": "contact_confirmed_weld",
+          "reason": null,
+          "stage": "grasp",
+          "state": "done",
+          "steps": 82
+        },
+        {
+          "err_m": 0.013043986455009317,
+          "mechanism": null,
+          "reason": null,
+          "stage": "lift",
+          "state": "done",
+          "steps": 112
+        },
+        {
+          "err_m": 0.013045427413731808,
+          "mechanism": null,
+          "reason": null,
+          "stage": "move_to_tray",
+          "state": "done",
+          "steps": 598
+        },
+        {
+          "err_m": 0.0030537674971023404,
+          "mechanism": null,
+          "reason": null,
+          "stage": "release",
+          "state": "done",
+          "steps": 90
+        }
+      ],
+      "unexpected_collisions": [],
+      "unexpected_collisions_final_snapshot_only": [
+        [
+          "wrist_rod",
+          "cube_geom"
+        ],
+        [
+          "wrist_rod",
+          "cube_geom"
+        ]
+      ],
+      "unexpected_collisions_full_trajectory": [
+        {
+          "geoms": [
+            "cube_geom",
+            "wrist_rod"
+          ],
+          "steps_present": 1862
+        }
+      ],
+      "unexpected_contacts_by_stage": {
+        "approach_down": {
+          "cube_geom/wrist_rod": 184
+        },
+        "grasp": {
+          "cube_geom/wrist_rod": 164
+        },
+        "lift": {
+          "cube_geom/wrist_rod": 284
+        },
+        "move_to_tray": {
+          "cube_geom/wrist_rod": 1196
+        },
+        "release": {
+          "cube_geom/wrist_rod": 34
+        }
+      },
+      "wall_s": 0.049
+    }
+  ],
+  "verdict": "BASELINE_FAIL",
+  "wall_total_s": 0.786
+}

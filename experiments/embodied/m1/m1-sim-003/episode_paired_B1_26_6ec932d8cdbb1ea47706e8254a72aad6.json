@@ -1,0 +1,282 @@
+{
+  "elapsed_s": 30.233,
+  "experiment_id": "M1-SIM-003",
+  "host_claims": {
+    "grasp": {
+      "action_seq": 4,
+      "claim_kind": "grasp",
+      "nonce": "4e1bb1398bb7904010edaa7cf35359cb",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 4,
+        "claim_kind": "grasp",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 0.02233425685049844,
+          "cube_z": 0.06685907805501135,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "oracle_settle_steps": 30,
+          "weld_active": true
+        },
+        "experiment_id": "M1-SIM-003",
+        "nonce": "4e1bb1398bb7904010edaa7cf35359cb",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "6ec932d8cdbb1ea47706e8254a72aad6",
+        "scene_epoch": 1,
+        "signature": "6fbaebcbf715b227e776efd5c41e216b6099f15285793b0432be2f762a8d5927a03e4f2808213b2ced32c0c165c1c1f91d7f30089b33029012ac99f3e75b8001",
+        "snapshot_hash": "972e3ffee7b049ad7537a9eb4a09ac96f45af3b5762a961006570d529e4fa61d",
+        "trial": {
+          "arm": "B1",
+          "phase": "paired",
+          "seed": 20261143,
+          "trial_index": 26
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "5c5119dcf2ce3317efc3879dcd93c57bd4e2a7646d608fdcf2f7c092dfc68e16",
+      "status": "VERIFIED_BY_ORACLE"
+    },
+    "place": {
+      "action_seq": 5,
+      "claim_kind": "place",
+      "nonce": "2ae5bf7081ebb4d0122214c2cf5400a3",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 5,
+        "claim_kind": "place",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 1.9659036886719715e-07,
+          "cube_z": 0.03989223922839678,
+          "height_ok": true,
+          "inside_tray_xy": true,
+          "oracle_settle_steps": 150,
+          "released": true,
+          "tray_contact": true
+        },
+        "experiment_id": "M1-SIM-003",
+        "nonce": "2ae5bf7081ebb4d0122214c2cf5400a3",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "6ec932d8cdbb1ea47706e8254a72aad6",
+        "scene_epoch": 1,
+        "signature": "326eb92e758e55e24617f7b6adb32cbf513e8e33cef495ec1305af9c0d7d9caaf8731d5e3c06c3a1d8be177d5572b3f13905c82a38f9aea5969b09a7b65de00f",
+        "snapshot_hash": "4a2f5df77ab9e7db1c07efafc0f1cad78aa7d36a27e7da39dc4fedb10f44fc09",
+        "trial": {
+          "arm": "B1",
+          "phase": "paired",
+          "seed": 20261143,
+          "trial_index": 26
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "b1b75cf738ed89743dab6044ca70e96912513ddaeea051d3ad7abd707a213001",
+      "status": "VERIFIED_BY_ORACLE"
+    }
+  },
+  "learning": "off",
+  "managed_recoveries": 0,
+  "model_used": "deepseek/deepseek-v4-flash",
+  "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
+  "provider_attempts": 5,
+  "provider_calls_bounded": [
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 516,
+      "cost_usd_estimate": "0.00093840",
+      "finish_reason": "stop",
+      "latency_ms": 2982.7,
+      "model_identity": null,
+      "prompt_tokens": 1064,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1580,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 239,
+      "cost_usd_estimate": "0.00063450",
+      "finish_reason": "stop",
+      "latency_ms": 1802.6,
+      "model_identity": null,
+      "prompt_tokens": 1159,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1398,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 833,
+      "cost_usd_estimate": "0.00136140",
+      "finish_reason": "stop",
+      "latency_ms": 4336.5,
+      "model_identity": null,
+      "prompt_tokens": 1206,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 2039,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 2528,
+      "cost_usd_estimate": "0.00340230",
+      "finish_reason": "stop",
+      "latency_ms": 13157.9,
+      "model_identity": null,
+      "prompt_tokens": 1229,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 3757,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 630,
+      "cost_usd_estimate": "0.00113670",
+      "finish_reason": "stop",
+      "latency_ms": 3728.7,
+      "model_identity": null,
+      "prompt_tokens": 1269,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1899,
+      "usage_status": "reported"
+    }
+  ],
+  "provider_usage": {
+    "attempts": 5,
+    "completion_tokens": 4746,
+    "estimated_usd": "0.00747330",
+    "metered_attempts": 5,
+    "prompt_tokens": 5927,
+    "status": "provider_reported",
+    "total_tokens": 10673,
+    "unmetered_or_missing_attempts": 0
+  },
+  "replans": 0,
+  "stop_receipts": {},
+  "terminated_by": "place_host_verified",
+  "tool_actions": 5,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.1775,
+          "y": 0.0025,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 1,
+      "status": {
+        "action_id": "act-000001",
+        "last_err_m": 0.013272139561758317,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 150
+      },
+      "t_s": 3.414
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.1775,
+          "y": 0.0025,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 2,
+      "status": {
+        "action_id": "act-000002",
+        "last_err_m": 0.013299441182530953,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 87
+      },
+      "t_s": 5.703
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 3,
+      "status": {
+        "action_id": "act-000003",
+        "last_err_m": 0.004645682990743839,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 80
+      },
+      "t_s": 10.53
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.0,
+          "y": 0.18,
+          "z": 0.08
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 4,
+      "status": {
+        "action_id": "act-000004",
+        "last_err_m": 0.013020426313693588,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 600
+      },
+      "t_s": 24.231
+    },
+    {
+      "event": "grasp_host_verified",
+      "seq": 4
+    },
+    {
+      "decision": {
+        "intent_key": "k5",
+        "params": {},
+        "skill": "release"
+      },
+      "event": "tool_action",
+      "seq": 5,
+      "status": {
+        "action_id": "act-000005",
+        "last_err_m": 0.0030696169634724614,
+        "reason": null,
+        "skill": "release",
+        "state": "done",
+        "steps": 90
+      },
+      "t_s": 29.307
+    }
+  ],
+  "trial": {
+    "arm": "B1",
+    "phase": "paired",
+    "seed": 20261143,
+    "trial_index": 26
+  }
+}

@@ -1,0 +1,232 @@
+{
+  "elapsed_s": 30.151,
+  "experiment_id": "M1-SIM-003",
+  "host_claims": {},
+  "learning": "off",
+  "managed_recoveries": 0,
+  "model_used": "deepseek/deepseek-v4-flash",
+  "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
+  "provider_attempts": 6,
+  "provider_calls_bounded": [
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 266,
+      "cost_usd_estimate": "0.00063750",
+      "finish_reason": "stop",
+      "latency_ms": 1873.9,
+      "model_identity": null,
+      "prompt_tokens": 1061,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1327,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 225,
+      "cost_usd_estimate": "0.00061650",
+      "finish_reason": "stop",
+      "latency_ms": 1441.3,
+      "model_identity": null,
+      "prompt_tokens": 1155,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1380,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 309,
+      "cost_usd_estimate": "0.00073110",
+      "finish_reason": "stop",
+      "latency_ms": 1870.7,
+      "model_identity": null,
+      "prompt_tokens": 1201,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1510,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 792,
+      "cost_usd_estimate": "0.00131820",
+      "finish_reason": "stop",
+      "latency_ms": 4956.4,
+      "model_identity": null,
+      "prompt_tokens": 1226,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 2018,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 2864,
+      "cost_usd_estimate": "0.00381120",
+      "finish_reason": "stop",
+      "latency_ms": 15889.0,
+      "model_identity": null,
+      "prompt_tokens": 1248,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 4112,
+      "usage_status": "reported"
+    },
+    {
+      "cached_prompt_tokens": 768,
+      "completion_tokens": 138,
+      "cost_usd_estimate": "0.00055290",
+      "finish_reason": "stop",
+      "latency_ms": 1250.8,
+      "model_identity": null,
+      "prompt_tokens": 1291,
+      "response_model": "deepseek-flash",
+      "status": 200,
+      "total_tokens": 1429,
+      "usage_status": "reported"
+    }
+  ],
+  "provider_usage": {
+    "attempts": 6,
+    "completion_tokens": 4594,
+    "estimated_usd": "0.00766740",
+    "metered_attempts": 6,
+    "prompt_tokens": 7182,
+    "status": "provider_reported",
+    "total_tokens": 11776,
+    "unmetered_or_missing_attempts": 0
+  },
+  "replans": 0,
+  "stop_receipts": {},
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 6,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.178,
+          "y": -0.0023,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 1,
+      "status": {
+        "action_id": "act-000001",
+        "last_err_m": 0.013265183330799115,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 150
+      },
+      "t_s": 2.148
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.178,
+          "y": -0.0023,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 2,
+      "status": {
+        "action_id": "act-000002",
+        "last_err_m": 0.013299048766912281,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 87
+      },
+      "t_s": 4.074
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 3,
+      "status": {
+        "action_id": "act-000003",
+        "last_err_m": 0.0046409061356478265,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 80
+      },
+      "t_s": 6.536
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 4,
+      "status": {
+        "action_id": "act-000004",
+        "last_err_m": 0.004910148288578511,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 15
+      },
+      "t_s": 11.925
+    },
+    {
+      "decision": {
+        "intent_key": "k5",
+        "params": {
+          "x": 0.1779,
+          "y": -0.0021,
+          "z": 0.0317
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 5,
+      "status": {
+        "action_id": "act-000005",
+        "last_err_m": 0.003010161818029406,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 20
+      },
+      "t_s": 28.195
+    },
+    {
+      "decision": {
+        "intent_key": "k6",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 6,
+      "status": {
+        "action_id": "act-000006",
+        "last_err_m": 0.0051366098955766895,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 15
+      },
+      "t_s": 30.151
+    }
+  ],
+  "trial": {
+    "arm": "B1",
+    "phase": "paired",
+    "seed": 20261131,
+    "trial_index": 14
+  }
+}

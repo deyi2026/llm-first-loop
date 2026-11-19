@@ -1,0 +1,144 @@
+{
+  "elapsed_s": 181.417,
+  "experiment_id": "M1-SIM-002",
+  "host_claims": {},
+  "l3_diagnostic": {
+    "assessment": "L3_B1_CONTROL_RECORDED",
+    "diagnostic_only": true,
+    "model_decisions_after_fault": true,
+    "not_a_frozen_paired_trial": true,
+    "provider_attempts_including_scripted_decision": 6,
+    "real_model_calls": 3,
+    "scripted_decisions_counted_in_budget": 1,
+    "scripted_first_decision": "grasp without initial move_to"
+  },
+  "learning": "off",
+  "managed_recoveries": 0,
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
+  "provider_attempts": 6,
+  "provider_calls_bounded": [
+    {
+      "finish_reason": "stop",
+      "latency_ms": 6343.8,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 5894.5,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 46126.0,
+      "status": 200
+    }
+  ],
+  "replans": 2,
+  "stop_receipts": {},
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 4,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "l3-diagnostic-fault",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 1,
+      "status": {
+        "action_id": "act-000001",
+        "last_err_m": 6.924925960739847e-05,
+        "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+        "skill": "grasp",
+        "state": "failed",
+        "steps": 200
+      },
+      "t_s": 0.594
+    },
+    {
+      "event": "grasp_failed",
+      "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+      "seq": 1
+    },
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.1776,
+          "y": 0.0007,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 2,
+      "status": {
+        "action_id": "act-000002",
+        "last_err_m": 0.013194830026734982,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 150
+      },
+      "t_s": 7.584
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.1776,
+          "y": 0.0007,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 3,
+      "status": {
+        "action_id": "act-000003",
+        "last_err_m": 0.013109566889471,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 98
+      },
+      "t_s": 14.127
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 4,
+      "status": {
+        "action_id": "act-000004",
+        "last_err_m": 0.00499565762709251,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 17
+      },
+      "t_s": 60.854
+    },
+    {
+      "attempts": 5,
+      "error": "ReadTimeout",
+      "event": "provider_retry"
+    },
+    {
+      "attempts": 6,
+      "error": "ReadTimeout",
+      "event": "provider_retry"
+    }
+  ],
+  "trial": {
+    "arm": "B1",
+    "phase": "smoke",
+    "seed": 9,
+    "trial_index": 9
+  }
+}
