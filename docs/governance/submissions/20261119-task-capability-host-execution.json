@@ -77,6 +77,7 @@
         "docs/design/DESIGN-20261119-task-capability-host-execution-v1.md",
         "docs/governance/HOST-TASK-LEASE-BOOTSTRAP-20261119.md",
         "docs/governance/submissions/20261119-task-capability-host-execution.json",
+        "tests/guards/function_size_baseline.json",
         "tests/unit/test_browser_task_capability.py",
         "tests/unit/test_desktop_task_capability.py",
         "tests/unit/test_execute_command_scrubs_env.py",

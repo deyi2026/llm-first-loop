@@ -601,6 +601,15 @@
         "status": "observe",
         "tier": "T1"
       },
+      "managed_git_commit": {
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/managed_git.py"
+        ],
+        "rationale": "Host Task Git broker 通过受限 Git 子进程写入 index/objects/HEAD，并通过 os.open 创建独立 advisory flock 锁文件；签名 Lease、Goal/Task 状态、Lane/CAS 与精确 worktree 在锁内及提交前复核。Git commit 与 Lane ledger 更新尚非单个原子事务，未知效果必须显式 reconcile，故只登记 T2 partial，不宣称跨崩溃全域一致或生产 Host 已安装。",
+        "status": "partial",
+        "tier": "T2"
+      },
       "memory_store": {
         "owner": "memory",
         "paths": [

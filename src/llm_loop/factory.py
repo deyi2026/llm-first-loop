@@ -135,6 +135,7 @@ from llm_loop.runtime.service_control import (
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.timekeeping import system_local_now, system_local_now_iso
+from llm_loop.tools import task_runtime as _task_runtime
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
@@ -172,6 +173,7 @@ from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
+from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
 from llm_loop.tools.builtin.task_state import TaskStateTool
 from llm_loop.tools.builtin.verify_path_scope import VerifyPathScopeTool
 from llm_loop.tools.builtin.video_generation import VideoGenerationTool
@@ -1888,12 +1890,8 @@ def build_engine(
     # Task Git is available only after the independent Host authority has
     # been installed. No model-supplied Lease/worktree/Git argv is accepted.
     # The legacy tool surface remains unchanged before Host bootstrap.
-    from llm_loop.tools.task_runtime import _installed_authority_root
-
-    _task_authority_root = _installed_authority_root()
+    _task_authority_root = _task_runtime._installed_authority_root()
     if _task_authority_root is not None and _task_authority_root.is_dir():
-        from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
-
         try:
             (Path(settings.audit_dir) / "git-locks").mkdir(mode=0o700, exist_ok=True)
         except OSError:

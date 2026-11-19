@@ -242,6 +242,44 @@ def _pinned_task_target(path: Path, root: str) -> Iterator[_PinnedTaskTarget]:
         os.close(fd)
 
 
+def _check_expected_task_sha(expected_sha256: str, source_bytes: bytes) -> None:
+    if not expected_sha256:
+        return
+    if len(expected_sha256) != 64 or any(
+        ch not in "0123456789abcdef" for ch in expected_sha256
+    ):
+        raise FileServiceError("VersionPreconditionInvalid")
+    if hashlib.sha256(source_bytes).hexdigest() != expected_sha256:
+        raise FileServiceError("VersionConflict")
+
+
+def _replace_edit_bytes(
+    path: Path,
+    out_bytes: bytes,
+    pinned: _PinnedTaskTarget | None,
+    pinned_before: os.stat_result | None,
+    source_bytes: bytes,
+) -> None:
+    """Preserve pinned openat replacement and legacy atomic file replacement."""
+    if pinned is not None and pinned_before is not None:
+        pinned.replace(out_bytes, pinned_before, source_bytes)
+        return
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as file_obj:
+            file_obj.write(out_bytes)
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def _process_lock(key: str) -> threading.RLock:
     with _PROCESS_LOCKS_GUARD:
         return _PROCESS_LOCKS.setdefault(key, threading.RLock())
@@ -654,13 +692,7 @@ class FileService:
             raise FileServiceError(
                 "ReadError", detail=str(exc), cause_type=type(exc).__name__
             ) from exc
-        if expected_sha256:
-            if len(expected_sha256) != 64 or any(
-                ch not in "0123456789abcdef" for ch in expected_sha256
-            ):
-                raise FileServiceError("VersionPreconditionInvalid")
-            if hashlib.sha256(source_bytes).hexdigest() != expected_sha256:
-                raise FileServiceError("VersionConflict")
+        _check_expected_task_sha(expected_sha256, source_bytes)
 
         try:
             baseline = (
@@ -807,23 +839,7 @@ class FileService:
                 )
                 raise FileServiceError("EffectAuthorityLost", detail=detail)
             try:
-                if pinned is not None and pinned_before is not None:
-                    pinned.replace(out_bytes, pinned_before, source_bytes)
-                else:
-                    fd, tmp_name = tempfile.mkstemp(
-                        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
-                    )
-                    tmp = Path(tmp_name)
-                    try:
-                        with os.fdopen(fd, "wb") as file_obj:
-                            file_obj.write(out_bytes)
-                            file_obj.flush()
-                            os.fsync(file_obj.fileno())
-                        os.replace(tmp, path)
-                    except BaseException:
-                        with contextlib.suppress(OSError):
-                            os.unlink(tmp)
-                        raise
+                _replace_edit_bytes(path, out_bytes, pinned, pinned_before, source_bytes)
             except OSError as exc:
                 raise FileServiceError(
                     "WriteFailed", detail=str(exc), cause_type=type(exc).__name__

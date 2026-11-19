@@ -37,6 +37,12 @@ from llm_loop.runtime.service_control_derivation import (
 )
 from llm_loop.tools.review_gate import GATE_NOTE_PREFIX
 
+_TASK_SERVICE_HOLD = (
+    "[task service hold] task_service_worker_fence_unavailable: "
+    "仅 status 可用；异步重启/发布须走现有独立受管审批入口，"
+    "不得把 Task Lease 当成跳过发布屏障或 worker 复验的授权。"
+)
+
 
 def _missing_artifacts(code_root: str) -> list[str]:
     """L15/AC-13: 列出会让 build_deployment 绑定失败的缺失产物路径（可机械观测）."""
@@ -537,21 +543,13 @@ class ServiceControlTool:
             return self._failure(contract_error)
         if action == "status":
             return self._status(kwargs)
-        # A Task Lease checked only here cannot protect a detached worker:
-        # revocation can happen after acceptance, before physical restart.
         if current_task_execution.get() is not None:
-            return self._failure(
-                "[task service hold] task_service_worker_fence_unavailable: "
-                "仅 status 可用；异步重启/发布须走现有独立受管审批入口，"
-                "不得把 Task Lease 当成跳过发布屏障或 worker 复验的授权。"
-            )
-
+            return self._failure(_TASK_SERVICE_HOLD)
         if action == "publish":
             return self._publish_action(kwargs)
 
         if action == "update":
             return self._update(kwargs)
-
         if action in {"release", "adopt", "override", "verify_acknowledge"}:
             return self._exit_action(action, kwargs)
 

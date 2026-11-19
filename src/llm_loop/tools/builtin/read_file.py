@@ -260,7 +260,6 @@ class ReadFileTool:
         p = Path(path).expanduser()
         # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
         if not p.is_absolute():
-
             p = Path(workspace_base()) / p
         # held-out 读侧封条: 在任何磁盘 IO / path_registry 登记之前判定（命中即拒，回显类别）
         _sealed_on = seal_enabled()
@@ -343,7 +342,6 @@ class ReadFileTool:
             # 元信息首行提供路径/总行数/选定范围；正文保持真实字节直到统一 hard cap。
             meta = f"[read_file] {p} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
             content = meta + "\n" + numbered + note + _link_note + sensitive_note
-
             raw_observation = content if current_evidence_shadow_enabled.get() else None
             # EVO-20260823-12be9cac: 成功翻转 + 登记正帧（存在 + 元数据，查询时 stat 对账）
             from llm_loop.tools.path_registry import register_seen

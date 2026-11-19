@@ -98,30 +98,8 @@ def _parse_time(value: object) -> datetime:
     return stamp.astimezone(UTC)
 
 
-def verify_signed_task_lease(
-    public_key_pem: bytes,
-    lease_document: bytes,
-    state_document: bytes,
-    request: CapabilityRequest,
-    *,
-    now: datetime | None = None,
-) -> TaskLeaseClaims:
-    """Pure verification; caller must supply bytes from a trusted Host source.
-
-    This pure function is NOT a production file loader or approval interface.
-    It deliberately does not infer parent/Lane/backend/OS authority from JSON.
-    """
-    try:
-        key = serialization.load_pem_public_key(public_key_pem)
-    except (ValueError, TypeError) as exc:
-        raise TaskAuthorityError("authority_public_key_invalid") from exc
-    if not isinstance(key, Ed25519PublicKey):
-        raise TaskAuthorityError("authority_public_key_invalid")
-    key_id = hashlib.sha256(
-        key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    ).hexdigest()[:16]
-    lease = _verify_document(lease_document, public_key=key, key_id=key_id, domain=_LEASE_DOMAIN)
-    state = _verify_document(state_document, public_key=key, key_id=key_id, domain=_STATE_DOMAIN)
+def _verify_lease_state_schema(lease: dict[str, Any], state: dict[str, Any]) -> None:
+    """Check exact signed schema, state binding and revocation before use."""
     required = {
         "schema",
         "lease_id",
@@ -170,6 +148,33 @@ def verify_signed_task_lease(
         raise TaskAuthorityError("authority_state_stale")
     if state["status"] != "active":
         raise TaskAuthorityError("authority_lease_revoked")
+
+
+def verify_signed_task_lease(
+    public_key_pem: bytes,
+    lease_document: bytes,
+    state_document: bytes,
+    request: CapabilityRequest,
+    *,
+    now: datetime | None = None,
+) -> TaskLeaseClaims:
+    """Pure verification; caller must supply bytes from a trusted Host source.
+
+    This pure function is NOT a production file loader or approval interface.
+    It deliberately does not infer parent/Lane/backend/OS authority from JSON.
+    """
+    try:
+        key = serialization.load_pem_public_key(public_key_pem)
+    except (ValueError, TypeError) as exc:
+        raise TaskAuthorityError("authority_public_key_invalid") from exc
+    if not isinstance(key, Ed25519PublicKey):
+        raise TaskAuthorityError("authority_public_key_invalid")
+    key_id = hashlib.sha256(
+        key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    ).hexdigest()[:16]
+    lease = _verify_document(lease_document, public_key=key, key_id=key_id, domain=_LEASE_DOMAIN)
+    state = _verify_document(state_document, public_key=key, key_id=key_id, domain=_STATE_DOMAIN)
+    _verify_lease_state_schema(lease, state)
 
     issued, expiry = _parse_time(lease["issued_at"]), _parse_time(lease["expires_at"])
     clock = now or datetime.now(UTC)

@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import current_evidence_shadow_enabled, workspace_base
+from llm_loop.core.run_context import (
+    current_evidence_shadow_enabled,
+    current_task_execution,
+    workspace_base,
+)
 from llm_loop.sealed_paths import sealed_path_reason
 from llm_loop.tools.safety import link_shaped_paths
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
@@ -248,15 +252,9 @@ class EditFileTool:
         old, new = str(old), str(new)
         if old == "":
             return self._fail("old_string 为空无法定位（插入内容请锚定相邻原文）")
-
-        if self.require_version_precondition and not dry_run and not expected_snapshot_ref:
-            return self._fail(
-                "当前 edit_file 实例要求 expected_snapshot_ref 版本前置条件；本次未写入。"
-                f"[file_contract] required_call=read_file path={path_str!r} snapshot=true; "
-                "required_result=snapshot_ref; retry_field=expected_snapshot_ref",
-                "VersionPreconditionRequired",
-            )
-
+        version_error = self._version_precondition_error(path_str, dry_run, expected_snapshot_ref)
+        if version_error is not None:
+            return version_error
         path, reject = self._symlink_write_guard(path_str)
         if reject is not None:
             return reject
@@ -264,8 +262,6 @@ class EditFileTool:
         from llm_loop.core.tool_execution_journal import current_tool_effect_binding
 
         binding = current_tool_effect_binding()
-        from llm_loop.core.run_context import current_task_execution
-
         if current_task_execution.get() is not None:
             return self._task_edit(
                 path=path, path_str=path_str, old=old, new=new,
@@ -298,6 +294,18 @@ class EditFileTool:
             return self._map_service_error(exc, path_str)
 
         return self._success_result(result, path_str)
+
+    def _version_precondition_error(
+        self, path_str: str, dry_run: bool, expected_snapshot_ref: str
+    ) -> ToolResult | None:
+        if self.require_version_precondition and not dry_run and not expected_snapshot_ref:
+            return self._fail(
+                "当前 edit_file 实例要求 expected_snapshot_ref 版本前置条件；本次未写入。"
+                f"[file_contract] required_call=read_file path={path_str!r} snapshot=true; "
+                "required_result=snapshot_ref; retry_field=expected_snapshot_ref",
+                "VersionPreconditionRequired",
+            )
+        return None
 
     def _task_edit(
         self, *, path: Path, path_str: str, old: str, new: str,

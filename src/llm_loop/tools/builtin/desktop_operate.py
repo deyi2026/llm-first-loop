@@ -1426,6 +1426,37 @@ class DesktopOperateTool:
             )
         return None
 
+    def _gate_task_delivery(self, flow: _ActFlow) -> ToolResult | None:
+        """Revalidate exact Host app/window identity immediately before delivery."""
+        task = current_task_execution.get()
+        if task is None:
+            return None
+        fresh_window, window = flow.fresh_window, flow.window
+        if (
+            fresh_window is None
+            or fresh_window.window_id != window.window_id
+            or fresh_window.pid != window.pid
+            or fresh_window.bundle_id != window.bundle_id
+        ):
+            return self._refuse(
+                flow,
+                DesktopErrorCode.FOREGROUND_CHANGED,
+                "Task 窗口 PID/ID/bundle 已变化；禁止投递，重新绑定。",
+            )
+        try:
+            cast(TrustedTaskExecution, task).authorize_app(
+                window.bundle_id,
+                verb="edit",
+                os_permission_granted=bool(flow.backend.permission_snapshot().ax_trusted),
+            )
+        except TaskExecutionError as exc:
+            return self._refuse(
+                flow,
+                DesktopErrorCode.APP_NOT_ALLOWED,
+                f"Task 投递前授权失效: {exc.reason_code}；未投递。",
+            )
+        return None
+
     def _deliver_and_receipt(self, flow: _ActFlow) -> ToolResult:
         """真实投递 + post 指纹 + 会话批准 + 成功回执（S2：force 凭据此刻才消耗）。"""
         do, options, backend = flow.do, flow.options, flow.backend
@@ -1438,36 +1469,10 @@ class DesktopOperateTool:
         idle_ms, frontmost_before = flow.idle_ms, flow.frontmost_before
         force_used = flow.force_used
         channel_token_required = flow.channel_token_required
-        task = current_task_execution.get()
-        if task is not None:
-            # Fresh window identity and Host state must still hold after
-            # token/world/AX probes, immediately before physical delivery.
-            if (
-                fresh_window is None
-                or fresh_window.window_id != window.window_id
-                or fresh_window.pid != window.pid
-                or fresh_window.bundle_id != window.bundle_id
-            ):
-                return self._refuse(
-                    flow,
-                    DesktopErrorCode.FOREGROUND_CHANGED,
-                    "Task 窗口 PID/ID/bundle 已变化；禁止投递，重新绑定。",
-                )
-            try:
-                cast(TrustedTaskExecution, task).authorize_app(
-                    bundle,
-                    verb="edit",
-                    os_permission_granted=bool(backend.permission_snapshot().ax_trusted),
-                )
-            except TaskExecutionError as exc:
-                return self._refuse(
-                    flow,
-                    DesktopErrorCode.APP_NOT_ALLOWED,
-                    f"Task 投递前授权失效: {exc.reason_code}；未投递。",
-                )
-        # ── 真实投递 ──────────────────────────────────────────────────────
-        # S2：一次性 force 凭据在此刻才消耗——此前所有关卡（写开关/EXEC_MODE/令牌/
-        # 世界重绑/AX 探针）都可能拒绝，拒绝路径不得烧掉用户预置的凭据。
+        refused = self._gate_task_delivery(flow)
+        if refused is not None:
+            return refused
+        # S2: force 凭据只在所有门禁通过、真实投递前消耗，拒绝路径不得消耗。
         if force_used:
             self._gate.mark_force_consumed(session_id)
         outcome = self._deliver(do, options, backend, fresh_window)
@@ -1507,7 +1512,6 @@ class DesktopOperateTool:
                 guidance=outcome.detail, started=started, base=base,
                 payload=failure_payload,
             )
-
         # D-02（T-05）：post 观测异常不得把已投递动作改写成"从未发生"——
         # 观测失败只降级 effect_state=unknown，投递证据保留。
         post_sha: str | None = None

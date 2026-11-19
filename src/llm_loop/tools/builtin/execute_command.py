@@ -1680,6 +1680,16 @@ class ExecuteCommandTool:
             error_detail=f"{reason}: {detail}",
         )
 
+    def _task_host_grant_denial(self) -> ToolResult:
+        """Task Lease and legacy one-shot host grant are mutually exclusive."""
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 任务级 Lease 与一次性 host_grant_id 不得混用",
+            error_type="task_host_grant_conflict",
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
     def execute(self, **kwargs) -> ToolResult:
         # ── P2-2（2026-10-25）: command / argv 二选一的结构化执行入口 ──
         # argv 模式: shell=False 直执行（不经 /bin/sh），守卫按 shlex.join(argv)
@@ -1730,13 +1740,7 @@ class ExecuteCommandTool:
         grant_ctx: dict | None = None
         if host_grant_id:
             if current_task_execution.get() is not None:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content="[参数错误] 任务级 Lease 与一次性 host_grant_id 不得混用",
-                    error_type="task_host_grant_conflict",
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
+                return self._task_host_grant_denial()
             if esc_id or esc_token:
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
@@ -1767,7 +1771,6 @@ class ExecuteCommandTool:
         gate_line = self._review_gate_line(command)
         # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
         if workdir is None:
-
             workdir = workspace_base()
         # RULE-AI-34 补充（2026-11-06）: main 直写机械门——存在他人 active lane 时
         # 拒绝 git commit/push main（并行会话合并闸竞争防护；无冲突时零行为变化）。
@@ -1797,7 +1800,6 @@ class ExecuteCommandTool:
         pinned_grant_fd: int | None = None
         if grant_ctx is not None:
             from llm_loop.tools.sandbox import resolve_auto_backend, sandbox_mode
-
             backend = sandbox_mode(self._sandbox_mode)
             if backend == "auto":
                 backend, _reasons = resolve_auto_backend()

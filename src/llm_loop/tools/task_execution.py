@@ -258,6 +258,20 @@ class TrustedTaskExecution:
             raise TaskExecutionError(verdict.reason_code)
         return root
 
+    def _deny_other_lane_roots(self, roots: tuple[str, ...]) -> None:
+        """A signed project grant never transfers another active Lane's tree."""
+        for other in self.lanes.list():
+            if other.get("lane_id") == self.lane_id or not other.get("worktree"):
+                continue
+            other_root = os.path.realpath(str(other["worktree"]))
+            for root in roots:
+                try:
+                    overlap = os.path.commonpath((root, other_root)) in (root, other_root)
+                except (OSError, ValueError):
+                    overlap = True
+                if overlap:
+                    raise TaskExecutionError("task_other_lane_worktree_conflict")
+
     def preflight(self, command: str, workdir: str, mode: str) -> TaskSandboxPlan:
         """Verify signed lease, parent/Lane/OS facts and compile exact multi-root plan."""
         if current_task_execution.get() is not self:
@@ -316,19 +330,7 @@ class TrustedTaskExecution:
         )
         if workdir not in roots:
             raise TaskExecutionError("task_workdir_not_authorized")
-        # Signed project access does not transfer another active Lane's
-        # worktree ownership; ancestor/descendant overlap is also denied.
-        for other in self.lanes.list():
-            if other.get("lane_id") == self.lane_id or not other.get("worktree"):
-                continue
-            other_root = os.path.realpath(str(other["worktree"]))
-            for root in roots:
-                try:
-                    overlap = os.path.commonpath((root, other_root)) in (root, other_root)
-                except (OSError, ValueError):
-                    overlap = True
-                if overlap:
-                    raise TaskExecutionError("task_other_lane_worktree_conflict")
+        self._deny_other_lane_roots(roots)
         if os.path.lexists(os.path.join(workdir, ".git")):
             # Compare actual HEAD, not just the potentially stale Lane ledger.
             env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
