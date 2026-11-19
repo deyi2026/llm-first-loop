@@ -1624,3 +1624,69 @@ def test_block_amp_redirect_cd_into_main_repo(tmp_path):
         workdir=None,
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# ---------------------------------------------------------------------------
+# review subagent_3eab63eb5e61 修复回归（P1-1 复合关键字 + P2-2/P2-3，r11）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_if_compound_cd_tracked(tmp_path):
+    """P1-1：`if cd main; then git commit; fi` 的 cd 不再因 `if` 失踪。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if cd {main_dir}; then git commit -m x; fi", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_git_verbs_while_do_compound_cd_tracked(tmp_path):
+    """P1-1：`while cd wt; do git commit; done` 循环体落 wt。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"while cd {wt}; do git commit -m x; done", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_for_loop_body_cd_tracked(tmp_path):
+    """P1-1：`for` 头部词不终结命令位，`do` 后体命令照常跟踪。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"for f in a b; do cd {wt} && git commit -m x; done", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_quoted_eval_payload_sentinel(tmp_path):
+    """P2-2：整串带引号 eval 载荷（含空白/段界标点的命令位 token）→ 保守哨兵。"""
+    verbs = guard_module._git_verbs(
+        'eval "cd /tmp && git commit -m x"', "/tmp"
+    )
+    assert verbs == [("commit", [], "")]
+
+
+def test_git_verbs_dquote_escape_preserves_quote_state(tmp_path):
+    """P2-3：双引号内 `\\"` 不再误判引号闭合；消息含引号仍正常判定。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f'cd {wt} 2>&1 && git commit -m "say \\"hi\\""', str(wt)
+    )
+    assert verbs == [("commit", ["-m", 'say "hi"'], str(wt))]
+
+
+def test_block_if_cd_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`if cd main; then git commit; fi` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"if cd {repo}; then git commit -m x; fi",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"

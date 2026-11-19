@@ -60,9 +60,14 @@
 - **``cd`` 多操作数 = 失败**（审查 4289cf3401e0 P1-1）：bash 对
   ``cd wt extra`` 报 "too many arguments" 且 cwd 不变——按成功跟踪是
   fail-open，现按失败处理（cwd 保持）。
-- **已知边界（既有，非本批引入，4289cf3401e0 P2-1）**：``eval "…"``（整串
-  单 token）与反引号替换内的 git 命令不产生可识别动词 → 按"无 git 命令"
-  放行；属解析器表达力边界，暂以文档声明而非引入重量级 shell 语义解析。
+- **已知边界（既有，非本批引入，4289cf3401e0 P2-1；2026-11-20 修订，审查
+  subagent_3eab63eb5e61 P2-1/P2-2）**：反引号替换与 ``$( … )`` 内的 git 命令
+  按上文"引号内命令替换 = 保守哨兵"拦截（任一 token 含 ``$(`` 或反引号即
+  哨兵）；旧版"反引号内放行"的说法与哨兵行为矛盾，已更正。整串单 token
+  的带引号 ``eval "cd wt && git commit"``（不含 ``$(``/反引号）自 r11 起也
+  走命令位不透明词哨兵（见下）。``bash -c``/``sh -c`` 嵌套解释器载荷仍是
+  文档声明的表达力边界：子进程内落点不在父 shell cwd 模型内，依赖外层
+  执行闸（execute_command 沙箱/宿主策略）。
 - **cd 后重定向不是操作数**（审查 61bbdabfee9d P1-1）：``<``/``>``/``>>`` 不
   计入多操作数判定——``cd wt > log && git push`` 的 cd 在 bash 中成功，
   误判失败会放行真实落点。
@@ -97,6 +102,24 @@
   重定向失效；``2>&1`` 无独立目标词，不吞后续 token）。
 - **P2-5 核验**：``re``/``Path`` 等导入均在模块顶部 import 区，审查器 diff
   视野不可见项，此处显式确认存在。
+- **shell 复合关键字透明化（审查 subagent_3eab63eb5e61 P1-1 修复）**：
+  ``if``/``then``/``else``/``elif``/``fi``/``while``/``until``/``for``/
+  ``do``/``done``/``case``/``esac``/``select`` 是普通词，旧解析在命令位遇
+  到它们会终结 seg_start——``if cd <main>; then git commit; fi`` 的 cd
+  失踪 → fail-open。现并入透明前缀集（命令位保持）。注：``if cd`` 失败
+  分支的 cwd 条件性不建模——把落点记到 cd 目标属保守方向（失败时实际
+  不执行 then 体，无 fail-open）；条件分支精确建模不在射程。
+- **命令位不透明词哨兵（审查 subagent_3eab63eb5e61 P2-2）**：命令位上含
+  空白/``&&``/``;``/``|`` 的单 token（引号折叠产物，如
+  ``eval "cd wt && git commit"``）可能携带隐藏 git 动词 → 保守哨兵（当
+  main commit 判定）。bash 命令名不可能含未引号空白，此类 token 均属
+  引号/展开不可静态解析形态；代价：命令位带引号含空格的怪形态被过拦
+  （安全方向，罕见）。
+- **双引号内反斜杠转义（审查 subagent_3eab63eb5e61 P2-3 修复）**：
+  ``_split_logical_lines`` 在双引号内按 bash 消费 ``\\<char>``（``\\"``/
+  ``\\\\``/``\\$``/续行），修复引号状态失步导致的伪段界或误触未配对
+  引号哨兵；单引号内反斜杠保持字面（bash 语义）。实测偏差本就偏保守，
+  此为保真度补齐。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -282,6 +305,19 @@ def _git_verbs(
         if seg_start and tokens[i] in _CMD_POS_CWD_UNKNOWABLE:
             # eval/pushd/popd/source/.：可能改 cwd 且参数不可静态解析 → 置未知
             # （P2-1 fail-closed；其后词不再是命令位，避免把参数误当命令）。
+            # 若其载荷（同段内后续 token）含不透明词（引号折叠的空白/段界
+            # 标点，如 eval "cd wt && git commit"），可能携带隐藏 git 动词 →
+            # 升级为保守哨兵（审查 subagent_3eab63eb5e61 P2-2）。
+            _k = i + 1
+            while (
+                _k < len(tokens)
+                and tokens[_k] not in _SEG_PERSIST
+                and tokens[_k] not in _SEG_SUBSHELL
+                and tokens[_k] not in ("(", ")")
+            ):
+                if _OPAQUE_CMDPOS_RE.search(tokens[_k]):
+                    return [("commit", [], "")]
+                _k += 1
             seg_start = False
             shell_cwd = ""
             i += 1
@@ -292,6 +328,11 @@ def _git_verbs(
             # `1=2` 这类非法赋值名不匹配正则，按普通词处理）。
             i += 1
             continue
+        if seg_start and _OPAQUE_CMDPOS_RE.search(tokens[i]):
+            # 命令位不透明词（审查 subagent_3eab63eb5e61 P2-2）：含空白/段界
+            # 标点的单 token（引号折叠产物，如 eval "cd wt && git commit"）
+            # 可能携带隐藏 git 动词 → 保守哨兵（当 main 上的 commit 判定）。
+            return [("commit", [], "")]
         if seg_start and tokens[i] == "cd":
             seg_start = False
             nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
@@ -422,7 +463,34 @@ _SEG_SUBSHELL = frozenset({"|", "||", "&", "|&"})  # |& = bash 双流管道（pu
 # ③cwd 不可静态判定——eval/pushd/popd/source/. 可能改 cwd 且参数无法解析 →
 #   置未知（""，fail-closed；18c9ecb809a5 P2-1 的文档边界就此收敛）。
 _ASSIGN_WORD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_CMD_POS_TRANSPARENT = frozenset({"builtin", "command", "time", "!", "{", "}"})
+# 命令位不透明词（审查 subagent_3eab63eb5e61 P2-2）：含空白/段界标点的
+# 单 token 是引号折叠产物（eval "cd wt && git commit"），可能携带隐藏
+# git 动词 → 命令位出现即保守哨兵。bash 命令名不可能含未引号空白。
+_OPAQUE_CMDPOS_RE = re.compile(r"[\s&;|]")
+_CMD_POS_TRANSPARENT = frozenset({
+    "builtin",
+    "command",
+    "time",
+    "!",
+    "{",
+    "}",
+    # shell 复合关键字（审查 subagent_3eab63eb5e61 P1-1）：普通词形态会
+    # 终结命令位——`if cd wt; then git commit; fi` 的 cd 旧解析直接丢失
+    # （fail-open）。它们后面的词仍是命令位，必须透明跳过。
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "while",
+    "until",
+    "for",
+    "do",
+    "done",
+    "case",
+    "esac",
+    "select",
+})
 _CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", "."})
 
 
@@ -442,9 +510,12 @@ def _split_logical_lines(text: str) -> list[str]:
     i, n = 0, len(text)
     while i < n:
         ch = text[i]
-        if quote is None and ch == "\\" and i + 1 < n:
+        if ch == "\\" and i + 1 < n and (quote is None or quote == '"'):
+            # bash 转义/续行（引号外与双引号内同义；审查 subagent_3eab63eb5e61
+            # P2-3）：\<newline> 连行符一并丢弃，其余成对消费保持引号状态；
+            # 单引号内反斜杠保持字面（bash 语义，不走此分支）。
             if text[i + 1] == "\n":
-                i += 2  # bash 续行：丢弃 \<newline>
+                i += 2
                 continue
             buf.append(ch)
             buf.append(text[i + 1])
