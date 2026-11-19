@@ -9,11 +9,13 @@
         "174 M1 tests PASS including signed trial and negative forgery/replay",
         "52 architecture guards PASS",
         "Ruff/Pyright PASS; exact-SHA Reviewer/R9 and Host cross-UID acceptance still required",
-        "M1-SIM-003: 60/60 frozen DeepSeek paired episodes, 30 matched seeds, 319 Provider attempts, 308 tool actions; B1 27/30 vs B2 23/30 independent Oracle placements; no demonstrated B2 benefit; see M1-SIM-003-paired-audit-20261120.md"
+        "M1-SIM-003: 60/60 frozen DeepSeek paired episodes, 30 matched seeds, 319 Provider attempts, 308 tool actions; B1 27/30 vs B2 23/30 independent Oracle placements; no demonstrated B2 benefit; see M1-SIM-003-paired-audit-20261120.md",
+        "Remote PR #78 Linux CI initially failed M1 collection because the dev lock omitted isolated MuJoCo; CI test job now installs the pinned mujoco==4.0.1 without altering runtime wheel or other Lanes' pyproject/uv.lock. Exact new-SHA CI pending."
       ],
       "model_evidence_veto_recovery_exit": "Only independent UID463 Ed25519 verification can prove success; no client-selected seeds, unsigned runtime claims, local Oracle self-grading or fabricated reviewer receipt.",
       "owning_subsystem": "M1 embodied simulation / isolated UID463 Oracle",
       "paths": [
+        ".github/workflows/ci.yml",
         "scripts/embodied/install_oracle_host_macos.sh",
         "scripts/embodied/m1_gate_b_e2e.py",
         "scripts/embodied/m1_gate_c_episode.py",

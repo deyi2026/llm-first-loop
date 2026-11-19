@@ -57,6 +57,13 @@ jobs:
           cache-dependency-path: webui/package-lock.json
       - name: 安装冻结 Python 依赖并核对锁文件
         run: uv sync --locked --extra dev
+      # M1 simulation tests import MuJoCo at collection time. The simulator
+      # is an isolated test-only dependency, not part of the production wheel
+      # or the shared pyproject/uv.lock owned by concurrent development Lanes.
+      - name: 安装 M1 冻结仿真测试依赖（仅 CI 测试任务）
+        run: |
+          uv pip install --python .venv/bin/python 'mujoco==4.0.1'
+          .venv/bin/python -c "from importlib.metadata import version; assert version('mujoco') == '4.0.1'"
       - name: 安装冻结 WebUI 构建依赖
         working-directory: webui
         run: npm ci --ignore-scripts
