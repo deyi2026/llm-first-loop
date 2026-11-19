@@ -1296,3 +1296,53 @@ def test_block_cd_then_dash_c_back_to_main(tmp_path):
         workdir=None,
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_paren_subshell_cd_tracked(tmp_path):
+    """(cd wt && git commit)：括号子壳内 cd 必须被跟踪（a645e424028c P0-2 修复）。"""
+    wt = tmp_path / "wt"
+    verbs = guard_module._git_verbs(f"(cd {wt} && git commit -m x)", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_paren_inherits_parent_cd(tmp_path):
+    """cd 进 wt 后再进括号子壳：git 落点仍是 wt（父壳视图继承）。"""
+    wt = tmp_path / "wt"
+    verbs = guard_module._git_verbs(f"cd {wt} && (git commit -m x)", None)
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_paren_restore_after_close(tmp_path):
+    """括号关闭后弹栈还原父壳视图：) 之后的 git 按原 workdir 判定。"""
+    wt = tmp_path / "wt"
+    verbs = guard_module._git_verbs(f"(cd {wt}) && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
+
+
+def test_git_verbs_unbalanced_close_conservative():
+    """不配对 ) 弹空栈 → 视图未知（""，调用方保守当 main）。"""
+    verbs = guard_module._git_verbs(
+        "git commit -m a ) && git commit -m b", "/tmp/main"
+    )
+    assert verbs[0] == ("commit", ["-m", "a"], "/tmp/main")
+    assert verbs[1] == ("commit", ["-m", "b"], "")
+
+
+def test_git_verbs_unquoted_comment_stops_line_like_bash(tmp_path):
+    """未加引号 # 起注释（与 bash 一致）：注释内的 git 不参与判定。"""
+    wt = tmp_path / "wt"
+    verbs = guard_module._git_verbs(f"cd {wt} # note && git commit -m x", "/tmp/main")
+    assert verbs == []
+
+
+def test_block_paren_subshell_cd_into_main_repo(tmp_path):
+    """端到端：(cd <main 仓> && git commit) 在他人 live lane 下必须被拒（P0-2 旁路闭合）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"(cd {repo} && git commit -m x)",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(tmp_path),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"

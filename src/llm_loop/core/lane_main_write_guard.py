@@ -42,6 +42,12 @@
 - **token 化收紧**：``shlex.split`` 启用 ``punctuation_chars``，``;``/``&&``/``|``
   独立成 token——``cd wt&&git commit`` 粘写使 ``git`` 动词整体逃过判定的
   既有旁路同批闭合。
+- **括号子壳精确建模（审查 subagent_a645e424028c P0-2 修复）**：``(``/``)`` 以栈
+  建模——子壳继承父壳视图、内部 ``cd`` 正常跟踪、``)`` 弹栈还原；不配对 ``)``
+  弹空栈置未知（保守）。闭合 ``(cd wt && git commit)`` 内层 ``cd`` 逃过判定的
+  fail-open 旁路；``$( )`` 命令替换中的命令同被跟踪。
+- **commenters 恢复 shell 语义 ``#``**（审查 P2-2）：未加引号 ``#`` 起注释与
+  bash 一致，消除 ``cd wt # note && …`` 形态的假阳性；引号内 ``#`` 不受影响。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -117,7 +123,7 @@ def _git_verbs(
         text = command
     try:
         _lex = shlex.shlex(text, posix=True, punctuation_chars=True)
-        _lex.commenters = ""
+        _lex.commenters = "#"  # 与 bash 一致：未加引号的 # 起注释；引号内不受影响
         _lex.whitespace_split = True
         tokens = list(_lex)
     except ValueError:
@@ -126,6 +132,10 @@ def _git_verbs(
     # EVO-20261119-0fa86cab：shell 层 ``cd`` 链跟踪。None=未见 cd（沿用 workdir
     # 参数判定，行为与历史一致）；""=不可解析/子壳语义（调用方保守当 main）。
     shell_cwd: str | None = workdir
+    # 括号子壳栈（review subagent_a645e424028c P0-2 修复）：``(`` 继承父壳视图
+    # 入栈、子壳内 ``cd`` 正常跟踪（精确建模，不再逃过判定）、``)`` 弹栈还原；
+    # 不配对 ``)`` → 弹空栈置未知（保守）。``$( )`` 命令替换中的命令同被跟踪。
+    stack: list[str | None] = []
     seg_start = True
     i = 0
     while i < len(tokens):
@@ -137,6 +147,16 @@ def _git_verbs(
             # | & || ：子壳/异步/左臂成败不定，cd 语义不可靠 → 置未知（fail-closed）。
             seg_start = True
             shell_cwd = ""
+            i += 1
+            continue
+        if tokens[i] == "(":
+            stack.append(shell_cwd)
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == ")":
+            shell_cwd = stack.pop() if stack else ""
+            seg_start = True
             i += 1
             continue
         if seg_start and tokens[i] == "cd":
@@ -186,7 +206,19 @@ def _git_verbs(
                 # 无任何重定向 → 以 shell 层 cd 链落点为判定 cwd；无 cd 段时即
                 # workdir 参数（None 保持 None，历史行为不变）。
                 target = shell_cwd
-            out.append((tokens[j], tokens[j + 1 :], target))
+            # 参数/refspec 只吃到本段边界（&& ; | & || ( )），不吞后续段——
+            # 旧的无界切片会把 `git push origin main && echo hi` 的 echo/hi
+            # 与括号闭合 `)` 误收进 refspec（punctuation_chars 粘写批次的
+            # 残留，审查 3 failed 定位后同批闭合）。
+            k2 = j + 1
+            while (
+                k2 < len(tokens)
+                and tokens[k2] not in _SEG_PERSIST
+                and tokens[k2] not in _SEG_SUBSHELL
+                and tokens[k2] not in ("(", ")")
+            ):
+                k2 += 1
+            out.append((tokens[j], tokens[j + 1 : k2], target))
             i = j + 1
         else:
             i = j
