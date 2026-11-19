@@ -39,6 +39,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from llm_loop.embodied_sim.contract import VerificationStatus
+from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial
 
 PROD_JOBS_DIR = "/private/var/run/lfl-m1-oracle/jobs"
 PROD_RECEIPTS_DIR = "/private/var/run/lfl-m1-oracle/receipts"
@@ -246,6 +247,7 @@ def _verify_attestation_impl(
     replay_ledger: ReplayLedger,
     expected_claim_kind: str = "place",
     host_authority: bool = False,
+    expected_trial: dict[str, Any] | None = None,
 ) -> VerificationStatus:
     """Asymmetric verification with strict binding + persistent replay defence.
 
@@ -268,6 +270,16 @@ def _verify_attestation_impl(
         "oracle_impl",
         "evidence",
     }
+    trial_bound = expected_experiment_id == EXPERIMENT_ID
+    if trial_bound:
+        try:
+            if validate_trial(receipt.get("trial")) != validate_trial(expected_trial):
+                return VerificationStatus.FAILED_CLAIM
+        except (ValueError, TypeError):
+            return VerificationStatus.FAILED_CLAIM
+        required.add("trial")
+    elif expected_trial is not None:
+        return VerificationStatus.FAILED_CLAIM
     if any(k not in receipt for k in required):
         return VerificationStatus.FAILED_CLAIM
     if set(receipt) - required - {"daemon_public_key"}:
@@ -325,7 +337,7 @@ def _verify_attestation_impl(
                 "experiment_id",
                 "oracle_impl",
                 "evidence",
-            )
+            ) + (("trial",) if trial_bound else ())
         }
         pubkey.verify(bytes.fromhex(str(receipt["signature"])), canonical(core))
     except (InvalidSignature, ValueError, OSError):
@@ -356,6 +368,7 @@ def verify_attestation(
     expected_experiment_id: str,
     replay_ledger: ReplayLedger,
     expected_claim_kind: str = "place",
+    expected_trial: dict[str, Any] | None = None,
 ) -> VerificationStatus:
     """Unprivileged advisory check. Never grants VERIFIED_BY_ORACLE."""
     return _verify_attestation_impl(
@@ -368,6 +381,7 @@ def verify_attestation(
         expected_experiment_id=expected_experiment_id,
         replay_ledger=replay_ledger,
         expected_claim_kind=expected_claim_kind,
+        expected_trial=expected_trial,
     )
 
 
@@ -382,6 +396,7 @@ def verify_attestation_host(
     expected_experiment_id: str,
     replay_ledger: ReplayLedger,
     expected_claim_kind: str = "place",
+    expected_trial: dict[str, Any] | None = None,
 ) -> VerificationStatus:
     """Host-only verifier. The consuming safety gate MUST run out of process."""
     if os.getuid() != ATTEST_UID:
@@ -397,4 +412,5 @@ def verify_attestation_host(
         replay_ledger=replay_ledger,
         expected_claim_kind=expected_claim_kind,
         host_authority=True,
+        expected_trial=expected_trial,
     )

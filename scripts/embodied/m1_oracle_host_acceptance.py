@@ -26,6 +26,7 @@ from llm_loop.embodied_sim.attestation import (  # noqa: E402
 )
 from llm_loop.embodied_sim.contract import VerificationStatus  # noqa: E402
 from llm_loop.embodied_sim.host_bridge import request_host_verification  # noqa: E402
+from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial  # noqa: E402
 
 RUN_INFO = Path("/private/var/run/lfl-m1-oracle/runtime/run.json")
 PRIVATE = Path("/usr/local/etc/lfl-m1-oracle-ed25519.key")
@@ -78,6 +79,8 @@ def _verify(receipt: dict, nonce: str, run: dict, seq: int, **overrides: Any):
         "expected_experiment_id": run["experiment_id"],
         "expected_claim_kind": "grasp",
     }
+    if run["experiment_id"] == EXPERIMENT_ID:
+        binding["expected_trial"] = run["trial"]
     binding.update(overrides)
     return request_host_verification(receipt, **binding, timeout_s=30)
 
@@ -86,9 +89,13 @@ def run() -> dict:
     _assert_isolation()
     run = json.loads(RUN_INFO.read_text(encoding="utf-8"))
     run_id = run["run_id"]
-    if len(run_id) != 32 or run["experiment_id"] != "M1-SIM-001":
+    if len(run_id) != 32 or run["experiment_id"] not in ("M1-SIM-001", EXPERIMENT_ID):
         raise RuntimeError("invalid Host run identity")
+    if run["experiment_id"] == EXPERIMENT_ID:
+        validate_trial(run.get("trial"))
     _, obs = _run_command({"skill": "observe"}, run_id, 0)
+    if run["experiment_id"] == EXPERIMENT_ID and obs.get("trial") != run["trial"]:
+        raise RuntimeError("Host observation trial binding mismatch")
     cube = obs["observation"]["cube"]["pos"]
     seq = 0
     stages = (
@@ -117,6 +124,11 @@ def run() -> dict:
     negatives["wrong_experiment"] = _verify(
         receipt, nonce, run, seq, expected_experiment_id="wrong-experiment"
     )
+    if run["experiment_id"] == EXPERIMENT_ID:
+        other_arm = "B1" if run["trial"]["arm"] == "B2" else "B2"
+        negatives["wrong_trial_arm"] = _verify(
+            receipt, nonce, run, seq,
+            expected_trial={**run["trial"], "arm": other_arm})
     negatives["wrong_claim"] = _verify(receipt, nonce, run, seq, expected_claim_kind="place")
     tampered = dict(receipt, verdict="failure")
     negatives["forged_receipt"] = _verify(tampered, nonce, run, seq)
@@ -167,7 +179,7 @@ def run() -> dict:
         negatives["missing_queue"] = VerificationStatus.FAILED_CLAIM
     else:
         raise RuntimeError("missing Host queue did not fail closed")
-    return {
+    result = {
         "schema": "lfl.m1-host-cross-uid-acceptance/v1",
         "status": "PASS",
         "client_uid": os.getuid(),
@@ -180,6 +192,9 @@ def run() -> dict:
         "negative_tests": {k: v.value for k, v in negatives.items()},
         "model_autonomy": "NOT_TESTED (deterministic infrastructure probe)",
     }
+    if run["experiment_id"] == EXPERIMENT_ID:
+        result["trial"] = run["trial"]
+    return result
 
 
 if __name__ == "__main__":

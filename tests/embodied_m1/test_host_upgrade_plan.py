@@ -1,0 +1,149 @@
+"""Non-root M1-only upgrade/switch safety; no LaunchDaemon mutation."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import plistlib
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _upgrade_module():
+    path = ROOT / "scripts/embodied/m1_oracle_host_upgrade.py"
+    spec = importlib.util.spec_from_file_location("m1_oracle_host_upgrade", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_upgrade_root_stage_is_mandatory(monkeypatch):
+    mod = _upgrade_module()
+    monkeypatch.setattr(mod.os, "getuid", lambda: 501)
+    monkeypatch.setattr(mod.os, "geteuid", lambda: 501)
+    with pytest.raises(RuntimeError, match="administrator/root required"):
+        mod._root_stage()
+
+
+def test_upgrade_config_preserves_frozen_seeds():
+    mod = _upgrade_module()
+    for phase, arm, index, seed in (("smoke", "B1", 7, 7),
+                                    ("paired", "B2", 0, 20261117),
+                                    ("paired", "B1", 29, 20261146)):
+        trial, raw = mod._config(phase, arm, index)
+        assert trial["seed"] == seed
+        assert json.loads(raw)["experiment_id"] == "M1-SIM-002"
+    for phase, arm, index in (("paired", "B1", 30), ("smoke", "B2", 10),
+                              ("paired", "B3", 0), ("paired", "B1", True)):
+        with pytest.raises(RuntimeError):
+            mod._config(phase, arm, index)
+
+
+def test_upgrade_plist_rewrites_only_m1_service():
+    mod = _upgrade_module()
+    old = {"Label": mod.LABEL, "UserName": "_lfl_oracle",
+           "GroupName": "_lfl_oracle", "KeepAlive": True,
+           "RunAtLoad": True, "EnvironmentVariables": {"HOME": "/var/empty"},
+           "ProgramArguments": ["/usr/bin/sandbox-exec", "-f", str(mod.OLD / "oracle.sb")],
+           "WorkingDirectory": str(mod.OLD)}
+    target = mod.ROOT / ("lfl-m1-oracle-v2-" + "a" * 12)
+    new = plistlib.loads(mod._new_plist(old, target))
+    assert new["Label"] == mod.LABEL
+    assert new["UserName"] == old["UserName"]
+    assert new["EnvironmentVariables"] == old["EnvironmentVariables"]
+    assert new["ProgramArguments"][-1] == "--serve"
+    assert new["ProgramArguments"][-2] == str(target / "m1_oracle_host_service.py")
+    assert new["WorkingDirectory"] == str(target)
+
+
+def test_upgrade_manifest_is_exact_and_rejects_tampering(tmp_path, monkeypatch):
+    mod = _upgrade_module()
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "file.py").write_text("a=1\n")
+    info = {"schema": "lfl.m1-oracle-host-bundle/v1", "python": "3.13.16",
+            "architecture": "arm64", "git_head": "a" * 40,
+            "files": {"file.py": hashlib.sha256((bundle / "file.py").read_bytes()).hexdigest()}}
+    raw = json.dumps(info).encode()
+    (bundle / "manifest.json").write_bytes(raw)
+    monkeypatch.setattr(mod, "_trusted", lambda *_a, **_k: True)
+    assert mod._manifest(bundle, hashlib.sha256(raw).hexdigest())["files"] == info["files"]
+    (bundle / "file.py").write_text("a=2\n")
+    with pytest.raises(RuntimeError, match="content mismatch"):
+        mod._manifest(bundle, hashlib.sha256(raw).hexdigest())
+
+
+def test_failed_uid463_probe_leaves_v1_running(tmp_path, monkeypatch):
+    mod = _upgrade_module()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    pub = tmp_path / "pub"
+    pub.write_bytes(b"existing-public-key")
+    config_path = tmp_path / "trial.json"
+    monkeypatch.setattr(mod, "STAGE", stage)
+    monkeypatch.setattr(mod, "PUBLIC", pub)
+    monkeypatch.setattr(mod, "TRIAL_CONFIG", config_path)
+    monkeypatch.setattr(mod, "_root_stage", lambda: None)
+    monkeypatch.setattr(mod, "_current", lambda *_a, **_k: {"run_id": "a" * 32})
+    old = {"ProgramArguments": [str(mod.OLD / "m1_oracle_host_service.py")]}
+    monkeypatch.setattr(mod, "_plist", lambda: (old, b"old-plist"))
+    monkeypatch.setattr(mod, "_manifest", lambda *_a: {})
+    monkeypatch.setattr(mod, "_install", lambda *_a: tmp_path / "v2")
+    monkeypatch.setattr(mod, "_atomic", lambda path, data, mode=0o644: path.write_bytes(data))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k:
+                        SimpleNamespace(returncode=77, stdout=""))
+    launches = []
+    monkeypatch.setattr(mod, "_launch", lambda *args: launches.append(args))
+    trial, config = mod._config("smoke", "B1", 7)
+    with pytest.raises(RuntimeError, match="trial probe failed"):
+        mod._upgrade(tmp_path / "bundle", "a" * 64, "a" * 32, trial, config)
+    assert launches == []
+    assert not config_path.exists()
+    assert (stage / "old.plist").read_bytes() == b"old-plist"
+
+
+def test_failed_v2_bootstrap_restores_v1_plist_and_trial_config(tmp_path, monkeypatch):
+    mod = _upgrade_module()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    pub = tmp_path / "pub"
+    pub.write_bytes(b"existing-public-key")
+    config_path = tmp_path / "trial.json"
+    plist_path = tmp_path / "launchd.plist"
+    original = b"old-plist-bytes"
+    plist_path.write_bytes(original)
+    monkeypatch.setattr(mod, "STAGE", stage)
+    monkeypatch.setattr(mod, "PUBLIC", pub)
+    monkeypatch.setattr(mod, "PLIST", plist_path)
+    monkeypatch.setattr(mod, "TRIAL_CONFIG", config_path)
+    monkeypatch.setattr(mod, "_root_stage", lambda: None)
+    monkeypatch.setattr(mod, "_current", lambda *_a, **_k: {"run_id": "a" * 32})
+    old = {"ProgramArguments": [str(mod.OLD / "m1_oracle_host_service.py")]}
+    monkeypatch.setattr(mod, "_plist", lambda: (old, original))
+    monkeypatch.setattr(mod, "_manifest", lambda *_a: {})
+    monkeypatch.setattr(mod, "_install", lambda *_a: tmp_path / "v2")
+    monkeypatch.setattr(mod, "_atomic", lambda path, data, mode=0o644: path.write_bytes(data))
+    trial, config = mod._config("smoke", "B2", 7)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k:
+                        SimpleNamespace(returncode=0, stdout=json.dumps({"uid": 463, "trial": trial})))
+    launches = []
+
+    def launch(*args):
+        launches.append(args)
+        if args[0] == "bootstrap" and launches.count(args) == 1:
+            raise RuntimeError("simulated new Host bootstrap failure")
+
+    monkeypatch.setattr(mod, "_launch", launch)
+    monkeypatch.setattr(mod, "_health", lambda *_a: {"run_id": "b" * 32})
+    with pytest.raises(RuntimeError, match="bootstrap failure"):
+        mod._upgrade(tmp_path / "bundle", "a" * 64, "a" * 32, trial, config)
+    assert plist_path.read_bytes() == original
+    assert not config_path.exists()
+    assert launches[0][0] == "bootout"
+    assert launches[-1][0] == "bootstrap"

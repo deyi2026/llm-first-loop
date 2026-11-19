@@ -308,3 +308,106 @@ def test_real_host_scene_settles_before_grasp_and_place_verdicts(host):
     place = daemon.handle_command({"skill": "verify_place"}, "run-A", seq, "c" * 32)
     assert place["verdict"] == "success"
     assert place["evidence"]["oracle_settle_steps"] == 150
+
+
+def test_v2_signed_trial_binding_positive_and_replay(host):
+    key, legacy, ledger, public, jobs, receipts = host
+    trial = {"phase": "smoke", "arm": "B1", "trial_index": 7, "seed": 7}
+    daemon = oracle_daemon.build_daemon_from_scene_seed(
+        7, "run-A", legacy._key_path, trial=trial)
+    v2 = (key, daemon, ledger, public, jobs, receipts)
+    nonce = "d" * 32
+    core = {k: v for k, v in _signed_receipt(key, nonce).items() if k != "signature"}
+    core.update(experiment_id="M1-SIM-002", trial=trial)
+    signed = {**core, "signature": key.sign(attestation.canonical(core)).hex()}
+    binding = {**_binding(nonce), "expected_experiment_id": "M1-SIM-002",
+               "expected_trial": trial}
+    result = _process(v2, signed, binding, "e" * 32)
+    assert result["trial"] == trial
+    assert host_bridge.verify_host_response(
+        result, request_nonce="e" * 32, receipt=signed, binding=binding,
+        pubkey_path=str(public)) == VerificationStatus.VERIFIED_BY_ORACLE
+    assert ledger.seen(nonce)
+    replay = _process(v2, signed, binding, "f" * 32)
+    assert host_bridge.verify_host_response(
+        replay, request_nonce="f" * 32, receipt=signed, binding=binding,
+        pubkey_path=str(public)) == VerificationStatus.FAILED_CLAIM
+
+
+@pytest.mark.parametrize("mutation", ["wrong_arm", "wrong_seed", "forged_receipt"])
+def test_v2_trial_tampering_never_consumes_nonce(host, mutation):
+    key, legacy, ledger, public, jobs, receipts = host
+    trial = {"phase": "smoke", "arm": "B1", "trial_index": 7, "seed": 7}
+    daemon = oracle_daemon.build_daemon_from_scene_seed(
+        7, "run-A", legacy._key_path, trial=trial)
+    v2 = (key, daemon, ledger, public, jobs, receipts)
+    nonce = "a" * 32
+    core = {k: v for k, v in _signed_receipt(key, nonce).items() if k != "signature"}
+    core.update(experiment_id="M1-SIM-002", trial=trial)
+    signed = {**core, "signature": key.sign(attestation.canonical(core)).hex()}
+    binding = {**_binding(nonce), "expected_experiment_id": "M1-SIM-002",
+               "expected_trial": dict(trial)}
+    if mutation == "wrong_arm":
+        binding["expected_trial"]["arm"] = "B2"
+    elif mutation == "wrong_seed":
+        binding["expected_trial"]["seed"] = 8
+    else:
+        signed["trial"] = {**trial, "arm": "B2"}
+    result = _process(v2, signed, binding, "b" * 32)
+    assert host_bridge.verify_host_response(
+        result, request_nonce="b" * 32, receipt=signed, binding=binding,
+        pubkey_path=str(public)) == VerificationStatus.FAILED_CLAIM
+    assert not ledger.seen(nonce)
+
+
+def test_v2_host_rejects_missing_trial_binding(host):
+    key, legacy, ledger, _public, jobs, receipts = host
+    trial = {"phase": "smoke", "arm": "B1", "trial_index": 7, "seed": 7}
+    daemon = oracle_daemon.build_daemon_from_scene_seed(
+        7, "run-A", legacy._key_path, trial=trial)
+    nonce = "c" * 32
+    core = {k: v for k, v in _signed_receipt(key, nonce).items() if k != "signature"}
+    core.update(experiment_id="M1-SIM-002", trial=trial)
+    signed = {**core, "signature": key.sign(attestation.canonical(core)).hex()}
+    host_bridge._atomic_publish(jobs / f"{nonce}.verify.json", {
+        "request_nonce": nonce, "receipt": signed,
+        **{**_binding(nonce), "expected_experiment_id": "M1-SIM-002"},
+    })
+    assert host_bridge.process_verification_jobs(daemon, ledger, str(jobs), str(receipts)) == 0
+    assert not ledger.seen(nonce)
+
+
+def test_v2_real_physics_claim_signs_seed_arm_and_trial(host):
+    key, legacy, ledger, public, jobs, receipts = host
+    trial = {"phase": "smoke", "arm": "B2", "trial_index": 7, "seed": 7}
+    daemon = oracle_daemon.build_daemon_from_scene_seed(
+        7, "run-A", legacy._key_path, trial=trial)
+    v2 = (key, daemon, ledger, public, jobs, receipts)
+    obs = daemon.handle_command({"skill": "observe"}, "run-A", 0, "1" * 32)
+    assert obs["trial"] == trial
+    cube = obs["observation"]["cube"]["pos"]
+    for seq, (skill, params) in enumerate((
+        ("move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + 0.07}),
+        ("move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + 0.010}),
+        ("grasp", {}),
+        ("move_to", {"x": cube[0], "y": cube[1], "z": cube[2] + 0.13}),
+    ), 1):
+        action = daemon.handle_command({"skill": skill, "params": params},
+                                       "run-A", seq, f"{seq + 1:032x}")
+        assert action["trial"] == trial
+        assert action["action_status"]["state"] == "done"
+    nonce = "7" * 32
+    signed = daemon.handle_command({"skill": "verify_grasp"}, "run-A", 4, nonce)
+    assert signed["verdict"] == "success" and signed["trial"] == trial
+    binding = {**_binding(nonce), "expected_experiment_id": "M1-SIM-002",
+               "expected_action_seq": 4, "expected_trial": trial}
+    forged = {**signed, "trial": {**trial, "arm": "B1"}}
+    rejected = _process(v2, forged, binding, "8" * 32)
+    assert host_bridge.verify_host_response(
+        rejected, request_nonce="8" * 32, receipt=forged, binding=binding,
+        pubkey_path=str(public)) == VerificationStatus.FAILED_CLAIM
+    assert not ledger.seen(nonce)
+    accepted = _process(v2, signed, binding, "9" * 32)
+    assert host_bridge.verify_host_response(
+        accepted, request_nonce="9" * 32, receipt=signed, binding=binding,
+        pubkey_path=str(public)) == VerificationStatus.VERIFIED_BY_ORACLE

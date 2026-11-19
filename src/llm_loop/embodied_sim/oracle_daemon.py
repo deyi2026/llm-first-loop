@@ -35,6 +35,7 @@ from llm_loop.embodied_sim.attestation import (
 )
 from llm_loop.embodied_sim.oracle import judge_grasp, judge_place
 from llm_loop.embodied_sim.skills import EmbodiedInterface
+from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial
 
 
 class DaemonUnavailableError(Exception):
@@ -53,12 +54,18 @@ class OracleDaemon:
     """One daemon binds one live scene/interface and one private key."""
 
     def __init__(
-        self, iface, run_id: str, private_key_path: str, experiment_id: str = "M1-SIM-001"
+        self, iface, run_id: str, private_key_path: str,
+        experiment_id: str = "M1-SIM-001", trial: dict[str, Any] | None = None,
     ):
         self.iface = iface
         self.scene = iface.scene
         self.run_id = str(run_id)
-        self.experiment_id = str(experiment_id)
+        if (trial is None and experiment_id != "M1-SIM-001") or (
+            trial is not None and experiment_id != EXPERIMENT_ID
+        ):
+            raise ValueError("trial binding and experiment identity disagree")
+        self.trial = validate_trial(trial) if trial is not None else None
+        self.experiment_id = experiment_id
         self._key_path = str(private_key_path)
         self._action_seq = 0
         self._seen_nonces: set[str] = set()
@@ -91,12 +98,15 @@ class OracleDaemon:
                 raise ValueError("out-of-order action_seq")
             self._seen_nonces.add(nonce)
             if skill == "observe":
-                return {
+                result = {
                     "oracle_execution": "observation_only",
                     "observation": self.scene.observe(),
                     "run_id": self.run_id,
                     "action_seq": self._action_seq,
                 }
+                if self.trial is not None:
+                    result["trial"] = self.trial
+                return result
             if is_action:
                 result = self.iface.execute_skill(
                     skill,
@@ -114,12 +124,15 @@ class OracleDaemon:
                 if status["state"] not in ("done", "failed"):
                     raise ValueError(f"action did not reach terminal state: {status['state']}")
                 self._action_seq = action_seq
-                return {
+                result = {
                     "oracle_execution": "action_only",
                     "run_id": self.run_id,
                     "action_seq": self._action_seq,
                     "action_status": status,
                 }
+                if self.trial is not None:
+                    result["trial"] = self.trial
+                return result
             # Only an explicit, separate physical Oracle check may be signed.
             # A successful move/observe is NOT proof of grasp or placement.
             if os.getuid() != ATTEST_UID:
@@ -158,6 +171,8 @@ class OracleDaemon:
                 "evidence": ev,
                 "oracle_impl": "embodied-m1-oracle-daemon-v0",
             }
+            if self.trial is not None:
+                core["trial"] = self.trial
             signature = self._key.sign(canonical(core)).hex()
             return {**core, "signature": signature, "daemon_public_key": self._pub_hex}
         except Exception as e:
@@ -236,7 +251,10 @@ class OracleDaemon:
             time.sleep(poll_interval_s)
 
 
-def build_daemon_from_scene_seed(seed: int, run_id: str, private_key_path: str) -> OracleDaemon:
+def build_daemon_from_scene_seed(
+    seed: int, run_id: str, private_key_path: str,
+    trial: dict[str, Any] | None = None,
+) -> OracleDaemon:
     """Host-side bootstrap helper: the daemon constructs its OWN interface.
 
     In production the Host process builds this from its managed live scene;
@@ -244,7 +262,13 @@ def build_daemon_from_scene_seed(seed: int, run_id: str, private_key_path: str) 
     validate the protocol, NOT the process boundary - the boundary is Host
     deployment's responsibility and is never claimed by client code).
     """
+    if trial is not None and validate_trial(trial)["seed"] != seed:
+        raise ValueError("Host scene seed differs from signed trial identity")
     scene = MuJoCoScene(seed=seed)
     scene.step(100)
     iface = EmbodiedInterface(scene)
-    return OracleDaemon(iface, run_id=run_id, private_key_path=private_key_path)
+    return OracleDaemon(
+        iface, run_id=run_id, private_key_path=private_key_path,
+        experiment_id=EXPERIMENT_ID if trial is not None else "M1-SIM-001",
+        trial=trial,
+    )

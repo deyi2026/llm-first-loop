@@ -29,6 +29,7 @@ from llm_loop.embodied_sim.policy import ScriptedStubProvider  # noqa: E402
 
 RUN_ID = "a" * 32
 RUN = {"run_id": RUN_ID, "experiment_id": "M1-SIM-001", "scene_epoch": 1}
+TRIAL = {"phase": "smoke", "arm": "B2", "trial_index": 7, "seed": 7}
 
 
 def _obs(t: float) -> dict:
@@ -123,6 +124,38 @@ def test_observe_action_receipts_need_no_nonce_or_epoch(wired):
     bad = _observe_receipt("b" * 32, 6, 0.2)
     with pytest.raises(host_episode.HostLinkError):
         host_episode.assert_runtime_binding(bad, run_id=RUN_ID, seq=6, expected_kind="observe")
+
+
+def test_v2_client_binds_root_selected_trial_in_all_receipt_types(wired, monkeypatch):
+    run = {**RUN, "experiment_id": "M1-SIM-002", "pid": 123, "trial": TRIAL}
+    assert host_episode.validate_run_identity(run) == run
+    original = wired.request_attestation
+
+    def dispatch(command, *, run_id, action_seq, timeout_s=30):
+        nonce, receipt = original(command, run_id=run_id, action_seq=action_seq,
+                                  timeout_s=timeout_s)
+        return nonce, {**receipt, "trial": TRIAL,
+                       **({"experiment_id": "M1-SIM-002"}
+                          if command["skill"].startswith("verify_") else {})}
+
+    monkeypatch.setattr(host_episode, "request_attestation", dispatch)
+    link = host_episode.HostOracleLink(run)
+    assert link.observe(0)["trial"] == TRIAL
+    assert link.execute({"skill": "grasp", "params": {}}, 1)["trial"] == TRIAL
+    assert link.verify("grasp", 1)["status"] == "VERIFIED_BY_ORACLE"
+    assert wired.verify_kwargs[-1]["expected_trial"] == TRIAL
+    bad = {**_observe_receipt(RUN_ID, 0, 0.2), "trial": {**TRIAL, "arm": "B1"}}
+    with pytest.raises(host_episode.HostLinkError, match="trial binding mismatch"):
+        host_episode.assert_runtime_binding(bad, run_id=RUN_ID, seq=0,
+                                            expected_kind="observe", expected_trial=TRIAL)
+
+
+def test_v2_client_rejects_missing_or_changed_seed():
+    base = {**RUN, "experiment_id": "M1-SIM-002", "pid": 123}
+    with pytest.raises(host_episode.HostLinkError, match="trial"):
+        host_episode.validate_run_identity(base)
+    with pytest.raises(host_episode.HostLinkError, match="trial"):
+        host_episode.validate_run_identity({**base, "trial": {**TRIAL, "seed": 8}})
     with pytest.raises(host_episode.HostLinkError):
         host_episode.assert_runtime_binding(_observe_receipt(RUN_ID, 9, 0.2), run_id=RUN_ID, seq=6, expected_kind="observe")
 

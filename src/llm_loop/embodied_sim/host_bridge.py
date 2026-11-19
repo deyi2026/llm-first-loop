@@ -33,6 +33,7 @@ from llm_loop.embodied_sim.attestation import (
 )
 from llm_loop.embodied_sim.contract import VerificationStatus
 from llm_loop.embodied_sim.oracle_daemon import PROD_PRIVATE_KEY_PATH, OracleDaemon
+from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial
 
 PROD_VERIFY_JOBS_DIR = "/private/var/run/lfl-m1-oracle/verify-jobs"
 PROD_VERIFY_RECEIPTS_DIR = "/private/var/run/lfl-m1-oracle/verify-receipts"
@@ -44,6 +45,7 @@ _BINDINGS = (
     "expected_experiment_id",
     "expected_claim_kind",
 )
+_TRIAL_BINDINGS = _BINDINGS + ("expected_trial",)
 _CORE = (
     "request_nonce",
     "receipt_sha256",
@@ -56,6 +58,7 @@ _CORE = (
     "status",
     "uid",
 )
+_TRIAL_CORE = _CORE + ("trial",)
 
 
 def _atomic_publish(path: Path, obj: dict[str, Any]) -> None:
@@ -78,7 +81,7 @@ def _atomic_publish(path: Path, obj: dict[str, Any]) -> None:
 
 
 def _binding_values(receipt: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
-    return {
+    values = {
         "receipt_sha256": hashlib.sha256(canonical(receipt)).hexdigest(),
         "receipt_nonce": binding["expected_nonce"],
         "run_id": binding["expected_run"],
@@ -87,6 +90,9 @@ def _binding_values(receipt: dict[str, Any], binding: dict[str, Any]) -> dict[st
         "experiment_id": binding["expected_experiment_id"],
         "claim_kind": binding["expected_claim_kind"],
     }
+    if "expected_trial" in binding:
+        values["trial"] = binding["expected_trial"]
+    return values
 
 
 def _signed_host_result(
@@ -108,6 +114,8 @@ def _signed_host_result(
         "status": str(status.value),
         "uid": ATTEST_UID,
     }
+    if daemon.trial is not None and "expected_trial" not in binding:
+        raise AttestationUnavailableError("missing signed Host trial binding")
     return {**core, "signature": daemon._key.sign(canonical(core)).hex()}
 
 
@@ -120,10 +128,11 @@ def verify_host_response(
     pubkey_path: str = PROD_PUBLIC_KEY_PATH,
 ) -> VerificationStatus:
     """No caller-chosen key or receipt can fabricate Host acceptance."""
+    core_keys = _TRIAL_CORE if "expected_trial" in binding else _CORE
     if (
         pubkey_path != PROD_PUBLIC_KEY_PATH
         or not _trusted_host_file(pubkey_path, owner=0)
-        or set(response) != set(_CORE) | {"signature"}
+        or set(response) != set(core_keys) | {"signature"}
     ):
         return VerificationStatus.FAILED_CLAIM
     expected = {"request_nonce": request_nonce, **_binding_values(receipt, binding)}
@@ -135,7 +144,7 @@ def verify_host_response(
     }:
         return VerificationStatus.FAILED_CLAIM
     try:
-        core = {key: response[key] for key in _CORE}
+        core = {key: response[key] for key in core_keys}
         load_public_key(pubkey_path).verify(bytes.fromhex(response["signature"]), canonical(core))
     except (InvalidSignature, OSError, ValueError, TypeError):
         return VerificationStatus.FAILED_CLAIM
@@ -151,6 +160,7 @@ def request_host_verification(
     expected_nonce: str,
     expected_experiment_id: str,
     expected_claim_kind: str = "place",
+    expected_trial: dict[str, Any] | None = None,
     jobs_dir: str = PROD_VERIFY_JOBS_DIR,
     receipts_dir: str = PROD_VERIFY_RECEIPTS_DIR,
     timeout_s: float = 5.0,
@@ -168,6 +178,13 @@ def request_host_verification(
         "expected_experiment_id": expected_experiment_id,
         "expected_claim_kind": expected_claim_kind,
     }
+    if expected_trial is not None:
+        try:
+            binding["expected_trial"] = validate_trial(expected_trial)
+        except (ValueError, TypeError) as exc:
+            raise AttestationUnavailableError(f"invalid Host trial binding: {exc}") from None
+    elif expected_experiment_id == EXPERIMENT_ID:
+        raise AttestationUnavailableError("new Host experiment requires trial binding")
     request_nonce = secrets.token_hex(16)
     job = {"request_nonce": request_nonce, "receipt": receipt, **binding}
     try:
@@ -217,19 +234,21 @@ def process_verification_jobs(
                 if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
                     continue
                 job = json.loads(inp.read(65537).decode("utf-8"))
-            if not isinstance(job, dict) or set(job) != set(_BINDINGS) | {
+            keys = _TRIAL_BINDINGS if daemon.trial is not None else _BINDINGS
+            if not isinstance(job, dict) or set(job) != set(keys) | {
                 "request_nonce",
                 "receipt",
             }:
                 continue
             if job["request_nonce"] != request_nonce or not isinstance(job["receipt"], dict):
                 continue
-            binding = {key: job[key] for key in _BINDINGS}
+            binding = {key: job[key] for key in keys}
             if (
                 type(binding["expected_epoch"]) is not int
                 or type(binding["expected_action_seq"]) is not int
                 or binding["expected_run"] != daemon.run_id
                 or binding["expected_experiment_id"] != daemon.experiment_id
+                or (daemon.trial is not None and binding["expected_trial"] != daemon.trial)
             ):
                 status = VerificationStatus.FAILED_CLAIM
             else:

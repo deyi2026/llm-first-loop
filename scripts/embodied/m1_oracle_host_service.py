@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fixed root-owned entrypoint for the independent macOS M1 Oracle.
 
-Installed at /Library/PrivilegedHelperTools/lfl-m1-oracle-v1. Never run from
+Installed at /Library/PrivilegedHelperTools/lfl-m1-oracle-v2-<manifest>. Never run from
 the project worktree as a privileged service. Only --init-key runs as root;
 --probe/--serve require the isolated _lfl_oracle UID/GID 463.
 """
@@ -11,13 +11,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
 import sys
 import time
 from pathlib import Path
 
-ROOT = Path("/Library/PrivilegedHelperTools/lfl-m1-oracle-v1")
+ROOT = Path(__file__).absolute().parent
 PYTHON = ROOT / "runtime/bin/python3.13"
 VENDOR = ROOT / "vendor"
 SRC = ROOT / "src"
@@ -25,7 +26,7 @@ PRIVATE = Path("/usr/local/etc/lfl-m1-oracle-ed25519.key")
 PUBLIC = Path("/usr/local/etc/lfl-m1-oracle-ed25519.pub")
 QUEUE_ROOT = Path("/private/var/run/lfl-m1-oracle")
 STATE_ROOT = Path("/private/var/db/lfl-m1-oracle")
-EXPERIMENT_ID = "M1-SIM-001"
+TRIAL_CONFIG = Path("/usr/local/etc/lfl-m1-oracle-trial.json")
 
 
 def _trusted(path: Path, *, uid: int = 0, directory: bool = False) -> bool:
@@ -43,6 +44,10 @@ def _trusted(path: Path, *, uid: int = 0, directory: bool = False) -> bool:
 def _bootstrap() -> None:
     if Path(sys.executable) != PYTHON or sys.flags.isolated != 1 or sys.flags.no_site != 1:
         raise RuntimeError("fixed Python3.13 -I -S entrypoint required")
+    if (ROOT.parent != Path("/Library/PrivilegedHelperTools")
+            or re.fullmatch(r"lfl-m1-oracle-v2-[0-9a-f]{12}", ROOT.name) is None
+            or not _trusted(ROOT.parent, directory=True)):
+        raise RuntimeError("untrusted versioned Host installation path")
     for directory in (ROOT, ROOT / "runtime", VENDOR, SRC, SRC / "llm_loop"):
         if not _trusted(directory, directory=True):
             raise RuntimeError(f"untrusted root-owned runtime directory: {directory}")
@@ -51,6 +56,22 @@ def _bootstrap() -> None:
             raise RuntimeError(f"untrusted root-owned runtime file: {file}")
     sys.path.insert(0, str(VENDOR))
     sys.path.insert(0, str(SRC))
+
+
+def _load_trial() -> dict:
+    """Read a bounded root-owned config; client queues cannot choose seeds."""
+    from llm_loop.embodied_sim.trial import validate_host_config
+
+    if not _trusted(TRIAL_CONFIG.parent, directory=True):
+        raise RuntimeError("untrusted Host trial configuration parent")
+    fd = os.open(TRIAL_CONFIG, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as inp:
+        info = os.fstat(inp.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) != 0o644 or info.st_nlink != 1
+                or not 0 < info.st_size <= 512):
+            raise RuntimeError("Host trial configuration ownership/mode/size invalid")
+        return validate_host_config(json.loads(inp.read(513)))
 
 
 def _write_key(path: Path, raw: bytes, uid: int, mode: int) -> None:
@@ -139,7 +160,9 @@ def _check_host_state() -> None:
             raise RuntimeError(f"Host queue ownership/mode mismatch: {name}")
 
 
-def _publish_run_info(run_id: str, scene_epoch: int) -> None:
+def _publish_run_info(run_id: str, scene_epoch: int, trial: dict) -> None:
+    from llm_loop.embodied_sim.trial import EXPERIMENT_ID
+
     directory = QUEUE_ROOT / "runtime"
     if not _trusted(directory, uid=463, directory=True):
         raise RuntimeError("untrusted runtime metadata directory")
@@ -156,6 +179,7 @@ def _publish_run_info(run_id: str, scene_epoch: int) -> None:
                     "scene_epoch": scene_epoch,
                     "experiment_id": EXPERIMENT_ID,
                     "pid": os.getpid(),
+                    "trial": trial,
                 },
                 sort_keys=True,
             )
@@ -171,9 +195,11 @@ def _run(*, serve: bool) -> int:
     from llm_loop.embodied_sim.attestation import ReplayLedger
     from llm_loop.embodied_sim.host_bridge import process_verification_jobs
     from llm_loop.embodied_sim.oracle_daemon import build_daemon_from_scene_seed
+    from llm_loop.embodied_sim.trial import EXPERIMENT_ID
 
+    trial = _load_trial()
     run_id = secrets.token_hex(16)
-    daemon = build_daemon_from_scene_seed(7, run_id, str(PRIVATE))
+    daemon = build_daemon_from_scene_seed(trial["seed"], run_id, str(PRIVATE), trial=trial)
     ledger = ReplayLedger(STATE_ROOT / "verified-nonces.sqlite3")
     if not serve:
         print(
@@ -182,6 +208,8 @@ def _run(*, serve: bool) -> int:
                     "HOST_ORACLE_PROBE": "PASS",
                     "uid": os.getuid(),
                     "scene_epoch": daemon.scene.scene_epoch,
+                    "experiment_id": EXPERIMENT_ID,
+                    "trial": trial,
                     "public_sha256": hashlib.sha256(
                         bytes.fromhex(daemon.public_key_hex)
                     ).hexdigest(),
@@ -190,7 +218,7 @@ def _run(*, serve: bool) -> int:
             )
         )
         return 0
-    _publish_run_info(run_id, daemon.scene.scene_epoch)
+    _publish_run_info(run_id, daemon.scene.scene_epoch, trial)
     while True:
         daemon.process_pending(str(QUEUE_ROOT / "jobs"), str(QUEUE_ROOT / "receipts"))
         process_verification_jobs(

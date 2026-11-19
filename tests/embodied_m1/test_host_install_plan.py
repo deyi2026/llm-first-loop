@@ -97,3 +97,16 @@ def test_service_refuses_worktree_execution_and_profile_is_write_scoped():
     assert '(subpath "/private/var/db/lfl-m1-oracle")' in profile
     assert '(subpath "/private/var/run/lfl-m1-oracle")' in profile
     assert '(deny file-read* (subpath "/Users")' in profile
+
+
+def test_v2_service_refuses_user_owned_trial_config(tmp_path, monkeypatch):
+    service = _load("m1_oracle_host_service")
+    config = tmp_path / "trial.json"
+    config.write_text(json.dumps({"schema": "lfl.m1-oracle-host-trial/v1",
+                                  "experiment_id": "M1-SIM-002",
+                                  "trial": {"phase": "smoke", "arm": "B1",
+                                            "trial_index": 7, "seed": 7}}))
+    monkeypatch.setattr(service, "TRIAL_CONFIG", config)
+    monkeypatch.setattr(service, "_trusted", lambda *_a, **_kw: True)
+    with pytest.raises(RuntimeError, match="ownership/mode/size invalid"):
+        service._load_trial()

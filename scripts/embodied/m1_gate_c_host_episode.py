@@ -50,6 +50,7 @@ from llm_loop.embodied_sim.host_bridge import (  # noqa: E402
     request_host_verification,
 )
 from llm_loop.embodied_sim.policy import TASK_BRIEF, build_prompt, parse_decision  # noqa: E402
+from llm_loop.embodied_sim.trial import EXPERIMENT_ID, validate_trial  # noqa: E402
 
 RUN_INFO = Path("/private/var/run/lfl-m1-oracle/runtime/run.json")
 BUDGET = {"max_provider_attempts": 6, "max_tool_actions": 8,
@@ -81,8 +82,15 @@ def validate_run_identity(run: Any) -> dict[str, Any]:
     run_id = run.get("run_id")
     if (not isinstance(run_id, str) or len(run_id) != 32
             or any(c not in "0123456789abcdef" for c in run_id)
-            or run.get("experiment_id") != "M1-SIM-001"):
+            or run.get("experiment_id") not in ("M1-SIM-001", EXPERIMENT_ID)):
         raise HostLinkError("invalid Host run identity")
+    if run["experiment_id"] == EXPERIMENT_ID:
+        try:
+            validate_trial(run.get("trial"))
+        except (ValueError, TypeError) as exc:
+            raise HostLinkError(f"invalid Host trial identity: {exc}") from None
+    elif "trial" in run:
+        raise HostLinkError("legacy Host run forbids trial identity")
     if type(run.get("scene_epoch")) is not int or run["scene_epoch"] < 1:
         raise HostLinkError("invalid Host scene_epoch")
     if type(run.get("pid")) is not int or run["pid"] < 1:
@@ -113,7 +121,8 @@ def project_public_status(status: dict[str, Any]) -> dict[str, Any]:
 
 
 def assert_runtime_binding(receipt: dict[str, Any], *, run_id: str, seq: int,
-                           expected_kind: str) -> None:
+                           expected_kind: str,
+                           expected_trial: dict[str, Any] | None = None) -> None:
     """Check Host queue shape and identity, never treat unsigned runtime as a claim."""
     if receipt.get("oracle_execution") == "daemon_fail_closed":
         raise HostLinkError(f"daemon rejected command: {receipt.get('error')}")
@@ -123,8 +132,13 @@ def assert_runtime_binding(receipt: dict[str, Any], *, run_id: str, seq: int,
     if receipt.get("oracle_execution") != expected_execution:
         raise HostLinkError("Host runtime receipt kind mismatch")
     payload_key = "observation" if expected_kind == "observe" else "action_status"
-    if set(receipt) != {"action_seq", "run_id", "oracle_execution", payload_key}:
+    expected = {"action_seq", "run_id", "oracle_execution", payload_key}
+    if expected_trial is not None:
+        expected.add("trial")
+    if set(receipt) != expected:
         raise HostLinkError("Host runtime receipt fields mismatch")
+    if expected_trial is not None and receipt.get("trial") != expected_trial:
+        raise HostLinkError("Host runtime trial binding mismatch")
     if receipt.get("run_id") != run_id:
         raise HostLinkError("stale/foreign run_id in daemon receipt")
     if int(receipt.get("action_seq", -1)) != int(seq):
@@ -154,14 +168,14 @@ class HostOracleLink:
                                          run_id=self.run["run_id"],
                                          action_seq=seq, timeout_s=30)
         assert_runtime_binding(receipt, run_id=self.run["run_id"], seq=seq,
-                               expected_kind="observe")
+                               expected_kind="observe", expected_trial=self.run.get("trial"))
         return receipt
 
     def execute(self, command: dict[str, Any], seq: int) -> dict[str, Any]:
         _, receipt = request_attestation(command, run_id=self.run["run_id"],
                                          action_seq=seq, timeout_s=30)
         assert_runtime_binding(receipt, run_id=self.run["run_id"], seq=seq,
-                               expected_kind="action")
+                               expected_kind="action", expected_trial=self.run.get("trial"))
         return receipt
 
     def verify(self, claim_kind: str, seq: int) -> dict[str, Any]:
@@ -184,6 +198,8 @@ class HostOracleLink:
                 or signed["nonce"] != nonce
                 or signed["uid"] != 463):
             raise HostLinkError("signed claim binding mismatch")
+        if signed.get("trial") != self.run.get("trial"):
+            raise HostLinkError("signed claim trial binding mismatch")
         status = request_host_verification(
             signed,
             expected_run=self.run["run_id"],
@@ -192,6 +208,7 @@ class HostOracleLink:
             expected_nonce=nonce,
             expected_experiment_id=self.run["experiment_id"],
             expected_claim_kind=claim_kind,
+            expected_trial=self.run.get("trial"),
             timeout_s=30)
         if status.name != "VERIFIED_BY_ORACLE":
             raise HostLinkError(f"host verification rejected: {status.name}")
@@ -424,7 +441,7 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
 
     if terminated_by is None:
         terminated_by = "no_progress_halt"
-    return {
+    result = {
         "experiment_id": run.get("experiment_id", "M1-SIM-001"),
         "model_used": getattr(provider, "model_used", "unknown"),
         "learning": budget["learning"],
@@ -439,6 +456,9 @@ def run_host_episode(provider: Any, link: Any, *, clock: Any = None,
         "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
         "trace": trace,
     }
+    if "trial" in run:
+        result["trial"] = run["trial"]
+    return result
 
 
 def main(argv: list[str]) -> int:
@@ -466,14 +486,26 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"status": "HOLD",
                           "reason": f"provider unavailable: {type(e).__name__}"}))
         return 2
-    result = run_host_episode(provider, link, fresh_receipt=fresh_receipt)
+    result = run_host_episode(
+        provider, link, fresh_receipt=fresh_receipt,
+        auto_recover_failed_grasp=(run.get("trial", {}).get("arm") == "B2"),
+    )
     result["provider_calls_bounded"] = [
         {k: c.get(k) for k in ("latency_ms", "status", "finish_reason")}
         for c in getattr(provider, "calls", [])][: result["provider_attempts"]]
     evidence_path = EPISODE_EVIDENCE_PATH
+    if run.get("experiment_id") == EXPERIMENT_ID:
+        trial = run["trial"]
+        evidence_path = ROOT / "experiments/embodied/m1/m1-sim-002" / (
+            f"episode_{trial['phase']}_{trial['arm']}_"
+            f"{trial['trial_index']:02d}_{run['run_id']}.json")
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    evidence_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n",
-                             encoding="utf-8")
+    if run.get("experiment_id") == EXPERIMENT_ID:
+        with evidence_path.open("x", encoding="utf-8") as output:
+            output.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    else:
+        evidence_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n",
+                                 encoding="utf-8")
     verified = (result.get("terminated_by") == "place_host_verified"
                 and result.get("elapsed_s", 999) <= BUDGET["deadline_s"]
                 and result.get("host_claims", {}).get("place", {}).get("status")
