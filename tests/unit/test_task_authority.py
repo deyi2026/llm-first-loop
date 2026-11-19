@@ -255,7 +255,7 @@ def test_root_pinned_separate_issuer_uid_and_public_digest(signed_receipts, monk
         ),
     )
     root = RootOwnedTaskAuthority(
-        Path("/Library/Application Support/LFL-HostIssuer/task-authority")
+        Path("/Library/LFL-TaskHostIssuer/task-authority")
     )
     assert root.verify("lease-12345678", req).lease_id == "lease-12345678"
     trust["issuer_uid"] = os.getuid()

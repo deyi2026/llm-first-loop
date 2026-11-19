@@ -20,7 +20,7 @@ from llm_loop.introspection.task_store import TaskStore
 from llm_loop.tools.task_authority import RootOwnedTaskAuthority, TaskAuthorityError
 from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
 
-_MAC_AUTHORITY = Path("/Library/Application Support/LFL-HostIssuer/task-authority")
+_MAC_AUTHORITY = Path("/Library/LFL-TaskHostIssuer/task-authority")
 _LINUX_AUTHORITY = Path("/var/lib/lfl-host-issuer/task-authority")
 
 

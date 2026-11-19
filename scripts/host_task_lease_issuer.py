@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Any
 
 _ISSUER_UID = 462
-_BASE = Path("/Library/Application Support/LFL-HostIssuer/task-authority")
-_TRUSTED_SITE = Path("/Library/Application Support/LFL-DualAgent/runtime/site")
+_BASE = Path("/Library/LFL-TaskHostIssuer/task-authority")
+_TRUSTED_SITE = Path("/Library/LFL-TaskHostIssuer/runtime/site")
 _ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 _VERBS = {
     "project": {"read", "write", "create", "rename", "delete", "build", "git_commit"},
@@ -237,11 +237,16 @@ def revoked_state(lease_document: bytes, key: Any, eddsa: Any) -> tuple[bytes, s
 
 def _crypto() -> tuple[Any, Any]:
     """Only root-owned frozen runtime modules are importable in production."""
-    info = _TRUSTED_SITE.lstat()
-    require(
-        stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
-        "issuer_crypto_runtime_untrusted",
-    )
+    parent = _TRUSTED_SITE
+    while True:
+        info = parent.lstat()
+        require(
+            stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+            "issuer_crypto_runtime_untrusted",
+        )
+        if parent == parent.parent:
+            break
+        parent = parent.parent
     sys.path.insert(0, str(_TRUSTED_SITE))
     from Crypto.PublicKey import ECC
     from Crypto.Signature import eddsa

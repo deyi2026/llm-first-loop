@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import stat
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from Crypto.PublicKey import ECC
@@ -14,6 +17,26 @@ from llm_loop.tools.task_authority import TaskAuthorityError, verify_signed_task
 from scripts import host_task_lease_issuer as issuer
 
 NOW = datetime(2026, 11, 19, 2, 0, tzinfo=UTC)
+
+
+def test_mac_task_host_anchor_is_dedicated_and_matches_runtime():
+    from llm_loop.tools.task_runtime import _MAC_AUTHORITY
+
+    assert issuer._BASE == _MAC_AUTHORITY
+    assert issuer._BASE.parent == Path("/Library/LFL-TaskHostIssuer")
+    assert issuer._BASE.parent / "runtime" / "site" == issuer._TRUSTED_SITE
+    assert "Application Support" not in str(issuer._BASE)
+
+
+def test_crypto_import_denies_group_writable_ancestor(monkeypatch):
+    def fake_lstat(path):
+        mode = 0o775 if str(path) == "/Library" else 0o755
+        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=0)
+
+    with monkeypatch.context() as m:
+        m.setattr(Path, "lstat", fake_lstat)
+        with pytest.raises(issuer.IssuerHoldError, match="issuer_crypto_runtime_untrusted"):
+            issuer._crypto()
 
 
 @pytest.fixture
