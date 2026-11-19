@@ -13,6 +13,7 @@ if SCRIPTS not in sys.path:
 
 from m1_gate_c_host_episode import HostLinkError  # noqa: E402
 from m1_l3_host_probe import (  # noqa: E402
+    DIAGNOSTIC_LIFT_HINT,
     OneScriptedFaultThenLiveModel,
     assess_probe,
     validate_probe_trial,
@@ -62,7 +63,7 @@ def test_l3_probe_discloses_scripted_fault_and_uses_real_provider_afterward():
                      "intent_key": "l3-diagnostic-fault"}
     assert live.states == []
     assert json.loads(probe.decide("second"))["skill"] == "move_to"
-    assert live.states == ["second"]
+    assert live.states == ["second" + DIAGNOSTIC_LIFT_HINT]
     assert probe.scripted_decisions == 1
     assert probe.real_model_attempts == 1
 

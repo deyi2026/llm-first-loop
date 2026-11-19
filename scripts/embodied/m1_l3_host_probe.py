@@ -32,6 +32,14 @@ from m1_gate_c_host_episode import (
 from llm_loop.embodied_sim.attestation import AttestationUnavailableError
 from llm_loop.embodied_sim.trial import EXPERIMENT_ID
 
+DIAGNOSTIC_LIFT_HINT = (
+    " | Engineering L3 smoke-only public geometry reminder: after grasp "
+    "returns done, move_to over tray-A with tool z >= 0.10 meters so the "
+    "cube can visibly lift above z=0.05 meters before release. "
+    "Do not release merely because the fingers closed; the independent "
+    "Host must verify a lifted grasp. This hint is NOT used in paired trials."
+)
+
 
 def validate_probe_trial(run: dict[str, Any]) -> str:
     validate_run_identity(run)
@@ -61,7 +69,7 @@ class OneScriptedFaultThenLiveModel:
             return json.dumps({"skill": "grasp", "params": {},
                                "intent_key": "l3-diagnostic-fault"})
         self.real_model_attempts += 1
-        return str(self.live.decide(state_text))
+        return str(self.live.decide(state_text + DIAGNOSTIC_LIFT_HINT))
 
 
 def assess_probe(result: dict[str, Any], *, arm: str) -> tuple[str, bool]:
@@ -156,6 +164,7 @@ def main(argv: list[str]) -> int:
         "internal_decision_budget_including_scripted_probe": internal_budget["max_provider_attempts"],
         "accounting_verified": accounting_ok,
         "model_decisions_after_fault": provider.real_model_attempts > 0,
+        "diagnostic_only_public_lift_hint": DIAGNOSTIC_LIFT_HINT.strip(),
     }
     status, accepted = assess_probe(result, arm=arm)
     if not accounting_ok:
