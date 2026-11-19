@@ -237,6 +237,15 @@
         "status": "observe",
         "tier": "T2"
       },
+      "embodied_sim_paired_cost_ledger": {
+        "owner": "embodied-sim",
+        "paths": [
+          "src/llm_loop/embodied_sim/paired_budget.py"
+        ],
+        "rationale": "M1-SIM-003 Host 授权配对实验 USD 成本账本：跨进程 flock 下 reserve/settle 追加 JSONL，每条 flush+file fsync；回放对未结清调用、未知计费、损坏事件 fail-closed，拒绝盲重试。60 次真实配对实验独立审计核对 319 次 Provider 调用与 0.39625350 USD 保守估算；未完成断电故障注入、实际 Provider 账单对账和跨主机恢复验证，因此按 T1 partial 登记，不冒充全面持久化合规。guard(r9): M1-SIM-003。",
+        "status": "partial",
+        "tier": "T1"
+      },
       "embodied_sim_unknown_ledger": {
         "owner": "embodied-sim",
         "paths": [
