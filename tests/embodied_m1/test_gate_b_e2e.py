@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from llm_loop.embodied_sim import MuJoCoScene
 from llm_loop.embodied_sim.oracle import judge_grasp, judge_place, make_receipt, verify_receipt
@@ -96,9 +97,10 @@ def test_grasp_failure_recovery_l3(tmp_path):
     assert ok and ev["lifted"]
 
 
-def test_l3_frozen_seed_recovery_and_place_within_action_budget():
-    """Mechanism-only L3 smoke; local Oracle is NOT independent Host truth."""
-    scene = MuJoCoScene(seed=20261117)  # prereg paired_seed_start
+@pytest.mark.parametrize("seed", range(10))
+def test_l3_engineering_seed_recovery_and_place_within_action_budget(seed):
+    """Prereg 10 engineering seeds; local Oracle is NOT independent Host truth."""
+    scene = MuJoCoScene(seed=seed)  # keep paired seeds 20261117+ untouched
     scene.step(100)
     iface = EmbodiedInterface(scene)
     failed = _run(iface, "grasp", {}, "fault1")
