@@ -26,6 +26,7 @@ PREFIX = "repos/o/r"
 RUN_ID = 12345
 PR_NUMBER = 42
 APP_ID = 15368
+HOST_APP_ID = 424242
 GATE_PATHS = _GATE_PATHS
 POLICY = "docs/governance/required-ci-checks.json"
 
@@ -131,10 +132,15 @@ class FakeGitHub:
             f"{PREFIX}/commits/{MERGE}": {
                 "sha": MERGE, "parents": [{"sha": MAIN}, {"sha": CANDIDATE}],
             },
+            f"{PREFIX}/branches/main/protection": {
+                "enforce_admins": {"enabled": True},
+                "allow_force_pushes": {"enabled": False},
+                "allow_deletions": {"enabled": False},
+            },
             f"{PREFIX}/branches/main/protection/required_status_checks": {
                 "strict": True, "checks": [
                     {"context": c["context"], "app_id": c["app_id"]} for c in checks
-                ],
+                ] + [{"context": "lfl-host-premerge", "app_id": HOST_APP_ID}],
             },
             f"{PREFIX}/rulesets?includes_parents=true": [],
             f"{PREFIX}/commits/{MAIN}/check-runs?per_page=100&filter=all": {
@@ -207,7 +213,8 @@ def evaluate(fixture: tuple[FakeGitHub, dict], *, final_now: float = NOW) -> dic
     return evaluate_host(
         client, repo="o/r", pr_number=PR_NUMBER, main=MAIN,
         candidate=CANDIDATE, run_id=RUN_ID, envelope=envelope,
-        snapshot_public_key=TEST_PUBLIC, now=NOW, final_now=final_now,
+        snapshot_public_key=TEST_PUBLIC, now=NOW, host_app_id=HOST_APP_ID,
+        final_now=final_now,
     )
 
 
@@ -410,7 +417,7 @@ def test_t25_no_snapshot_secret_holds(fixture):
     with pytest.raises(HostHoldError, match="host_snapshot_public_key_unavailable"):
         evaluate_host(fixture[0], repo="o/r", pr_number=PR_NUMBER, main=MAIN,
                       candidate=CANDIDATE, run_id=RUN_ID, envelope=fixture[1],
-                      snapshot_public_key="", now=NOW)
+                      snapshot_public_key="", now=NOW, host_app_id=HOST_APP_ID)
 
 
 def test_cli_host_missing_credentials_returns_hold_without_git_writes(tmp_path: Path):
@@ -501,7 +508,7 @@ def test_p1_verifier_rejects_private_key_instead_of_public(fixture):
         evaluate_host(
             fixture[0], repo="o/r", pr_number=PR_NUMBER, main=MAIN,
             candidate=CANDIDATE, run_id=RUN_ID, envelope=fixture[1],
-            snapshot_public_key=private_pem, now=NOW,
+            snapshot_public_key=private_pem, now=NOW, host_app_id=HOST_APP_ID,
         )
 
 
@@ -584,7 +591,8 @@ def test_candidate_cannot_modify_additional_policy_workflow(fixture):
     required = [{"context": item["context"], "app_id": item["app_id"]}
                 for item in policy["checks"]]
     with pytest.raises(HostHoldError, match="gate_version_untrusted"):
-        _trusted_policy(client, PREFIX, MAIN, CANDIDATE, required)
+        _trusted_policy(client, PREFIX, MAIN, CANDIDATE, required,
+                        host_app_id=HOST_APP_ID)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -648,7 +656,9 @@ def test_v19_p1_host_executed_root_sha_and_blob_must_match(
     subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
                    check=True)
-    for name in ("scripts/premerge_host.py", "scripts/premerge_gate.py"):
+    for name in ("scripts/premerge_host.py", "scripts/premerge_gate.py",
+                     "scripts/host_premerge_check_publisher.py",
+                     "scripts/premerge_host_snapshot_issuer.py"):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# reviewed host code\n")
@@ -755,3 +765,37 @@ def test_v19_p1_gate_closure_rejects_lookalike_paths(fixture, untrusted_ref: byt
     client.blobs["scripts/ci_gate.sh", MAIN] = b"python " + untrusted_ref + b"\n"
     with pytest.raises(HostHoldError, match="gate_closure_incomplete"):
         _verify_gate_closure(client, MAIN)
+
+
+@pytest.mark.parametrize(
+    ("setting", "unsafe_value"),
+    [
+        ("enforce_admins", False),
+        ("allow_force_pushes", True),
+        ("allow_deletions", True),
+    ],
+)
+def test_issue73_branch_protection_admin_or_ref_bypass_fails_closed(
+    fixture, setting, unsafe_value,
+):
+    protection = fixture[0].data[f"{PREFIX}/branches/main/protection"]
+    protection[setting]["enabled"] = unsafe_value
+    holds(fixture, "branch_protection_bypass_possible")
+
+
+def test_issue73_branch_protection_changes_during_host_check_fails_closed(fixture):
+    client = fixture[0]
+    original_get = client.get
+    calls = 0
+
+    def mutate_on_final_read(path):
+        nonlocal calls
+        value = original_get(path)
+        if path == f"{PREFIX}/branches/main/protection":
+            calls += 1
+            if calls == 2:
+                value["enforce_admins"]["enabled"] = False
+        return value
+
+    client.get = mutate_on_final_read
+    holds(fixture, "premerge_race_detected")
