@@ -1346,3 +1346,20 @@ def test_block_paren_subshell_cd_into_main_repo(tmp_path):
         workdir=str(tmp_path),
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_double_amp_pipe_unknown_target():
+    """|&（bash 双流管道，punctuation_chars 单 token）→ 次段子壳语义 → 目标未知。"""
+    verbs = guard_module._git_verbs("cd /tmp/wt |& git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_pathspec_cd_after_verb_not_segment_start():
+    """动词后的 `cd` 是 pathspec 不是命令位：不得误启 cd 链跟踪（fe01ff8da0cd P2-1）。"""
+    verbs = guard_module._git_verbs(
+        "git commit cd wt && git push origin x", "/tmp/main"
+    )
+    assert verbs == [
+        ("commit", ["cd", "wt"], "/tmp/main"),
+        ("push", ["origin", "x"], "/tmp/main"),
+    ]

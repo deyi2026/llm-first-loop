@@ -46,8 +46,10 @@
   建模——子壳继承父壳视图、内部 ``cd`` 正常跟踪、``)`` 弹栈还原；不配对 ``)``
   弹空栈置未知（保守）。闭合 ``(cd wt && git commit)`` 内层 ``cd`` 逃过判定的
   fail-open 旁路；``$( )`` 命令替换中的命令同被跟踪。
-- **commenters 恢复 shell 语义 ``#``**（审查 P2-2）：未加引号 ``#`` 起注释与
-  bash 一致，消除 ``cd wt # note && …`` 形态的假阳性；引号内 ``#`` 不受影响。
+- **commenters 恢复 ``#``**（审查 fe01ff8da0cd P2-2 措辞修正）：未加引号的词首
+  ``#`` 起注释，消除 ``cd wt # note && …`` 形态假阳性；已知偏差（shlex 边界）：
+  **词中** ``#``（如 ``wt#note``）同样被截断，bash 则视为目录名——罕见路径名
+  场景下 ``cd`` 目标可能解析到更短路径，非宽判方向；引号内 ``#`` 不受影响。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -219,6 +221,7 @@ def _git_verbs(
             ):
                 k2 += 1
             out.append((tokens[j], tokens[j + 1 : k2], target))
+            seg_start = False  # 动词后的参数词不是命令位（`git commit cd wt` 的 cd 是 pathspec）
             i = j + 1
         else:
             i = j
@@ -228,7 +231,7 @@ def _git_verbs(
 # EVO-20261119-0fa86cab：shell 段分隔符分类。顺序段（&& ;）cd 语义延续；
 # 子壳/异步/左臂成败不定（| & ||）cd 语义不可靠 → 其后按未知 fail-closed。
 _SEG_PERSIST = frozenset({"&&", ";"})
-_SEG_SUBSHELL = frozenset({"|", "||", "&"})
+_SEG_SUBSHELL = frozenset({"|", "||", "&", "|&"})  # |& = bash 双流管道（punctuation_chars 单 token）
 
 
 def _resolve_shell_cd(cur: str | None, seg: str, workdir: str | None) -> str:
