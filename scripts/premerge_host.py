@@ -31,6 +31,8 @@ _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GATE_PATHS = (
     "scripts/premerge_gate.py",
     "scripts/premerge_host.py",
+    "scripts/host_premerge_check_publisher.py",
+    "scripts/premerge_host_snapshot_issuer.py",
     "scripts/integration_writer_lock.py",
     "scripts/ci_gate.sh",
     ".github/workflows/ci.yml",
@@ -49,6 +51,7 @@ _GATE_PATHS = (
 )
 _POLICY_PATH = "docs/governance/required-ci-checks.json"
 _MAX_ARTIFACT = 1024 * 1024
+_HOST_CHECK_CONTEXT = "lfl-host-premerge"
 
 
 class HostHoldError(Exception):
@@ -209,9 +212,9 @@ def _verified_snapshot(envelope: dict, public_key_pem: str, now: float) -> dict:
     payload = envelope.get("payload")
     signature = envelope.get("signature_ed25519")
     key_id = envelope.get("key_id")
-    _require(isinstance(payload, dict) and isinstance(signature, str),
-             "host_snapshot_unsigned")
-    _require(isinstance(public_key_pem, str) and public_key_pem.strip(),
+    if not isinstance(payload, dict) or not isinstance(signature, str):
+        raise HostHoldError("host_snapshot_unsigned")
+    _require(isinstance(public_key_pem, str) and bool(public_key_pem.strip()),
              "host_snapshot_public_key_unavailable")
     _require(
         isinstance(key_id, str) and key_id ==
@@ -234,8 +237,9 @@ def _verified_snapshot(envelope: dict, public_key_pem: str, now: float) -> dict:
     except (ValueError, TypeError, KeyError) as exc:
         raise HostHoldError("host_snapshot_signature_invalid") from exc
     stamp = payload.get("checked_at")
-    _require(isinstance(stamp, (int, float)) and 0 <= now - stamp <= 90,
-             "host_snapshot_stale")
+    if not isinstance(stamp, (int, float)):
+        raise HostHoldError("host_snapshot_stale")
+    _require(0 <= now - stamp <= 90, "host_snapshot_stale")
     return payload
 
 def _check_local(snapshot: dict, main: str, candidate: str, *,
@@ -252,16 +256,20 @@ def _check_local(snapshot: dict, main: str, candidate: str, *,
     review = snapshot.get("review") or {}
     r9 = snapshot.get("r9") or {}
     integration = snapshot.get("integration") or {}
+    lane_version = lane.get("version")
     _require(
         lane.get("status") == "merging"
-        and bool(lane.get("lane_id")) and isinstance(lane.get("version"), int)
-        and lane.get("version") > 0 and lane.get("head_sha") == candidate
+        and bool(lane.get("lane_id")) and type(lane_version) is int
+        and isinstance(lane_version, int) and lane_version > 0
+        and lane.get("head_sha") == candidate
         and lane.get("base_main_sha") == main and bool(lane.get("verify_ref")),
         "lane_snapshot_incomplete",
     )
+    queue_version = queue.get("version")
     _require(
-        bool(queue.get("queue_id")) and isinstance(queue.get("version"), int)
-        and queue.get("version") > 0 and queue.get("lane_id") == lane["lane_id"]
+        bool(queue.get("queue_id")) and type(queue_version) is int
+        and isinstance(queue_version, int) and queue_version > 0
+        and queue.get("lane_id") == lane["lane_id"]
         # request_merge acquires the exclusive slot when ready_for_confirm
         # transitions to merging. The former state cannot truthfully hold it.
         and queue.get("status") == "merging"
@@ -318,7 +326,8 @@ def _check_run_origin(client: Any, repo: str, check: dict, *,
                       expected_workflow_path: str = "",
                       expected_workflow_id: int = 0) -> None:
     details = check.get("details_url")
-    _require(isinstance(details, str), "check_run_origin_unverifiable")
+    if not isinstance(details, str):
+        raise HostHoldError("check_run_origin_unverifiable")
     parsed = urllib.parse.urlsplit(details)
     match = re.fullmatch(
         rf"/{re.escape(repo)}/actions/runs/([1-9][0-9]*)(?:/job/[0-9]+)?",
@@ -381,7 +390,7 @@ def _workflow_events(data: bytes) -> set[str]:
 
 
 def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
-                    remote_required: list[dict]) -> list[dict]:
+                    remote_required: list[dict], *, host_app_id: int) -> list[dict]:
     main_policy_sha, raw = client.blob(_POLICY_PATH, main)
     candidate_policy_sha, _ = client.blob(_POLICY_PATH, candidate)
     _require(main_policy_sha == candidate_policy_sha, "gate_version_untrusted",
@@ -393,7 +402,8 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
     _require(isinstance(policy, dict) and policy.get("schema") == "lfl.required_checks.v1",
              "policy_invalid")
     pinned = policy.get("checks")
-    _require(isinstance(pinned, list) and len(pinned) >= 3, "required_checks_source_inadequate")
+    if not isinstance(pinned, list) or len(pinned) < 3:
+        raise HostHoldError("required_checks_source_inadequate")
     seen: set[tuple[str, int]] = set()
     purposes: set[str] = set()
     for item in pinned:
@@ -412,6 +422,8 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
             and type(workflow_id) is int and workflow_id > 0,
             "policy_invalid",
         )
+        assert isinstance(context, str) and type(app_id) is int
+        assert isinstance(path, str)
         key = (context, app_id)
         _require(key not in seen, "required_checks_source_inadequate")
         seen.add(key)
@@ -433,10 +445,22 @@ def _trusted_policy(client: Any, repo_path: str, main: str, candidate: str,
         context, app_id = item.get("context"), item.get("app_id")
         _require(isinstance(context, str) and type(app_id) is int and app_id > 0,
                  "required_checks_unavailable")
+        assert isinstance(context, str) and type(app_id) is int
         key = (context, app_id)
         _require(key not in required, "check_context_ambiguous")
         required.add(key)
-    _require(seen == required, "required_checks_source_inadequate")
+    # The required Host check must be emitted by a separate GitHub App, not
+    # the candidate-controlled GitHub Actions app. Its ID is pinned by the
+    # operator outside this repository, never supplied by the PR.
+    _require(type(host_app_id) is int and host_app_id > 0,
+             "host_check_app_unconfigured", unavailable=False)
+    _require(all(app_id != host_app_id for _, app_id in seen),
+             "host_check_app_not_independent", unavailable=False)
+    host_checks = [key for key in required if key[0] == _HOST_CHECK_CONTEXT]
+    _require(host_checks == [(_HOST_CHECK_CONTEXT, host_app_id)],
+             "host_check_not_required", unavailable=False)
+    _require(seen == required - {(_HOST_CHECK_CONTEXT, host_app_id)},
+             "required_checks_source_inadequate")
     _require(sum(x.get("purpose") == "managed_evidence" for x in pinned) == 1,
              "required_checks_source_inadequate")
     return pinned
@@ -512,7 +536,9 @@ def _verify_host_execution(client: Any, main: str, *,
              and git("rev-parse", "HEAD") == main
              and git("status", "--porcelain=v1", "--untracked-files=all") == "",
              "gate_execution_root_untrusted", unavailable=False)
-    for path in ("scripts/premerge_host.py", "scripts/premerge_gate.py"):
+    for path in ("scripts/premerge_host.py", "scripts/premerge_gate.py",
+                 "scripts/host_premerge_check_publisher.py",
+                 "scripts/premerge_host_snapshot_issuer.py"):
         local = root / path
         _require(local.is_file() and not local.is_symlink(),
                  "gate_execution_blob_untrusted", unavailable=False)
@@ -535,7 +561,7 @@ def _verify_gate_blobs(client: Any, main: str, candidate: str) -> dict[str, str]
 
 def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
                   candidate: str, run_id: int, envelope: dict,
-                  snapshot_public_key: str, now: float,
+                  snapshot_public_key: str, now: float, host_app_id: int,
                   final_now: float | None = None) -> dict:
     """No Git writes. All external facts are read through the injected client."""
     _require(bool(_REPO.fullmatch(repo)) and pr_number > 0 and run_id > 0,
@@ -566,6 +592,13 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         and (parents[1] or {}).get("sha") == candidate,
         "tested_merge_parents_mismatch", unavailable=False,
     )
+    protection_full = client.get(f"{prefix}/branches/main/protection")
+    _require(
+        (protection_full.get("enforce_admins") or {}).get("enabled") is True
+        and (protection_full.get("allow_force_pushes") or {}).get("enabled") is False
+        and (protection_full.get("allow_deletions") or {}).get("enabled") is False,
+        "branch_protection_bypass_possible", unavailable=False,
+    )
     protection = client.get(f"{prefix}/branches/main/protection/required_status_checks")
     _require(protection.get("strict") is True, "base_guard_unavailable")
     remote_required = protection.get("checks")
@@ -573,7 +606,9 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
              "required_checks_unavailable")
     rulesets = client.get(f"{prefix}/rulesets?includes_parents=true")
     _require(rulesets == [], "rulesets_unverified")
-    pinned = _trusted_policy(client, prefix, main, candidate, remote_required)
+    pinned = _trusted_policy(
+        client, prefix, main, candidate, remote_required, host_app_id=host_app_id
+    )
     blobs = _verify_gate_blobs(client, main, candidate)
     main_runs = _checks(client, prefix, main)
     pr_runs = _checks(client, prefix, tested_merge)
@@ -639,6 +674,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     # C6: fresh second read immediately before eligibility; never reuse C1.
     final_main = client.get(f"{prefix}/branches/main")
     final_pr = client.get(f"{prefix}/pulls/{pr_number}")
+    final_protection_full = client.get(f"{prefix}/branches/main/protection")
     final_protection = client.get(
         f"{prefix}/branches/main/protection/required_status_checks"
     )
@@ -655,6 +691,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         and (final_pr.get("base") or {}).get("sha") == main
         and final_pr.get("merge_commit_sha") == tested_merge
         and final_pr.get("state") == "open" and final_pr.get("draft") is not True
+        and final_protection_full == protection_full
         and final_protection == protection
         and final_rulesets == rulesets,
         "premerge_race_detected",
@@ -670,8 +707,12 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
         "read_only": True, "remote_main_sha": main, "candidate_sha": candidate,
         "pr_number": pr_number, "github_run_id": run_id,
         "tested_merge_sha": tested_merge, "required_checked": len(pinned),
+        "required_check_keys": sorted(
+            (item["context"], item["app_id"]) for item in remote_required
+        ),
         "trusted_gate_blobs": blobs, "host_snapshot_signature_verified": True,
         "branch_protection_verified": True, "remote_main_cas": False,
+        "host_check_context": _HOST_CHECK_CONTEXT, "host_check_app_id": host_app_id,
         "git_writes": False, "deployment": False,
     }
 
@@ -693,6 +734,10 @@ def main(argv: list[str] | None = None) -> int:
             raise HostHoldError("host_snapshot_unavailable") from exc
         token = os.environ.get("LFL_PREMERGE_HOST_GITHUB_TOKEN", "")
         public_key = os.environ.get("LFL_PREMERGE_HOST_SNAPSHOT_PUBKEY", "")
+        try:
+            host_app_id = int(os.environ.get("LFL_PREMERGE_HOST_CHECK_APP_ID", "0"))
+        except ValueError as exc:
+            raise HostHoldError("host_check_app_unconfigured") from exc
         client = GitHubReadOnly(args.repo, token)
         _verify_host_execution(client, args.expected_main_sha)
         result = evaluate_host(
@@ -700,6 +745,7 @@ def main(argv: list[str] | None = None) -> int:
             main=args.expected_main_sha, candidate=args.expected_candidate_sha,
             run_id=args.run_id, envelope=envelope,
             snapshot_public_key=public_key, now=time.time(),
+            host_app_id=host_app_id,
         )
         code = 0
     except HostHoldError as exc:
