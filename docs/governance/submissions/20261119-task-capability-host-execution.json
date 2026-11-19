@@ -19,7 +19,7 @@
       "owning_subsystem": "Host-signed Task Lease, session binding, Goal/Task/Lane/CAS validation and Run ContextVar activation",
       "disposition": "Introduce a root-owned Host trust/issuer contract and a fail-closed resolver; no production Host install is part of this PR.",
       "evidence": [
-        "Unit tests for real Ed25519 bindings, revocation, Goal/Task state and generator resume pass.",
+        "Ed25519, revocation, Goal/Task and Run tests pass; macOS exact /Library root:admin exception, dedicated-root rejection and issuer file+directory fsync are negative-tested.",
         "Production root-owned trust and real GLM Run are not yet tested."
       ],
       "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
@@ -98,8 +98,8 @@
       "owning_subsystem": "Frozen design, Host bootstrap runbook, architecture coverage and negative regression tests",
       "disposition": "Record exact changed paths and measured limits; do not treat simulated tests as production Host authorization.",
       "evidence": [
-        "Task/Git/factory/Run broad suite 126 passed; Ruff/Pyright ratchets new diagnostics 0.",
-        "Independent Reviewer, original full R9, remote CI, protected merge and production install pending."
+        "Architecture guards 52 passed; Task/Git/factory/Run broad suite 268 passed, 4 skipped; Ruff/Pyright ratchets new diagnostics 0.",
+        "Previous independent Reviewer returned REVISE; new SHA must pass independent review, original full R9, remote CI and protected merge before any production Host install."
       ],
       "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
       "model_evidence_veto_recovery_exit": "Failed architecture coverage or review is a merge blocker; preserve historical receipts and roll back by protected PR.",

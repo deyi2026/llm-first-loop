@@ -10,7 +10,6 @@ import dataclasses
 import hashlib
 import logging
 import os
-import re
 import shlex
 import shutil
 import signal
@@ -207,6 +206,40 @@ def _is_bare_python_tool_command(command: str) -> bool:
     return parts[0] in {"python", "python3", "pip", "pip3", "pytest", "ruff", "pyright"}
 
 
+def _contains_python_execution(command: str, *, depth: int = 0) -> bool:
+    """Match shell command positions, not quoted git messages or echo arguments."""
+    if depth > 2:
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        parts = list(lexer)
+    except ValueError:
+        return False
+    expect_command = True
+    for index, token in enumerate(parts):
+        if token in {";", ";;", "&&", "||", "|", "&", "(", ")"}:
+            expect_command = True
+            continue
+        if not expect_command:
+            continue
+        if "=" in token and token.split("=", 1)[0].isidentifier():
+            continue
+        if token in {"env", "command", "exec", "time"}:
+            continue
+        if token in {"python", "python3", "pip", "pip3", "pytest", "ruff", "pyright"}:
+            return True
+        if (
+            token in {"sh", "bash", "zsh"}
+            and index + 2 < len(parts)
+            and parts[index + 1] in {"-c", "-lc", "-ic"}
+        ):
+            return _contains_python_execution(parts[index + 2], depth=depth + 1)
+        expect_command = False
+    return False
+
+
 def _workspace_python_env(
     env: dict[str, str], workdir: str | None, command: str
 ) -> dict[str, str]:
@@ -224,9 +257,7 @@ def _workspace_python_env(
     to avoid shadowing their executables. PYTHONPATH remains narrower: commands
     that change directory do not inherit a source-tree import override.
     """
-    if not workdir or not (
-        _is_bare_python_tool_command(command) or _PY_WORD_RE.search(command)
-    ):
+    if not workdir or not _contains_python_execution(command):
         return env
     try:
         start = Path(workdir).expanduser().resolve()
@@ -268,10 +299,6 @@ def _workspace_python_env(
     return pinned
 
 
-# B 最小闭环（工具故障可追溯）：词级匹配 python/python3（覆盖 `cd X && python3 …`
-# 及 `sh -c 'python3 …'`；仅含 Python 命令时才优先选用项目 venv）。
-_PY_WORD_RE = re.compile(r"""(?:^|[\s;&|`('"])python3?(?=[\s;&|)`'"]|$)""")
-
 
 def _python_interpreter_fact(command: str, env: dict[str, str]) -> str:
     """命令词级含 python/python3 时附解释器指纹（环境漂移当轮可见）.
@@ -279,7 +306,7 @@ def _python_interpreter_fact(command: str, env: dict[str, str]) -> str:
     探测用与真实执行一致的 PATH（清洗后 env）；which 失败如实标 absent。
     仅观测事实，不改写/不重试命令。
     """
-    if not _PY_WORD_RE.search(command):
+    if not _contains_python_execution(command):
         return ""
     facts: list[str] = []
     for name in ("python3", "python"):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,15 +29,76 @@ def test_mac_task_host_anchor_is_dedicated_and_matches_runtime():
     assert "Application Support" not in str(issuer._BASE)
 
 
-def test_crypto_import_denies_group_writable_ancestor(monkeypatch):
+def test_crypto_import_denies_group_writable_dedicated_ancestor(monkeypatch):
     def fake_lstat(path):
-        mode = 0o775 if str(path) == "/Library" else 0o755
-        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=0)
+        mode = 0o775 if str(path) == "/Library/LFL-TaskHostIssuer" else 0o755
+        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=0, st_gid=80)
 
     with monkeypatch.context() as m:
         m.setattr(Path, "lstat", fake_lstat)
         with pytest.raises(issuer.IssuerHoldError, match="issuer_crypto_runtime_untrusted"):
             issuer._crypto()
+
+
+@pytest.mark.parametrize(
+    ("path", "mode", "uid", "gid", "platform", "allowed"),
+    [
+        ("/Library", 0o775, 0, 80, "darwin", True),
+        ("/Library", 0o755, 0, 0, "darwin", True),
+        ("/Library", 0o775, 0, 80, "linux", False),
+        ("/Library", 0o775, 0, 20, "darwin", False),
+        ("/Library", 0o773, 0, 80, "darwin", False),
+        ("/Library", 0o777, 0, 80, "darwin", False),
+        ("/Library", 0o775, 501, 80, "darwin", False),
+        ("/Library/LFL-TaskHostIssuer", 0o775, 0, 80, "darwin", False),
+        ("/", 0o755, 0, 0, "darwin", True),
+    ],
+)
+def test_root_ancestor_exception_is_exact_mac_admin_library(
+    monkeypatch, path, mode, uid, gid, platform, allowed
+):
+    import llm_loop.tools.task_authority as authority
+
+    info = SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=uid, st_gid=gid)
+    with monkeypatch.context() as m:
+        m.setattr(issuer.sys, "platform", platform)
+        assert issuer._trusted_root_ancestor(Path(path), info) is allowed
+        assert authority._trusted_root_ancestor(Path(path), info) is allowed
+
+
+def test_issuer_create_and_revoke_sync_parent_directory(tmp_path, monkeypatch):
+    """No SIGNED/REVOKED acknowledgement before the directory entry is durable."""
+    actual_fsync = os.fsync
+    synced: list[str] = []
+
+    def recorded_fsync(fd):
+        synced.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        actual_fsync(fd)
+
+    with monkeypatch.context() as m:
+        m.setattr(issuer.os, "fsync", recorded_fsync)
+        target = tmp_path / "lease.json"
+        issuer._create(target, b"active", 0o600)
+        assert synced == ["file", "dir"]
+        temp = tmp_path / "revoked.tmp"
+        issuer._create(temp, b"revoked", 0o600)
+        synced.clear()
+        issuer._replace_state_durable(temp, target)
+        assert synced == ["dir"]
+        assert target.read_bytes() == b"revoked"
+
+
+def test_revoke_parent_sync_failure_never_reports_success(tmp_path, monkeypatch):
+    target, temporary = tmp_path / "lease.json", tmp_path / "revoke.tmp"
+    target.write_bytes(b"active")
+    temporary.write_bytes(b"revoked")
+
+    def failed_sync(_path):
+        raise OSError("directory fsync failed")
+
+    monkeypatch.setattr(issuer, "_sync_parent_directory", failed_sync)
+    with pytest.raises(OSError, match="directory fsync failed"):
+        issuer._replace_state_durable(temporary, target)
 
 
 @pytest.fixture

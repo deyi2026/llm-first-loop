@@ -4,7 +4,7 @@
 
 ## 1. 信任边界与复用范围
 
-- 复用既有独立签发 OS 身份 `_lfl_dual_witness`（UID 462）和经管理员核验的 Python 3.13 解释器，但**不复用** premerge 的安装目录、私钥、签名域、审核证据或授权语义；不得修改 `/Library/Application Support/LFL-HostIssuer` 及其 `bin/issuer.py`。某些 macOS 上 `/Library/Application Support` 为 root:admin 0775，不能把它作为需要所有祖先均不可组写的 Task Host 信任根，也不得为此 chmod 共享系统目录。
+- 复用既有独立签发 OS 身份 `_lfl_dual_witness`（UID 462）和经管理员核验的 Python 3.13 解释器，但**不复用** premerge 的安装目录、私钥、签名域、审核证据或授权语义；不得修改 `/Library/Application Support/LFL-HostIssuer` 及其 `bin/issuer.py`。macOS 的 `/Library` 可能为 root:admin 0775；只允许这一**精确路径**的系统特例（root UID0、admin GID80、无 other-write），因为 admin 属 OS 特权组。不得放宽新专用根或其他祖先的权限，也不得 chmod 共享系统目录；Linux 不适用此例外。
 - 新脚本：`scripts/host_task_lease_issuer.py` → 安装为 `/Library/LFL-TaskHostIssuer/bin/task_lease_issuer.py`（root-owned 0555）；必须从**独立 Reviewer PASS、完整原版 R9 exit0、远端 CI 通过且受保护 main 的精确 SHA**取得源码，安装前后核对 SHA256。
 - 新独立根：`/Library/LFL-TaskHostIssuer/task-authority`（root:wheel 0755）。受信 Crypto 依赖安装到同一专用根下的 `/Library/LFL-TaskHostIssuer/runtime/site`（root-owned、非组/其他可写；仅复制经管理员校验的冻结依赖，不从可变工作树直接加载）。其 `public_key.pem` 与 `trust.json` 必须 root-owned 0644；`trust.json` 仅包含固定 `schema=lfl.task-authority-trust/v1`、`issuer_uid=462` 和 `public_key_sha256`（公钥 PEM 字节 SHA256）。
 - `private/`、`private/approvals/`、`private/consumed/`：UID462 0700；`private/task-ed25519.pem`：UID462 0600；`private/task-public.pending.pem`：UID462 0600；`leases/`、`states/`、`bindings/`：UID462 0755；签名收据及 `bindings/<sha256(session)>/<lease_id>.json`：UID462 0644。普通 LFL UID501 只可读取公钥/签名收据/绑定，不可读取私钥或修改收据/绑定/信任锚。
@@ -13,7 +13,7 @@
 ## 2. Operator 一次性安装（需真实 macOS 管理员操作）
 
 1. 确认当前 GitHub 受保护 `main` 的精确 SHA、required checks、独立 Reviewer/R9 证据、候选与安装脚本 SHA256；不接受本地未合并候选。
-2. 先只读核验 `/`、`/Library` 到新专用根的每一级目录均 root-owned 且 `mode & 0022 == 0`，任何祖先组写/其他写、符号链接或身份异常均 **HOLD**；不要修改 `/Library/Application Support` 的全局权限。再由系统管理员创建专用根、`bin`、`runtime/site` 及 `task-authority`，逐级设为 root-owned、非组/其他可写，复制**已核验受保护 main** 中的脚本为 root-owned 0555，校验安装 SHA256 一致；受信 Crypto site 的内容与来源也须核验并冻结。不得运行未经核验的 shell 安装脚本。
+2. 先只读核验 `/`、`/Library` 到新专用根的每一级目录均 root-owned、非符号链接；除 macOS 精确 `/Library` 的 root:admin(GID80) 0775（无 other-write）特例外，全部须 `mode & 0022 == 0`。其他组写/其他写、符号链接或身份异常均 **HOLD**，不得修改 `/Library` 或 `/Library/Application Support` 的全局权限。再由系统管理员创建专用根、`bin`、`runtime/site` 及 `task-authority`，逐级设为 root-owned、非组/其他可写，复制**已核验受保护 main** 中的脚本为 root-owned 0555，校验安装 SHA256 一致；受信 Crypto site 的内容与来源也须核验并冻结。不得运行未经核验的 shell 安装脚本。
 3. 以 UID462 在隔离 Python 下运行 `--mode keygen`（create-only）。生成的独立私钥不离开 `private/`；管理员从 `task-public.pending.pem` 复制公钥到 root-owned `public_key.pem`，写入并校验 root-owned `trust.json`。若已有密钥，拒绝覆盖。
 4. 以普通 LFL UID 验证私钥/审批目录不可读写、`trust.json`/公钥/状态不可写、收据可读；无特权直接运行签发器必须 `HOLD`。完成真实伪造签名、篡改、旧 epoch、已撤销、跨 Owner/Goal/Task/Lane、过期、路径越界和 Mac Seatbelt 拒写负测。
 5. 只在 Owner 明确批准的 Task/roots/verbs/TTL 内签发一次任务 Lease。先验证 LFL Goal/Task/Lane 的真实状态、owner session、HEAD/CAS、父 scope、项目路径与其他 Lane 排他，再由管理员将审核过的请求放入 **UID462 0600** `private/approvals/<approval_id>.json`。此文件不能由 Agent 或 LFL Web 写入；每个 approval_id 只能使用一次。
@@ -23,7 +23,7 @@
 
 审批请求的字段严格固定为 `schema,approval_id,approved_at,approved_by,purpose,goal_id,task_id,owner_session_id,agent_id,lane_id,revision,authority_epoch,ttl_seconds,parent_lease_id,resources`。资源只能是精确 `project/app/service` 身份及受限 verbs；不支持全 HOME、任意 shell 提权、`git_push`、`merge`、`release`。批准后 10 分钟内消费，TTL 不超过 24 小时；超过需重新审批。
 
-签发器输出分离的 Ed25519 Lease 和 State 收据；状态文件可由独立 UID462 使用 `--mode revoke --lease-id <lease_id>` 原子改为 `revoked`。LFL 每次副作用前重新验签和读取当前状态，撤销后拒绝**新**副作用；已经运行的后台进程取消/效果对账仍属 T3，未完成前不得宣称任意时点撤销全覆盖。
+签发器输出分离的 Ed25519 Lease 和 State 收据；状态文件可由独立 UID462 使用 `--mode revoke --lease-id <lease_id>` 原子改为 `revoked`。创建/替换时须文件 fsync 加父目录 fsync 完成后才回报 `SIGNED`/`REVOKED`；任一持久化失败即 HOLD，不能声称撤销已成功。LFL 每次副作用前重新验签和读取当前状态，撤销后拒绝**新**副作用；已经运行的后台进程取消/效果对账仍属 T3，未完成前不得宣称任意时点撤销全覆盖。
 
 ## 4. 发布、回滚与边界
 

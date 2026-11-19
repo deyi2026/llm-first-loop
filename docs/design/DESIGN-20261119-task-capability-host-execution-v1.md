@@ -504,7 +504,8 @@ Reviewer 只针对精确冻结候选审查；发现 P0/P1 修复代码和测试�
 ## 17. 当前执行状态（2026-11-19）
 
 - 设计：**v1.0 实施基线已冻结**；若后续事实证明必须修改关键合同，记录 spec_change 并对新候选重新审查，不进入无限文档拷问。
-- 代码：M1 已提交纯 Resolver `src/llm_loop/core/task_capabilities.py`（`2e7d10d19`、`0a16d7742`、`1965a41f8`）及多根沙箱计划 `src/llm_loop/tools/task_sandbox.py`（`ff706e45b`）；Mac 真实写入/拒绝测试、61 项相关测试、Ruff/Pyright 定向通过。**尚未接入可信 Host 签发、实际文件/命令工具、多根 bwrap 真机、受管 Git Adapter、桌面/服务工具**，不能称正常任务闭环已完成。
+- 代码（M1 **历史快照**）：当时仅有纯 Resolver `src/llm_loop/core/task_capabilities.py`（`2e7d10d19`、`0a16d7742`、`1965a41f8`）及多根沙箱计划 `src/llm_loop/tools/task_sandbox.py`（`ff706e45b`），尚未接线 Host/文件/命令/Git/桌面；61 项相关测试通过。这不是本次完整候选的现状。
+- 代码（**当前候选**）：已在源码接入独立 Host issuer/verifier、Run resolver、Task 文件/命令/Seatbelt、受管 Git commit、桌面授权核验及 Browser/Service 安全 HOLD；Task IDE AX `type` 因内嵌终端无法独立识别也保持 HOLD。Mac/Deepin 生产 Host **未安装**，Linux bwrap 真机、真实 TCC/Polkit、后台效果对账和生产 Lease 调用仍未完成；不能将本地接线与专项测试宣称为端到端生产验收。
 - LFL Goal：已通过原生 `create_goal` 创建 `GOAL-20261119-e6f2f767`（active）；T0 已 done、T1 in_progress、T2/T3/T4 pending；受管 Lane `lane-d656ddb7`（v2, active，路径 10 项，最后一次账本 head 为 `d92a38e`，新增提交 `ff706e45b` 尚待下次 CAS 同步）。此处只是事实快照，最终以实时账本为准。
 - 审查/R9/PR/CI/合并/部署：尚未针对本方案执行；不得借用 Issue #73 或其他 Lane 的回执。
 - 并行风险：创建本方案时协调看板显示 15 条在途 Lane；后续以实时看板为准。

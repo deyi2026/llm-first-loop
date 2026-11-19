@@ -19,6 +19,7 @@ import json
 import os
 import re
 import stat
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -38,6 +39,20 @@ _LEASE_DOMAIN = b"lfl.task-lease.v1\x00"
 _STATE_DOMAIN = b"lfl.task-lease-state.v1\x00"
 _MAX_RECEIPT_BYTES = 65536
 _LEASE_ID_RE = re.compile(r"[a-zA-Z0-9_-]{8,64}\Z")
+
+
+def _trusted_root_ancestor(path: Path, info: os.stat_result) -> bool:
+    """Only macOS root:admin /Library may be group-writable above the anchor."""
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o002:
+        return False
+    if not info.st_mode & 0o020:
+        return True
+    return (
+        sys.platform == "darwin"
+        and path == Path("/Library")
+        and info.st_gid == 80
+        and stat.S_IMODE(info.st_mode) == 0o775
+    )
 
 
 class TaskAuthorityError(RuntimeError):
@@ -244,7 +259,7 @@ def _read_root_owned(path: Path) -> bytes:
             info = os.lstat(parent)
         except OSError as exc:
             raise TaskAuthorityError("authority_store_unavailable") from exc
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        if not _trusted_root_ancestor(parent, info):
             raise TaskAuthorityError("authority_store_untrusted")
         if parent == parent.parent:
             break

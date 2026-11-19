@@ -174,6 +174,10 @@ def test_lfl_workdir_pins_python_path_for_compound_shell_without_import_leak(tmp
     assert pinned["PYTHONPATH"] == "/custom"
     assert _workspace_python_env(env, str(root), "/usr/bin/python3 -c pass") == env
     assert _workspace_python_env(env, str(root), "echo ok") == env
+    assert _workspace_python_env(env, str(root), 'git commit -m "fix python3 bug"') == env
+    assert _workspace_python_env(env, str(root), "echo 'python3 -c pass'") == env
+    assert _workspace_python_env(env, str(root), "sh -c 'python3 -c pass'")["PATH"].split(os.pathsep)[0] == str(root / ".venv" / "bin")
+    assert _workspace_python_env(env, str(root), "echo ok | python3 -m json.tool")["PATH"].split(os.pathsep)[0] == str(root / ".venv" / "bin")
     assert env == {"PATH": "/usr/bin", "PYTHONPATH": "/custom"}
 
 

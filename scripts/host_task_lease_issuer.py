@@ -43,6 +43,22 @@ def require(condition: bool, code: str) -> None:
         raise IssuerHoldError(code)
 
 
+def _trusted_root_ancestor(path: Path, info: os.stat_result) -> bool:
+    """Allow only macOS's privileged root:admin /Library group-write exception."""
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o002:
+        return False
+    if not info.st_mode & 0o020:
+        return True
+    # macOS admin (GID 80) is an OS-privileged group. Never extend this
+    # exception to the dedicated TaskHostIssuer tree or to Linux.
+    return (
+        sys.platform == "darwin"
+        and path == Path("/Library")
+        and info.st_gid == 80
+        and stat.S_IMODE(info.st_mode) == 0o775
+    )
+
+
 def canonical(payload: dict[str, Any]) -> bytes:
     return json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
@@ -241,7 +257,7 @@ def _crypto() -> tuple[Any, Any]:
     while True:
         info = parent.lstat()
         require(
-            stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+            _trusted_root_ancestor(parent, info),
             "issuer_crypto_runtime_untrusted",
         )
         if parent == parent.parent:
@@ -269,7 +285,7 @@ def _check_installed() -> None:
     while True:
         st = parent.lstat()
         require(
-            stat.S_ISDIR(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o022,
+            _trusted_root_ancestor(parent, st),
             "issuer_install_parent_untrusted",
         )
         if parent == parent.parent:
@@ -358,6 +374,18 @@ def _verify_public_trust(key: Any, ecc_module: Any) -> None:
     )
 
 
+def _sync_parent_directory(path: Path) -> None:
+    """Persist the directory entry, not just the file contents, before success."""
+    fd = os.open(
+        path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    )
+    try:
+        require(stat.S_ISDIR(os.fstat(fd).st_mode), "issuer_sync_parent_untrusted")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _create(path: Path, raw: bytes, mode: int) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
@@ -368,6 +396,13 @@ def _create(path: Path, raw: bytes, mode: int) -> None:
             os.fsync(stream.fileno())
     finally:
         os.close(fd)
+    _sync_parent_directory(path)
+
+
+def _replace_state_durable(temporary: Path, state_path: Path) -> None:
+    """REVOKED must not be reported until its rename survives a crash."""
+    os.replace(temporary, state_path)
+    _sync_parent_directory(state_path)
 
 
 def _audit(event: str, lease_id: str, approval_id: str = "") -> None:
@@ -393,6 +428,7 @@ def _audit(event: str, lease_id: str, approval_id: str = "") -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+    _sync_parent_directory(path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -448,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
                 binding_dir = _BASE / "bindings" / session_digest
                 with contextlib.suppress(FileExistsError):
                     binding_dir.mkdir(mode=0o755)
+                _sync_parent_directory(binding_dir)
                 binding_info = binding_dir.lstat()
                 require(
                     stat.S_ISDIR(binding_info.st_mode)
@@ -483,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
                 _audit("revoke_intent", ident)
                 temporary = _BASE / "states" / (f".{ident}.{secrets.token_hex(8)}.tmp")
                 _create(temporary, state_doc, 0o644)
-                os.replace(temporary, state_path)
+                _replace_state_durable(temporary, state_path)
                 _audit("revoke_published", ident)
                 result = {"decision": "REVOKED", "lease_id": ident}
         print(json.dumps(result, sort_keys=True))
