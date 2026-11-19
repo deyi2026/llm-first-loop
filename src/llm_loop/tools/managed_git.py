@@ -64,8 +64,10 @@ class GitCommitReceipt:
 
 def _safe_env() -> dict[str, str]:
     """No ambient Git config, filters, hooks, SSH, credentials or index overrides."""
+    from llm_loop.tools.task_execution import _task_git_env
+
     allowed = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "TMPDIR")
-    env = {key: os.environ[key] for key in allowed if key in os.environ}
+    env = _task_git_env(allowed)
     env.update(
         GIT_CONFIG_NOSYSTEM="1",
         GIT_CONFIG_GLOBAL=os.devnull,

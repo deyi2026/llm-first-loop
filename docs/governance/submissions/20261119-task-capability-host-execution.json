@@ -31,6 +31,7 @@
       "component_id": "file-command-git-sandbox",
       "paths": [
         "pyproject.toml",
+        "src/llm_loop/config.py",
         "src/llm_loop/tools/builtin/edit_file.py",
         "src/llm_loop/tools/builtin/execute_command.py",
         "src/llm_loop/tools/builtin/read_file.py",
@@ -98,8 +99,8 @@
       "owning_subsystem": "Frozen design, Host bootstrap runbook, architecture coverage and negative regression tests",
       "disposition": "Record exact changed paths and measured limits; do not treat simulated tests as production Host authorization.",
       "evidence": [
-        "Architecture guards 52 passed; Task/Git/factory/Run broad suite 268 passed, 4 skipped; Ruff/Pyright ratchets new diagnostics 0.",
-        "Previous independent Reviewer returned REVISE; new SHA must pass independent review, original full R9, remote CI and protected merge before any production Host install."
+        "Architecture guards 52 passed; Task/Git/factory/Run broad suite 269 passed, 4 skipped; environment-access and local-time guards pass; Ruff/Pyright ratchets new diagnostics 0.",
+        "Earlier Reviewer PASS and full R9 exit 1 were bound to a previous SHA; the new candidate must pass independent review and original full R9 exit 0, remote CI and protected merge before production Host install."
       ],
       "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
       "model_evidence_veto_recovery_exit": "Failed architecture coverage or review is a merge blocker; preserve historical receipts and roll back by protected PR.",

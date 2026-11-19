@@ -18,7 +18,11 @@ from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.task_store import TaskStore
 from llm_loop.tools.task_authority import RootOwnedTaskAuthority, TaskAuthorityError
-from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+from llm_loop.tools.task_execution import (
+    TaskExecutionError,
+    TrustedTaskExecution,
+    _task_git_env,
+)
 
 _MAC_AUTHORITY = Path("/Library/LFL-TaskHostIssuer/task-authority")
 _LINUX_AUTHORITY = Path("/var/lib/lfl-host-issuer/task-authority")
@@ -140,7 +144,7 @@ def resolve_task_execution_for_run(
     # The ledger SHA alone is insufficient: inspect the physical worktree.
     if not os.path.lexists(os.path.join(workspace_root, ".git")):
         raise TaskRuntimeActivationError("task_worktree_git_missing")
-    env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+    env = _task_git_env()
     env.update(
         GIT_CONFIG_NOSYSTEM="1",
         GIT_CONFIG_GLOBAL=os.devnull,

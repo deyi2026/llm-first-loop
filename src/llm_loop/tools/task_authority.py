@@ -34,6 +34,7 @@ from llm_loop.core.task_capabilities import (
     CapabilityResource,
     TaskLeaseClaims,
 )
+from llm_loop.timekeeping import system_local_now
 
 _LEASE_DOMAIN = b"lfl.task-lease.v1\x00"
 _STATE_DOMAIN = b"lfl.task-lease-state.v1\x00"
@@ -192,7 +193,7 @@ def verify_signed_task_lease(
     _verify_lease_state_schema(lease, state)
 
     issued, expiry = _parse_time(lease["issued_at"]), _parse_time(lease["expires_at"])
-    clock = now or datetime.now(UTC)
+    clock = now or system_local_now()
     if clock.tzinfo is None or clock.utcoffset() is None:
         raise TaskAuthorityError("authority_time_invalid")
     clock = clock.astimezone(UTC)

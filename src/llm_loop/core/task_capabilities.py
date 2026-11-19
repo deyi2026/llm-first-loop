@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
+
+from llm_loop.timekeeping import system_local_now
 
 ResourceKind = Literal["project", "app", "service"]
 Decision = Literal["allow", "need_approval", "need_os_permission", "unsupported", "deny", "stale"]
@@ -189,7 +191,7 @@ def resolve_capability(
             "通过可信 Owner 入口申请任务范围",
             approval=True,
         )
-    clock = now or datetime.now(UTC)
+    clock = now or system_local_now()
     if clock.tzinfo is None or clock.utcoffset() is None:
         return _deny("deny", "owner", "invalid_clock", "使用可信时区时间重新预检")
     if clock >= lease.expires_at:

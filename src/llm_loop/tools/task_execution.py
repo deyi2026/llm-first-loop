@@ -36,6 +36,14 @@ class TaskExecutionError(RuntimeError):
         super().__init__(reason_code)
 
 
+def _task_git_env(keys: tuple[str, ...] = ("PATH", "HOME", "LANG")) -> dict[str, str]:
+    """Read only non-secret Git subprocess keys via the existing config boundary."""
+    from llm_loop.config import _raw_env
+
+    values = {key: _raw_env(key, preserve_raw=True) for key in keys}
+    return {key: value for key, value in values.items() if value}
+
+
 @dataclass(frozen=True)
 class TrustedTaskExecution:
     authority: RootOwnedTaskAuthority
@@ -92,7 +100,7 @@ class TrustedTaskExecution:
         worktree = os.path.realpath(str(lane.get("worktree") or ""))
         if not os.path.lexists(os.path.join(worktree, ".git")):
             raise TaskExecutionError("task_worktree_git_missing")
-        env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+        env = _task_git_env()
         env.update(
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=os.devnull,
@@ -180,7 +188,7 @@ class TrustedTaskExecution:
             raise TaskExecutionError("task_lane_cas_conflict")
         worktree = os.path.realpath(str(lane.get("worktree") or ""))
         if os.path.lexists(os.path.join(worktree, ".git")):
-            env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+            env = _task_git_env(("PATH", "HOME"))
             env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
             try:
                 observed = subprocess.run(
@@ -333,7 +341,7 @@ class TrustedTaskExecution:
         self._deny_other_lane_roots(roots)
         if os.path.lexists(os.path.join(workdir, ".git")):
             # Compare actual HEAD, not just the potentially stale Lane ledger.
-            env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG") if key in os.environ}
+            env = _task_git_env()
             env.update(
                 GIT_CONFIG_NOSYSTEM="1",
                 GIT_CONFIG_GLOBAL=os.devnull,

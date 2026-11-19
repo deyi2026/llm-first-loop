@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,29 @@ from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.task_store import TaskStore
 from llm_loop.tools.managed_git import GitCommitRequest, ManagedGitAdapter, ManagedGitError
+
+
+def test_task_git_subprocess_environment_is_minimal_and_scrubbed(monkeypatch):
+    from llm_loop.tools.managed_git import _safe_env
+    from llm_loop.tools.task_execution import _task_git_env
+
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("HOME", "/tmp")
+    monkeypatch.setenv("LLM_API_KEY", "must-not-reach-git")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "must-not-reach-git")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "must-not-reach-git")
+    minimal = _task_git_env()
+    assert minimal["PATH"] == "/usr/bin:/bin"
+    assert minimal["HOME"] == "/tmp"
+    assert "LLM_API_KEY" not in minimal
+    assert "GIT_SSH_COMMAND" not in minimal
+    env = _safe_env()
+    assert "LLM_API_KEY" not in env
+    assert "GIT_SSH_COMMAND" not in env
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    monkeypatch.setenv("PATH", "/tmp/project#tag:/usr/bin")
+    assert _task_git_env()["PATH"] == "/tmp/project#tag:/usr/bin"
 
 
 def git(path: Path, *args: str) -> str:
