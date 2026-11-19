@@ -35,11 +35,11 @@ from llm_loop.embodied_sim.oracle import (  # noqa: E402
     judge_place,
     make_receipt,
 )
-from llm_loop.embodied_sim.scene import SCENE_CONSTANTS  # noqa: E402
+from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa: E402
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.2"
+BASELINE_VERSION = "M1-baseline-v1.2-restored"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -134,6 +134,7 @@ def run_calibrated_episode(seed: int) -> dict[str, Any]:
     init_q = [round(v, 6) for v in obs["arm_qpos"]]
 
     stages: list[dict[str, Any]] = []
+    snap: dict[str, Any] | None = None
     measured = {
         "seed": seed,
         "mujoco_version": mujoco.__version__,
@@ -198,10 +199,12 @@ def run_calibrated_episode(seed: int) -> dict[str, Any]:
         "max_single_step_cube_displacement_m_full_trajectory": round(recorder.max_step_d, 6),
         "unexpected_collisions_full_trajectory": [
             {"geoms": list(k), "steps_present": v} for k, v in recorder.unexpected_steps.items()],
-        "unexpected_collisions_final_snapshot_only": [
-            [a, b] for a, b, _ in snap["contact_pairs"]
-            if (a == "cube_geom" and b not in EXPECTED_CUBE_PARTNERS)
-            or (b == "cube_geom" and a not in EXPECTED_CUBE_PARTNERS)],
+        "unexpected_collisions_final_snapshot_only": (
+            [
+                [a, b] for a, b, _ in snap["contact_pairs"]
+                if (a == "cube_geom" and b not in EXPECTED_CUBE_PARTNERS)
+                or (b == "cube_geom" and a not in EXPECTED_CUBE_PARTNERS)
+            ] if snap is not None else None),
         "physics_time_s": round(float(scene.data.time), 3),
         "wall_s": round(time.monotonic() - t_wall0, 3),
         "final_state_digest": scene.state_digest(),
@@ -320,6 +323,22 @@ def main() -> int:
     t0 = time.monotonic()
     evidence: dict[str, Any] = {
         "baseline_version": BASELINE_VERSION,
+        "scene_xml_sha256": hashlib.sha256(build_scene_xml().encode()).hexdigest(),
+        "scene_revision_reason": ("restored original v1.2 axial rod geometry "
+                                  "(z[0.14,0.18], r0.004); v1.3 rear-rod and v1.4 lateral-rod "
+                                  "attempts both failed 0/10 and are preserved as "
+                                  "M1-baseline-v1.3-fail-rod-rear.json / M1-baseline-v1.4.json. "
+                                  "True root cause: with the wrist-rod contact removed, the "
+                                  "approach_down servo target is unreachable in the limit-pose "
+                                  "and the grasp loses fingertip contact - next phase must "
+                                  "re-calibrate the descent IK/joint limits and fingertip "
+                                  "contact, not relax tolerances."),
+        "legacy_note_v13": ("TASK-008 approved minimal geometry fix: wrist_rod relocated "
+                                  "from link3 z[0.14,0.18] (overlapping tool作用区 z~0.123..0.163 "
+                                  "incl. tool_site 0.143) to wrist-rear conduit z[0.18,0.22]; "
+                                  "collision remains enabled; v1.2 BASELINE_FAIL 0/10 root cause "
+                                  "was rod scuffing cube in approach_down then welded into a "
+                                  "constant rigid contact"),
         "revision_note": ("v1.2: unexpected non-gripper cube contacts promoted to a HARD verdict "
                           "gate (no_unexpected_contacts); per-stage attribution and first-contact "
                           "geometry added. Tolerances and oracle thresholds remain UNCHANGED. "

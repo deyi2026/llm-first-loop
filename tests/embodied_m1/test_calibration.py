@@ -55,7 +55,9 @@ def test_determinism_same_seed_identical_trajectory():
 
 
 @pytest.mark.parametrize("name", ["M1-baseline-v1-initial-fail.json",
-                                  "M1-baseline-v1.1-pre-safety-gate.json"])
+                                  "M1-baseline-v1.1-pre-safety-gate.json",
+                                  "M1-baseline-v1.3-fail-rod-rear.json",
+                                  "M1-baseline-v1.4.json"])
 def test_evidence_versions_immutable(name):
     path = CAL / name
     assert path.exists(), "historical evidence must not be deleted"
@@ -67,6 +69,14 @@ def test_evidence_versions_immutable(name):
 
 def test_v12_hard_gate_present_in_evidence():
     data = json.loads((CAL / "M1-baseline-v1.2.json").read_text())
-    assert data["baseline_version"] == "M1-baseline-v1.2"
     assert data["verdict"] == "BASELINE_FAIL"
     assert all("no_unexpected_contacts" in s for s in data["seed_results"])
+
+
+def test_v13_v14_failures_preserved():
+    """v1.3 (rod-rear) and v1.4 (lateral rods) failures must stay on record."""
+    v13 = json.loads((CAL / "M1-baseline-v1.3-fail-rod-rear.json").read_text())
+    assert v13["verdict"] == "BASELINE_FAIL"
+    v14 = json.loads((CAL / "M1-baseline-v1.4.json").read_text())
+    assert v14["verdict"] == "BASELINE_FAIL"
+    assert all(f["stage"] == "grasp" for f in v14["failures"])
