@@ -14,7 +14,7 @@ from pathlib import Path
 
 WORKER = Path("/Library/PrivilegedHelperTools/lfl-oracle-v1/oracle_worker.py")
 PROFILE = Path("/Library/PrivilegedHelperTools/lfl-oracle-v1/oracle.sb")
-WORKER_SHA = "a25e95617869697021609d1fe35b70b6aa07e74ff88866f674074a3f063c5b7b"
+WORKER_SHA = "e83e3d837ca18bf5622f66f954e9c2be7c7b35132afc6f8c060c442e3b8f8f98"
 PROFILE_SHA = "b3ed2b80cd5ec6201a8a10627461fc82a2c1e7275d505c0cff1a6f34cc869c76"
 FIXED = [
     "/usr/bin/sudo", "-n", "-u", "_lfl_oracle",
@@ -30,13 +30,17 @@ def _run(payload: dict | str, *, args: list[str] | None = None) -> subprocess.Co
                           env={"PATH": "/usr/bin:/bin", "HOME": "/var/empty"})
 
 
-def _snapshot(*, weld: bool = True, contact: bool = True, pos=None) -> dict:
+def _snapshot(*, weld: bool = True, contact: bool = True,
+              tray_contact: bool = False, pos=None) -> dict:
+    pairs = ([["cube_geom", "fingertip_left", -0.001],
+              ["cube_geom", "fingertip_right", -0.001]]
+             if contact else [])
+    if tray_contact:
+        pairs.append(["cube_geom", "tray_floor", -0.001])
     return {
         "cube": {"pos": pos or [0.1, 0.0, 0.06], "vel": [0.0, 0.0, 0.0]},
         "weld_active": weld,
-        "contact_pairs": ([["cube_geom", "fingertip_left", -0.001],
-                           ["cube_geom", "fingertip_right", -0.001]]
-                          if contact else []),
+        "contact_pairs": pairs,
     }
 
 
@@ -62,13 +66,26 @@ def run() -> dict:
             "scene_epoch": 3, "experiment_id": "M1-UID463-ACCEPTANCE",
         },
         "place_positive": {
-            "snapshot": _snapshot(weld=False, pos=[0.0, 0.18, 0.04]),
-            "claim_kind": "place", "tray_pos": [0.0, 0.18, 0.0],
+            "snapshot": _snapshot(weld=False, contact=False, tray_contact=True,
+                                  pos=[0.0, 0.18, 0.04]),
+            "claim_kind": "place", "tray_pos": [0.0, 0.18, 0.01],
+            "scene_epoch": 3, "experiment_id": "M1-UID463-ACCEPTANCE",
+        },
+        "place_held_above_tray": {
+            "snapshot": _snapshot(weld=True, contact=True,
+                                  pos=[0.0, 0.18, 0.077]),
+            "claim_kind": "place", "tray_pos": [0.0, 0.18, 0.01],
+            "scene_epoch": 3, "experiment_id": "M1-UID463-ACCEPTANCE",
+        },
+        "place_hover_without_contact": {
+            "snapshot": _snapshot(weld=False, contact=False,
+                                  pos=[0.0, 0.18, 0.04]),
+            "claim_kind": "place", "tray_pos": [0.0, 0.18, 0.01],
             "scene_epoch": 3, "experiment_id": "M1-UID463-ACCEPTANCE",
         },
         "place_off_target": {
-            "snapshot": _snapshot(weld=False),
-            "claim_kind": "place", "tray_pos": [0.0, 0.18, 0.0],
+            "snapshot": _snapshot(weld=False, contact=False, tray_contact=True),
+            "claim_kind": "place", "tray_pos": [0.0, 0.18, 0.01],
             "scene_epoch": 3, "experiment_id": "M1-UID463-ACCEPTANCE",
         },
     }

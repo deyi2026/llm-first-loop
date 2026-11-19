@@ -43,7 +43,7 @@ def judge_grasp(snapshot: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     tips = {frozenset((_CUBE_GEOM, _FTIP_L)), frozenset((_CUBE_GEOM, _FTIP_R))}
     touching = any(c in tips for c in contacts)
     lifted = float(pos[2]) > 0.05
-    ok = bool(weld and lifted and speed < 0.08)
+    ok = bool(weld and touching and lifted and speed < 0.08)
     return ok, {
         "grasp_mechanism": "contact_confirmed_weld",
         "weld_active": weld,
@@ -62,11 +62,19 @@ def judge_place(snapshot: dict[str, Any], tray_pos: list[float]) -> tuple[bool, 
     speed = float(sum(v * v for v in vel)) ** 0.5
     inside = (abs(float(pos[0]) - float(tray_pos[0])) < 0.055
               and abs(float(pos[1]) - float(tray_pos[1])) < 0.055)
-    height_ok = 0.015 <= float(pos[2]) <= 0.09
-    ok = bool(inside and height_ok and speed < 0.06)
+    # Tray floor top is 0.01 m above tray body origin; the 0.02 m cube
+    # half-size puts a resting cube centre ~0.03 m above that origin.
+    # Geometric overlap alone is not placement: the gripper must have
+    # released and the cube must physically contact the tray floor.
+    height_ok = 0.025 <= float(pos[2]) - float(tray_pos[2]) <= 0.045
+    released = not bool(snapshot.get("weld_active", True))
+    tray_contact = frozenset((_CUBE_GEOM, "tray_floor")) in _contact_set(snapshot)
+    ok = bool(inside and height_ok and released and tray_contact and speed < 0.06)
     return ok, {
         "inside_tray_xy": inside,
         "height_ok": height_ok,
+        "released": released,
+        "tray_contact": tray_contact,
         "cube_speed": speed,
         "cube_z": float(pos[2]),
     }

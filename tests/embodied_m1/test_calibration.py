@@ -27,6 +27,7 @@ FROZEN_RECEIPT_SHA256 = {
     'M1-baseline-v1.6.1.json': '167c63560d346f74067381341e20427822350f0e4dcbb814575b4667d760590d',
     'M1-baseline-v1.6.2.json': '9ae1b7eeed11cde8e6039492e7a36725051ea00671001fbf53ccaa17bede6ff2',
     'M1-baseline-v1.6.3.json': 'cdb200973197f9493d4b11a5e630f8b675fe19e89f15eb045364f2c738683e3c',
+    'M1-baseline-v1.6.4.json': '820b73cf54ddb13a0f86c179950b0fca58a7ddea632cbf565153772af5846f3d',
     'M1-baseline-v1.6.json': '4e0f943a69910b8c9de3ad6f3459f5128b534c793f961d4e6cf8f4dfb37e819f',
     'M1-baseline-v1.json': 'f0ff6c636f8fbc188af95def72695e9b903c98fb4eb9abab6eb6ffb692919dcf',
 }
@@ -63,8 +64,8 @@ def test_is_unexpected_contact_hard_gate_matrix():
     assert f("cube_geom", "tray_floor") is False
 
 
-def test_v163_local_baseline_pass_metadata_consistent():
-    data = json.loads((CAL / "M1-baseline-v1.6.3.json").read_text())
+def test_v164_local_baseline_pass_metadata_consistent():
+    data = json.loads((CAL / "M1-baseline-v1.6.4.json").read_text())
     assert data["verdict"] == "LOCAL_PHYSICS_BASELINE_PASS"
     assert data["independent_oracle"].startswith("PENDING_ORACLE")
     assert data["structural_whitelist_verification"]["adjacent_assembly_confirmed"] is True
@@ -105,7 +106,7 @@ def test_existing_receipt_cannot_be_overwritten(monkeypatch):
 
 def test_sidecar_only_also_blocks_version_reuse(monkeypatch, tmp_path):
     monkeypatch.setattr(m1_calibrate, "OUT_DIR", tmp_path)
-    (tmp_path / "M1-baseline-v1.6.3.json.sha256").write_text("partial receipt")
+    (tmp_path / "M1-baseline-v1.6.4.json.sha256").write_text("partial receipt")
     with pytest.raises(FileExistsError, match="immutable calibration receipt exists"):
         m1_calibrate.main()
 

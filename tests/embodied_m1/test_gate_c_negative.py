@@ -18,7 +18,7 @@ from llm_loop.embodied_sim.contract import (
     VerificationStatus,
 )
 from llm_loop.embodied_sim.episode import EpisodeBudget, run_episode
-from llm_loop.embodied_sim.oracle import verify_receipt
+from llm_loop.embodied_sim.oracle import judge_grasp, judge_place, verify_receipt
 from llm_loop.embodied_sim.oracle_worker import ORACLE_EXECUTION_STDIN, judge_from_stdin
 from llm_loop.embodied_sim.policy import FlakyStubProvider, ScriptedStubProvider, build_prompt
 from llm_loop.embodied_sim.skills import EmbodiedInterface
@@ -207,6 +207,54 @@ def test_tool_action_budget_enforced():
     r = run_episode(iface, ScriptedStubProvider(script), budget)
     assert r["terminated_by"] == "tool_action_budget_exhausted"
     assert r["tool_actions"] <= r["budget"]["max_tool_actions"]
+
+
+def test_runner_does_not_finish_while_cube_still_welded_over_tray():
+    iface = _iface()
+    cube = _cube(iface)
+    tray = iface.observe()["observation"]["tray_pos"]
+    script = [
+        _mv(cube, dz=0.07, key="k1"),
+        _mv(cube, dz=0.012, key="k2"),
+        json.dumps({"skill": "grasp", "params": {}, "intent_key": "k3"}),
+        json.dumps({"skill": "move_to",
+                    "params": {"x": tray[0], "y": tray[1], "z": 0.09},
+                    "intent_key": "k4"}),
+        json.dumps({"skill": "stop", "params": {"reason": "hold"},
+                    "intent_key": "k5"}),
+    ]
+    r = run_episode(iface, ScriptedStubProvider(script))
+    assert r["terminated_by"] == "stop_confirmed"
+    assert r["local_verdict"]["ok"] is False
+    assert iface.scene.weld_active() is True
+    assert r["tool_actions"] == 4
+
+
+def test_oracle_place_requires_release_and_real_tray_contact():
+    snap = {
+        "cube": {"pos": [0.0, 0.18, 0.077], "vel": [0.0, 0.0, 0.0]},
+        "contact_pairs": [["cube_geom", "fingertip_left", -0.001]],
+        "weld_active": True,
+    }
+    tray = [0.0, 0.18, 0.01]
+    ok, ev = judge_place(snap, tray)
+    assert ok is False and ev["released"] is False
+    snap["weld_active"] = False
+    snap["cube"]["pos"][2] = 0.04
+    ok, ev = judge_place(snap, tray)
+    assert ok is False and ev["tray_contact"] is False
+    snap["contact_pairs"] = [["cube_geom", "tray_floor", -0.001]]
+    ok, ev = judge_place(snap, tray)
+    assert ok is True and ev["released"] and ev["tray_contact"]
+
+
+def test_local_oracle_grasp_rejects_forged_weld_without_contact():
+    snap = {
+        "cube": {"pos": [0.1, 0.0, 0.06], "vel": [0.0, 0.0, 0.0]},
+        "contact_pairs": [], "weld_active": True,
+    }
+    ok, ev = judge_grasp(snap)
+    assert ok is False and ev["fingertips_contacting"] is False
 
 
 def test_worker_receipt_is_pending_and_cannot_self_promote(monkeypatch):

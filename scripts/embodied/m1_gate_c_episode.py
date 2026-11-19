@@ -4,8 +4,8 @@
 No scripted action sequence anywhere in this path: every tool action comes from
 a live provider decision parsed via policy.parse_decision. Budgets are the
 prereg values (6 provider attempts / 8 tool actions / 180 s / learning off).
-The oracle receipt stays PENDING_ORACLE (in-process; UID-463 channel is HOLD
-pending formal Host authorization - see report field oracle_channel_hold).
+The oracle receipt stays PENDING_ORACLE (in-process). UID-463 Worker is
+installed, but no trusted Host attestation signer is installed.
 
 Usage:
   set -a; source /path/to/llm-first-loop-mirror/.env; set +a
@@ -138,9 +138,9 @@ def main() -> int:
     result["t_stop_provenance"] = measure_t_stop(iface)
     result["oracle_channel_hold"] = {
         "status": "HOLD",
-        "reason": "uid 463 (_lfl_oracle) exists but non-interactive sudo requires a password; "
-                  "no cross-UID oracle execution without formal Host authorization. "
-                  "Worker entrypoint ready: python -m llm_loop.embodied_sim.oracle_worker.",
+        "reason": "uid 463 (_lfl_oracle) Worker installed and Host-accepted, "
+                  "but trusted snapshot-provenance attestation signer NOT_INSTALLED. "
+                  "Caller-provided Oracle receipts cannot be promoted to VERIFIED.",
         "independent_verification": "PENDING_ORACLE",
     }
     result["status"] = "ok"

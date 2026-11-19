@@ -43,10 +43,20 @@ def test_host_oracle_judgement_positive_and_fail_closed(host_worker):
     assert host_worker.judge_payload(_case(weld=False))["verdict"] == "failure"
     assert host_worker.judge_payload(_case(contact=False))["verdict"] == "failure"
     assert host_worker.judge_payload(_case(z=0.03))["verdict"] == "failure"
-    place = _case(kind="place", weld=False)
-    place["tray_pos"] = [0.1, 0.0, 0.0]
+    place = _case(kind="place", weld=False, z=0.04)
+    place["tray_pos"] = [0.1, 0.0, 0.01]
+    place["snapshot"]["contact_pairs"] = [["cube_geom", "tray_floor", -0.001]]
     assert host_worker.judge_payload(place)["verdict"] == "success"
-    place["tray_pos"] = [0.0, 0.18, 0.0]
+    place["snapshot"]["weld_active"] = True
+    assert host_worker.judge_payload(place)["verdict"] == "failure"
+    place["snapshot"]["weld_active"] = False
+    place["snapshot"]["contact_pairs"] = []
+    assert host_worker.judge_payload(place)["verdict"] == "failure"
+    place["snapshot"]["contact_pairs"] = [["cube_geom", "tray_floor", -0.001]]
+    place["snapshot"]["cube"]["pos"][2] = 0.077
+    assert host_worker.judge_payload(place)["verdict"] == "failure"
+    place["snapshot"]["cube"]["pos"][2] = 0.04
+    place["tray_pos"] = [0.0, 0.18, 0.01]
     assert host_worker.judge_payload(place)["verdict"] == "failure"
 
 

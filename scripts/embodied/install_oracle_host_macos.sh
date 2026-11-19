@@ -7,7 +7,7 @@ PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 umask 077
 
-worker_sha=a25e95617869697021609d1fe35b70b6aa07e74ff88866f674074a3f063c5b7b
+worker_sha=e83e3d837ca18bf5622f66f954e9c2be7c7b35132afc6f8c060c442e3b8f8f98
 profile_sha=b3ed2b80cd5ec6201a8a10627461fc82a2c1e7275d505c0cff1a6f34cc869c76
 root_dir=/Library/PrivilegedHelperTools/lfl-oracle-v1
 sudoers_file=/private/etc/sudoers.d/lfl-oracle-v1

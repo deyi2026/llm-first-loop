@@ -97,11 +97,16 @@ def _judge(snapshot: dict, kind: str, payload: dict) -> tuple[bool, dict]:
         }
     tray = _vec3(payload["tray_pos"], "tray_pos")
     inside = abs(pos[0] - tray[0]) < 0.055 and abs(pos[1] - tray[1]) < 0.055
-    height_ok = 0.015 <= pos[2] <= 0.09
-    ok = inside and height_ok and speed < 0.06
+    height_ok = 0.025 <= pos[2] - tray[2] <= 0.045
+    released = not snapshot["weld_active"]
+    contacts = {frozenset((a, b)) for a, b, _ in snapshot["contact_pairs"]}
+    tray_contact = frozenset(("cube_geom", "tray_floor")) in contacts
+    ok = inside and height_ok and released and tray_contact and speed < 0.06
     return ok, {
         "inside_tray_xy": inside,
         "height_ok": height_ok,
+        "released": released,
+        "tray_contact": tray_contact,
         "cube_speed": speed,
         "cube_z": pos[2],
     }
