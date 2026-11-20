@@ -2,6 +2,13 @@
 
 > 此处记录源码与发行候选的变更，**不等于 GitHub 已正式发布版本列表**；实际稳定版以 [GitHub releases/latest](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准。
 
+## v0.6.56 — Deepin 最新已集成 main 快照安装候选（2026-11-20，待验收部署）
+
+- 以远端 `main` 的已合并提交 `07fd45f0de4eb62d7f2094014af6d3e3bdb5b867` 为版本基线，包含此前合入的任务执行、Host 授权与审计、多 Agent 协调、具身 M1 仿真和 CI 改进；不将实验能力宣称为生产就绪。
+- 本次发行差异仅递增 Python 包、锁文件、Web API 版本及中英文 README 的候选版本标识，并新增 A.5 变更声明；不改写已安装的 0.6.55 wheel，也不覆盖其他并行工作。
+- 正式切换前必须重新完成精确候选独立 Reviewer PASS（P0/P1=0）、原版完整 R9 exit 0、PR/远端 CI、合并后 `main` CI、不可变 wheel 溯源/摘要与 Deepin 受管三服务收敛验收。
+- GitHub 正式公开 Release 与 Deepin 本地候选部署是不同状态；截至本条记录，最新正式 Release 为 `v0.6.54`，本版尚未发布。
+
 ## v0.6.55 — Deepin 出站隐私守卫误拦截修复候选（2026-11-16，待受管发布）
 
 - 本版承接经独立 DeepSeek-v4-flash Reviewer PASS（P0/P1/P2=0）的出站隐私投影最小修复：统一 cache_guard 终检与脱敏器的敏感模式，修复历史 `reasoning_content` 中仅讨论私钥标记的文本误拦截，补齐嵌入式凭据检测，并对拒绝原因做无明文分类；真实凭据、受保护字段及脱敏异常继续 fail-closed。
