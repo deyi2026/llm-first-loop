@@ -342,7 +342,7 @@ def test_stale_origin_main_base_is_rejected(tmp_path):
         root=root, design=design, audit_dir=audit, goal_id=GOAL,
         req_id="REQ-FLOW-003", base=base, dry_run=True,
     )["status"] == "DRY_RUN"
-    _git(root, "commit", "--allow-empty", "-qm", "remote advanced")
+    _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "remote advanced")
     _git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
     report = run_dev_gate(
         root=root, design=design, audit_dir=audit, goal_id=GOAL,
