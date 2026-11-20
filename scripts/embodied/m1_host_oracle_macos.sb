@@ -1,0 +1,8 @@
+(version 1)
+(allow default)
+(deny network*)
+(deny file-write*)
+(deny file-read* (subpath "/Users"))
+(deny file-read* (subpath "/Volumes"))
+(deny file-read* (subpath "/dev"))
+(allow file-read* (literal "/dev/urandom"))

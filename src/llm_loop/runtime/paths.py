@@ -85,6 +85,32 @@ def _explicit(env: Mapping[str, str], key: str) -> str:
 def discover_git_common_root(code_root: str | Path) -> Path | None:
     """Return the primary worktree root for a normal Git repository, if provable."""
     code = _resolved(code_root)
+    # Resolve the ordinary Git worktree pointer without spawning a process.
+    # This is also important while callers mock subprocess.Popen: an unrelated
+    # runtime-path probe must not be mistaken for the command under test.
+    dotgit = code / ".git"
+    if (dotgit.is_dir() and not dotgit.is_symlink()
+            and (dotgit / "HEAD").is_file()
+            and (dotgit / "config").is_file()):
+        return code
+    if dotgit.is_file() and not dotgit.is_symlink():
+        try:
+            pointer = dotgit.read_text(encoding="utf-8").strip()
+            if pointer.startswith("gitdir: "):
+                raw_gitdir = Path(pointer[len("gitdir: "):].strip())
+                gitdir = _resolved(
+                    raw_gitdir if raw_gitdir.is_absolute() else code / raw_gitdir
+                )
+                common_file = gitdir / "commondir"
+                if common_file.is_file():
+                    raw_common = Path(common_file.read_text(encoding="utf-8").strip())
+                    common = _resolved(
+                        raw_common if raw_common.is_absolute() else gitdir / raw_common
+                    )
+                    if common.name == ".git" and common.is_dir():
+                        return common.parent
+        except (OSError, UnicodeError, ValueError):
+            pass  # Unfamiliar layout: fall back to Git's authoritative answer.
     try:
         proc = subprocess.run(
             [

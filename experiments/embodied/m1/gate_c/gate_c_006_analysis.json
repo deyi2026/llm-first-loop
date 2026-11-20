@@ -1,0 +1,24 @@
+{
+  "candidate_sha": "8f629e1a6190b5d45a0a65cb2505ecc0cd2e3225",
+  "diagnosis": "Model repeated a move_to target already marked done; no grasp or release attempted. Provider returned HTTP200 for all six decisions. Mechanism-only offline reproduction of first two moves plus explicit grasp formed real contact and weld, but is NOT a model-autonomous result.",
+  "file_sha256": {
+    "episode_glm_006.json": "532a1d8aaa0fe80331aa4ac8138d7800338f8a75a201c4671d230e6dbe2a66db",
+    "episode_stdout_006.txt": "6ea2f0edc3a6d1b8ad3214c873f945ca3ac5bb5798cc177930421df675122687"
+  },
+  "generated_at_utc": "2026-11-19T07:17:51.234948+00:00",
+  "goal": "GOAL-20261119-9887ca71",
+  "host_trusted_signer": "NOT_INSTALLED",
+  "lane": "lane-66faa2db",
+  "learning": "off",
+  "local_placement_success": false,
+  "model_used": "glm/glm-5.3-flash",
+  "next_minimal_fix": "Add observation-derived grasp_attempt_ready hint and reject redundant same-target move_to with fresh intent_key after prior done, with model-visible reason. Preserve fail-closed Oracle PENDING_ORACLE.",
+  "oracle_independent_verified": false,
+  "provider_attempts": 6,
+  "release_state": "not_pushed_not_merged_not_deployed",
+  "repeated_identical_target_after_first_approach": 5,
+  "repeated_target_after_second_move": 4,
+  "schema": "lfl.embodied.m1-gate-c-episode-006-analysis/v1",
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 6
+}

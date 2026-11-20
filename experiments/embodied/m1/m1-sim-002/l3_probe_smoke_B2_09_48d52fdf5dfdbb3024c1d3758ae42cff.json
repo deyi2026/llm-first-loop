@@ -1,0 +1,221 @@
+{
+  "elapsed_s": 128.221,
+  "experiment_id": "M1-SIM-002",
+  "host_claims": {
+    "grasp": {
+      "action_seq": 6,
+      "claim_kind": "grasp",
+      "nonce": "be85fb7a70ce4c78f7cf370ee2b6a013",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 6,
+        "claim_kind": "grasp",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 0.02252978699532733,
+          "cube_z": 0.07676539981775793,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "oracle_settle_steps": 30,
+          "weld_active": true
+        },
+        "experiment_id": "M1-SIM-002",
+        "nonce": "be85fb7a70ce4c78f7cf370ee2b6a013",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "48d52fdf5dfdbb3024c1d3758ae42cff",
+        "scene_epoch": 1,
+        "signature": "d12725236d923c0fed82cd171ff93a4ff91c4db248d0f1027611c8d5116a1cbe46953a81afbc4a9424efbbac2c93ce64df0452fb52f5fc66cd503d0426d3b00d",
+        "snapshot_hash": "40d9aa5a1bee20ed18fbd937b003e1ed941b8140b33773d7facc762949cd53b7",
+        "trial": {
+          "arm": "B2",
+          "phase": "smoke",
+          "seed": 9,
+          "trial_index": 9
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "690d89fc002c9f97e5870aece1f692e1842a0c4b4705564bb3acc7ae012385a5",
+      "status": "VERIFIED_BY_ORACLE"
+    }
+  },
+  "l3_diagnostic": {
+    "assessment": "L3_B2_RECOVERY_HOLD",
+    "diagnostic_only": true,
+    "model_decisions_after_fault": true,
+    "not_a_frozen_paired_trial": true,
+    "provider_attempts_including_scripted_decision": 6,
+    "real_model_calls": 4,
+    "scripted_decisions_counted_in_budget": 1,
+    "scripted_first_decision": "grasp without initial move_to"
+  },
+  "learning": "off",
+  "managed_recoveries": 1,
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
+  "provider_attempts": 6,
+  "provider_calls_bounded": [
+    {
+      "finish_reason": "stop",
+      "latency_ms": 7180.5,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 7928.2,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 7172.0,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 42026.3,
+      "status": 200
+    }
+  ],
+  "replans": 1,
+  "stop_receipts": {},
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 6,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "l3-diagnostic-fault",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 1,
+      "status": {
+        "action_id": "act-000001",
+        "last_err_m": 6.924925960739847e-05,
+        "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+        "skill": "grasp",
+        "state": "failed",
+        "steps": 200
+      },
+      "t_s": 0.541
+    },
+    {
+      "event": "grasp_failed",
+      "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+      "seq": 1
+    },
+    {
+      "event": "managed_grasp_recovery_release",
+      "seq": 2,
+      "status": {
+        "action_id": "act-000002",
+        "last_err_m": 0.003012344953394397,
+        "reason": null,
+        "skill": "release",
+        "state": "done",
+        "steps": 94
+      }
+    },
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.1776,
+          "y": 0.0007,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 3,
+      "status": {
+        "action_id": "act-000003",
+        "last_err_m": 0.013194830017389504,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 150
+      },
+      "t_s": 8.471
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.1776,
+          "y": 0.0007,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 4,
+      "status": {
+        "action_id": "act-000004",
+        "last_err_m": 0.013265661995541822,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 87
+      },
+      "t_s": 16.779
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 5,
+      "status": {
+        "action_id": "act-000005",
+        "last_err_m": 0.0044533993873806035,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 82
+      },
+      "t_s": 24.439
+    },
+    {
+      "attempts": 5,
+      "error": "ReadTimeout",
+      "event": "provider_retry"
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.0,
+          "y": 0.18,
+          "z": 0.09
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 6,
+      "status": {
+        "action_id": "act-000006",
+        "last_err_m": 0.01304764198810807,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 600
+      },
+      "t_s": 127.316
+    },
+    {
+      "event": "grasp_host_verified",
+      "seq": 6
+    }
+  ],
+  "trial": {
+    "arm": "B2",
+    "phase": "smoke",
+    "seed": 9,
+    "trial_index": 9
+  }
+}

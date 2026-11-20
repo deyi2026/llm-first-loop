@@ -1,0 +1,232 @@
+{
+  "elapsed_s": 60.029,
+  "experiment_id": "M1-SIM-002",
+  "host_claims": {
+    "grasp": {
+      "action_seq": 4,
+      "claim_kind": "grasp",
+      "nonce": "76d7a6b275e4c6a6e77491e1578217bd",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 4,
+        "claim_kind": "grasp",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 0.0224073534544924,
+          "cube_z": 0.07696881480184005,
+          "fingertips_contacting": true,
+          "grasp_mechanism": "contact_confirmed_weld",
+          "lifted": true,
+          "oracle_settle_steps": 30,
+          "weld_active": true
+        },
+        "experiment_id": "M1-SIM-002",
+        "nonce": "76d7a6b275e4c6a6e77491e1578217bd",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "d807fc63228179f2cf55abc112ada743",
+        "scene_epoch": 1,
+        "signature": "7ef7b024956faebc85c9a667cdd18c13c7a5549b7ccffe49235968e7f2758c3a0f2e5239e02b070585f8e66dafad9a4e59b7610239f3e62b1291d6eb3c945a0c",
+        "snapshot_hash": "457d68247bf7b702695014462a93ba65ba511eab879a54466bde534ae2847639",
+        "trial": {
+          "arm": "B1",
+          "phase": "smoke",
+          "seed": 8,
+          "trial_index": 8
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "b677bd6b3fe434123f889082e542abaf4b5d022c5d5eeed716b14046466dcccf",
+      "status": "VERIFIED_BY_ORACLE"
+    },
+    "place": {
+      "action_seq": 5,
+      "claim_kind": "place",
+      "nonce": "ffa008e5194b5d3eb90d6b4eff0534b6",
+      "scene_epoch": 1,
+      "signed_receipt": {
+        "action_seq": 5,
+        "claim_kind": "place",
+        "daemon_public_key": "b27e93d599dfc2f6b4bbf2b2823c2c097e5dd0d9c933b0e2792ee292455d24d8",
+        "evidence": {
+          "cube_speed": 3.778564288863267e-07,
+          "cube_z": 0.03989223424489064,
+          "height_ok": true,
+          "inside_tray_xy": true,
+          "oracle_settle_steps": 150,
+          "released": true,
+          "tray_contact": true
+        },
+        "experiment_id": "M1-SIM-002",
+        "nonce": "ffa008e5194b5d3eb90d6b4eff0534b6",
+        "oracle_execution": "host_uid463_managed",
+        "oracle_impl": "embodied-m1-oracle-daemon-v0",
+        "run_id": "d807fc63228179f2cf55abc112ada743",
+        "scene_epoch": 1,
+        "signature": "be31c702578d95ee13580d743a699f9717474845fffd67c723ef71a40edf845f1684b82cb21558e05bb2deb358981eb9d87f97687caa5aa2a71ac04062936c06",
+        "snapshot_hash": "5be5c044187bf0a3df4efd64e5119598aa24b3d1ac653d7529f3a5f587b2c539",
+        "trial": {
+          "arm": "B1",
+          "phase": "smoke",
+          "seed": 8,
+          "trial_index": 8
+        },
+        "uid": 463,
+        "verdict": "success"
+      },
+      "signed_receipt_sha256": "069d1151e6890fd71628e392d669ef62b6a3f6bc4395d9939864f1ed6c67f897",
+      "status": "VERIFIED_BY_ORACLE"
+    }
+  },
+  "learning": "off",
+  "managed_recoveries": 0,
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_binding": "UID463 Host-owned runtime queue (unsigned actions); signed claims Host-verified",
+  "provider_attempts": 5,
+  "provider_calls_bounded": [
+    {
+      "finish_reason": "stop",
+      "latency_ms": 5245.2,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 5727.7,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 5136.3,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 14475.9,
+      "status": 200
+    },
+    {
+      "finish_reason": "stop",
+      "latency_ms": 24933.9,
+      "status": 200
+    }
+  ],
+  "replans": 0,
+  "stop_receipts": {},
+  "terminated_by": "place_host_verified",
+  "tool_actions": 5,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.1748,
+          "y": -0.004,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 1,
+      "status": {
+        "action_id": "act-000001",
+        "last_err_m": 0.013030912959782781,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 151
+      },
+      "t_s": 5.614
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.1748,
+          "y": -0.004,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 2,
+      "status": {
+        "action_id": "act-000002",
+        "last_err_m": 0.013306586101786583,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 87
+      },
+      "t_s": 11.775
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "seq": 3,
+      "status": {
+        "action_id": "act-000003",
+        "last_err_m": 0.0049600361936920495,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 77
+      },
+      "t_s": 17.506
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.0,
+          "y": 0.18,
+          "z": 0.09
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "seq": 4,
+      "status": {
+        "action_id": "act-000004",
+        "last_err_m": 0.013041625930994468,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 604
+      },
+      "t_s": 32.681
+    },
+    {
+      "event": "grasp_host_verified",
+      "seq": 4
+    },
+    {
+      "decision": {
+        "intent_key": "k5",
+        "params": {},
+        "skill": "release"
+      },
+      "event": "tool_action",
+      "seq": 5,
+      "status": {
+        "action_id": "act-000005",
+        "last_err_m": 0.0030914962361519786,
+        "reason": null,
+        "skill": "release",
+        "state": "done",
+        "steps": 90
+      },
+      "t_s": 59.064
+    }
+  ],
+  "trial": {
+    "arm": "B1",
+    "phase": "smoke",
+    "seed": 8,
+    "trial_index": 8
+  }
+}

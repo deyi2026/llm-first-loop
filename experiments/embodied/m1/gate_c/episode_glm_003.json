@@ -1,0 +1,225 @@
+{
+  "budget": {
+    "deadline_s": 180.0,
+    "max_provider_attempts": 6,
+    "max_tool_actions": 8
+  },
+  "elapsed_s": 123.288,
+  "elapsed_wall_s": 123.322,
+  "experiment_id": "M1-SIM-001",
+  "learning": "off",
+  "local_verdict": {
+    "evidence": {
+      "cube_speed": 0.05921617313916495,
+      "cube_z": 0.02363373747656856,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "ok": false
+  },
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_channel_hold": {
+    "independent_verification": "PENDING_ORACLE",
+    "reason": "uid 463 (_lfl_oracle) exists but non-interactive sudo requires a password; no cross-UID oracle execution without formal Host authorization. Worker entrypoint ready: python -m llm_loop.embodied_sim.oracle_worker.",
+    "status": "HOLD"
+  },
+  "oracle_execution": "in_process_pending_host_uid",
+  "oracle_receipt": {
+    "claim_kind": "place",
+    "evidence": {
+      "cube_speed": 0.05921617313916495,
+      "cube_z": 0.02363373747656856,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "experiment_id": "M1-SIM-001",
+    "oracle_execution": "in_process_pending_host_uid",
+    "oracle_impl": "embodied-m1-oracle-local-v0",
+    "scene_epoch": 1,
+    "snapshot_sha256": "9bda53b042539dbfc4d5ad46001621fb2e93cef02baa1dfd97459fbb773f7890",
+    "verdict": "failure"
+  },
+  "provider_attempts": 6,
+  "provider_calls": [
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.10}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 7523.1,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.02}, \"intent_key\": \"k2\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 4250.0,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.1624, \"y\": 0.001, \"z\": 0.06}, \"intent_key\": \"k3\"}",
+      "content_len": 88,
+      "finish_reason": "stop",
+      "latency_ms": 13969.0,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.1494, \"y\": 0.001, \"z\": 0.025}, \"intent_key\": \"k4\"}",
+      "content_len": 89,
+      "finish_reason": "stop",
+      "latency_ms": 39153.6,
+      "status": 200
+    },
+    {
+      "content_head": "",
+      "content_len": 0,
+      "finish_reason": "length",
+      "latency_ms": 39833.4,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.1358, \"y\": 0.0011, \"z\": 0.06}, \"intent_key\": \"k5\"}",
+      "content_len": 89,
+      "finish_reason": "stop",
+      "latency_ms": 18499.0,
+      "status": 200
+    }
+  ],
+  "replans": 1,
+  "status": "ok",
+  "stop_receipts": {},
+  "t_stop_provenance": {
+    "backfill_for": "M0 P2 prereg gap; old prereg untouched (frozen sha 56f79674...)",
+    "request_confirm_ms": 0.031,
+    "settle_ms": 1222.0,
+    "settle_steps": 611,
+    "source": "gate_c measured (m1_gate_c_episode.py), timestep=2ms",
+    "stop_confirmation": {
+      "state": "confirmed",
+      "stop_id": "stop-000001"
+    },
+    "stop_request": {
+      "reason": "t_stop provenance measurement",
+      "state": "requested",
+      "stop_id": "stop-000001"
+    },
+    "t_stop_max_ms": 1222.0
+  },
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 5,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.1
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000001",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013186574664579693,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 149
+      },
+      "t_s": 7.528
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.02
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000002",
+        "grasp_mechanism": null,
+        "last_err_m": 0.023168249000109963,
+        "reason": "timeout after 600 physics steps (last_err_m=0.023168249000109963)",
+        "skill": "move_to",
+        "state": "failed",
+        "steps": 600
+      },
+      "t_s": 11.81
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {
+          "x": 0.1624,
+          "y": 0.001,
+          "z": 0.06
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000003",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013188763026239473,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 69
+      },
+      "t_s": 25.782
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.1494,
+          "y": 0.001,
+          "z": 0.025
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000004",
+        "grasp_mechanism": null,
+        "last_err_m": 0.02045724153857344,
+        "reason": "timeout after 600 physics steps (last_err_m=0.02045724153857344)",
+        "skill": "move_to",
+        "state": "failed",
+        "steps": 600
+      },
+      "t_s": 64.952
+    },
+    {
+      "attempts": 5,
+      "event": "decision_invalid"
+    },
+    {
+      "decision": {
+        "intent_key": "k5",
+        "params": {
+          "x": 0.1358,
+          "y": 0.0011,
+          "z": 0.06
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000005",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013265665438644634,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 62
+      },
+      "t_s": 123.287
+    }
+  ]
+}
