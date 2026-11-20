@@ -1,0 +1,82 @@
+{
+  "all_local_geometry_verdicts": "PENDING_ORACLE (in-process only, never VERIFIED_BY_ORACLE)",
+  "authorization_note": "second controlled real-GLM episode pending coordinator approval (first allocation consumed by 004)",
+  "base_head": "5ca2e590c5c24ac8eb61dfb0cce19e5610d57e75",
+  "budget_contract": "max_provider_attempts=6, max_tool_actions=8, deadline=180s, learning=off (prereg M1-SIM-001)",
+  "episodes_honest_record": {
+    "001": {
+      "provider_calls": 6,
+      "result": "FAIL: content empty/truncated (max_tokens 300 too small for thinking model)",
+      "tool_actions": 0
+    },
+    "002": {
+      "provider_calls": 6,
+      "result": "FAIL: model reused intent_key k1, idempotency contract rejected duplicates",
+      "tool_actions": 1
+    },
+    "003": {
+      "provider_calls": 6,
+      "result": "FAIL: budget exhausted chasing pushed cube; real autonomy shown (x tracking), no grasp",
+      "tool_actions": 5
+    },
+    "004": {
+      "provider_calls": 6,
+      "result": "FAIL: descent to cube_z pushed cube via wrist_rod geometry; model followed pre_grasp_hint exactly",
+      "tool_actions": 6
+    }
+  },
+  "file_sha256": {
+    "experiments/embodied/m1/gate_c/episode_glm_001.json": "15d3e740503919759260bc160c734881d668d352210c79d2781104a4499b1a08",
+    "experiments/embodied/m1/gate_c/episode_glm_002.json": "f3042a7315aa48a89ef7d0af65d185a75ada4d44db215ac61dc3f021df986f1b",
+    "experiments/embodied/m1/gate_c/episode_glm_003.json": "6f9ca24bda44b13a604cee85cf28486427d6abe98711161673f5f0994eec6f16",
+    "experiments/embodied/m1/gate_c/episode_glm_004.json": "6a196df4a2380476d497b51c7ae7dd9d10c1a6cd9c643bdfec9e8a65bbbccbc7",
+    "experiments/embodied/prereg-m1-sim-001.json": "56f796748e31f7d42d41061d8c458ee7ce87e962f0f12f7244d31c3b5ea2705f",
+    "scripts/embodied/m1_gate_a_probe.py": "87531c7ee4dc74140a761ce7c4f4ca9c6c09fed6754eca737d97dee25239e84c",
+    "scripts/embodied/m1_gate_b_e2e.py": "de5c8315f18230904953baf810308cc143adca7acc7655cd8eb4bfd859fb169f",
+    "scripts/embodied/m1_gate_c_episode.py": "cd2566006ca9f3ea3c4a674bb9b5b7a4c3fe2683ee0ae4284b393979331f2be1",
+    "scripts/embodied/m1_weld_probe.py": "359ca364db85e251a0e39d83788a3f566b6789bbb74b1b80b952036ad8377470",
+    "src/llm_loop/embodied_sim/__init__.py": "8e8a9507925513c11471283aaaf104e30de6eeae1f528b1867cbbe05d40807a9",
+    "src/llm_loop/embodied_sim/contract.py": "51232f770873ec4fe387a7f536b6d8f7ce8ae8940b9bfb22fc38a579f6629d5d",
+    "src/llm_loop/embodied_sim/episode.py": "0a70777e0bfeb05cf7e537599b395e3af281204cd10d7ab44e92304311e378fd",
+    "src/llm_loop/embodied_sim/oracle.py": "861ae368c807d59d90fcfdb627afb0b1c767d5e08fe2c3e0d52da4ce4c780cd4",
+    "src/llm_loop/embodied_sim/oracle_worker.py": "08df6d7e26fa1cc5c1185ee546cc53ddf46a520ef420ebea87ad017fa54ba189",
+    "src/llm_loop/embodied_sim/policy.py": "6f8fc418960bec7c388b74e564b9b318fc832234e7e346297e128208e7eeb3f0",
+    "src/llm_loop/embodied_sim/scene.py": "e7609f1be888f8932393e553fa7ef945f4a1d2aee9ef8865741566c9d629d02b",
+    "src/llm_loop/embodied_sim/sim.py": "6288a4fc446b9bb615a79233352248c76484b1b96d21283b4066abe2bd603bde",
+    "src/llm_loop/embodied_sim/skills.py": "d7942f7346ea16e70f28d906fef2cc39ed19e5d32c056f1dcd6fb135da66c37e",
+    "tests/embodied_m1/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/embodied_m1/conftest.py": "d3fcf5967d190a1f82ab123c198694dc3b4ae0866936fafce7a38fe5a13f5bf2",
+    "tests/embodied_m1/test_contract.py": "0825adf6f79c492f6f7d90a7bd1131a041528070e1d3d813bcee69d311c03d1a",
+    "tests/embodied_m1/test_gate_b_e2e.py": "9694572a6127ee7ceda8bfbe92c439da2759ca874a7c55cf9368dbfe2a347053",
+    "tests/embodied_m1/test_gate_c_negative.py": "59f0bab4ada822ecc5ad5b48a52976cff0d19db131a7a3435d366a48af580f57",
+    "tests/embodied_m1/test_no_external_entries.py": "8b9447548e547cc4ff1716e8f1ed7c7a1a83c7676424b19fb24318ed44e96710",
+    "tests/embodied_m1/test_scene_physics.py": "67812897d505ab2a87a433327f3ad5260713a87afc73aa4b52180ce01ada3f11"
+  },
+  "generated_at": "2026-11-19T09:17:31+0800",
+  "goal": "GOAL-20261119-9887ca71",
+  "lane": "lane-66faa2db (head aligned 5ca2e590c5c2, v4)",
+  "oracle_channel": {
+    "detail": "uid 463 (_lfl_oracle) exists (Host read-only check); sudo -n -u requires password (exit1). Worker entrypoint python -m llm_loop.embodied_sim.oracle_worker ready (stdin snapshot -> stdout receipt, no network/fs/env). Receipts stay PENDING_ORACLE; host_acceptance block only via managed channel.",
+    "status": "HOLD"
+  },
+  "real_model": "glm/glm-5.3-flash (model_used from LFL ProviderRegistry.resolve)",
+  "receipt": "m1-gate-c-partial",
+  "root_causes_found_and_fixed": [
+    "001: max_tokens 300->2000 (thinking model headroom)",
+    "002: prompt now mandates incrementing intent_key",
+    "003: history injection (actions_so_far) so stateless completion sees used keys",
+    "004: wrist_rod geometry (Gate B defect) shortened/raised/re-thinned 0.14->0.18 r=0.004; descent-depth teaching z=cube_z+0.012 NEVER below +0.010; verified: two-stage approach (pre_grasp then short descent) is safe, one-shot deep IK sweep is not"
+  ],
+  "static_qa": {
+    "pyright": "0 errors",
+    "pytest": "33 passed exit0",
+    "ruff": "0 errors"
+  },
+  "status": "PARTIAL_HOLD",
+  "stub_regression_after_fixes": "place_verified_locally_pending_oracle, local ok=true (deterministic stub, mechanism-only)",
+  "t_stop_max_ms_provenance": {
+    "backfill_for": "M0 P2 prereg gap; frozen prereg sha 56f796748e31f7d42d41061d8c458ee7ce87e962f0f12f7244d31c3b5ea2705f untouched",
+    "source": "gate_c measured (m1_gate_c_episode.py measure_t_stop): request->confirm wall time + physics settle steps (562x2ms)",
+    "value_ms": 1222.0
+  }
+}

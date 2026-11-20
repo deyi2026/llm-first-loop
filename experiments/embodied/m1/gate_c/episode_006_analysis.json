@@ -1,0 +1,29 @@
+{
+  "episode": "episode_glm_006",
+  "model_used": "glm/glm-5.3-flash",
+  "budget": {"provider_attempts": 6, "tool_actions": 6, "deadline_s": 180, "learning": "off"},
+  "measured": {"attempts": 6, "tool_actions": 6, "replans": 0, "elapsed_s": 120.1,
+               "terminated_by": "provider_attempt_budget_exhausted"},
+  "three_state_truth": {
+    "local_physics_success": false,
+    "independent_oracle": "PENDING_ORACLE (in_process_pending_host_uid; uid463 worker installed but trusted signer absent)",
+    "trusted_host_attestation": "NOT_AVAILABLE (signer not installed)"
+  },
+  "decision_pattern": "k1 approach z=0.0899; k2..k6 identical down-press z=0.0319; never issued grasp/release",
+  "residual_convergence": "13.3 -> 13.0 -> 5.7 -> 4.2 -> 3.5 -> 3.2 mm across repeated identical targets",
+  "diff_vs_previous": {
+    "ep003": "model chased a pushed cube (x corrections) - active but scattered",
+    "ep006": "model locked into repeating one down-press target - passive stall; feedback hints visible but not acted on"
+  },
+  "root_hypotheses": [
+    "no actionable switching rule: model not told WHEN to grasp (aligned+close => grasp immediately)",
+    "no repeat-target penalty visible in feedback; model cannot see it is wasting budget",
+    "6-attempt prereg budget fits a 5-action nominal plan with zero retries; any extra down-press exhausts it"
+  ],
+  "minimal_fix_recommendations_for_host": [
+    "policy prompt: add explicit switching rule (when grasp-feasible flag true => next action MUST be grasp; never repeat an identical move_to target)",
+    "episode runner: mark repeated identical decisions in feedback as wasted_action=true (contract-safe, no budget change)",
+    "defer budget changes to a separate prereg amendment (new experiment_id); do not touch the frozen 6"
+  ],
+  "exit_code_note": "script exit0 only means the harness ran; placement did NOT succeed (local_verdict.ok=false)"
+}

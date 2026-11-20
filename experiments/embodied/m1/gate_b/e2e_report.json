@@ -1,0 +1,165 @@
+{
+  "elapsed_s": 0.08,
+  "l3_recovery": {
+    "approach_empty": {
+      "action_id": "act-000001",
+      "grasp_mechanism": null,
+      "last_err_m": 0.013023189618978174,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 390
+    },
+    "grasp_empty": {
+      "action_id": "act-000002",
+      "grasp_mechanism": null,
+      "last_err_m": 0.0006999287137897381,
+      "reason": "closure timed out without sustained fingertip-cube contact; weld not activated",
+      "skill": "grasp",
+      "state": "failed",
+      "steps": 200
+    },
+    "oracle_grasp_after_recovery": {
+      "evidence": {
+        "cube_speed": 0.034917093551489274,
+        "cube_z": 0.11802652046761937,
+        "fingertips_contacting": true,
+        "grasp_mechanism": "contact_confirmed_weld",
+        "lifted": true,
+        "weld_active": true
+      },
+      "ok": true
+    },
+    "re_approach_above": {
+      "action_id": "act-000004",
+      "grasp_mechanism": null,
+      "last_err_m": 0.013027757736732006,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 329
+    },
+    "re_approach_down": {
+      "action_id": "act-000005",
+      "grasp_mechanism": null,
+      "last_err_m": 0.013000182912207604,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 294
+    },
+    "re_grasp": {
+      "action_id": "act-000006",
+      "grasp_mechanism": "contact_confirmed_weld",
+      "last_err_m": 0.011195221682321569,
+      "reason": null,
+      "skill": "grasp",
+      "state": "done",
+      "steps": 54
+    },
+    "re_lift": {
+      "action_id": "act-000007",
+      "grasp_mechanism": null,
+      "last_err_m": 0.0131760249730727,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 113
+    },
+    "release": {
+      "action_id": "act-000003",
+      "grasp_mechanism": null,
+      "last_err_m": 0.003064001974738817,
+      "reason": null,
+      "skill": "release",
+      "state": "done",
+      "steps": 93
+    },
+    "weld_after_failed_grasp": false
+  },
+  "ledger_reconcile": {
+    "chain_ok": true,
+    "records": 0
+  },
+  "mechanism": "contact_confirmed_weld",
+  "oracle_execution": "in_process_pending_host_uid",
+  "oracle_grasp": {
+    "evidence": {
+      "cube_speed": 0.033966360468085224,
+      "cube_z": 0.11693975417453152,
+      "fingertips_contacting": true,
+      "grasp_mechanism": "contact_confirmed_weld",
+      "lifted": true,
+      "weld_active": true
+    },
+    "independent_verification": "PENDING_ORACLE",
+    "local_geometry_ok": true
+  },
+  "oracle_place": {
+    "evidence": {
+      "cube_speed": 3.3811191246767785e-06,
+      "cube_z": 0.039892152818626535,
+      "height_ok": true,
+      "inside_tray_xy": true
+    },
+    "final_cube": [
+      0.0074,
+      0.1738,
+      0.0399
+    ],
+    "ok": true
+  },
+  "probe": "m1-gate-b-e2e",
+  "seed": 7,
+  "started_at": 1795049239.913019,
+  "tool_action_count_l3": 7,
+  "tool_action_count_main": 6,
+  "trace": {
+    "above": {
+      "action_id": "act-000001",
+      "grasp_mechanism": null,
+      "last_err_m": 0.013269982730408345,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 150
+    },
+    "down": {
+      "action_id": "act-000002",
+      "grasp_mechanism": null,
+      "last_err_m": 0.013072772877188036,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 107
+    },
+    "grasp": {
+      "action_id": "act-000003",
+      "grasp_mechanism": "contact_confirmed_weld",
+      "last_err_m": 0.00441172738348878,
+      "reason": null,
+      "skill": "grasp",
+      "state": "done",
+      "steps": 81
+    },
+    "release": {
+      "action_id": "act-000006",
+      "grasp_mechanism": null,
+      "last_err_m": 0.0030573742990565186,
+      "reason": null,
+      "skill": "release",
+      "state": "done",
+      "steps": 90
+    },
+    "to_tray": {
+      "action_id": "act-000005",
+      "grasp_mechanism": null,
+      "last_err_m": 0.01300789862014825,
+      "reason": null,
+      "skill": "move_to",
+      "state": "done",
+      "steps": 600
+    }
+  },
+  "weld_lift_max_single_step_m": 9e-06
+}

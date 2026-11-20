@@ -1,0 +1,153 @@
+{
+  "budget": {
+    "deadline_s": 180.0,
+    "max_provider_attempts": 6,
+    "max_tool_actions": 8
+  },
+  "elapsed_s": 63.841,
+  "elapsed_wall_s": 63.874,
+  "experiment_id": "M1-SIM-001",
+  "learning": "off",
+  "local_verdict": {
+    "evidence": {
+      "cube_speed": 2.4789647183971707e-09,
+      "cube_z": 0.019892244511933988,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "ok": false
+  },
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_channel_hold": {
+    "independent_verification": "PENDING_ORACLE",
+    "reason": "uid 463 (_lfl_oracle) exists but non-interactive sudo requires a password; no cross-UID oracle execution without formal Host authorization. Worker entrypoint ready: python -m llm_loop.embodied_sim.oracle_worker.",
+    "status": "HOLD"
+  },
+  "oracle_execution": "in_process_pending_host_uid",
+  "oracle_receipt": {
+    "claim_kind": "place",
+    "evidence": {
+      "cube_speed": 2.4789647183971707e-09,
+      "cube_z": 0.019892244511933988,
+      "height_ok": true,
+      "inside_tray_xy": false
+    },
+    "experiment_id": "M1-SIM-001",
+    "oracle_execution": "in_process_pending_host_uid",
+    "oracle_impl": "embodied-m1-oracle-local-v0",
+    "scene_epoch": 1,
+    "snapshot_sha256": "bf450e3e816637ce18df0a3f86af8d611c954aa79bf2dc74403193fd7e7f9ffe",
+    "verdict": "failure"
+  },
+  "provider_attempts": 6,
+  "provider_calls": [
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.08}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 9320.5,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.08}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 5094.8,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.05}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 4718.7,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.02}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 15082.6,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.02}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 18651.9,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.08}, \"intent_key\": \"k1\"}",
+      "content_len": 87,
+      "finish_reason": "stop",
+      "latency_ms": 10956.0,
+      "status": 200
+    }
+  ],
+  "replans": 0,
+  "status": "ok",
+  "stop_receipts": {},
+  "t_stop_provenance": {
+    "backfill_for": "M0 P2 prereg gap; old prereg untouched (frozen sha 56f79674...)",
+    "request_confirm_ms": 0.073,
+    "settle_ms": 772.0,
+    "settle_steps": 386,
+    "source": "gate_c measured (m1_gate_c_episode.py), timestep=2ms",
+    "stop_confirmation": {
+      "state": "confirmed",
+      "stop_id": "stop-000001"
+    },
+    "stop_request": {
+      "reason": "t_stop provenance measurement",
+      "state": "requested",
+      "stop_id": "stop-000001"
+    },
+    "t_stop_max_ms": 772.1
+  },
+  "terminated_by": "provider_attempt_budget_exhausted",
+  "tool_actions": 1,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.08
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000001",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013196797198403488,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 151
+      },
+      "t_s": 9.336
+    },
+    {
+      "action_id": "act-000001",
+      "event": "duplicate_intent_key"
+    },
+    {
+      "action_id": "act-000001",
+      "event": "duplicate_intent_key"
+    },
+    {
+      "action_id": "act-000001",
+      "event": "duplicate_intent_key"
+    },
+    {
+      "action_id": "act-000001",
+      "event": "duplicate_intent_key"
+    },
+    {
+      "action_id": "act-000001",
+      "event": "duplicate_intent_key"
+    }
+  ]
+}
