@@ -60,6 +60,11 @@ _MUTABLE_FIELDS = (
     "verify_ref",
     "priority",
     "base_main_sha",
+    # EVO-20261120-8fd0fab1：merge review 已闸覆盖声明（[{"paths": [...],
+    # "evidence_child_id": "subagent_..."}]）。CAS 可写、落 lane 账本可审计；
+    # start_review/_attest 共用的 _lane() 会逐条校验宿主审计层 PASS 凭证，
+    # 校验失败 fail-closed 不剔除。
+    "review_covered",
 )
 # close_reason 刻意不在 _MUTABLE_FIELDS：它只能由 close(reason=...) 在进入终态时写，
 # 否则 lane_update 可给非终态 lane 留一个永远解释不了的终止理由。

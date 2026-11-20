@@ -30,7 +30,11 @@ from llm_loop.core.run_context import current_session_id
 from llm_loop.security_guard import has_strong_secret, is_template_name, sensitive_path_reason
 from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
-from llm_loop.tools.review_report import is_placeholder_finding, rejected_receipt
+from llm_loop.tools.review_report import (
+    is_placeholder_finding,
+    persist_report,
+    rejected_receipt,
+)
 
 
 @dataclass(frozen=True)
@@ -5081,6 +5085,15 @@ class HostReviewAdmission:
             }
             if not self._audit(parent, "review_admission_qualified", audit_payload):
                 return {"qualification": "DENIED", "reason": "review_receipt_not_durable"}
+            # EVO-20261120-8fd0fab1：PASS 回执落盘（此前仅 REVISE/UNAVAILABLE
+            # 落 md，data/review_admission/ 缺 PASS 凭证、治理链不可人工复核）。
+            # 纯可读性镜像：durable 权威凭证是上面的审计事件；persist_report
+            # never raises，失败不影响已签发资格。
+            persist_report(
+                child_id, kind=frozen.kind, qualification="PASS",
+                reason="review_verdict_pass", answer=answer,
+                candidate_sha256=frozen.sha,
+            )
             self._records[child_id] = replace(
                 previous, granted=True, state="settled", findings="",
                 reviewer_observed_model=observed_model,

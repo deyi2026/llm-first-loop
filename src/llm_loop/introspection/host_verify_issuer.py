@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,11 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _LANE = re.compile(r"lane-[0-9a-f]{8}\Z")
 _REVIEW_TTL_S = 3600
 _READ_ONLY_TOOLS = ["read_file", "search_files"]
+# EVO-20261120-8fd0fab1：covered-subset 声明规模上限（防滥用；越界 fail-closed）。
+_REVIEW_COVERED_MAX_ENTRIES = 8
+_REVIEW_COVERED_MAX_PATHS = 2000
+# 宿主审计事件（append-only event log）里 PASS 资格的类型名与判定值。
+_AUDIT_PASS_EVENT = "review_admission_qualified"
 
 
 class HostVerifyError(ValueError):
@@ -84,6 +90,96 @@ def _has_git_binary_diff_marker(diff: str) -> bool:
         or (line.startswith("Binary files ") and line.endswith(" differ"))
         for line in diff.splitlines()
     )
+
+
+def _audit_qualified_pass(child_id: str, repo_root: Path) -> datetime | None:
+    """宿主审计层该 child 的 PASS 资格事件时间（EVO-20261120-8fd0fab1）。
+
+    扫描 data/event_logs/*.jsonl（宿主 append-only 审计），命中
+    type=review_admission_qualified 且 payload.child_id 匹配且
+    payload.review_verdict=PASS 的最早事件时间；无命中/读失败/无合法时间戳
+    一律返回 None（fail-closed）。事件行由宿主 event store 写入，AI 不可写。
+    """
+    if not re.fullmatch(r"subagent_[0-9a-f]{8,}", child_id or ""):
+        return None
+    logs_dir = repo_root / "data" / "event_logs"
+    if not logs_dir.is_dir():
+        return None
+    best: datetime | None = None
+    try:
+        for log_file in sorted(logs_dir.glob("*.jsonl")):
+            try:
+                text = log_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if child_id not in line or _AUDIT_PASS_EVENT not in line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if str(record.get("type") or "") != _AUDIT_PASS_EVENT:
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if str(payload.get("child_id") or "") != child_id:
+                    continue
+                if str(payload.get("review_verdict") or "").upper() != "PASS":
+                    continue
+                try:
+                    ev_dt = datetime.fromisoformat(str(record.get("ts") or ""))
+                except ValueError:
+                    continue
+                if best is None or ev_dt < best:
+                    best = ev_dt
+    except OSError:
+        return None
+    return best
+
+
+def _covered_exclude_paths(
+    lane: dict[str, Any], repo_root: Path, worktree: Path, head_sha: str,
+) -> list[str]:
+    """校验 lane["review_covered"] 覆盖声明，返回可剔除路径（fail-closed）。
+
+    每条声明形如 {"paths": [...], "evidence_child_id": "subagent_..."}；
+    证据须为宿主审计层的 review_admission_qualified PASS 事件且事件时间不早
+    于 head 提交时间（该 PASS 覆盖的候选树不早于当前审查对象）。任一校验失败
+    抛 HostVerifyError；无声明返回空清单。声明本身经 lane_update CAS 写入
+    （落 lane 账本、可审计、可追责）；宿主只校验证据存在性与新鲜度，不做
+    路径级逐文件回放（push 闸资格授权的是整树执行面，批次与目录非一一映射）。
+    """
+    covered = lane.get("review_covered") or []
+    if not covered:
+        return []
+    if not isinstance(covered, list) or len(covered) > _REVIEW_COVERED_MAX_ENTRIES:
+        raise HostVerifyError("review_covered_bad_shape")
+    head_ts_raw = _git(worktree, "log", "-1", "--format=%cI", head_sha)
+    try:
+        head_dt = datetime.fromisoformat(head_ts_raw.strip())
+    except ValueError as exc:
+        raise HostVerifyError("review_covered_head_time_unavailable") from exc
+    paths: list[str] = []
+    for item in covered:
+        if not isinstance(item, dict):
+            raise HostVerifyError("review_covered_bad_shape")
+        child_id = str(item.get("evidence_child_id") or "")
+        item_paths = item.get("paths")
+        if (
+            not isinstance(item_paths, list)
+            or not item_paths
+            or len(item_paths) > _REVIEW_COVERED_MAX_PATHS
+        ):
+            raise HostVerifyError("review_covered_bad_shape")
+        ev_dt = _audit_qualified_pass(child_id, repo_root)
+        if ev_dt is None or ev_dt < head_dt:
+            raise HostVerifyError("review_covered_evidence_missing_or_stale")
+        paths.extend(str(p) for p in item_paths if p)
+    if not paths or len(paths) > _REVIEW_COVERED_MAX_PATHS:
+        raise HostVerifyError("review_covered_bad_shape")
+    return sorted(set(paths))
 
 
 def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -175,9 +271,21 @@ class HostVerifyAuthority:
             raise HostVerifyError("lane_diff_empty")
         if any(sensitive_path_reason(name) for name in changed.splitlines()):
             raise HostVerifyError("review_sensitive_path")
+        # EVO-20261120-8fd0fab1：已闸覆盖子集剔除——校验失败 fail-closed。
+        # sensitive 路径检查已在上面全量 changed 上完成，covered 不能豁免它；
+        # 剔除发生在 start_review 与 _attest 共用的本函数内，冻结 diff 摘要
+        # 两处天然一致。
+        excluded = _covered_exclude_paths(lane, Path(self.repo_root), worktree, head)
+        pathspec: list[str] = (
+            ["--", ".", *(f":(exclude){p}" for p in excluded)] if excluded else []
+        )
+        if excluded:
+            changed = _git(worktree, "diff", "--name-only", base, head, *pathspec)
+            if not changed:
+                raise HostVerifyError("review_fully_covered_manual_gate_required")
         # Freeze the exact committed patch, not mutable worktree contents.
         diff = _git(
-            worktree, "diff", "--no-ext-diff", "--no-color", base, head,
+            worktree, "diff", "--no-ext-diff", "--no-color", base, head, *pathspec,
             output_limit=_FROZEN_DIFF_LIMIT,
             too_large_code="review_diff_too_large",
         )

@@ -490,3 +490,142 @@ def test_host_binary_diff_guard_distinguishes_git_metadata_from_source_text(
         assert runner.started["review_isolated"] is True
         assert "+GIT binary patch" in runner.started["task"]
     assert not (audit / "verify_receipts.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# EVO-20261120-8fd0fab1：merge review 已闸覆盖子集（lane.review_covered）
+# ---------------------------------------------------------------------------
+
+
+def _seed_audit_pass(repo: Path, child_id: str, ts: str, verdict: str = "PASS") -> None:
+    log_dir = repo / "data" / "event_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    event = {
+        "event_id": f"ev-{child_id}", "session_id": "owner-session", "seq": 1,
+        "type": "review_admission_qualified", "ts": ts,
+        "payload": {"child_id": child_id, "review_verdict": verdict,
+                    "candidate_sha256": "0" * 64},
+    }
+    with (log_dir / "owner-session.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def _lane_store(audit):
+    from llm_loop.introspection.lane import LaneStore
+    return LaneStore(audit)
+
+
+def test_covered_subset_excluded_from_frozen_diff(host):
+    """合法覆盖声明：声明路径从冻结 diff 剔除，其余增量照常送审。"""
+    authority, runner, _, lane_id, repo, audit = host
+    _wt_paths = [ln[len("worktree "):] for ln in git(repo, "worktree", "list", "--porcelain").splitlines() if ln.startswith("worktree ")]
+    worktree = Path(_wt_paths[1])
+    (worktree / "b.txt").write_text("big\npayload\n", encoding="utf-8")
+    (worktree / "a.txt").write_text("three\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "two files")
+    head = git(worktree, "rev-parse", "HEAD")
+    head_ts = git(worktree, "log", "-1", "--format=%cI", head)
+    child = "subagent_deadbeef001"
+    _seed_audit_pass(repo, child, head_ts)
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"], "evidence_child_id": child}])
+    authority.start_review(lane_id)
+    task = runner.started["task"]
+    assert "changed_files_json" in task
+    assert "b.txt" not in task.split("frozen_diff_sha256=")[0].split(
+        "changed_files_json=")[1]
+    assert "+three" in task and "+big" not in task
+
+
+def test_covered_missing_evidence_fail_closed(host):
+    """证据不存在（审计层无 PASS 事件）→ start_review 拒绝，不剔除。"""
+    authority, runner, _, lane_id, repo, audit = host
+    _wt_paths = [ln[len("worktree "):] for ln in git(repo, "worktree", "list", "--porcelain").splitlines() if ln.startswith("worktree ")]
+    worktree = Path(_wt_paths[1])
+    (worktree / "b.txt").write_text("x\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "touch b")
+    head = git(worktree, "rev-parse", "HEAD")
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"],
+                                  "evidence_child_id": "subagent_nosuch0001"}])
+    with pytest.raises(HostVerifyError, match="review_covered_evidence_missing_or_stale"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
+def test_covered_revise_evidence_fail_closed(host):
+    """审计事件存在但 verdict 非 PASS → 拒绝。"""
+    authority, runner, _, lane_id, repo, audit = host
+    _wt_paths = [ln[len("worktree "):] for ln in git(repo, "worktree", "list", "--porcelain").splitlines() if ln.startswith("worktree ")]
+    worktree = Path(_wt_paths[1])
+    (worktree / "b.txt").write_text("y\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "touch b again")
+    head = git(worktree, "rev-parse", "HEAD")
+    head_ts = git(worktree, "log", "-1", "--format=%cI", head)
+    _seed_audit_pass(repo, "subagent_deadbeef002", head_ts, verdict="REVISE")
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"],
+                                  "evidence_child_id": "subagent_deadbeef002"}])
+    with pytest.raises(HostVerifyError, match="review_covered_evidence_missing_or_stale"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
+def test_covered_stale_evidence_fail_closed(host):
+    """PASS 事件早于 head 提交 → 覆盖的是更旧候选树，拒绝。"""
+    authority, runner, _, lane_id, repo, audit = host
+    _wt_paths = [ln[len("worktree "):] for ln in git(repo, "worktree", "list", "--porcelain").splitlines() if ln.startswith("worktree ")]
+    worktree = Path(_wt_paths[1])
+    (worktree / "b.txt").write_text("z\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "touch b stale check")
+    head = git(worktree, "rev-parse", "HEAD")
+    _seed_audit_pass(repo, "subagent_deadbeef003", "2001-01-01T00:00:00+00:00")
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"],
+                                  "evidence_child_id": "subagent_deadbeef003"}])
+    with pytest.raises(HostVerifyError, match="review_covered_evidence_missing_or_stale"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
+def test_covered_fully_covered_requires_manual_gate(host):
+    """全部路径被覆盖（无剩余增量）→ fail-closed 提示人工通道。"""
+    authority, runner, _, lane_id, repo, audit = host
+    _wt_paths = [ln[len("worktree "):] for ln in git(repo, "worktree", "list", "--porcelain").splitlines() if ln.startswith("worktree ")]
+    worktree = Path(_wt_paths[1])
+    (worktree / "a.txt").write_text("four\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "only covered file")
+    head = git(worktree, "rev-parse", "HEAD")
+    head_ts = git(worktree, "log", "-1", "--format=%cI", head)
+    child = "subagent_deadbeef004"
+    _seed_audit_pass(repo, child, head_ts)
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["a.txt"], "evidence_child_id": child}])
+    with pytest.raises(HostVerifyError, match="review_fully_covered_manual_gate_required"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
+def test_audit_qualified_pass_ignores_non_pass(tmp_path):
+    """单元：_audit_qualified_pass 只认 PASS；格式错/无命中 → None。"""
+    from llm_loop.introspection.host_verify_issuer import _audit_qualified_pass
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert _audit_qualified_pass("subagent_deadbeef005", repo) is None
+    _seed_audit_pass(repo, "subagent_deadbeef005", "2026-01-01T00:00:00+00:00",
+                     verdict="REVISE")
+    assert _audit_qualified_pass("subagent_deadbeef005", repo) is None
+    _seed_audit_pass(repo, "subagent_deadbeef005", "2026-01-02T00:00:00+00:00")
+    got = _audit_qualified_pass("subagent_deadbeef005", repo)
+    assert got is not None and got.year == 2026 and got.day == 2
+    assert _audit_qualified_pass("not-a-child-id", repo) is None
