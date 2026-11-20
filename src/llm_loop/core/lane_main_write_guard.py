@@ -242,13 +242,35 @@ def _git_verbs(
         # 行间补 ";" 段边界；每行独立 lex 同时让 # 注释止于行尾（bash 语义，
         # 旧实现单次 lex 会把后续行整体吞进注释）。
         tokens: list[str] = []
+        _adjacent: set[int] = set()  # 与后一 token 在原文紧邻的索引（review a37f665fb944 P1-2）
         for _li, _line in enumerate(_split_logical_lines(text)):
             if _li and tokens:
                 tokens.append(";")
+            _tok_start = len(tokens)
             _lex = shlex.shlex(_line, posix=True, punctuation_chars=True)
             _lex.commenters = "#"  # 词首 # 起注释（行内）；词中 # 截断为已知偏差（见 _resolve_shell_cd）
             _lex.whitespace_split = True
             tokens.extend(_lex)
+            # 邻接感知对齐（P1-2）：shlex 丢弃空白邻接信息，而 bash 里 ``2 >f``
+            # 的 ``2`` 是参数、``2>f`` 才是 fd 重定向 → 逐 token 贪心 find 对齐
+            # 行内原文（token 序与原文一致，find 只会提前命中、错判方向均保守），
+            # span 相接才算紧邻合并候选。
+            _spans: list[int] = []
+            _p = 0
+            for _t in tokens[_tok_start:]:
+                if _t:
+                    _j = _line.find(_t, _p)
+                    if _j >= 0:
+                        _spans.append(_j)
+                        _p = _j + len(_t)
+                        continue
+                _spans.append(-1)
+            for _k in range(len(_spans) - 1):
+                if (
+                    _spans[_k] >= 0
+                    and _spans[_k + 1] == _spans[_k] + len(tokens[_tok_start + _k])
+                ):
+                    _adjacent.add(_tok_start + _k)
     except ValueError:
         # 词法失败（引号不配对等，bash 语法错误本就不执行任何命令）→ 保守哨兵：
         # 按 "" 目标上的 commit 判定（调用方当 main），不盲放行（ecc9877d2e93 P2-3）。
@@ -263,6 +285,7 @@ def _git_verbs(
             _tok.isdigit()
             and _mk + 1 < len(tokens)
             and _FD_REDIRECT_RE.match(tokens[_mk + 1] or "")
+            and _mk in _adjacent  # ``2 >f``（有空格）里 2 是参数，不合并（P1-2）
         ):
             _merged_tok = _tok + tokens[_mk + 1]
             _after = tokens[_mk + 2] if _mk + 2 < len(tokens) else ""
@@ -281,6 +304,7 @@ def _git_verbs(
             and _tok.endswith("&")
             and _mk + 1 < len(tokens)
             and tokens[_mk + 1].isdigit()
+            and _mk in _adjacent  # ``>& 2``（有空格）里 2 是命令参数，不合并（P1-2）
         ):
             # `>&` + `2` 等未带前置数字的 fd 复制形 → 同样并回单 token。
             merged.append(_tok + tokens[_mk + 1])
@@ -331,6 +355,13 @@ def _git_verbs(
             i += 1
             continue
         if tokens[i] == ")":
+            if _case_depth > 0:
+                # case 模式分隔符 `a)`（review subagent_a37f665fb944 P1-1）：
+                # 非子壳闭合——无条件弹栈会把开放子壳内的 cwd 恢复成过期父值
+                # （连 sticky unknown 一并被覆写）→ 只作段分隔，栈/cwd 原样保持。
+                seg_start = True
+                i += 1
+                continue
             shell_cwd = stack.pop() if stack else ""
             if _prev_tok == "(":
                 # `name()` 空参数括号 = 函数定义声明（bash 语法中空 () 仅此一用；
