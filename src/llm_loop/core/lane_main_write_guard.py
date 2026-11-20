@@ -313,6 +313,20 @@ def _git_verbs(
         merged.append(_tok)
         _mk += 1
     tokens = merged
+    # 括号-标点合并拆分（review subagent_8d393977e0ec P0-1 复检发现）：
+    # punctuation_chars 把 `)` 与相邻标点并成 `');'`（同 `2>&1` 合并机制），
+    # 裸 `)` 子壳分支失配 → 栈不弹 → 后续 git 误归属子壳内 cwd（fail-open，
+    # `( cd feat; : ); git commit` 实证）。首括号纯标点 token 拆出 `(`/`)`
+    # 保留栈语义，其余复合（`;;`/`&&` 等）原样保留不破坏既有分支。
+    if any(_tok and _tok[0] in "()" and len(_tok) > 1 and all(_c in "(){};&|<>" for _c in _tok) for _tok in tokens):
+        _expanded: list[str] = []
+        for _tok in tokens:
+            if _tok and _tok[0] in "()" and len(_tok) > 1 and all(_c in "(){};&|<>" for _c in _tok):
+                _expanded.append(_tok[0])
+                _expanded.append(_tok[1:])
+            else:
+                _expanded.append(_tok)
+        tokens = _expanded
     # 引号内命令替换（18c9ecb809a5 P1-3）：`"$( … git … )"` / 反引号整串单
     # token，内部 git 动词不可见而 bash 会真实执行 → 保守哨兵（当 main 判定）。
     # 进程替换（review subagent_c50061b2c402 P0-1）：`<(`/`>(`（含 `2>(` fd 形）
@@ -349,6 +363,15 @@ def _git_verbs(
             i += 1
             continue
         if tokens[i] == "(":
+            if _case_depth > 0:
+                # case 模式可选 `(`（`case $x in (a) …` 合法 bash，review
+                # subagent_8d393977e0ec P0-1）：非子壳开口——push 会造成栈失衡
+                # （pattern `)` 被 case 门控不弹 → 真子壳闭合 `)` 弹到过期条目
+                # 恢复 stale cwd）。case 体内 cd 已被条件体哨兵降级，不 push
+                # 与 `)` 的 case 门控自洽保守。
+                seg_start = True
+                i += 1
+                continue
             stack.append(shell_cwd)
             _func_pending = False  # `f() ( … )` 子壳体形态：后续 `{` 不再是函数体开口
             seg_start = True
@@ -689,7 +712,10 @@ _TRANSPARENT_PREFIX_FLAGS = {
     "builtin": set(),
     "!": set(),
 }
-_CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", "."})
+_CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", ".", "env"})
+# env 含其中（review subagent_8d393977e0ec P1-1）：GNU coreutils `env -C <dir>`
+# （--chdir）会真实改变子进程 cwd——`env -C <main> git commit` 在 workdir=feat
+# 场景旧解析归属 feat（fail-open）。env 整体置未知（保守），与 eval 同级。
 # 条件体状态机词集（review subagent_cd3f526623bf P1-1）：仅命令位生效——
 # `echo then` 的 then 是数据词，命令位判定防止把数据词误当状态迁移。
 # then/do 进入分支体；elif/fi/done 关闭；case/esac 成对计数（case 内任意
@@ -718,6 +744,14 @@ def _strip_here_strings(text: str) -> str:
     while i < n:
         ch = text[i]
         if quote is None and ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if quote == '"' and ch == "\\" and i + 1 < n:
+            # bash 双引号内 `\<char>`：`\"` 不结束字符串（与 _split_logical_lines
+            # 同语义，review subagent_8d393977e0ec P2-3）——统一消费两字符，
+            # 防止 `\"` 提前翻转引号状态导致 here-string 边界误判。
             out.append(ch)
             out.append(text[i + 1])
             i += 2

@@ -1365,10 +1365,18 @@ def test_git_verbs_unbalanced_close_conservative():
 
 
 def test_git_verbs_unquoted_comment_stops_line_like_bash(tmp_path):
-    """未加引号 # 起注释（与 bash 一致）：注释内的 git 不参与判定。"""
+    """未加引号 # 起注释（与 bash 一致）：注释内的 git 不参与判定。
+
+    P2-2（review subagent_8d393977e0ec）：wt 必须真实存在——cd 落点可跟踪时
+    注释截断才被真正验证（旧版 wt 未创建，cd 恒为未知，verbs==[] 恒真，
+    未覆盖具名行为）；对照组证明同一落点下无注释时 commit 可见归属。
+    """
     wt = tmp_path / "wt"
+    wt.mkdir()
     verbs = guard_module._git_verbs(f"cd {wt} # note && git commit -m x", "/tmp/main")
     assert verbs == []
+    control = guard_module._git_verbs(f"cd {wt} && git commit -m x", "/tmp/main")
+    assert control == [("commit", ["-m", "x"], str(wt))]
 
 
 def test_block_paren_subshell_cd_into_main_repo(tmp_path):
@@ -2001,6 +2009,93 @@ def test_block_spaced_fd_redirect_multi_operand_cd(tmp_path):
         workdir=str(repo),
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_case_pattern_paren_no_stack_imbalance(tmp_path):
+    """P0-1（review subagent_8d393977e0ec）：case 模式可选 `(` 不 push 子壳栈。
+
+    bash 真相：``( cd <feat>; case $x in (a) : ;; esac ); git commit`` 的
+    子壳 cd 不影响父壳，commit 真实落调用方 cwd（main）；旧逻辑 pattern
+    `(` push + pattern `)` 不弹 → 子壳闭合 `)` 弹到过期条目恢复 feat →
+    commit 误归属 feat 放行（fail-open）。修复后精确归属 main（拦截）。
+    """
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"( cd {feat}; case $x in (a) : ;; esac ); git commit -m x",
+        str(main_dir),
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_block_case_pattern_paren_stale_restore(tmp_path):
+    """RULE-AI-35 应拦输入：子壳内 case 模式 `)` 栈失衡后落 main 提交 → 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"( cd {feat}; case $x in (a) : ;; esac ); git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_env_chdir_sentinel(tmp_path):
+    """P1-1（review subagent_8d393977e0ec）：`env -C`（--chdir）置未知哨兵。
+
+    bash 真相：``env -C <main> git commit`` 真实落 main 提交；workdir=feat
+    场景旧解析归属 feat 放行（fail-open）→ env 命令位整体置未知（保守）。
+    """
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"env -C {main_dir} git commit -m x", str(feat)
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_block_env_chdir_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：`env -C <main> git commit` 在他人 lane live 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"env -C {repo} git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_git_dir_assign_sentinel_pin(tmp_path):
+    """P1-2 pin（review subagent_8d393977e0ec 报告经实测为已拦截）：赋值链
+    回扫（_git_verbs 内 k 逆扫）对裸 `GIT_DIR=`/`GIT_WORK_TREE=` 赋值生效
+    → target 未知哨兵（当 main 判定）。pin 防后续改动回归。
+    """
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for assign in (f"GIT_DIR={main_dir}/.git", f"GIT_WORK_TREE={main_dir}"):
+        verbs = guard_module._git_verbs(f"{assign} git commit -m x", "/tmp/feat")
+        assert verbs == [("commit", ["-m", "x"], "")], assign
+
+
+def test_strip_here_strings_double_quote_escape():
+    """P2-3（review subagent_8d393977e0ec）：双引号内 `\\"` 不结束字符串。
+
+    `echo "a\\" <<< b"` 的 here-string 算子在引号数据内，不得被剥离；
+    旧逻辑 `\\"` 提前翻转引号状态 → `<<< b` 被误剥（保守方向但语义错）。
+    """
+    out = guard_module._strip_here_strings('echo "a\\" <<< b"')
+    assert "<<<" in out
 
 
 def test_block_cd_option_form_into_main_repo(tmp_path):
