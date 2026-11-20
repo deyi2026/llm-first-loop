@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from llm_loop.tools.review_report import AUDIT_PASS_EVENT
+
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
     current_model_label,
@@ -37,8 +39,9 @@ _READ_ONLY_TOOLS = ["read_file", "search_files"]
 # EVO-20261120-8fd0fab1：covered-subset 声明规模上限（防滥用；越界 fail-closed）。
 _REVIEW_COVERED_MAX_ENTRIES = 8
 _REVIEW_COVERED_MAX_PATHS = 2000
-# 宿主审计事件（append-only event log）里 PASS 资格的类型名与判定值。
-_AUDIT_PASS_EVENT = "review_admission_qualified"
+# 审计扫描上限（P2-2）：只看最新 64 个日志文件、单文件 ≤8MB。
+_AUDIT_SCAN_MAX_FILES = 64
+_AUDIT_SCAN_MAX_FILE_BYTES = 8 * 1024 * 1024
 
 
 class HostVerifyError(ValueError):
@@ -92,51 +95,68 @@ def _has_git_binary_diff_marker(diff: str) -> bool:
     )
 
 
-def _audit_qualified_pass(child_id: str, repo_root: Path) -> datetime | None:
-    """宿主审计层该 child 的 PASS 资格事件时间（EVO-20261120-8fd0fab1）。
+def _audit_qualified_pass(child_id: str, repo_root: Path) -> dict[str, Any] | None:
+    """宿主审计层该 child 的 PASS 资格事件绑定信息（EVO-20261120-8fd0fab1）。
 
-    扫描 data/event_logs/*.jsonl（宿主 append-only 审计），命中
+    扫描 data/event_logs/*.jsonl（宿主 append-only 审计），返回命中
     type=review_admission_qualified 且 payload.child_id 匹配且
-    payload.review_verdict=PASS 的最早事件时间；无命中/读失败/无合法时间戳
-    一律返回 None（fail-closed）。事件行由宿主 event store 写入，AI 不可写。
+    payload.review_verdict=PASS 的最早事件绑定
+    {"ts", "candidate_sha256", "head_commit", "review_scope"}；无命中/读失败/
+    naive 时间戳/超扫描上限一律 None（fail-closed）。事件行由宿主 event store
+    写入，AI 不可写。
     """
     if not re.fullmatch(r"subagent_[0-9a-f]{8,}", child_id or ""):
         return None
     logs_dir = repo_root / "data" / "event_logs"
     if not logs_dir.is_dir():
         return None
-    best: datetime | None = None
     try:
-        for log_file in sorted(logs_dir.glob("*.jsonl")):
-            try:
-                text = log_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for line in text.splitlines():
-                if child_id not in line or _AUDIT_PASS_EVENT not in line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except ValueError:
-                    continue
-                if str(record.get("type") or "") != _AUDIT_PASS_EVENT:
-                    continue
-                payload = record.get("payload")
-                if not isinstance(payload, dict):
-                    continue
-                if str(payload.get("child_id") or "") != child_id:
-                    continue
-                if str(payload.get("review_verdict") or "").upper() != "PASS":
-                    continue
-                try:
-                    ev_dt = datetime.fromisoformat(str(record.get("ts") or ""))
-                except ValueError:
-                    continue
-                if best is None or ev_dt < best:
-                    best = ev_dt
+        scan_list = sorted(
+            logs_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True,
+        )[:_AUDIT_SCAN_MAX_FILES]
     except OSError:
         return None
-    return best
+    best: tuple[datetime, dict[str, Any]] | None = None
+    for log_file in scan_list:
+        try:
+            if log_file.stat().st_size > _AUDIT_SCAN_MAX_FILE_BYTES:
+                continue
+            text = log_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if child_id not in line or AUDIT_PASS_EVENT not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if str(record.get("type") or "") != AUDIT_PASS_EVENT:
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("child_id") or "") != child_id:
+                continue
+            if str(payload.get("review_verdict") or "").upper() != "PASS":
+                continue
+            try:
+                ev_dt = datetime.fromisoformat(str(record.get("ts") or ""))
+            except ValueError:
+                continue
+            if ev_dt.tzinfo is None:
+                continue  # naive 时间戳无法与 head 提交时间比较 → fail-closed
+            if best is None or ev_dt < best[0]:
+                best = (ev_dt, payload)
+    if best is None:
+        return None
+    ev_dt, payload = best
+    return {
+        "ts": ev_dt,
+        "candidate_sha256": str(payload.get("candidate_sha256") or ""),
+        "head_commit": str(payload.get("head_commit") or ""),
+        "review_scope": str(payload.get("review_scope") or ""),
+    }
 
 
 def _covered_exclude_paths(
@@ -144,12 +164,16 @@ def _covered_exclude_paths(
 ) -> list[str]:
     """校验 lane["review_covered"] 覆盖声明，返回可剔除路径（fail-closed）。
 
-    每条声明形如 {"paths": [...], "evidence_child_id": "subagent_..."}；
-    证据须为宿主审计层的 review_admission_qualified PASS 事件且事件时间不早
-    于 head 提交时间（该 PASS 覆盖的候选树不早于当前审查对象）。任一校验失败
-    抛 HostVerifyError；无声明返回空清单。声明本身经 lane_update CAS 写入
-    （落 lane 账本、可审计、可追责）；宿主只校验证据存在性与新鲜度，不做
-    路径级逐文件回放（push 闸资格授权的是整树执行面，批次与目录非一一映射）。
+    每条声明形如 {"paths": [...], "evidence_child_id": "subagent_...",
+    "candidate_sha256": "<64hex>"}。校验链（任一失败即 HostVerifyError，不剔除）：
+    ① 审计层存在该 child 的 PASS 事件（append-only，AI 不可写）；
+    ② 事件 candidate_sha256 == 声明值（声明与真实事件配对）；
+    ③ 事件 head_commit == lane 当前 head_sha（PASS 精确绑定被审树；旧格式
+       事件无 head_commit → 校验失败，不可用作覆盖证据）；
+    ④ 事件 review_scope == "tree"（patch 级 PASS 只覆盖其绑定子集，宿主不做
+       逐文件回放，故只接受整树口径）；
+    ⑤ 事件时间 ≥ head 提交时间（防御纵深）。
+    声明本身经 lane_update CAS 写入（落 lane 账本、可审计、可追责）。
     """
     covered = lane.get("review_covered") or []
     if not covered:
@@ -166,16 +190,24 @@ def _covered_exclude_paths(
         if not isinstance(item, dict):
             raise HostVerifyError("review_covered_bad_shape")
         child_id = str(item.get("evidence_child_id") or "")
+        declared_candidate = str(item.get("candidate_sha256") or "")
         item_paths = item.get("paths")
         if (
             not isinstance(item_paths, list)
             or not item_paths
             or len(item_paths) > _REVIEW_COVERED_MAX_PATHS
+            or not re.fullmatch(r"[0-9a-f]{64}", declared_candidate)
         ):
             raise HostVerifyError("review_covered_bad_shape")
-        ev_dt = _audit_qualified_pass(child_id, repo_root)
-        if ev_dt is None or ev_dt < head_dt:
+        evidence = _audit_qualified_pass(child_id, repo_root)
+        if evidence is None or evidence["ts"] < head_dt:
             raise HostVerifyError("review_covered_evidence_missing_or_stale")
+        if evidence["candidate_sha256"] != declared_candidate:
+            raise HostVerifyError("review_covered_candidate_mismatch")
+        if not evidence["head_commit"] or evidence["head_commit"] != head_sha:
+            raise HostVerifyError("review_covered_tree_mismatch")
+        if evidence["review_scope"] != "tree":
+            raise HostVerifyError("review_covered_scope_not_tree")
         paths.extend(str(p) for p in item_paths if p)
     if not paths or len(paths) > _REVIEW_COVERED_MAX_PATHS:
         raise HostVerifyError("review_covered_bad_shape")

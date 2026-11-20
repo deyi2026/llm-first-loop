@@ -497,17 +497,31 @@ def test_host_binary_diff_guard_distinguishes_git_metadata_from_source_text(
 # ---------------------------------------------------------------------------
 
 
-def _seed_audit_pass(repo: Path, child_id: str, ts: str, verdict: str = "PASS") -> None:
+def _seed_audit_pass(
+    repo: Path, child_id: str, ts: str, verdict: str = "PASS",
+    head_commit: str = "", scope: str = "tree", candidate: str = "0" * 64,
+) -> None:
     log_dir = repo / "data" / "event_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     event = {
         "event_id": f"ev-{child_id}", "session_id": "owner-session", "seq": 1,
         "type": "review_admission_qualified", "ts": ts,
         "payload": {"child_id": child_id, "review_verdict": verdict,
-                    "candidate_sha256": "0" * 64},
+                    "candidate_sha256": candidate, "head_commit": head_commit,
+                    "review_scope": scope},
     }
     with (log_dir / "owner-session.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def _second_worktree(repo) -> Path:
+    """fixture 主仓的第一个 lane worktree（worktree list 第二块）。"""
+    paths = [
+        ln[len("worktree "):]
+        for ln in git(repo, "worktree", "list", "--porcelain").splitlines()
+        if ln.startswith("worktree ")
+    ]
+    return Path(paths[1])
 
 
 def _lane_store(audit):
@@ -527,10 +541,11 @@ def test_covered_subset_excluded_from_frozen_diff(host):
     head = git(worktree, "rev-parse", "HEAD")
     head_ts = git(worktree, "log", "-1", "--format=%cI", head)
     child = "subagent_deadbeef001"
-    _seed_audit_pass(repo, child, head_ts)
+    _seed_audit_pass(repo, child, head_ts, head_commit=head, scope="tree")
     store = _lane_store(audit)
     store.update(lane_id, expected_version=2, head_sha=head,
-                 review_covered=[{"paths": ["b.txt"], "evidence_child_id": child}])
+                 review_covered=[{"paths": ["b.txt"], "evidence_child_id": child,
+                                  "candidate_sha256": "0" * 64}])
     authority.start_review(lane_id)
     task = runner.started["task"]
     assert "changed_files_json" in task
@@ -551,7 +566,8 @@ def test_covered_missing_evidence_fail_closed(host):
     store = _lane_store(audit)
     store.update(lane_id, expected_version=2, head_sha=head,
                  review_covered=[{"paths": ["b.txt"],
-                                  "evidence_child_id": "subagent_nosuch0001"}])
+                                  "evidence_child_id": "subagent_deadbeef9999",
+                                  "candidate_sha256": "0" * 64}])
     with pytest.raises(HostVerifyError, match="review_covered_evidence_missing_or_stale"):
         authority.start_review(lane_id)
     assert runner.started == {}
@@ -571,7 +587,8 @@ def test_covered_revise_evidence_fail_closed(host):
     store = _lane_store(audit)
     store.update(lane_id, expected_version=2, head_sha=head,
                  review_covered=[{"paths": ["b.txt"],
-                                  "evidence_child_id": "subagent_deadbeef002"}])
+                                  "evidence_child_id": "subagent_deadbeef002",
+                                  "candidate_sha256": "0" * 64}])
     with pytest.raises(HostVerifyError, match="review_covered_evidence_missing_or_stale"):
         authority.start_review(lane_id)
     assert runner.started == {}
@@ -590,7 +607,8 @@ def test_covered_stale_evidence_fail_closed(host):
     store = _lane_store(audit)
     store.update(lane_id, expected_version=2, head_sha=head,
                  review_covered=[{"paths": ["b.txt"],
-                                  "evidence_child_id": "subagent_deadbeef003"}])
+                                  "evidence_child_id": "subagent_deadbeef003",
+                                  "candidate_sha256": "0" * 64}])
     with pytest.raises(HostVerifyError, match="review_covered_evidence_missing_or_stale"):
         authority.start_review(lane_id)
     assert runner.started == {}
@@ -607,17 +625,81 @@ def test_covered_fully_covered_requires_manual_gate(host):
     head = git(worktree, "rev-parse", "HEAD")
     head_ts = git(worktree, "log", "-1", "--format=%cI", head)
     child = "subagent_deadbeef004"
-    _seed_audit_pass(repo, child, head_ts)
+    _seed_audit_pass(repo, child, head_ts, head_commit=head, scope="tree")
     store = _lane_store(audit)
     store.update(lane_id, expected_version=2, head_sha=head,
-                 review_covered=[{"paths": ["a.txt"], "evidence_child_id": child}])
+                 review_covered=[{"paths": ["a.txt"], "evidence_child_id": child,
+                                  "candidate_sha256": "0" * 64}])
     with pytest.raises(HostVerifyError, match="review_fully_covered_manual_gate_required"):
         authority.start_review(lane_id)
     assert runner.started == {}
 
 
+def test_covered_tree_mismatch_fail_closed(host):
+    """PASS 事件绑定的是另一棵树（head_commit 不同）→ 拒绝（r26 P1-1）。"""
+    authority, runner, _, lane_id, repo, audit = host
+    worktree = _second_worktree(repo)
+    (worktree / "b.txt").write_text("tree-mismatch\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "tree mismatch check")
+    head = git(worktree, "rev-parse", "HEAD")
+    head_ts = git(worktree, "log", "-1", "--format=%cI", head)
+    _seed_audit_pass(repo, "subagent_deadbeef006", head_ts,
+                     head_commit="f" * 40, scope="tree")
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"],
+                                  "evidence_child_id": "subagent_deadbeef006",
+                                  "candidate_sha256": "0" * 64}])
+    with pytest.raises(HostVerifyError, match="review_covered_tree_mismatch"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
+def test_covered_scope_patch_fail_closed(host):
+    """patch 级 PASS 不可作整树覆盖证据 → 拒绝（r26 P1-1）。"""
+    authority, runner, _, lane_id, repo, audit = host
+    worktree = _second_worktree(repo)
+    (worktree / "b.txt").write_text("scope-patch\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "scope patch check")
+    head = git(worktree, "rev-parse", "HEAD")
+    head_ts = git(worktree, "log", "-1", "--format=%cI", head)
+    _seed_audit_pass(repo, "subagent_deadbeef007", head_ts,
+                     head_commit=head, scope="patch")
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"],
+                                  "evidence_child_id": "subagent_deadbeef007",
+                                  "candidate_sha256": "0" * 64}])
+    with pytest.raises(HostVerifyError, match="review_covered_scope_not_tree"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
+def test_covered_candidate_mismatch_fail_closed(host):
+    """声明 candidate 与事件 payload 不配对 → 拒绝（r26 P1-1）。"""
+    authority, runner, _, lane_id, repo, audit = host
+    worktree = _second_worktree(repo)
+    (worktree / "b.txt").write_text("cand-mismatch\n", encoding="utf-8")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-m", "candidate mismatch check")
+    head = git(worktree, "rev-parse", "HEAD")
+    head_ts = git(worktree, "log", "-1", "--format=%cI", head)
+    _seed_audit_pass(repo, "subagent_deadbeef008", head_ts,
+                     head_commit=head, scope="tree", candidate="a" * 64)
+    store = _lane_store(audit)
+    store.update(lane_id, expected_version=2, head_sha=head,
+                 review_covered=[{"paths": ["b.txt"],
+                                  "evidence_child_id": "subagent_deadbeef008",
+                                  "candidate_sha256": "b" * 64}])
+    with pytest.raises(HostVerifyError, match="review_covered_candidate_mismatch"):
+        authority.start_review(lane_id)
+    assert runner.started == {}
+
+
 def test_audit_qualified_pass_ignores_non_pass(tmp_path):
-    """单元：_audit_qualified_pass 只认 PASS；格式错/无命中 → None。"""
+    """单元：_audit_qualified_pass 只认 PASS；格式错/无命中/naive tz → None。"""
     from llm_loop.introspection.host_verify_issuer import _audit_qualified_pass
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -627,5 +709,8 @@ def test_audit_qualified_pass_ignores_non_pass(tmp_path):
     assert _audit_qualified_pass("subagent_deadbeef005", repo) is None
     _seed_audit_pass(repo, "subagent_deadbeef005", "2026-01-02T00:00:00+00:00")
     got = _audit_qualified_pass("subagent_deadbeef005", repo)
-    assert got is not None and got.year == 2026 and got.day == 2
+    assert got is not None and got["ts"].year == 2026 and got["ts"].day == 2
+    assert got["candidate_sha256"] == "0" * 64
     assert _audit_qualified_pass("not-a-child-id", repo) is None
+    _seed_audit_pass(repo, "subagent_deadbeef006", "2026-01-03T00:00:00")
+    assert _audit_qualified_pass("subagent_deadbeef006", repo) is None  # naive tz

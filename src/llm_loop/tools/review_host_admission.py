@@ -31,6 +31,7 @@ from llm_loop.security_guard import has_strong_secret, is_template_name, sensiti
 from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
 from llm_loop.tools.review_report import (
+    AUDIT_PASS_EVENT,
     is_placeholder_finding,
     persist_report,
     rejected_receipt,
@@ -5082,8 +5083,13 @@ class HostReviewAdmission:
                 "reviewer_model": frozen.reviewer_model,
                 "reviewer_observed_model": observed_model,
                 "policy_digest": self._policy_digest,
+                # EVO-20261120-8fd0fab1：merge review 覆盖声明的树/scope 绑定锚——
+                # head_commit 精确指向被审树（_freeze 时 HEAD），review_scope 声明
+                # 该 PASS 的材料覆盖口径（tree 才可作整树覆盖证据）。
+                "head_commit": frozen.head_commit,
+                "review_scope": frozen.scope,
             }
-            if not self._audit(parent, "review_admission_qualified", audit_payload):
+            if not self._audit(parent, AUDIT_PASS_EVENT, audit_payload):
                 return {"qualification": "DENIED", "reason": "review_receipt_not_durable"}
             # EVO-20261120-8fd0fab1：PASS 回执落盘（此前仅 REVISE/UNAVAILABLE
             # 落 md，data/review_admission/ 缺 PASS 凭证、治理链不可人工复核）。

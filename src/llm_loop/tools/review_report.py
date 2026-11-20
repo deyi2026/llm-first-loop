@@ -53,6 +53,9 @@ _MAX_BODY_CHARS = 200_000
 _KEEP_HEAD_CHARS = 100_000
 _MAX_PER_LEVEL = 8
 _MAX_FINDING_CHARS = 280
+# EVO-20261120-8fd0fab1：PASS 资格审计事件类型名（review_host_admission 签发
+# 与 host_verify_issuer 覆盖声明校验共用同一常量，避免裸串漂移）。
+AUDIT_PASS_EVENT = "review_admission_qualified"
 
 # Reviewer output is prose followed by a three-line machine contract. Findings
 # are matched on their severity label in every shape reviewers actually emit:
