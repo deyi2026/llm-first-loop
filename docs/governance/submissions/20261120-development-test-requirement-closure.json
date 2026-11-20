@@ -1,0 +1,183 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261120-development-test-requirement-closure",
+  "summary": "Declare the 22-path requirement coverage, incremental local dev gate and default-disabled Host authority changes for PR #82. Original full R9 remains mandatory; no Host installation or production activation.",
+  "components": [
+    {
+      "component_id": "goal-requirement-coverage",
+      "paths": [
+        "scripts/check_goal_coverage.py",
+        "src/llm_loop/introspection/goal.py",
+        "src/llm_loop/introspection/goal_coverage.py",
+        "src/llm_loop/introspection/goal_gates.py",
+        "src/llm_loop/introspection/tools_goal.py",
+        "tests/unit/test_goal_coverage.py",
+        "tests/unit/test_goal_requirement_scope_gate.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "LFL Goal/TaskStore introspection and completion gates",
+      "disposition": "Requirement IDs are mapped to TaskStore tasks, tests and verified evidence; Goal completion refuses missing, cancelled, or unverified required coverage rather than silently accepting partial implementation.",
+      "evidence": [
+        "scripts/check_goal_coverage.py",
+        "tests/unit/test_goal_requirement_scope_gate.py"
+      ],
+      "verification_level": "Exact-tree independent Reviewer PASS and original full R9 exit 0 on 21-file predecessor; this 22-file successor requires new independent Reviewer, original full R9, remote PR CI and protected merge checks.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer, original full R9, Host git_push admission and GitHub required checks may veto this successor; no prior SHA qualification is reused. Hold, repair on isolated branch, re-review and retest before any protected merge.",
+      "rollback_route": "Revert this PR through protected GitHub review; Host dev issuer remains default OFF and no OS-level installation or production service change is in this patch.",
+      "declaration_id": "goal-requirement-coverage"
+    },
+    {
+      "component_id": "incremental-dev-gate",
+      "paths": [
+        "scripts/dev_gate.py",
+        "scripts/dev_gate.sh",
+        "scripts/r9_commit.sh",
+        "src/llm_loop/introspection/dev_gate.py",
+        "tests/unit/test_dev_gate.py",
+        "tests/unit/test_dev_commit_flow.py",
+        "tests/unit/test_r9_commit_dev_mode.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "LFL local developer test selection and r9_commit commit gate",
+      "disposition": "An incremental impacted-test gate is restricted to local development; normal r9_commit.sh retains the original complete R9; unknown impact and protected paths fail closed.",
+      "evidence": [
+        "scripts/dev_gate.py",
+        "tests/unit/test_r9_commit_dev_mode.py"
+      ],
+      "verification_level": "Exact-tree independent Reviewer PASS and original full R9 exit 0 on 21-file predecessor; this 22-file successor requires new independent Reviewer, original full R9, remote PR CI and protected merge checks.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer, original full R9, Host git_push admission and GitHub required checks may veto this successor; no prior SHA qualification is reused. Hold, repair on isolated branch, re-review and retest before any protected merge.",
+      "rollback_route": "Revert this PR through protected GitHub review; Host dev issuer remains default OFF and no OS-level installation or production service change is in this patch.",
+      "declaration_id": "incremental-dev-gate"
+    },
+    {
+      "component_id": "host-dev-commit-issuer",
+      "paths": [
+        "scripts/dev_commit_host_authority.py",
+        "tests/unit/test_dev_commit_host_authority.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Independent Host dev-commit authority and one-time grant lifecycle",
+      "disposition": "A separate default-disabled Host authority is required for any --dev local commit; OS-root approval, scoped signing, one-time consume and revocation remain prerequisites; no keys or Host activation installed.",
+      "evidence": [
+        "scripts/dev_commit_host_authority.py",
+        "tests/unit/test_dev_commit_host_authority.py"
+      ],
+      "verification_level": "Exact-tree independent Reviewer PASS and original full R9 exit 0 on 21-file predecessor; this 22-file successor requires new independent Reviewer, original full R9, remote PR CI and protected merge checks.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer, original full R9, Host git_push admission and GitHub required checks may veto this successor; no prior SHA qualification is reused. Hold, repair on isolated branch, re-review and retest before any protected merge.",
+      "rollback_route": "Revert this PR through protected GitHub review; Host dev issuer remains default OFF and no OS-level installation or production service change is in this patch.",
+      "declaration_id": "host-dev-commit-issuer"
+    },
+    {
+      "component_id": "design-and-governance",
+      "paths": [
+        "docs/ai_rules.md",
+        "docs/development_methodology.md",
+        "docs/design/DESIGN-20261120-LFL-development-test-and-requirement-closure-implementation-v1.1.md",
+        "docs/design/DESIGN-20261120-LFL-development-test-and-requirement-closure-v1.0.md",
+        "docs/governance/dev-commit-host-activation.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "LFL design and development governance",
+      "disposition": "Design, implementation traceability, operational guidance and methodology describe the bounded rollout and tests; no new runtime authority from documentation.",
+      "evidence": [
+        "docs/ai_rules.md",
+        "docs/governance/dev-commit-host-activation.md"
+      ],
+      "verification_level": "Exact-tree independent Reviewer PASS and original full R9 exit 0 on 21-file predecessor; this 22-file successor requires new independent Reviewer, original full R9, remote PR CI and protected merge checks.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer, original full R9, Host git_push admission and GitHub required checks may veto this successor; no prior SHA qualification is reused. Hold, repair on isolated branch, re-review and retest before any protected merge.",
+      "rollback_route": "Revert this PR through protected GitHub review; Host dev issuer remains default OFF and no OS-level installation or production service change is in this patch."
+    },
+    {
+      "component_id": "a5-manifest",
+      "paths": [
+        "docs/governance/submissions/20261120-development-test-requirement-closure.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture declaration and exact changed-path coverage gate",
+      "disposition": "One architecture submission manifest declares all changed paths and G1-G4 safety/rollback contracts for remote CI.",
+      "evidence": [
+        "docs/governance/submissions/20261120-development-test-requirement-closure.json"
+      ],
+      "verification_level": "Exact-tree independent Reviewer PASS and original full R9 exit 0 on 21-file predecessor; this 22-file successor requires new independent Reviewer, original full R9, remote PR CI and protected merge checks.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer, original full R9, Host git_push admission and GitHub required checks may veto this successor; no prior SHA qualification is reused. Hold, repair on isolated branch, re-review and retest before any protected merge.",
+      "rollback_route": "Revert this PR through protected GitHub review; Host dev issuer remains default OFF and no OS-level installation or production service change is in this patch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "goal-requirement-coverage",
+      "g1": {
+        "necessity": "Prevent incomplete design requirements from being silently marked done when tasks are cancelled or evidence is missing."
+      },
+      "g2": {
+        "authority_owner": "Existing TaskStore/Goal lifecycle remains the authority; requirement scope gate checks verified requirement coverage before completion.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses existing Goal/TaskStore evidence, task states and completion flow; does not create a second Goal store or bypass the original complete gate."
+      },
+      "g3": {
+        "model_evidence": [
+          "Unit tests cover missing requirements, cancelled required tasks, evidence verification and complete coverage.",
+          "Original full R9 exit 0 on 21-file predecessor commit 162488350; successor must rerun all gates."
+        ],
+        "recovery_or_reason": "If coverage evidence is missing, block completion and restore required task/test evidence; never auto-cancel a required item to close the Goal."
+      },
+      "g4": {
+        "rollback": "Revert the PR through protected GitHub; original Goal evidence and task records remain intact.",
+        "verification": [
+          "Run exact requirement coverage unit tests and A.5 exact-path coverage.",
+          "Independent Reviewer PASS P0/P1=0 on successor, original full R9 exit 0, remote PR CI required checks."
+        ]
+      }
+    },
+    {
+      "declaration_id": "incremental-dev-gate",
+      "g1": {
+        "necessity": "Avoid full-suite reruns during every local development iteration while preserving complete final verification."
+      },
+      "g2": {
+        "authority_owner": "Existing r9_commit.sh and ci_gate.sh retain full-R9 commit and release authority; incremental selection is advisory/locally gated and not a push or merge credential.",
+        "relationship": "reuse",
+        "non_duplication": "No second full-test or release authority; --dev requires explicit Host grant and cannot be used on protected paths or main."
+      },
+      "g3": {
+        "model_evidence": [
+          "Negative tests prove default full R9 remains intact and --dev fails closed without Host activation.",
+          "Incremental selection tests exercise unknown impact, protected paths, environment sanitization and receipt validity."
+        ],
+        "recovery_or_reason": "Unknown impact, unsafe path or missing Host grant blocks --dev; fall back to the unchanged original complete R9 for final acceptance."
+      },
+      "g4": {
+        "rollback": "Revert feature changes; standard r9_commit.sh full R9 remains the only normal commit path.",
+        "verification": [
+          "Ruff, Pyright, focused incremental/commit tests, full original R9 on successor.",
+          "Remote CI and protected merge checks must pass before deployment."
+        ]
+      }
+    },
+    {
+      "declaration_id": "host-dev-commit-issuer",
+      "g1": {
+        "necessity": "A local incremental commit must not be authorized by model-generated JSON, environment flags or a reusable software token."
+      },
+      "g2": {
+        "authority_owner": "Separate OS Host UID462, root-owned approval and configuration, dedicated Ed25519 key and one-time grant ledger; Owner must approve installation and activation separately.",
+        "relationship": "new_authority",
+        "non_duplication": "Separate from premerge, reviewer, Oracle and release signing; authority only permits a scoped local development commit, never git_push/main/CI/release/deployment."
+      },
+      "g3": {
+        "model_evidence": [
+          "Negative tests cover absent activation, fake approvals, signature mismatch, expiry, replay, dirty tree, SHA drift and wrong branch.",
+          "The Host issuer is not installed or activated; test fixtures cannot substitute for OS-level end-to-end proof."
+        ],
+        "recovery_or_reason": "Missing/invalid Host state rejects the dev commit; Owner can revoke activation while retaining append-only issuance and consumption audit records."
+      },
+      "g4": {
+        "rollback": "Do not install or activate Host authority in this PR; future Host rollback requires Owner-approved revocation without deleting keys or audit ledger.",
+        "verification": [
+          "Dedicated issuer negative unit tests, independent reviewer, original full R9 and remote CI.",
+          "Real Host install/activation/E2E requires separate Owner approval and cannot be claimed by this PR."
+        ]
+      }
+    }
+  ]
+}

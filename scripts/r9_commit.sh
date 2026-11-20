@@ -22,7 +22,59 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 source scripts/r9_probe_cleanup.sh
 
-MSG="${1:?用法: bash scripts/r9_commit.sh \"<commit message>\"}"
+# REQ-FLOW-004: no env var can enable --dev. The installed independent Host
+# authority is root-owned, separately activated and one-use; absent => deny.
+DEV_MODE=0
+DEV_GOAL=""
+DEV_REQ=""
+DEV_BASE=""
+DEV_DESIGN=""
+DEV_GRANT=""
+MSG=""
+HOST_DEV_AUTH="/Library/Application Support/LFL-HostIssuer/bin/dev_commit_host_authority.py"
+if [[ "${1:-}" == --dev ]]; then
+  DEV_MODE=1
+  shift
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --goal|--req|--base|--design|--grant-id)
+        [[ "$#" -ge 2 ]] || { echo "[DEV_COMMIT_DISABLED] missing option value" >&2; exit 78; }
+        case "$1" in
+          --goal) DEV_GOAL="$2";;
+          --req) DEV_REQ="$2";;
+          --base) DEV_BASE="$2";;
+          --design) DEV_DESIGN="$2";;
+          --grant-id) DEV_GRANT="$2";;
+        esac
+        shift 2;;
+      --) shift; break;;
+      -*) echo "[DEV_COMMIT_DISABLED] unsupported dev argument: $1" >&2; exit 78;;
+      *) [[ -z "$MSG" ]] || { echo "[DEV_COMMIT_DISABLED] multiple messages" >&2; exit 78; }
+         MSG="$1"; shift;;
+    esac
+  done
+  [[ "$#" -eq 0 && -n "$MSG" && -n "$DEV_GOAL" && -n "$DEV_REQ" &&
+     -n "$DEV_BASE" && -n "$DEV_DESIGN" && -n "$DEV_GRANT" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] incomplete dev request" >&2; exit 78; }
+  [[ "$DEV_DESIGN" == docs/design/*.md && "$DEV_DESIGN" != *..* ]] ||
+    { echo "[DEV_COMMIT_DISABLED] design path invalid" >&2; exit 78; }
+  [[ -f "$HOST_DEV_AUTH" && -x /usr/bin/sudo && -x /usr/bin/python3 ]] ||
+    { echo "[DEV_COMMIT_DISABLED] independent Host authority not installed" >&2; exit 78; }
+  [[ -n "${R9_STAGED_ALLOW:-}" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] R9_STAGED_ALLOW is mandatory" >&2; exit 78; }
+  for _unsafe_git_var in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_NAMESPACE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS BASH_ENV; do
+    [[ -z "${!_unsafe_git_var:-}" ]] ||
+      { echo "[DEV_COMMIT_DISABLED] unsafe Git/shell environment: $_unsafe_git_var" >&2; exit 78; }
+  done
+else
+  for _r9_arg in "$@"; do
+    if [[ "$_r9_arg" == --dev || "$_r9_arg" == --dev=* ]]; then
+      echo "[DEV_COMMIT_DISABLED] dev mode must be explicit and Host-authorized" >&2
+      exit 78
+    fi
+  done
+  MSG="${1:?用法: bash scripts/r9_commit.sh \"<commit message>\"}"
+fi
 
 # 暂存区须非空（防空提交/漏 add）
 if git diff --cached --quiet; then
@@ -37,6 +89,12 @@ fi
 STAGED_LIST="$(git -c core.quotePath=false diff --cached --name-only)"
 echo "── 暂存区：本次提交将包含 $(printf '%s\n' "$STAGED_LIST" | wc -l | tr -d ' ') 项 ──" >&2
 printf '%s\n' "$STAGED_LIST" | sed 's/^/   /' >&2
+if [[ "$DEV_MODE" -eq 1 ]]; then
+  _expected="$(printf '%s\n' "$R9_STAGED_ALLOW" | sed '/^[[:space:]]*$/d' | sort -u)"
+  _actual="$(printf '%s\n' "$STAGED_LIST" | sort -u)"
+  [[ "$_actual" == "$_expected" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] staged files do not exactly match allowlist" >&2; exit 78; }
+fi
 
 # ── [0a] 暂存区白名单（R9_STAGED_ALLOW）：隔离他人暂存残留 ──
 # 背景（2026-11-10 事故）：本脚本最后是裸 `git commit`，提交的是**整个索引**。
@@ -78,6 +136,7 @@ done
 # 兜底链（沿 1f0c6e7 PY 回落链设计语言）：flock 二进制（Linux/CI）→ python fcntl
 # （macOS 无 flock；coproc 持锁 holder，EOF/kill/父亡孤儿自释三路释放）
 GATE_LOG=""
+DEV_RECEIPT=""
 LOCK_HOLDER_PID=""
 LOCK_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/r9-commit.lock"
 LOCK_TIMEOUT="${R9_COMMIT_LOCK_TIMEOUT:-900}"
@@ -165,7 +224,6 @@ bash "$CHECK" "$PROBE"
 # Gate 0 日志归档：GATE_LOG 不再即弃，归档 /tmp/r9_gate_last.log（失败指纹审计面）。
 REGISTRY="tests/guards/external_red_registry.json"
 FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
-GATE_LOG="$(mktemp /tmp/r9_gate.XXXXXX)"
 PROBE_WT="$(mktemp -d /tmp/r9probe.XXXXXX)"
 # Git lists physical paths (e.g. /private/tmp on macOS), not symlink aliases.
 PROBE_WT="$(cd "$PROBE_WT" && pwd -P)"
@@ -185,6 +243,7 @@ r9_cleanup_exit() {
     fi
     rm -f "$GATE_LOG" || true
   fi
+  if [ -n "${DEV_RECEIPT:-}" ]; then rm -f "$DEV_RECEIPT" || true; fi
   exit "$result"
 }
 trap 'r9_cleanup_exit $?' EXIT
@@ -204,6 +263,61 @@ PYEOF
     exit 1
   fi
 fi
+
+# Dev-only local commit: same global lock, exact staged PROBE, fixture
+# verification, machine checks, staged scan and Git hooks. No R9 receipt,
+# no release qualification and no Host review/PR bypass. Any missing trusted
+# Host installation/activation/one-use grant is a hard refusal.
+if [[ "$DEV_MODE" -eq 1 ]]; then
+  [[ "$HEAD_NOW" == "$BASE_HEAD" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] queue advanced while waiting" >&2; exit 78; }
+  [[ -z "$(git diff --name-only)" &&
+     -z "$(git ls-files --others --exclude-standard)" &&
+     "$(git write-tree)" == "$TREE" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] staged tree not clean or changed" >&2; exit 78; }
+  bash scripts/git_security_scan.sh --staged
+  DEV_RECEIPT="$(mktemp /tmp/lfl-dev-commit.XXXXXXXX)"
+  COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+  AUDIT_DIR="$(dirname "$COMMON_DIR")/data/audit"
+  env -u LFL_PYTHON -u PYTHONPATH -u PYTHONHOME -u PYTEST_ADDOPTS \
+    -u PYTEST_PLUGINS -u PYTEST_DISABLE_PLUGIN_AUTOLOAD \
+    -u PYTHONSTARTUP -u PYTHONINSPECT bash scripts/dev_gate.sh \
+    --goal "$DEV_GOAL" --req "$DEV_REQ" --base "$DEV_BASE" \
+    --design "$DEV_DESIGN" --audit-dir "$AUDIT_DIR" \
+    --receipt "$DEV_RECEIPT"
+  [[ "$(git write-tree)" == "$TREE" && "$(git rev-parse HEAD)" == "$HEAD_NOW" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] candidate changed during incremental gate" >&2; exit 78; }
+  MSG_SHA="$(printf '%s' "$MSG" | /usr/bin/python3 -I -S -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+  HOST_REPLY="$(/usr/bin/sudo -n -u _lfl_dual_witness /usr/bin/python3 -I -S \
+    "$HOST_DEV_AUTH" consume \
+    --worktree "$PWD" --goal "$DEV_GOAL" --req "$DEV_REQ" \
+    --base "$DEV_BASE" --message-sha256 "$MSG_SHA" \
+    --grant-id "$DEV_GRANT" < "$DEV_RECEIPT")" ||
+    { echo "[DEV_COMMIT_DISABLED] Host refused one-use grant" >&2; exit 78; }
+  printf '%s' "$HOST_REPLY" | /usr/bin/python3 -I -S -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    ok=(d.get("decision")=="CONSUMED" and d.get("grant_id")==sys.argv[1]
+        and d.get("tree")==sys.argv[2] and d.get("release_qualified") is False)
+except (ValueError,TypeError,AttributeError):
+    ok=False
+sys.exit(0 if ok else 1)
+' "$DEV_GRANT" "$TREE" ||
+    { echo "[DEV_COMMIT_DISABLED] Host consumption response invalid" >&2; exit 78; }
+  [[ "$(git write-tree)" == "$TREE" && "$(git rev-parse HEAD)" == "$HEAD_NOW" &&
+     -z "$(git diff --name-only)" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] candidate changed after Host consumption" >&2; exit 78; }
+  git commit -m "$MSG"
+  [[ "$(git rev-parse HEAD^{tree})" == "$TREE" &&
+     "$(git rev-parse HEAD^)" == "$HEAD_NOW" ]] ||
+    { echo "[DEV_COMMIT_DISABLED] committed tree/parent mismatch; quarantine branch" >&2; exit 78; }
+  bash "$CHECK" HEAD
+  echo "[DEV_COMMIT_ONLY] Local commit created; no R9, Host review, push or release qualification."
+  exit 0
+fi
+
+GATE_LOG="$(mktemp /tmp/r9_gate.XXXXXX)"
 GATE_EXIT=0
 (cd "$PROBE_WT" && bash scripts/ci_gate.sh) > "$GATE_LOG" 2>&1 || GATE_EXIT=$?
 # PY 解析：PROBE 检出无 .venv → ci_gate 内部回落链取主 worktree .venv；PYTHONPATH 已由 ci_gate 前置 $ROOT/src（=PROBE 树）
