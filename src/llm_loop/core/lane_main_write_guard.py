@@ -244,6 +244,11 @@ def _git_verbs(
         tokens: list[str] = []
         _adjacent: set[int] = set()  # 与后一 token 在原文紧邻的索引（review a37f665fb944 P1-2）
         for _li, _line in enumerate(_split_logical_lines(text)):
+            if _has_unquoted_midword_hash(_line):
+                # 词中未加引号 #（review subagent_89ba9fb91a5f P2-1 实测升级）：
+                # shlex 截断整行余部致 git 动词对判定不可见（fail-open）→
+                # 保守哨兵，与词法失败同级。
+                return [("commit", [], "")]
             if _li and tokens:
                 tokens.append(";")
             _tok_start = len(tokens)
@@ -318,10 +323,13 @@ def _git_verbs(
     # 裸 `)` 子壳分支失配 → 栈不弹 → 后续 git 误归属子壳内 cwd（fail-open，
     # `( cd feat; : ); git commit` 实证）。首括号纯标点 token 拆出 `(`/`)`
     # 保留栈语义，其余复合（`;;`/`&&` 等）原样保留不破坏既有分支。
-    if any(_tok and _tok[0] in "()" and len(_tok) > 1 and all(_c in "(){};&|<>" for _c in _tok) for _tok in tokens):
+    # 排除仅 `()` 本身（数据词引号折叠的空括号对不是子壳边界）与单字符
+    # `(`/`)`（len==1 拆分会产生空 token 前缀，吃掉段首 seg_start——六测
+    # 回归实证）；其余首括号纯标点合并（`');'` 等多字符形）照拆。
+    if any(_tok and _tok[0] in "()" and len(_tok) > 1 and _tok != "()" and all(_c in "(){};&|<>" for _c in _tok) for _tok in tokens):
         _expanded: list[str] = []
         for _tok in tokens:
-            if _tok and _tok[0] in "()" and len(_tok) > 1 and all(_c in "(){};&|<>" for _c in _tok):
+            if _tok and _tok[0] in "()" and len(_tok) > 1 and _tok != "()" and all(_c in "(){};&|<>" for _c in _tok):
                 _expanded.append(_tok[0])
                 _expanded.append(_tok[1:])
             else:
@@ -419,11 +427,13 @@ def _git_verbs(
             seg_start = True
             i += 1
             continue
-        if tokens[i] == "()":
+        if seg_start and tokens[i] == "()":
             # `name()` 粘写形（punctuation_chars 把 () 并为单 token）：bash 中
             # 空参数括号仅函数定义一用 → 其后 `{` 开函数体
             # （review subagent_cd3f526623bf P1-1）。间隔写法 `f ()` 由上面
-            # `)` 分支的 prev_tok 检测覆盖。
+            # `)` 分支的 prev_tok 检测覆盖。seg_start 门控（review
+            # subagent_89ba9fb91a5f P2-2）：数据词 `echo '()'` 不得 arm
+            # 函数体模式误降级后续顶层花括号组。
             _func_pending = True
             seg_start = True
             i += 1
@@ -712,7 +722,14 @@ _TRANSPARENT_PREFIX_FLAGS = {
     "builtin": set(),
     "!": set(),
 }
-_CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", ".", "env"})
+_CMD_POS_CWD_UNKNOWABLE = frozenset({
+    "eval", "pushd", "popd", "source", ".", "env",
+    # wrapper 类（review subagent_89ba9fb91a5f P1-1）：执行后续命令且参数词法
+    # 未建模——`nohup env -C <main> git commit`/`exec env ...` 等 wrapper 前缀
+    # 会打断 seg_start 使 env 哨兵失配（fail-open）→ wrapper 词整体置未知
+    # （保守当 main 判定），与 eval/env 同级。
+    "exec", "nohup", "nice", "timeout", "setsid", "sudo", "stdbuf", "strace",
+})
 # env 含其中（review subagent_8d393977e0ec P1-1）：GNU coreutils `env -C <dir>`
 # （--chdir）会真实改变子进程 cwd——`env -C <main> git commit` 在 workdir=feat
 # 场景旧解析归属 feat（fail-open）。env 整体置未知（保守），与 eval 同级。
@@ -846,6 +863,36 @@ def _split_logical_lines(text: str) -> list[str]:
         i += 1
     lines.append("".join(buf))
     return lines
+
+
+def _has_unquoted_midword_hash(line: str) -> bool:
+    """引号感知检测词中未加引号 ``#``（review subagent_89ba9fb91a5f P2-1 实测升级）。
+
+    bash：词中未加引号 ``#`` 是字面字符（``cd wt#note`` 目标名含 #）；shlex
+    （commenters='#'）却从 ``#`` 起把整行余部截成注释 → ``&& git commit`` 对
+    判定完全不可见（verbs 缺失，`( cd …) ` 场景实证 fail-open）→ 命中即保守
+    哨兵（当 main 判定）。行首/空白后 ``#`` 两边语义一致（真注释）不触发；
+    引号内 ``#`` shlex 不截断（探针实证全名保留）不触发；``\\#`` 转义对两边
+    均为字面 # 不触发。
+    """
+    quote: str | None = None
+    prev: str = ""
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and i + 1 < n and (quote is None or quote == '"'):
+            i += 2
+            prev = "x"  # 转义对整体消费（含被转义的 #），等价一个词字符
+            continue
+        if quote is None and ch in ("'", '"'):
+            quote = ch
+        elif quote == ch:
+            quote = None
+        elif quote is None and ch == "#" and prev and not prev.isspace():
+            return True
+        prev = ch
+        i += 1
+    return False
 
 
 def _resolve_shell_cd(cur: str | None, seg: str, workdir: str | None) -> str:

@@ -1732,13 +1732,20 @@ def test_git_verbs_case_statement_attribution_conservative(tmp_path):
 
 
 def test_git_verbs_function_def_cd_not_attributed(tmp_path):
-    """`f() { … }` 定义体的 cd 不执行（仅定义）→ 不得归属。"""
+    """`f() { … }` 定义体的 cd 不执行（仅定义）→ commit 落调用方 cwd。
+
+    P2-2 门控（review subagent_89ba9fb91a5f）后：`f` 词打断 seg_start →
+    `()` 不再 arm 函数体模式（数据词 `echo '()'` 同不再误 arm）→ cd 不
+    跟踪、commit 按真实语义归属调用方 workdir（bash 真相一致，精确且
+    安全）；旧哨兵过拦已随门控移除。`function f { … }` 关键字形态仍走
+    函数体哨兵（见下一测试）。
+    """
     wt = tmp_path / "wt"
     wt.mkdir()
     verbs = guard_module._git_verbs(
         f"f() {{ cd {wt}; }}; git commit -m x", "/repo/main"
     )
-    assert verbs == [("commit", ["-m", "x"], "")]
+    assert verbs == [("commit", ["-m", "x"], "/repo/main")]
 
 
 def test_git_verbs_function_keyword_body_cd_not_attributed(tmp_path):
@@ -2096,6 +2103,95 @@ def test_strip_here_strings_double_quote_escape():
     """
     out = guard_module._strip_here_strings('echo "a\\" <<< b"')
     assert "<<<" in out
+
+
+def test_git_verbs_wrapper_prefixed_env_sentinel(tmp_path):
+    """P1-1（review subagent_89ba9fb91a5f）：wrapper 前缀 env 置未知哨兵。
+
+    bash 真相：``nohup env -C <main> git commit`` 真实落 main 提交；
+    workdir=feat 场景旧解析中 wrapper 词打断 seg_start 使 env 哨兵失配
+    → 归属 feat 放行（fail-open）→ wrapper 类词整体置未知（保守）。
+    """
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for wrapper in ("nohup", "exec", "nice", "timeout 5", "sudo"):
+        verbs = guard_module._git_verbs(
+            f"{wrapper} env -C {main_dir} git commit -m x", str(feat)
+        )
+        assert verbs == [("commit", ["-m", "x"], "")], wrapper
+
+
+def test_block_wrapper_prefixed_env_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：``nohup env -C <main> commit`` 他人 lane live 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"nohup env -C {repo} git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_data_paren_token_not_arm_function_body(tmp_path):
+    """P2-2（review subagent_89ba9fb91a5f）：数据词 `'()'` 不 arm 函数体。
+
+    bash 真相：``echo '()' ; { cd wt && git commit; }`` 的花括号组在当前
+    shell 执行 → cd 真实落 wt；旧逻辑数据词 `()` 无门控 arm 函数体模式 →
+    顶层花括号组被误读为永不执行的函数体，cd 被降级哨兵（过拦）。
+    seg_start 门控后精确归属 wt（仍安全）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"echo '()' ; {{ cd {wt} && git commit -m x; }}", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_midword_hash_truncation_pin(tmp_path):
+    """词中未加引号 `#` → 保守哨兵（89ba9fb91a5f P2-1 实测升级为修复）。
+
+    bash 真相：``cd wt#note`` 的字面名不存在 → cd 失败，git commit 落调用方
+    cwd。旧 lexer（shlex commenters='#'）从词中 # 把整行余部截成注释 → git
+    动词对判定完全不可见（verbs=[]，实证 fail-open）→ 现命中即哨兵
+    （当 main 判定，workdir=main 场景拒绝、workdir=lane 场景过拦均保守）。
+    引号目标/行首注释/转义 # 不触发（另见 _has_unquoted_midword_hash）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt}#note && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", [], "")]
+    # 行首/空白后真注释不触发（既有行为回归）：
+    assert guard_module._git_verbs(f"cd {wt} # note && git commit -m x", "/tmp/main") == []
+
+
+def test_git_verbs_until_condition_cd_sentinel_pin(tmp_path):
+    """until/while 条件极性 pin（review subagent_89ba9fb91a5f P2-3）。
+
+    ``until cd wt; do git commit; done``：cd 成功 ⟺ 目标存在
+    （_resolve_shell_cd 存在性校验）→ 条件真、体零次执行 → 归属 wt 放行
+    安全（放行的是不会执行的 commit）；cd 失败（目标不存在）→ do 体哨兵
+    降级 → commit 走 target 未知（当 main 判定，体真实执行场景兜底）。
+    该不变量（条件极性 ⟺ is_dir）是文档化的隐式契约；改动 CDPATH/选项
+    处理前必须复核本 pin。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"until cd {wt}; do git commit -m x; done", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+    nope = tmp_path / "nonexistent-target"
+    verbs2 = guard_module._git_verbs(
+        f"until cd {nope}; do git commit -m x; done", "/tmp/main"
+    )
+    assert verbs2 == [("commit", ["-m", "x"], "")]
 
 
 def test_block_cd_option_form_into_main_repo(tmp_path):
