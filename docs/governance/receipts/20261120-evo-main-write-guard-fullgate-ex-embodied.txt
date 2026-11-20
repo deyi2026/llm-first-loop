@@ -1,0 +1,746 @@
+# ci_gate [5/5] 提交门禁级全量复刻回执（排除 embodied_m1）
+# 宿主时间: 2026-11-20 14:25:33 +0800
+# HEAD: e550ac7730e46ae1bb666baf0d63dc96fb62def4
+# 口径: 复刻 scripts/ci_gate.sh [5/5] 三段 pytest 命令 + --ignore=tests/embodied_m1
+# 排除理由: embodied_m1 13 文件 collection error=ModuleNotFoundError mujoco（.venv 未装；main 基线同样失败，环境问题非本分支引入；ci-gate-full.log 全录）
+# ruff/pyright ratchet 见 ci-gate-full.log [1/5][3/5] PASS 段（new=0，修改文件零红）
+
+═══ serial_signal 串行补跑 ═══
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb.google')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+    _EPOCH_DATETIME_NAIVE = datetime.datetime.utcfromtimestamp(0)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+7 passed, 2 skipped, 16098 deselected, 7 warnings in 4.78s
+serial_signal_exit=0
+
+═══ serial_perf 串行性能门 ═══
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+.....                                                                    [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb.google')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+    _EPOCH_DATETIME_NAIVE = datetime.datetime.utcfromtimestamp(0)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+5 passed, 2 skipped, 16100 deselected, 7 warnings in 57.70s
+serial_perf_exit=0
+
+═══ xdist 并行全量（--dist loadfile -n auto，worker=4）═══
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  0%]
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  4%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  8%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 17%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 18%]
+..................xxx................................................... [ 19%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 21%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 25%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 30%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 34%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+...............................s........................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+....s................................................................... [ 38%]
+...............................................ssssssssssssssssssss..... [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+...............................sssssssssssssssss.ss..................... [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 41%]
+...............................................................sssssssss [ 42%]
+ss...................................................................... [ 42%]
+....................................................................s.ss [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 44%]
+.....................................................s.................. [ 45%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+...........................................s............................ [ 47%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 50%]
+.....................................................s...s..s.....s..... [ 51%]
+........................................................................ [ 51%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+.............................................................s.......... [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 55%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+..........ssssssssssssssss.............................................. [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 60%]
+........................................................................ [ 60%]
+....................................................ss.................. [ 61%]
+.................................................s...................... [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 64%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 67%]
+..................................................sssssss......ssssss... [ 68%]
+....sssssss............................................................. [ 68%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 70%]
+.....s..s...s..s........................................................ [ 71%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 72%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+..........................ssssssss...................................... [ 74%]
+.............................................sss........................ [ 75%]
+................................................ssssssss................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 76%]
+.............................................................ssssssssss. [ 77%]
+..............................ssssss.................................... [ 77%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+................sss.s................................................... [ 79%]
+........................................................................ [ 80%]
+.................................................sssssssss.............. [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 81%]
+........................................................................ [ 81%]
+..........................ssssssss...................................... [ 82%]
+........................................................................ [ 82%]
+......................................................................s. [ 83%]
+........................................................................ [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 85%]
+........................................................................ [ 85%]
+............................................sssssss..................... [ 86%]
+...........................................s............................ [ 86%]
+........................................................................ [ 87%]
+.............................................sssssss.................... [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+......s.ss.............................................................. [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 90%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+.......................................................ssssss........... [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+s......ss......s........................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 94%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+........................................................................ [ 98%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+..........................................................F............. [ 99%]
+.....................                                                    [100%]
+=================================== FAILURES ===================================
+____________ test_kernel_isolation_denies_oracle_network_and_device ____________
+[gw0] darwin -- Python 3.13.13 ~/Project/llm-first-loop-mirror/.venv/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x124d64280>
+
+    def test_kernel_isolation_denies_oracle_network_and_device(monkeypatch):
+        if sys.platform != "darwin":
+            pytest.skip("macOS kernel sandbox receipt required on Mac Host")
+        with monkeypatch.context() as scoped:
+            scoped.setattr(subprocess, "run", _ORIGINAL_RUN)
+            scoped.setattr(subprocess, "Popen", _ORIGINAL_POPEN)
+>           receipt = run()
+                      ^^^^^
+
+~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied/test_m0_os_isolation.py:23: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def run() -> dict[str, object]:
+        sandbox = shutil.which("sandbox-exec")
+        if sys.platform != "darwin" or not sandbox:
+            raise RuntimeError("M0-G3/G4 NO-GO: macOS sandbox-exec unavailable")
+        with tempfile.TemporaryDirectory(prefix="lfl-m0-oracle-") as tmp:
+            oracle_dir = Path(tmp, "oracle").resolve()
+            oracle_dir.mkdir(mode=0o700)
+            oracle_file = oracle_dir / "privileged_state.json"
+            canary = "ORACLE_CANARY_" + secrets.token_hex(16)
+            oracle_file.write_text(json.dumps({"canary": canary, "exact_pose": 0.123456789}))
+            oracle_file.chmod(0o600)
+    
+            # A kernel-enforced per-process sandbox, not a mere Python monkeypatch.
+            # Explicitly deny the synthetic Oracle path, safe device and network.
+            profile = (
+                '(version 1)(allow default)(deny network*)'
+                f'(deny file-read* (subpath {json.dumps(str(oracle_dir))}))'
+                '(deny file-read* (literal "/dev/null"))'
+            )
+            child = subprocess.run(
+                [sandbox, "-p", profile, sys.executable, "-c", _CHILD, str(oracle_file)],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                check=False,
+                env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+            )
+            if child.returncode != 0:
+>               raise RuntimeError(f"M0-G3/G4 NO-GO: sandbox child exited {child.returncode}")
+E               RuntimeError: M0-G3/G4 NO-GO: sandbox child exited 71
+
+~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied/m0_isolation_probe.py:83: RuntimeError
+=============================== warnings summary ===============================
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb.google')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+    _EPOCH_DATETIME_NAIVE = datetime.datetime.utcfromtimestamp(0)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+tests/unit/test_extensions_sources.py::test_archive_rejects_zip_slip_symlink_duplicate_and_absolute
+  ~/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/zipfile/__init__.py:1655: UserWarning: Duplicate name: 'a.txt'
+    return self._open_to_write(zinfo, force_zip64=force_zip64)
+
+tests/wecom/test_bridge.py::test_bridge_full_pipeline_reply_binds_req_id
+tests/wecom/test_heartbeat.py::test_heartbeat_written_with_fields_and_env_override
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/aibot/ws.py:28: DeprecationWarning: websockets.client.WebSocketClientProtocol is deprecated
+    from websockets.client import WebSocketClientProtocol
+
+tests/wecom/test_bridge.py::test_bridge_full_pipeline_reply_binds_req_id
+tests/wecom/test_heartbeat.py::test_heartbeat_written_with_fields_and_env_override
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device
+1 failed, 15883 passed, 191 skipped, 3 xfailed, 33 warnings in 262.95s (0:04:22)
+xdist_full_exit=1
+
+# 回执生成完成: 2026-11-20 14:31:02 +0800
+
+═══ 唯一失败项归因附录（追加于 2026-11-20 14:32:14 +0800）═══
+# FAILED tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device
+# [证据A] main 基线（origin/main 同步的本地 main，无本分支改动）同测 serial 实跑：
+FAILED tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device
+1 failed in 0.06s
+# [证据B] 本分支同测 serial 复核（D-B2-09 同款单点复核）：
+FAILED tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device
+1 failed in 0.03s
+# 结论: 两边一致 FAILED（macOS sandbox-exec 嵌套环境下内核收据测试的存量环境红，0.04s 快速失败=环境拒绝非 flaky）→ 本分支 15883 passed 零新增红
+# known_reds_current.json 登记状态:
+0
+0（未登记——账本未跟上该环境变化，属 main 侧存量事务）
+# 脱敏声明: 本日志中的本地绝对路径前缀 ~/ 已统一替换为 ~/ (内容语义不变；安全闸禁止本地绝对路径入仓)
