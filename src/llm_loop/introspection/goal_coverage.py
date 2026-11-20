@@ -37,11 +37,60 @@ class CoverageFormatError(ValueError):
     """A scope manifest is missing, malformed, or ambiguous."""
 
 
-def resolve_design_path(audit_dir: str | Path, design_path: str) -> Path:
-    """Resolve a pinned design under the repository; refuse external files.
+def _trusted_design_root(repo: Path) -> Path:
+    """Use the managed source release, never a stale shared-main checkout.
 
-    The runtime audit root must be the repository's data/audit. Do not use the
-    caller's current directory (Web and CLI have different cwd conventions).
+    Only the service-control managed deployment identity may select a source tree.
+    A legacy checkout without managed releases keeps its existing behavior.
+    """
+    releases = repo / ".releases"
+    manifest = repo / "data" / "runtime" / "managed_service_deployment.json"
+    if manifest.is_symlink():
+        raise CoverageFormatError("managed deployment identity must not be a symlink")
+    if not manifest.is_file():
+        if releases.exists():
+            raise CoverageFormatError("managed deployment identity unavailable")
+        return repo
+    try:
+        state = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise CoverageFormatError("managed deployment identity unreadable") from exc
+    if not isinstance(state, dict):
+        raise CoverageFormatError("managed deployment identity malformed")
+    git_head = state.get("git_head")
+    code_root = state.get("code_root")
+    runtime_root = state.get("runtime_root")
+    if (
+        not isinstance(git_head, str)
+        or not _SHA.fullmatch(git_head)
+        or len(git_head) != 40
+        or not isinstance(code_root, str)
+        or not isinstance(runtime_root, str)
+        or Path(runtime_root) != repo
+    ):
+        raise CoverageFormatError("managed deployment identity mismatch")
+    source = Path(code_root)
+    if not source.is_absolute():
+        raise CoverageFormatError("managed source root must be absolute")
+    if source == repo:
+        return repo
+    release = releases / git_head
+    if (
+        source != release
+        or releases.is_symlink()
+        or release.is_symlink()
+        or not release.is_dir()
+        or release.resolve().parent != releases.resolve()
+    ):
+        raise CoverageFormatError("managed source root is not the pinned release")
+    return release
+
+
+def resolve_design_path(audit_dir: str | Path, design_path: str) -> Path:
+    """Resolve approved scope from managed source, not caller cwd or stale main.
+
+    TaskStore remains under shared data/audit; only immutable design bytes come
+    from the exact managed source release, with SHA256 checked by the caller.
     """
     audit = Path(audit_dir).resolve()
     if audit.name != "audit" or audit.parent.name != "data":
@@ -51,9 +100,12 @@ def resolve_design_path(audit_dir: str | Path, design_path: str) -> Path:
     relative = Path(design_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise CoverageFormatError("requirements scope path traversal")
-    repo = audit.parent.parent
+    repo = _trusted_design_root(audit.parent.parent)
+    design_root = (repo / "docs" / "design").resolve()
+    if not design_root.is_relative_to(repo):
+        raise CoverageFormatError("requirements scope design directory escaped source")
     resolved = (repo / relative).resolve()
-    if not resolved.is_relative_to((repo / "docs" / "design").resolve()):
+    if not resolved.is_relative_to(design_root):
         raise CoverageFormatError("requirements scope escaped docs/design")
     return resolved
 
