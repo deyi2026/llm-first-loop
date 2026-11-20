@@ -39,7 +39,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.6.5"
+BASELINE_VERSION = "M1-baseline-v1.7"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -340,7 +340,8 @@ def code_shas() -> dict[str, str]:
     rel = ["scripts/embodied/m1_calibrate.py", "src/llm_loop/embodied_sim/scene.py",
            "src/llm_loop/embodied_sim/sim.py", "src/llm_loop/embodied_sim/skills.py",
            "src/llm_loop/embodied_sim/oracle.py", "src/llm_loop/embodied_sim/contract.py",
-           "src/llm_loop/embodied_sim/policy.py", "src/llm_loop/embodied_sim/episode.py"]
+           "src/llm_loop/embodied_sim/policy.py", "src/llm_loop/embodied_sim/episode.py",
+           "src/llm_loop/embodied_sim/goal_binding.py"]
     for r in rel:
         p = ROOT / r
         if p.exists():
@@ -370,7 +371,15 @@ def main() -> int:
                                   "preserved: M1-baseline-v1.3-fail-rod-rear.json (0/10, "
                                   "approach_down 46.7mm), M1-baseline-v1.4.json (0/10, grasp "
                                   "miss), M1-baseline-v1.6-pre-metadata-fix.json (10/10 physics "
-                                  "PASS but stale v1.2-era metadata, corrected here)."),
+                                  "PASS but stale v1.2-era metadata, corrected here). "
+                                  "M2 (issue #79, M1-baseline-v1.7): episode.py now re-observes "
+                                  "the target and scene epoch after every action and at goal "
+                                  "verification, and binds each claim to that goal digest "
+                                  "(goal_binding.py, oracle/contract goal checks); POLICIES AND "
+                                  "PHYSICS UNCHANGED - no tolerance, budget, geometry or step "
+                                  "count moved, which is why the same 10 engineering seeds must "
+                                  "reproduce exactly. Moving-target behaviour is covered by "
+                                  "tests/embodied_m2/, not by this receipt."),
         "legacy_note_v13": ("TASK-008 approved minimal geometry fix: wrist_rod relocated "
                                   "from link3 z[0.14,0.18] (overlapping tool作用区 z~0.123..0.163 "
                                   "incl. tool_site 0.143) to wrist-rear conduit z[0.18,0.22]; "

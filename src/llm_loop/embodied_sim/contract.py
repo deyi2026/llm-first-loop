@@ -20,6 +20,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from llm_loop.embodied_sim.goal_binding import goal_digest
+
 DEFAULT_OBSERVATION_TTL_S = 1.0
 
 
@@ -213,14 +215,16 @@ class ClaimGuard:
         self._receipts[str(claim_key)] = dict(receipt)
 
     def evaluate_claim(self, claim_key: str, claimed_success: bool,
-                       expected_scene_epoch: int) -> VerificationStatus:
+                       expected_scene_epoch: int, *,
+                       expected_goal_digest: str | None = None) -> VerificationStatus:
         receipt = self._receipts.get(str(claim_key))
         if not claimed_success:
             return VerificationStatus.UNVERIFIED
         if receipt is None:
             # A success claim without any Oracle receipt is a FAILED_CLAIM, never VERIFIED.
             return VerificationStatus.FAILED_CLAIM
-        return verify_receipt_fields(receipt, expected_scene_epoch)
+        return verify_receipt_fields(receipt, expected_scene_epoch,
+                                     expected_goal_digest=expected_goal_digest)
 
 
 # Marker for the future Host-managed independent channel. Gate B callers can
@@ -234,17 +238,40 @@ class ClaimGuard:
 INDEPENDENT_ORACLE_EXECUTION = "host_uid_463_managed"
 
 
-def verify_receipt_fields(receipt: dict[str, Any], expected_scene_epoch: int) -> VerificationStatus:
+def verify_receipt_fields(receipt: dict[str, Any], expected_scene_epoch: int, *,
+                          expected_goal_digest: str | None = None) -> VerificationStatus:
     """Fail-closed receipt validation. Anything missing/stale/mismatched is FAILED_CLAIM.
 
     Otherwise the result is at most PENDING_ORACLE: caller-supplied dicts cannot
     prove independence, so VERIFIED_BY_ORACLE is unreachable from this function
     by construction (see INDEPENDENT_ORACLE_EXECUTION note above).
+
+    `expected_goal_digest` binds the receipt to the goal observed for THIS claim
+    (M2). When supplied, a receipt without a well-formed `goal` block, a block
+    whose digest does not match its own pose, or a block for a different goal is
+    all FAILED_CLAIM — a stale goal is never silently accepted.
     """
     required = ("experiment_id", "scene_epoch", "verdict", "oracle_impl", "oracle_execution",
                 "snapshot_sha256", "evidence")
     if any(k not in receipt for k in required):
         return VerificationStatus.FAILED_CLAIM
+    if expected_goal_digest is not None:
+        goal = receipt.get("goal")
+        if not isinstance(goal, dict):
+            return VerificationStatus.FAILED_CLAIM
+        kind = goal.get("kind")
+        pos = goal.get("pos")
+        digest = goal.get("digest")
+        if not isinstance(kind, str) or not isinstance(digest, str):
+            return VerificationStatus.FAILED_CLAIM
+        if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+            return VerificationStatus.FAILED_CLAIM
+        try:
+            recomputed = goal_digest(kind, pos)
+        except (TypeError, ValueError):
+            return VerificationStatus.FAILED_CLAIM
+        if recomputed != digest or digest != str(expected_goal_digest):
+            return VerificationStatus.FAILED_CLAIM
     if int(receipt["scene_epoch"]) != int(expected_scene_epoch):
         return VerificationStatus.FAILED_CLAIM
     if str(receipt["verdict"]).lower() != "success":

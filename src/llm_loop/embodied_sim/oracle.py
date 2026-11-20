@@ -81,11 +81,12 @@ def judge_place(snapshot: dict[str, Any], tray_pos: list[float]) -> tuple[bool, 
 
 
 def make_receipt(snapshot: dict[str, Any], claim_kind: str, verdict: bool,
-                 evidence: dict[str, Any], experiment_id: str, scene_epoch: int) -> dict[str, Any]:
+                 evidence: dict[str, Any], experiment_id: str, scene_epoch: int, *,
+                 goal_binding: dict[str, Any] | None = None) -> dict[str, Any]:
     snap_sha = hashlib.sha256(
         json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return {
+    receipt = {
         "oracle_impl": ORACLE_IMPL,
         "oracle_execution": ORACLE_EXECUTION,
         "experiment_id": experiment_id,
@@ -95,10 +96,14 @@ def make_receipt(snapshot: dict[str, Any], claim_kind: str, verdict: bool,
         "snapshot_sha256": snap_sha,
         "evidence": evidence,
     }
+    if goal_binding is not None:
+        receipt["goal"] = dict(goal_binding)
+    return receipt
 
 
 def verify_receipt(receipt: dict[str, Any], expected_scene_epoch: int,
-                   snapshot: dict[str, Any] | None = None) -> VerificationStatus:
+                   snapshot: dict[str, Any] | None = None, *,
+                   expected_goal_digest: str | None = None) -> VerificationStatus:
     """Fail-closed verification; optionally binds receipt to a live snapshot.
 
     Severity order: integrity violations (missing fields, stale epoch, tampered
@@ -106,7 +111,8 @@ def verify_receipt(receipt: dict[str, Any], expected_scene_epoch: int,
     resolve to PENDING_ORACLE (in-process oracle) or VERIFIED_BY_ORACLE
     (Host-managed independent channel).
     """
-    status = verify_receipt_fields(receipt, expected_scene_epoch)
+    status = verify_receipt_fields(receipt, expected_scene_epoch,
+                                   expected_goal_digest=expected_goal_digest)
     if snapshot is not None and status is not VerificationStatus.FAILED_CLAIM:
         snap_sha = hashlib.sha256(
             json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
