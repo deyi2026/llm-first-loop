@@ -1651,14 +1651,181 @@ def test_git_verbs_while_do_compound_cd_tracked(tmp_path):
     assert verbs == [("commit", ["-m", "x"], str(wt))]
 
 
-def test_git_verbs_for_loop_body_cd_tracked(tmp_path):
-    """P1-1：`for` 头部词不终结命令位，`do` 后体命令照常跟踪。"""
+def test_git_verbs_for_loop_body_cd_conservative(tmp_path):
+    """`for` 头部词不终结命令位（旧 P1-1 保护仍在：commit 动词照常识别）；
+    `do` 体 cd 因列表展开可能为空/体可能不执行 → 降级未知哨兵
+    （review subagent_cd3f526623bf P1-1，过拦方向；纯字面列表的精确归属
+    留待后续轮次做显式字面检查）。"""
     wt = tmp_path / "wt"
     wt.mkdir()
     verbs = guard_module._git_verbs(
         f"for f in a b; do cd {wt} && git commit -m x; done", "/tmp"
     )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+# ---------------------------------------------------------------------------
+# review subagent_cd3f526623bf P1-1 修复回归（条件体/case 分支/函数体内 cd 降级）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_if_body_cd_not_attributed(tmp_path):
+    """`if` 分支体的 cd 可能不执行（分支未选中）→ 不得归属其落点。
+
+    bash 事实：`if false; then cd wt; fi && git commit` 实际在调用目录
+    （常为 main）提交——旧词法归属会把 main 提交放行成 wt 提交（fail-open）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if false; then cd {wt}; fi && git commit -m x", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_if_condition_cd_still_tracked(tmp_path):
+    """条件位置的 cd bash 会先执行（`if cd wt; then …`）→ 仍按落点归属。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if cd {wt}; then git commit -m x; fi", None
+    )
     assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_case_branch_cd_not_attributed(tmp_path):
+    """case 各分支只执行一支：分支体 cd 不得归属（否则"最后一支 wins"旁路）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"case $x in b) cd {main_dir};; a) cd {wt};; esac && git commit -m x",
+        None,
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_case_statement_attribution_conservative(tmp_path):
+    """case 语句内动词按保守未知归属（两层既有机制叠加）：
+
+    ① case 模式 ``a)`` 的 ``)`` 弹空括号栈 → 落点置未知（既有保守行为）；
+    ② 分支体内 cd 由本轮条件体状态机降级（cd3f526623bf P1-1）。
+    case 前的顶层 cd 归属在模式 ``)`` 处被抹成未知——bash 真值是 wt，
+    守卫选择过拦（安全方向）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} ; case $x in a) git commit -m x;; esac", None
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_function_def_cd_not_attributed(tmp_path):
+    """`f() { … }` 定义体的 cd 不执行（仅定义）→ 不得归属。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"f() {{ cd {wt}; }}; git commit -m x", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_function_keyword_body_cd_not_attributed(tmp_path):
+    """`function f { … }` 关键字形态同上。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"function f {{ cd {wt}; }}; git commit -m x", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_while_do_body_cd_conservative(tmp_path):
+    """循环体 cd 执行次数/是否执行静态不可知 → 未知哨兵（过拦方向）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"while true; do cd {wt}; git commit -m x; done", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_nested_if_body_cd_conservative(tmp_path):
+    """嵌套 if 的内层分支体 cd 同样降级；外层 fi 正确闭合（无深度泄漏）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if a; then if b; then cd {wt}; fi; fi && git commit -m x",
+        "/repo/main",
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_top_level_cd_after_if_body_still_tracked(tmp_path):
+    """条件体闭合后的顶层 cd 正常归属（状态机不泄漏 → 不过拦合法链）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if true; then echo hi; fi; cd {wt} && git commit -m x", None
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_body_cd_sentinel_sticky_over_later_cd(tmp_path):
+    """体内 cd 降级后的哨兵是粘性的：同段后续顶层 cd 从未知 base 解析仍得
+    未知（既有 _resolve_shell_cd 保守语义，含绝对路径）→ 恒保守当 main。
+
+    bash 真值是绝对 cd 可恢复落点（wt2）；守卫选择过拦（安全方向）。
+    精确恢复留待后续轮次改 _resolve_shell_cd 的 base-'' 分支。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    wt2 = tmp_path / "wt2"
+    wt2.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if true; then cd {wt}; fi ; cd {wt2} && git commit -m x", None
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_top_level_brace_group_cd_still_tracked(tmp_path):
+    """顶层花括号组无条件执行（非函数体）：cd 仍跟踪（不误伤既有语义）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"{{ cd {wt}; git commit -m x; }}", None
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_block_if_body_cd_then_commit_in_main(tmp_path):
+    """RULE-AI-35 应拦输入：if 分支体 cd 不归属 → 按真实 workdir(main) 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"if false; then cd {wt}; fi && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_allow_if_condition_cd_then_commit_in_wt(tmp_path):
+    """应放行输入：条件位置 cd（bash 先执行）→ 落 wt 的 commit 仍放行。"""
+    wt = _git_repo(tmp_path / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"if cd {wt}; then git commit -m x; fi",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is None
 
 
 def test_git_verbs_quoted_eval_payload_sentinel(tmp_path):

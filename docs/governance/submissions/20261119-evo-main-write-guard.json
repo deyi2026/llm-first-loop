@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "evo-main-write-guard-20261119",
-  "summary": "EVO-20261119-0fa86cab：lane_main_write_guard shell 层 cd 链跟踪落地后的守卫本体加固——括号子壳栈精确建模、bash |& 管道算子收编、动词后 seg_start 复位、refspec 边界切片、cd 目标存在性校验、词中 # 保守化、未知 cd 链下相对 -C 不回落 workdir、剥离空文本/词法失败保守哨兵。控制边界=main 直写守卫的 fail-closed 判定（他人 live lane + 主仓 workdir 即拒）。证据来自四轮真实独立审查回执（每轮 REVISE 发现均以代码修复闭环）与定向测试；successor SHA 的 Reviewer/R9/远端 CI 待跑，不复用旧 SHA 证据。",
+  "summary": "EVO-20261119-0fa86cab：lane_main_write_guard shell 层 cd 链跟踪落地后的守卫本体加固——括号子壳栈精确建模、bash |& 管道算子收编、动词后 seg_start 复位、refspec 边界切片、cd 目标存在性校验、词中 # 保守化、未知 cd 链下相对 -C 不回落 workdir、剥离空文本/词法失败保守哨兵、条件体（then/do/case 分支/函数体）内 cd 降级未知哨兵。控制边界=main 直写守卫的 fail-closed 判定（他人 live lane + 主仓 workdir 即拒）。证据来自 13 轮真实独立审查回执（前 12 轮 REVISE 发现均已修复闭环；第 13 轮 cd3f526623bf 的 P1-1/P1-2 由本轮提交修复）与定向测试；successor SHA 的 Reviewer/R9/远端 CI 待跑，不复用旧 SHA 证据。",
   "components": [
     {
       "component_id": "lane-main-write-guard-hardening",
@@ -11,12 +11,12 @@
       "disposition": "modify",
       "declaration_id": "decl-guard-lexer-fail-closed",
       "evidence": [
-        "审查链逐轮枚举（全部真实回执，data/review_admission/ 可查）：轮1 git_push a645e424028c REVISE P0=2（括号子壳 fail-open+陈旧基线伪影）；轮2 full_test ecc9877d2e93 REVISE P1=1 P2=3（cd 存在性未建模等）；轮3 git_push fe01ff8da0cd REVISE P1=1（|& 穿透）；轮4 full_test 4289cf3401e0 REVISE P1=1（cd 多操作数）；轮5 git_push 61bbdabfee9d REVISE P1=1（cd 后重定向误判为操作数）——每轮发现均以代码修复闭环，无跳过、无降级。",
-        "真实旁路闭环清单：括号子壳 (cd wt && git commit) 内层 cd 逃逸、|& 双流管道穿透、cd 目标不存在时字面落点误判、cd 多操作数误判成功、cd 后重定向误判操作数、refspec/参数无界切片跨段吞噬、动词后 pathspec cd 误启跟踪、剥离空文本盲放行、未知 cd 链相对 -C 回落 workdir。",
-        "fail-closed 方向保持：未知 cd 链/不配对括号/词法失败/剥离空文本/含 # 引号目标一律保守（未知目标当 main 或哨兵动词），不引入任何放行捷径。",
-        "最后一轮 full_test Reviewer 对同族前驱树 PASS（candidate=85e4bdc2 树摘要，2026-11-20 00:23）；successor SHA（本轮代码+清单修复后）的双通道 Reviewer/R9/push/PR CI 待跑，不复用旧 SHA 证据。"
+        "审查链逐轮枚举（全部真实回执，data/review_admission/ 可查）：轮1 git_push a645e424028c REVISE P0=2（括号子壳 fail-open+陈旧基线伪影）；轮2 full_test ecc9877d2e93 REVISE P1=1 P2=3（cd 存在性未建模等）；轮3 git_push fe01ff8da0cd REVISE P1=1（|& 穿透）；轮4 full_test 4289cf3401e0 REVISE P1=1（cd 多操作数）；轮5 git_push 61bbdabfee9d REVISE P1=1（cd 后重定向误判为操作数）；轮6 git_push 18c9ecb809a5 REVISE（清单引用不可调和等 P2）；轮7-12 full_test cde453f77b91 / 3eab63eb5e61 / f8b3178c6f57 / 6c60321fd479 / 02c9e0493bb0 / 36174c1824ec 均 REVISE（token 化、逻辑行拆分、seg_start 复位、refspec 切片、透明前缀旗标、cd 选项白名单、here-string 消费等）——每轮发现均以代码修复闭环，无跳过、无降级。",
+        "真实旁路闭环清单：括号子壳 (cd wt && git commit) 内层 cd 逃逸、|& 双流管道穿透、cd 目标不存在时字面落点误判、cd 多操作数误判成功、cd 后重定向误判操作数、refspec/参数无界切片跨段吞噬、动词后 pathspec cd 误启跟踪、剥离空文本盲放行、未知 cd 链相对 -C 回落 workdir、条件体（then/do/case 分支/函数体）内 cd fail-open。",
+        "fail-closed 方向保持：未知 cd 链/不配对括号/词法失败/剥离空文本/含 # 引号目标/条件体内 cd 一律保守（未知目标当 main 或哨兵动词），不引入任何放行捷径。",
+        "审查链现状（如实）：r16 审查子代理（86c45f3f8c7c）随 2026-11-20 凌晨会话中断丢失、无落盘回执，按 fail-closed 不计入证据；最近一轮 full_test cd3f526623bf（2026-11-20 09:17）REVISE P0=0 P1=2 P2=6——P1-1（条件体 cd fail-open）与 P1-2（本清单缺报基线路径）由本轮提交修复，P2-1（基线 head_commit 锚点）由本轮 regen 重锚、P2-6（清单引用不可调和）由本轮删除修订，其余 P2（_git_verbs 重构建议、here-string 转义、动态间接、.. 归一化）携带随 successor 重审复核；旧引用 85e4bdc2/d2b73173 经全库核对无对应审查回执（18c9ecb809a5 P2-2 已指出不可调和），删除不再引用；successor SHA（本轮代码+清单修复后）的双通道 Reviewer/R9/push/PR CI 待跑，不复用旧 SHA 证据。"
       ],
-      "verification_level": "targeted_103_passed_exit0__ruff_clean__pyright_0_on_predecessor_2ed181821__successor_reviewer_R9_push_pending",
+      "verification_level": "targeted_103_passed_exit0_on_predecessor_2ed181821__then_150_passed_exit0_after_cd3f526623bf_P1_fix__ruff_clean__pyright_0_on_predecessor__successor_reviewer_R9_push_pending",
       "model_evidence_veto_recovery_exit": "model-evidence veto：无——守卫判定全部机器可验（live lane 台账 + 分支/workdir 解析），无模型自证输入。recovery：任一审查发现否决即回退对应修复提交并重走闸；exit：revert 修复提交即回到 EVO 前守卫行为。",
       "rollback_route": "git revert 本组件提交；守卫回退后 main 直写判定回到历史行为（该行为本身已有 lane 台账保护，非无保护状态）。"
     },
@@ -27,9 +27,10 @@
       "owning_subsystem": "host-governance",
       "disposition": "modify",
       "evidence": [
-        "守卫单测扩充：103 passed / 0 failed（前驱 2ed181821 树，2026-11-20 00:09 宿主回执；Ruff 全过、Pyright 0 errors）。新增覆盖：括号子壳跟踪/继承/还原、不配对保守、|& 未知目标、动词后 pathspec cd 不误启、cd 存在性校验（不存在/文件/#目标）、未知链相对 -C、未闭合引号哨兵、相对落点存在性、cd 多操作数失败保持、重定向算子边界截断、cd 后重定向不破坏跟踪。"
+        "守卫单测扩充：103 passed / 0 failed（前驱 2ed181821 树，2026-11-20 00:09 宿主回执；Ruff 全过、Pyright 0 errors）。新增覆盖：括号子壳跟踪/继承/还原、不配对保守、|& 未知目标、动词后 pathspec cd 不误启、cd 存在性校验（不存在/文件/#目标）、未知链相对 -C、未闭合引号哨兵、相对落点存在性、cd 多操作数失败保持、重定向算子边界截断、cd 后重定向不破坏跟踪。",
+        "本轮 cd3f526623bf P1-1 修复回归：150 passed / 0 failed exit0（修复后工作树实测，2026-11-20 09:43）。新增 12 用例：if/while/do 分支体、case 分支、f(){} 与 function f{} 函数体 cd 降级未知哨兵；条件位置 cd（if cd wt; then…）仍归属；条件体闭合后顶层 cd 正常归属（无深度泄漏）；顶层花括号组 cd 不受影响（非函数体）；嵌套 if 正确闭合；哨兵粘性语义（后续 cd 从未知 base 仍保守）；RULE-AI-35 应拦输入（if false; then cd wt; fi && git commit → 按真实 workdir 拒）与应放行输入（条件位置 cd → wt commit 放行）；for 循环体 cd 语义由归属改为降级（旧 P1-1 动词识别保护保留）。"
       ],
-      "verification_level": "targeted_103_passed_exit0_on_predecessor_2ed181821__successor_rerun_pending",
+      "verification_level": "targeted_103_passed_exit0_on_predecessor_2ed181821__then_150_passed_exit0_after_cd3f526623bf_P1_fix__successor_rerun_pending",
       "model_evidence_veto_recovery_exit": "不适用（测试代码，非控制机器）。",
       "rollback_route": "随守卫组件一并 revert。"
     },
@@ -40,11 +41,25 @@
       "owning_subsystem": "governance-docs",
       "disposition": "add",
       "evidence": [
-        "A.5 CI 门禁（required_status_checks 内 A.5 架构提交审查）要求的唯一变更 manifest；覆盖 origin/main(71767de1b)...HEAD 全部 3 个变更路径。"
+        "A.5 CI 门禁（required_status_checks 内 A.5 架构提交审查）要求的唯一变更 manifest；覆盖 origin/main(71767de1b)...HEAD 全部 4 个变更路径（守卫本体/单测/基线棘轮数据/本 manifest；基线路径系 cd3f526623bf P1-2 补记）。"
       ],
       "verification_level": "staged_check_plus_post_commit_strict_pass_required",
       "model_evidence_veto_recovery_exit": "不适用（治理文档）。",
       "rollback_route": "revert 本 manifest 提交即回 A.5 FAIL 状态；不影响代码行为。"
+    },
+    {
+      "component_id": "guard-function-size-baseline",
+      "paths": ["tests/guards/function_size_baseline.json"],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-guard-lexer-fail-closed",
+      "evidence": [
+        "R9 架构护栏棘轮数据（原分支即有变更，cd3f526623bf P1-2 补记入清单）：本轮 P1-1 修复使 _git_verbs 增行，由 scripts/regen_function_size_baseline.py 重新 AST 实测登记（head_commit 锚定父提交，语义由 regen 脚本固化）；--check 由 ci_gate 全量强制（successor 待跑）。"
+      ],
+      "verification_level": "regen_ast_measure_now__ci_gate_function_size_check_on_successor_pending",
+      "model_evidence_veto_recovery_exit": "不适用（脚本生成的机器数据）。",
+      "rollback_route": "git revert 本组件提交即回旧基线；守卫回退后 --check 以旧值校验。"
     }
   ],
   "declarations": [
@@ -60,8 +75,8 @@
       },
       "g3": {
         "model_evidence": [
-          "四轮独立 Rule-28 审查真实回执（GLM-5.3-flash）：a645e424028c REVISE P0=2 P1=1、fe01ff8da0cd REVISE P0=0 P1=1、ecc9877d2e93 REVISE P0=0 P1=1 P2=3——全部发现已转化为代码修复与本轮测试；最后一轮 full_test Reviewer PASS（candidate=d2b73173，前驱树）。",
-          "定向回归：tests/unit/test_lane_main_write_guard.py 100 passed exit0（前驱 6ef0e7a8 树）；Ruff 全过；Pyright 0 errors。",
+          "真实独立 Rule-28 审查链（GLM-5.3-flash，全部回执 data/review_admission/ 可查）：a645e424028c、ecc9877d2e93、fe01ff8da0cd、4289cf3401e0、61bbdabfee9d、18c9ecb809a5、cde453f77b91、3eab63eb5e61、f8b3178c6f57、6c60321fd479、02c9e0493bb0、36174c1824ec 均 REVISE 且发现已转化为代码修复；cd3f526623bf（2026-11-20 09:17）REVISE P0=0 P1=2 P2=6，其 P1-1（条件体 cd fail-open）与 P1-2（清单缺报基线路径）由本轮提交修复；早期稿中的 PASS 引用（candidate=85e4bdc2/d2b73173）经全库核对无对应回执，已删除。",
+          "定向回归：tests/unit/test_lane_main_write_guard.py 100 passed exit0（前驱 6ef0e7a8 树）→ 103 passed（前驱 2ed181821 树）→ 本轮修复后 150 passed exit0（修复后工作树实测，2026-11-20 09:43，含条件体/case/函数体降级 12 用例）；Ruff 全过；Pyright 0 errors（前驱树，successor 重跑）。",
           "每轮 REVISE→修复→新 SHA 重审的完整链条即审查纪律执行证据；旧 SHA 的 PASS/REVISE 均不迁移到 successor。",
           "successor SHA：独立 Reviewer PASS P0/P1=0、原版完整 R9 exit0、受管 push、PR 远端 CI 全绿——待跑。"
         ],

@@ -134,6 +134,15 @@
   命令位；``cd -P/-L/--`` 的真实落点在选项之后（``--`` 后按字面）；
   ``>|``/``2>|``（clobber 重定向）并入 fd 重定向集。三者旧解析均会把
   真实落点误判为"第二操作数/普通词"→ cwd 不变 → fail-open，已关闭。
+- **条件体内 cd 降级（审查 subagent_cd3f526623bf P1-1 修复）**：``then``/
+  ``do`` 分支体、``case`` 分支、函数体（``f() { … }`` / ``function f { … }``）
+  内的 ``cd`` 可能永不执行（分支未选中/case 只跑一支/函数仅定义）——按
+  词法位置归属落点是 fail-open（``if false; then cd <wt>; fi && git commit``
+  原本按 workdir 拦截，会被放行）。现命中条件体即置未知哨兵（当 main
+  判定）；条件位置的 ``cd``（``if cd wt; then …``，bash 先执行条件）仍正常
+  跟踪。代价：分支确实执行时的合法落点被过拦（安全方向）。声明边界：
+  ``;;``/``esac`` 仅命令位识别（数据词 ``echo ";;"`` 不参与状态机），单行
+  case 的 esac 漏识别只会延续降级（过拦方向）。
 
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
@@ -174,8 +183,10 @@ CLOSING_BLOCK_MAX_S = 30 * 60.0
 # 同理（review subagent_f8b3178c6f57 P1-3）。
 _FD_REDIRECT_RE = re.compile(r"^(?:[0-9]*[<>]{1,2}&?[0-9]*|&(?:>>|>)|[0-9]*>[|]|<{3})$")
 # 操作数边界 token 集：cd 落点判定与 git refs 切片共用（含 here-string
-# `<<<`，review subagent_02c9e0493bb0 P1-2——`[<>]{1,2}` 匹配不了三个 `<`）。
-_TOK_OPERAND_BOUNDARY = ("(", ")", "<", ">", ">>", "<<<")
+# `<<<`，review subagent_02c9e0493bb0 P1-2——`[<>]{1,2}` 匹配不了三个 `<`）；
+# `;;` 为 case 分支结束符（cd3f526623bf 轮补充：refs 不再吞 `;;`/`esac`，
+# `cd wt;;` 不再被误判为多操作数 cd 失败）。
+_TOK_OPERAND_BOUNDARY = ("(", ")", "<", ">", ">>", "<<<", ";;")
 # 回执/证据窄通道（审查残余①，2026-11-09 收紧）：`git commit ... -- <paths>`
 # 显式列出且全部落在这些前缀下时，不受他人 live lane 阻挡（只追加证据，改不到
 # 代码）。原 `docs/` 整树过宽——`docs/ai_rules.md` 这类行为性文档也能借道；
@@ -290,9 +301,17 @@ def _git_verbs(
     # 入栈、子壳内 ``cd`` 正常跟踪（精确建模，不再逃过判定）、``)`` 弹栈还原；
     # 不配对 ``)`` → 弹空栈置未知（保守）。``$( )`` 命令替换中的命令同被跟踪。
     stack: list[str | None] = []
+    # 条件体跟踪（review subagent_cd3f526623bf P1-1）：cd 位于 then/do 分支体、
+    # case 分支或函数体内时可能永不执行（分支未选中/case 只跑一支/函数仅定义），
+    # 按词法位置归属 cd 落点是 fail-open → 命中即置未知哨兵（""，当 main 判定）。
+    _cond_body_depth = 0
+    _case_depth = 0
+    _func_pending = False
+    _func_body_depth = 0
     seg_start = True
     i = 0
     while i < len(tokens):
+        _prev_tok = tokens[i - 1] if i else ""
         if tokens[i] in _SEG_PERSIST:
             seg_start = True
             i += 1
@@ -305,11 +324,71 @@ def _git_verbs(
             continue
         if tokens[i] == "(":
             stack.append(shell_cwd)
+            _func_pending = False  # `f() ( … )` 子壳体形态：后续 `{` 不再是函数体开口
             seg_start = True
             i += 1
             continue
         if tokens[i] == ")":
             shell_cwd = stack.pop() if stack else ""
+            if _prev_tok == "(":
+                # `name()` 空参数括号 = 函数定义声明（bash 语法中空 () 仅此一用；
+                # 非空 () 在上面分支已消费）——其后 `{` 开函数体
+                # （review subagent_cd3f526623bf P1-1）。
+                _func_pending = True
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == ";;":
+            # case 分支结束符：其后 esac/下一分支模式词按命令位继续。与其余
+            # 保留字一致仅在命令位识别（数据词 `echo ";;"` 不参与状态机——
+            # 误识别会把后续词提为命令位，属 fail-open 方向）。
+            seg_start = True
+            i += 1
+            continue
+        if seg_start and tokens[i] in _COND_KEYWORDS:
+            # 条件体状态机（review subagent_cd3f526623bf P1-1）：then/do 进入
+            # 分支体；elif/fi/done 关闭；case/esac 成对计数（case 内任意位置
+            # 的 cd 一律降级——哪支会执行静态不可知）；function 声明（配合
+            # `name()` 括号检测）后 `{` 开函数体。
+            if tokens[i] in ("then", "do"):
+                _cond_body_depth += 1
+            elif tokens[i] in ("elif", "fi", "done"):
+                _cond_body_depth = max(0, _cond_body_depth - 1)
+            elif tokens[i] == "case":
+                _case_depth += 1
+            elif tokens[i] == "esac":
+                _case_depth = max(0, _case_depth - 1)
+            else:  # function
+                _func_pending = True
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == "()":
+            # `name()` 粘写形（punctuation_chars 把 () 并为单 token）：bash 中
+            # 空参数括号仅函数定义一用 → 其后 `{` 开函数体
+            # （review subagent_cd3f526623bf P1-1）。间隔写法 `f ()` 由上面
+            # `)` 分支的 prev_tok 检测覆盖。
+            _func_pending = True
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == "{" and (
+            _func_pending or (seg_start and _func_body_depth > 0)
+        ):
+            # 函数体开口不受 seg_start 门控（`function f {` 的 `{` 前是函数名
+            # 数据词）；体内嵌套花括号仍要求命令位。非函数语境的 `{` 落回
+            # 透明分支——那里还承担前缀旗标校验（`{ -x …` → 保守），绕过会
+            # 丢簿记（review subagent_6c60321fd479 P1-1 回归）。
+            if _func_pending:
+                _func_pending = False
+                _func_body_depth = 1
+            else:
+                _func_body_depth += 1
+            seg_start = True
+            i += 1
+            continue
+        if seg_start and tokens[i] == "}" and _func_body_depth > 0:
+            _func_body_depth -= 1
             seg_start = True
             i += 1
             continue
@@ -423,6 +502,16 @@ def _git_verbs(
             ):
                 # bash: cd 多操作数 → "too many arguments"，cwd 不变
                 # （review subagent_4289cf3401e0 P1-1：按成功 cd 跟踪是 fail-open）。
+                i = _opt + 1
+                continue
+            if _cond_body_depth > 0 or _case_depth > 0 or _func_body_depth > 0:
+                # cd 位于条件分支体/case 分支/函数体（review
+                # subagent_cd3f526623bf P1-1）：可能不执行（分支未选中、
+                # case 只跑一支、函数仅定义）——按词法归属落点是 fail-open
+                # （`if false; then cd wt; fi && git commit` 原本按 workdir
+                # 拦截，会被放行）→ 唯一一致安全解是未知哨兵（当 main 判定）。
+                # 代价：分支确实执行时的合法落点被过拦（安全方向）。
+                shell_cwd = ""
                 i = _opt + 1
                 continue
             shell_cwd = _resolve_shell_cd(shell_cwd, nxt, workdir)
@@ -568,6 +657,15 @@ _TRANSPARENT_PREFIX_FLAGS = {
     "!": set(),
 }
 _CMD_POS_CWD_UNKNOWABLE = frozenset({"eval", "pushd", "popd", "source", "."})
+# 条件体状态机词集（review subagent_cd3f526623bf P1-1）：仅命令位生效——
+# `echo then` 的 then 是数据词，命令位判定防止把数据词误当状态迁移。
+# then/do 进入分支体；elif/fi/done 关闭；case/esac 成对计数（case 内任意
+# 位置的 cd 一律降级——哪支会执行静态不可知）；function 声明（配合
+# `name()` 空括号检测）进入函数体。声明边界：``;;``/``esac`` 仅命令位识别，
+# 单行 case 的 esac 漏识别只会延续降级（过拦方向，不会 fail-open）。
+_COND_KEYWORDS = frozenset({
+    "then", "do", "elif", "fi", "done", "case", "esac", "function",
+})
 
 
 def _strip_here_strings(text: str) -> str:
