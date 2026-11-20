@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -216,3 +218,92 @@ def test_cancelled_required_task_cannot_be_waived_by_self_report(tmp_path):
 def test_unbound_legacy_goal_unchanged(tmp_path):
     host, gid, _, _, _, _ = _fixture(tmp_path)
     assert _complete(host, gid).status == ToolResultStatus.SUCCESS
+
+
+def _managed_release(host, design: Path) -> tuple[Path, Path, Path]:
+    """Model a verified source release without copying the design into shared root."""
+    repo = Path(host.audit_dir).parents[1]
+    sha = "a" * 40
+    release = repo / ".releases" / sha
+    pinned = release / "docs" / "design" / "approved.md"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_bytes(design.read_bytes())
+    manifest = repo / "data" / "runtime" / "managed_service_deployment.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {"code_root": str(release), "runtime_root": str(repo), "git_head": sha}
+        ),
+        encoding="utf-8",
+    )
+    return pinned, manifest, release
+
+
+def test_managed_release_scope_binds_without_shared_root_design(tmp_path):
+    host, gid, _, design, scope, _ = _fixture(tmp_path)
+    pinned, _, _ = _managed_release(host, design)
+    design.unlink()
+    assert pinned.is_file() and not design.exists()
+    assert _bind(host, gid, scope).status == ToolResultStatus.SUCCESS
+    assert _complete(host, gid).status == ToolResultStatus.SUCCESS
+
+
+def test_managed_release_prefers_pinned_source_over_root_decoy(tmp_path):
+    host, gid, _, design, scope, _ = _fixture(tmp_path)
+    pinned, _, _ = _managed_release(host, design)
+    design.write_text("untrusted old root copy", encoding="utf-8")
+    assert _bind(host, gid, scope).status == ToolResultStatus.SUCCESS
+    pinned.write_text(pinned.read_text() + "\nmodified", encoding="utf-8")
+    assert _complete(host, gid).status == ToolResultStatus.BLOCKED
+    assert _record(host, gid)["status"] == "active"
+
+
+def test_managed_release_rejects_stale_or_cross_workspace_pointer(tmp_path):
+    host, gid, _, design, scope, _ = _fixture(tmp_path)
+    _, manifest, release = _managed_release(host, design)
+    for bad in (
+        {"code_root": str(release.parent / ("b" * 40))},
+        {"runtime_root": str(tmp_path / "foreign")},
+        {"git_head": "not-a-commit"},
+    ):
+        state = json.loads(manifest.read_text())
+        state.update(bad)
+        manifest.write_text(json.dumps(state))
+        assert _bind(host, gid, scope).status == ToolResultStatus.FAILURE
+        assert not _record(host, gid).get("requirements_scope")
+        manifest.write_text(
+            json.dumps(
+                {"code_root": str(release), "runtime_root": str(Path(host.audit_dir).parents[1]), "git_head": "a" * 40}
+            )
+        )
+
+
+def test_managed_release_rejects_symlink_escape(tmp_path):
+    host, gid, _, design, scope, _ = _fixture(tmp_path)
+    _, _, release = _managed_release(host, design)
+    outside = tmp_path / "outside"
+    shutil.move(str(release), str(outside))
+    release.symlink_to(outside, target_is_directory=True)
+    assert _bind(host, gid, scope).status == ToolResultStatus.FAILURE
+    assert not _record(host, gid).get("requirements_scope")
+
+
+def test_managed_release_missing_or_corrupt_state_does_not_fallback(tmp_path):
+    host, gid, _, design, scope, _ = _fixture(tmp_path)
+    _, manifest, _ = _managed_release(host, design)
+    manifest.unlink()
+    assert _bind(host, gid, scope).status == ToolResultStatus.FAILURE
+    manifest.write_text("{corrupt", encoding="utf-8")
+    assert _bind(host, gid, scope).status == ToolResultStatus.FAILURE
+    assert not _record(host, gid).get("requirements_scope")
+
+
+def test_managed_release_rejects_symlinked_identity(tmp_path):
+    host, gid, _, design, scope, _ = _fixture(tmp_path)
+    _, manifest, _ = _managed_release(host, design)
+    other = tmp_path / "outside-identity.json"
+    other.write_bytes(manifest.read_bytes())
+    manifest.unlink()
+    manifest.symlink_to(other)
+    assert _bind(host, gid, scope).status == ToolResultStatus.FAILURE
+    assert not _record(host, gid).get("requirements_scope")
