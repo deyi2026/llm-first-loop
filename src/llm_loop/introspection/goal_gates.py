@@ -96,4 +96,60 @@ def complete_gate(host: Any, gid: str, args: dict) -> ToolResult | None:
             "",
             "update_goal",
         )
+    return _requirements_completion_gate(host, gid)
+
+
+def _requirements_completion_gate(host: Any, gid: str) -> ToolResult | None:
+    """Extra fail-closed REQ gate only for Goals with a pinned scope.
+
+    Legacy Goals without requirements_scope retain their original semantics.
+    The scope is immutable in GoalStore; no user-supplied complete args can
+    select a weaker design or turn this check off.
+    """
+    try:
+        from llm_loop.introspection.goal import GoalStore
+        from llm_loop.introspection.goal_coverage import (
+            audit_coverage,
+            resolve_design_path,
+        )
+
+        audit_dir = str(host.audit_dir)
+        goal = GoalStore(audit_dir).get(gid)
+        scope = (goal or {}).get("requirements_scope")
+        if not scope:
+            return None
+        if not isinstance(scope, dict) or set(scope) != {"design_path", "design_sha256"}:
+            raise ValueError("pinned requirements scope malformed")
+        verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
+        if verifier is None:
+            raise ValueError("trusted evidence verifier unavailable")
+        design = resolve_design_path(audit_dir, scope["design_path"])
+        report = audit_coverage(
+            design_path=design,
+            audit_dir=audit_dir,
+            goal_id=gid,
+            required_design_sha256=scope["design_sha256"],
+            evidence_verifier=verifier,
+        )
+        if report["status"] != "PASS":
+            codes = sorted({item["code"] for item in report["issues"]})
+            return ToolResult(
+                ToolResultStatus.BLOCKED,
+                "[REQ完成门] reason_code=requirement_coverage_unverified\n"
+                f"goal {gid} REQ覆盖/可信证据未通过: {', '.join(codes[:10])}; "
+                f"verified={report['requirements_verified']}/{report['requirements_total']}。"
+                "\n出口: 核实批准设计SHA、全部必需Task、实时证据与范围批准，"
+                "然后用相同Goal重验；不得以取消Task或自报完成绕过。",
+                "",
+                "update_goal",
+            )
+    except Exception as exc:  # noqa: BLE001 — 审计或verifier不可用必须拒绝写终局
+        return ToolResult(
+            ToolResultStatus.BLOCKED,
+            "[REQ完成门] reason_code=requirement_scope_unavailable\n"
+            f"goal {gid} 无法验证已绑定需求范围: {type(exc).__name__}: {exc}。"
+            "\n出口: 修复受管设计/证据读取后重验，不能降级为旧Goal门禁。",
+            "",
+            "update_goal",
+        )
     return None
