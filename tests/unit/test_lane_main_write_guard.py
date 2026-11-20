@@ -1903,6 +1903,37 @@ def test_git_verbs_here_string_with_substitution_conservative(tmp_path):
     assert verbs == [("commit", [], "")]
 
 
+def test_git_verbs_process_substitution_conservative(tmp_path):
+    """P0-1（review subagent_c50061b2c402）：`<(`/`>(` 进程替换哨兵。
+
+    bash 真值：`echo <(cd <main> && git commit -m x)` 的子 shell 会真实执行
+    并落 main 提交；旧逻辑 `<(` 既非括号也非段界 → 内层 cd 逃过判定
+    （fail-open）→ 现并入 `$( `同款保守哨兵。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    for form in (
+        "echo <(cd /tmp/main && git commit -m x)",
+        "echo >(cd /tmp/main && git commit -m x)",
+        f"git -C {wt} commit -m x 2>(cd /tmp/main && git commit -m y)",
+    ):
+        verbs = guard_module._git_verbs(form, str(wt))
+        assert verbs == [("commit", [], "")], form
+
+
+def test_block_process_substitution_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：进程替换内 ``cd main && git commit`` → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"echo <(cd {repo} && git commit -m x)",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
 def test_block_cd_option_form_into_main_repo(tmp_path):
     """RULE-AI-35 应拦输入：`cd -Pe main && git commit` 落 main → 拒绝。"""
     repo = _git_repo(tmp_path / "repo", "main")

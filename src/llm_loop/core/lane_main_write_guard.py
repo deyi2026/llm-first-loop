@@ -291,7 +291,9 @@ def _git_verbs(
     tokens = merged
     # 引号内命令替换（18c9ecb809a5 P1-3）：`"$( … git … )"` / 反引号整串单
     # token，内部 git 动词不可见而 bash 会真实执行 → 保守哨兵（当 main 判定）。
-    if any("$(" in _tok or "`" in _tok for _tok in tokens):
+    # 进程替换（review subagent_c50061b2c402 P0-1）：`<(`/`>(`（含 `2>(` fd 形）
+    # 的子 shell 会真实执行且内部 cd/git 对判定不可见 → 同入哨兵（保守当 main）。
+    if any("$(" in _tok or "`" in _tok or "<(" in _tok or ">(" in _tok for _tok in tokens):
         return [("commit", [], "")]
     out: list[tuple[str, list[str], str | None]] = []
     # EVO-20261119-0fa86cab：shell 层 ``cd`` 链跟踪。None=未见 cd（沿用 workdir
