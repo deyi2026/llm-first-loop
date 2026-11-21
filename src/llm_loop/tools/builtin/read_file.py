@@ -57,6 +57,7 @@ class ReadFileTool:
         "何时不用: 需要列出目录或查找文件时（应选目录/查找类工具）；URL 不是文件路径。"
         "失败对策: 文件不存在/无权限会如实返回失败原因，请核对路径后重试或换工具。"
         "状态契约: 选定行范围的真实文本默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，"
+        "运行环境事实（EVO-20261121-efa320ab）: 本工具读的是宿主视图，execute_command 沙盒的 /tmp 与宿主 /tmp 不是同一目录——沙盒内写入的 /tmp 文件此处读不到，反之亦然；"
         "且只在存在真实 durable recovery 时声明可恢复。超大文件可用 offset/limit 分段读取。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.PROBEABLE_FILE)

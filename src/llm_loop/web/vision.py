@@ -20,11 +20,13 @@
 """
 
 import base64
+import io
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -295,21 +297,140 @@ def _describe_minimax(image_bytes: bytes, mime: str, prompt: str) -> str:
     return result
 
 
-def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None) -> str:
-    """调用图片识别能力描述图片，返回描述文本（非空）.
+# ── 大图本地降采样与坐标几何（EVO-20261121-efa320ab）────────────────────────
+# 实测依据（2026-11-21 本机）：3000×200 / 2400×200 / 3120×1990 三张图内容识别全部降级
+# （仅返回元信息），1560 宽及以下可成功——大图失败率显著更高。故按长边阈值在**本地**
+# 降采样后再送检，并把「送检尺寸 / 缩放系数」作为结构化事实回报给调用方（坐标换算依据）。
+VISION_MAX_SIDE_ENV = "WEB_VISION_MAX_SIDE"
+DEFAULT_VISION_MAX_SIDE = 1568
+_FALLBACK_MIN_SIDE = 32
 
-    识别结果即**文本**（供无视觉能力的主模型使用），调用方注入对话上下文。
 
-    Args:
-        settings: 引擎设置（provider 后端注册表来源）；None = 全局配置。
+def vision_max_side() -> int:
+    """大图本地降采样阈值（长边像素上限）；<=0 表示关闭降采样与兜底重试.
 
-    Raises:
-        RuntimeError: 工具不可用 / 调用失败 / 空结果（含可操作指引）.
+    环境变量 ``WEB_VISION_MAX_SIDE``：留空取默认 1568；0=禁用（行为与本演进前一致）。
     """
-    if not image_bytes:
-        raise RuntimeError("图片内容为空")
-    if not mime:
-        mime = _sniff_mime(image_bytes)
+    raw = os.environ.get(VISION_MAX_SIDE_ENV, "").strip()
+    if not raw:
+        return DEFAULT_VISION_MAX_SIDE
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_VISION_MAX_SIDE
+
+
+@dataclass(frozen=True)
+class VisionGeometry:
+    """送检几何：source=送检前尺寸，input=实际送检尺寸（降采样后）."""
+
+    source_width: int
+    source_height: int
+    input_width: int
+    input_height: int
+    max_side: int
+    downsampled: bool
+
+    @property
+    def scale_x(self) -> float:
+        """送检坐标 → 送检前坐标 的比例因子（input/source）."""
+        if not self.source_width:
+            return 1.0
+        return self.input_width / self.source_width
+
+    @property
+    def scale_y(self) -> float:
+        if not self.source_height:
+            return 1.0
+        return self.input_height / self.source_height
+
+
+@dataclass(frozen=True)
+class VisionResult:
+    """识别结果 + 几何事实（坐标换算的唯一依据）."""
+
+    text: str
+    geometry: VisionGeometry
+    backend: str = ""
+    fallback_used: bool = False
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedImage:
+    """本地预处理后的待送检图片（降采样后）."""
+
+    data: bytes
+    width: int
+    height: int
+    mime: str
+
+
+def image_size(image_bytes: bytes) -> tuple[int, int] | None:
+    """图片像素尺寸（Pillow）；无法解析时返回 None（不伪报尺寸）."""
+    try:
+        from PIL import Image
+    except Exception:  # noqa: BLE001 - Pillow 缺失时如实降级
+        return None
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as im:
+            return int(im.width), int(im.height)
+    except Exception:  # noqa: BLE001 - 解码失败如实降级
+        return None
+
+
+def prepare_image(image_bytes: bytes, mime: str, max_side: int) -> PreparedImage:
+    """按长边阈值本地降采样（只缩小、不放大、不改原文件）.
+
+    超出阈值才重编码（JPEG 保持 JPEG，其余转 PNG）；降采样失败如实退回原图。
+    """
+    size = image_size(image_bytes)
+    fallback_mime = mime or _sniff_mime(image_bytes)
+    if size is None or max_side <= 0 or max(size) <= max_side:
+        width, height = size or (0, 0)
+        return PreparedImage(image_bytes, width, height, fallback_mime)
+    try:
+        from PIL import Image
+    except Exception:  # noqa: BLE001 - Pillow 缺失时如实退回原图
+        return PreparedImage(image_bytes, size[0], size[1], fallback_mime)
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as im:
+            im.load()
+            ratio = max_side / float(max(size))
+            new_w = max(1, int(round(size[0] * ratio)))
+            new_h = max(1, int(round(size[1] * ratio)))
+            resized = im.resize((new_w, new_h))
+            buf = io.BytesIO()
+            if (im.format or "").upper() == "JPEG":
+                resized.convert("RGB").save(buf, format="JPEG", quality=90)
+                out_mime = "image/jpeg"
+            else:
+                resized.save(buf, format="PNG")
+                out_mime = "image/png"
+            return PreparedImage(buf.getvalue(), new_w, new_h, out_mime)
+    except Exception:  # noqa: BLE001 - 降采样失败如实退回原图
+        return PreparedImage(image_bytes, size[0], size[1], fallback_mime)
+
+
+def _geometry_prompt(prompt: str, geometry: VisionGeometry) -> str:
+    """给视觉模型的坐标契约（送检像素尺寸 + 原点约定 + bbox 格式）.
+
+    模型自报坐标必须落在**送检尺寸**内；调用方据此换算回原图坐标。
+    """
+    base = (prompt or "").strip() or VISION_DEFAULT_PROMPT
+    return (
+        f"{base}\n\n"
+        "（坐标契约）本图送检像素尺寸 = "
+        f"{geometry.input_width}×{geometry.input_height}"
+        f"（送检前尺寸 = {geometry.source_width}×{geometry.source_height}；"
+        "左上角为原点，x 向右、y 向下）。"
+        "若给出目标元素边界框，请用 [x1,y1,x2,y2] 像素坐标表示（基于送检尺寸），"
+        "数值须落在送检尺寸范围内。"
+    )
+
+
+def _dispatch_vision(image_bytes: bytes, mime: str, prompt: str, settings: Any) -> str:
+    """按后端策略调用识别能力（auto/minimax/arkcli/provider），失败如实抛错."""
     backend = _vision_backend()
     if backend == "minimax":
         return _describe_minimax(image_bytes, mime, prompt)
@@ -328,6 +449,79 @@ def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", setting
             raise RuntimeError(
                 f"MiniMax 失败（{mm_exc}）且注册表视觉模型亦失败（{prov_exc}）。{_AUTH_HINT}"
             ) from prov_exc
+
+
+def describe_image_detailed(
+    image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None
+) -> VisionResult:
+    """识别图片并回报几何事实（原图尺寸/送检尺寸/缩放系数/是否兜底重试）.
+
+    大图（长边 > WEB_VISION_MAX_SIDE）先在**本地**降采样再送检；识别失败时按
+    「再降采样一半」兜底重试一次；两次都失败则如实抛错（不伪装成功）。
+    """
+    if not image_bytes:
+        raise RuntimeError("图片内容为空")
+    if not mime:
+        mime = _sniff_mime(image_bytes)
+    max_side = vision_max_side()
+    source = image_size(image_bytes)
+    prepared = prepare_image(image_bytes, mime, max_side)
+    fallback_used = False
+    try:
+        geometry = VisionGeometry(
+            source_width=source[0] if source else prepared.width,
+            source_height=source[1] if source else prepared.height,
+            input_width=prepared.width,
+            input_height=prepared.height,
+            max_side=max_side,
+            downsampled=bool(source) and (prepared.width, prepared.height) != source,
+        )
+        text = _dispatch_vision(
+            prepared.data, prepared.mime, _geometry_prompt(prompt, geometry), settings
+        )
+    except RuntimeError:
+        if max_side <= 0 or source is None:
+            raise
+        retry = prepare_image(
+            prepared.data, prepared.mime, max(_FALLBACK_MIN_SIDE, max_side // 2)
+        )
+        if (retry.width, retry.height) == (prepared.width, prepared.height):
+            raise
+        retry_geometry = VisionGeometry(
+            source_width=source[0],
+            source_height=source[1],
+            input_width=retry.width,
+            input_height=retry.height,
+            max_side=max_side,
+            downsampled=True,
+        )
+        text = _dispatch_vision(
+            retry.data, retry.mime, _geometry_prompt(prompt, retry_geometry), settings
+        )
+        prepared = retry
+        geometry = retry_geometry
+        fallback_used = True
+    return VisionResult(
+        text=(text or "").strip(),
+        geometry=geometry,
+        backend=_vision_backend(),
+        fallback_used=fallback_used,
+    )
+
+
+def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None) -> str:
+    """调用图片识别能力描述图片，返回描述文本（非空）.
+
+    识别结果即**文本**（供无视觉能力的主模型使用），调用方注入对话上下文。
+    几何事实（送检尺寸/缩放系数）经 :func:`describe_image_detailed` 暴露。
+
+    Args:
+        settings: 引擎设置（provider 后端注册表来源）；None = 全局配置。
+
+    Raises:
+        RuntimeError: 工具不可用 / 调用失败 / 空结果（含可操作指引）.
+    """
+    return describe_image_detailed(image_bytes, mime=mime, prompt=prompt, settings=settings).text
 
 
 def _describe_arkcli_with_hint(image_bytes: bytes, mime: str, prompt: str) -> str:

@@ -408,6 +408,9 @@ class ExecuteCommandTool:
         "默认 shell 退出码仅是最后执行命令的状态，不代表管道内全部步骤成功。"
         "命令输出默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，并由统一 durable recovery 负责恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
+        "运行环境事实（EVO-20261121-efa320ab，本机实测）：单次调用墙钟上限约 60s，超时回执不代表后台进程已被杀死（后台任务请用 run_in_background + job_id + job_output 查询）；"
+        "沙盒的 /tmp 与宿主 /tmp 不是同一目录——沙盒内写入的 /tmp 文件宿主工具（read_file/read_image）看不到，反之亦然，需跨边界时把产物落在工作区内；"
+        "沙盒内 releases/*/venv/bin/python 等解释器路径软链到沙盒外目录、不可执行，沙盒内请用系统 python3（无第三方库）或自行安装在沙盒可见路径的解释器。"
         + "RULE-AI-28：" + REVIEW_GATE_OBLIGATION
         + "RULE-AI-35：护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前，"
           "须构造应拦输入实测拦截；未实测的完成声明只可停在'代码已提交'。"
