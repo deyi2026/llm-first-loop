@@ -805,3 +805,16 @@ def test_issue73_branch_protection_changes_during_host_check_fails_closed(fixtur
 
     client.get = mutate_on_final_read
     holds(fixture, "premerge_race_detected")
+
+
+def test_repository_required_ci_workflow_pins_match_checked_out_blobs():
+    """Fail CI when a trusted workflow changes without updating its Host policy pin."""
+    root = Path(__file__).resolve().parents[2]
+    policy = json.loads((root / POLICY).read_text(encoding="utf-8"))
+    assert policy["schema"] == "lfl.required_checks.v1"
+    for check in policy["checks"]:
+        path = check["workflow_path"]
+        assert path.startswith(".github/workflows/")
+        workflow = root / path
+        assert workflow.is_file(), path
+        assert check["workflow_blob_sha"] == _blob_sha(workflow.read_bytes()), path

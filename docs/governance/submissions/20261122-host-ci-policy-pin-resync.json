@@ -1,0 +1,81 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "host-ci-policy-pin-resync-20261122",
+  "summary": "Resync three protected-main CI workflow blob pins after M1 MuJoCo test setup; preserve fail-closed Host verifier and add a local regression test.",
+  "declarations": [
+    {
+      "declaration_id": "host-ci-policy-pin-resync",
+      "g1": {
+        "necessity": "The 2026-11-20 trusted ci.yml update changed its Git blob but three required-check pins were not updated; Host correctly holds policy_workflow_untrusted and blocks PR86."
+      },
+      "g2": {
+        "authority_owner": "Protected main required-check policy and independent UID462 Host verifier",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing five strict GitHub Actions checks and Host policy schema; no new signing authority, bypass, or duplicate verifier."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent GLM-5.3-flash reviewer checked five pinned Git blobs and exact candidate diff; P0/P1 resolved under current protected five-check PR bootstrap.",
+          "Original full R9 exit 0; 16,180 pytest passed; Ruff and Pyright pass."
+        ],
+        "recovery_or_reason": "Any pin mismatch continues to fail closed. This policy-only PR uses the current protected five-check path; sixth Host App check is not yet required. If any required check fails, hold and repair before merge."
+      },
+      "g4": {
+        "rollback": "Revert this policy-only PR through a protected PR if needed; do not direct-push main or disable required checks.",
+        "verification": [
+          "Check all five workflow blobs against policy pins using the new unit test.",
+          "Run original complete R9 and all five remote required GitHub checks.",
+          "After protected merge, verify main policy and ci.yml blobs match before revalidating PR86 and enabling the sixth Host check."
+        ]
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "trusted-ci-workflow-policy",
+      "paths": [
+        "docs/governance/required-ci-checks.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "host-ci-policy-pin-resync",
+      "owning_subsystem": "Host premerge required-check policy",
+      "disposition": "Replace exactly three stale ci.yml workflow blob pins; retain schema, App IDs, workflow IDs, contexts and Host fail-closed validation.",
+      "evidence": [
+        "Protected main ci.yml blob 70404c658160e6687d9bfe00b0b4a675af6c7d5b; old pinned blob c6b90c0701ae16f172736fb79f9b8cbdd06f967a."
+      ],
+      "verification_level": "Git blob equality, independent read-only reviewer, original full R9 and remote strict CI.",
+      "model_evidence_veto_recovery_exit": "Host policy_workflow_untrusted and gate_version_untrusted remain hard HOLD; no relaxed validator.",
+      "rollback_route": "Protected PR revert of policy pins after re-evaluating trusted workflow."
+    },
+    {
+      "component_id": "policy-pin-regression-test",
+      "paths": [
+        "tests/unit/test_premerge_gate_host.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Host verifier unit tests",
+      "disposition": "Fail CI if a checked-in required workflow changes without a corresponding trusted pin update.",
+      "evidence": [
+        "Targeted test_premerge_gate_host.py 83 passed; full R9 exit 0 on original two-file candidate."
+      ],
+      "verification_level": "Targeted pytest and original full R9; rerun after manifest addition.",
+      "model_evidence_veto_recovery_exit": "Test only, no production Host verifier change or override.",
+      "rollback_route": "Protected PR revert of this test if superseded by a stronger check."
+    },
+    {
+      "component_id": "a5-exact-path-submission",
+      "paths": [
+        "docs/governance/submissions/20261122-host-ci-policy-pin-resync.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission governance",
+      "disposition": "Declare all three changed paths and G1-G4 security rationale to satisfy the existing A.5 gate.",
+      "evidence": [
+        "PR88 first A.5 failure explicitly required one changed architecture-submission manifest."
+      ],
+      "verification_level": "Local A.5 mechanical exact-path validation and remote A.5 check.",
+      "model_evidence_veto_recovery_exit": "A.5 presence alone is not a security approval; independent review and Host checks remain separate.",
+      "rollback_route": "Protected PR revert with the policy patch."
+    }
+  ]
+}
