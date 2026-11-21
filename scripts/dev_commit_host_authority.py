@@ -284,8 +284,11 @@ def _staged_tree_readonly(root: Path, *, owner_uid: int,
                 and before.st_mode & 0o022 == 0
                 and 0 < before.st_size <= 64 * 1024 * 1024,
                 "host_git_index_untrusted")
+        # Keep the root fixed, not inherited from caller-controlled TMPDIR.
+        # /tmp resolves to /private/tmp on macOS and exists on Linux; the
+        # Host-private directory itself is created mode 0700 by tempfile.
         with tempfile.TemporaryDirectory(
-            prefix="lfl-dev-host-index-", dir="/private/tmp"
+            prefix="lfl-dev-host-index-", dir="/tmp"
         ) as directory:
             temporary = Path(directory)
             with (temporary / "index").open("xb") as output:

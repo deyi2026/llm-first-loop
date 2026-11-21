@@ -279,6 +279,31 @@ def test_host_tree_requires_no_write_to_owner_git_index_or_objects(live_repo):
         git_dir.chmod(original_git_mode)
 
 
+def test_host_private_index_ignores_caller_tempdir(live_repo, tmp_path, monkeypatch):
+    root, _ = live_repo
+    untrusted_temp = tmp_path / "caller-controlled-tmp"
+    untrusted_temp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(untrusted_temp))
+    original_run = host.subprocess.run
+    seen = []
+
+    def check_private_git_index(args, **kwargs):
+        env = kwargs.get("env") or {}
+        if args[-1] == "write-tree" and "GIT_INDEX_FILE" in env:
+            private_dir = Path(env["GIT_INDEX_FILE"]).parent
+            assert private_dir.parent == Path("/tmp")
+            assert private_dir.stat().st_mode & 0o777 == 0o700
+            seen.append(private_dir)
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(host.subprocess, "run", check_private_git_index)
+    tree, _ = host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    assert tree == _git(root, "write-tree")
+    assert len(seen) == 1
+    assert not seen[0].exists()
+    assert list(untrusted_temp.iterdir()) == []
+
+
 def test_host_tree_in_linked_git_worktree(live_repo, tmp_path):
     root, base = live_repo
     linked = tmp_path / "linked"
