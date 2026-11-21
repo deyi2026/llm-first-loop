@@ -1,8 +1,8 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.55 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.56 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
-> **版本与发行状态（2026-11-16 核验）**：`0.6.55` 是当前源码/构建候选版本，**不代表已正式发布**。GitHub 最新正式 Release 仍为 [v0.6.50](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.50)；`v0.6.54` 目前仍是 Draft（macOS arm64 正式安装包未满足发布门禁），`v0.6.55` 尚未建立正式 GitHub Release。用户安装请以实时的 [GitHub 最新正式 Release](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准，不从 Draft 安装。
+> **版本与发行状态（2026-11-20 核验）**：`0.6.56` 是基于已合入 `main` 的 Deepin 源码/安装候选版本，**不代表已正式发布**。GitHub 最新正式 Release 为 [v0.6.54](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.54)；`v0.6.56` 尚未发布为 GitHub Release。用户安装应以实时的 [GitHub 最新正式 Release](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准，不从 Draft 安装。
 
 **手机 Web V2 操作**：屏幕右边缘的 `◂` 可展开右侧面板，再点 `▸` 收起；左上角 `☰` 打开会话导航。详见[移动端左右侧栏说明](docs/web-mobile-navigation.md)。
 

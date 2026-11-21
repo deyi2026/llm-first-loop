@@ -1,0 +1,83 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261121-dev-host-readonly-index-pr85",
+  "summary": "Fix isolated development Host staged-tree inspection without UID462 writing a developer-owned Git index; use a portable fixed system temp root and add regressions and authority-boundary declarations.",
+  "components": [
+    {
+      "component_id": "dev-commit-host-readonly-index",
+      "paths": ["scripts/dev_commit_host_authority.py"],
+      "control_machinery": true,
+      "owning_subsystem": "LFL dev-commit HostIssuer (dedicated UID462)",
+      "disposition": "modify",
+      "declaration_id": "decl-dev-host-index-isolation",
+      "evidence": [
+        "Real UID462 inspect on a UID501-owned repository previously failed: git write-tree could not create .git/index.lock (permission denied); no production activation was attempted.",
+        "Isolated UID462 smoke of the corrected readonly-index algorithm produced the exact developer staged tree without writing .git/index.lock.",
+        "PR #85 initial CI run 44862055053 found 10 Linux failures because /private/tmp is macOS-only; successor fixes the private index root to /tmp, never caller-controlled TMPDIR, with a mode-0700 and cleanup regression.",
+        "Independent Host review_admission full_test PASS with P0/P1=0 for the original frozen tree 41949d3055a8dd45859721a2d5955df1b6c136af; original full R9 exit 0 and commit b8cbb264e634c463c661001f964bec879167089b. Manifest successor must be re-reviewed and retested."
+      ],
+      "verification_level": "real_uid462_smoke_and_original_full_r9_pass__successor_review_r9_ci_pending",
+      "model_evidence_veto_recovery_exit": "The model cannot mint an operator approval, alter Host signing keys, or override fail-closed checks. Reject mismatched Git index metadata, symlink, stale fingerprint or untrusted paths. Stop without grant issuance on any uncertain condition; rollback by reverting this patch while activation remains disabled.",
+      "rollback_route": "Revert the PR commit; keep /Library/Application Support/LFL-HostIssuer/config/dev-commit-enabled.json absent and preserve existing root-owned Host keys and ledger."
+    },
+    {
+      "component_id": "dev-commit-host-readonly-index-tests",
+      "paths": ["tests/unit/test_dev_commit_host_authority.py"],
+      "control_machinery": false,
+      "owning_subsystem": "LFL dev-commit HostIssuer unit tests",
+      "disposition": "modify",
+      "evidence": [
+        "59 focused tests passed on the updated local candidate with Ruff/Pyright clean; coverage includes developer-owned read-only .git, group-writable index rejection, symlink rejection, linked worktree, and private temp directory isolation from caller TMPDIR.",
+        "Original scripts/r9_commit.sh isolated PROBE full gate exit 0 on tree 41949d3055a8dd45859721a2d5955df1b6c136af; successor gate to be rerun."
+      ],
+      "verification_level": "focused_59_passed__full_r9_original_pass__successor_pending",
+      "model_evidence_veto_recovery_exit": "No independent authority in test code; tests must not substitute for a real UID462 Host acceptance test. Failure blocks activation.",
+      "rollback_route": "Revert test additions together with the Host script; do not weaken test assertions or Host permissions."
+    },
+    {
+      "component_id": "a5-manifest-self",
+      "paths": ["docs/governance/submissions/20261121-dev-host-readonly-index.json"],
+      "control_machinery": false,
+      "owning_subsystem": "Architecture submission governance",
+      "disposition": "add",
+      "evidence": [
+        "PR #85 initial A.5 Architecture Review run 44862055051 failed with expected exactly one changed architecture-submission manifest; found 0. This declaration covers the exact three changed paths after inclusion.",
+        "A.5 mechanical presence and exact-path coverage validation required before new independent review, full R9 and remote CI."
+      ],
+      "verification_level": "a5_local_and_remote_ci_pending",
+      "model_evidence_veto_recovery_exit": "This document is declarative and cannot authorize signing, Host installation or GitHub merge. An invalid or missing declaration must fail the A.5 gate.",
+      "rollback_route": "Revert this manifest with the code change; a standalone removal must cause A.5 to fail closed."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-dev-host-index-isolation",
+      "g1": {
+        "necessity": "The dedicated UID462 Host cannot write a UID501-owned .git/index.lock. Granting write permission would cross the intended isolation boundary; a read-only staged-tree reconstruction is necessary for real Host inspect, issue and consume."
+      },
+      "g2": {
+        "authority_owner": "Root-owned installed Host script and root-only exact-tree operator approval, with dedicated UID462 Ed25519 key and append-only grant ledger; no LLM or developer UID501 signing authority.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse the existing dev_commit_host_authority.py inspect/issue/consume and Git index object model; introduce no second mutable task state, signer, approval database or parallel git write path."
+      },
+      "g3": {
+        "model_evidence": [
+          "Real UID462 smoke on a developer-owned staged index: original git write-tree failed on index.lock; isolated corrected algorithm matched the expected staged tree without writing developer Git state.",
+          "Independent Host full_test Reviewer PASS P0/P1=0, original full R9 exit0 and exact reviewed tree 41949d3055a8dd45859721a2d5955df1b6c136af; the successor SHA must be independently requalified.",
+          "PR #85 initial A.5 CI FAIL due to missing manifest; Linux CI additionally found 10 failures from the macOS-only /private/tmp directory. Updated local candidate fixes both, but must obtain fresh independent review, full R9, remote CI and protected merge before production update."
+        ],
+        "recovery_or_reason": "On any index symlink, group-writable or non-regular file, fingerprint drift, unknown object, stale base, failed test, unsigned approval or mismatched SHA, fail closed without issuing or consuming. Re-run qualification on a newly frozen tree; never chmod the developer .git or reuse stale receipts."
+      },
+      "g4": {
+        "rollback": "Revert the precise PR on main if needed; for the Host install preserve a verified backup of the old root-owned script, keep activation disabled until real positive and negative probes pass, and restore the previous script on failed acceptance. No Mac four-service restart for this Host-only change.",
+        "verification": [
+          "A.5 architecture submission exact changed-path coverage PASS on the successor candidate",
+          "Independent Reviewer Host qualification PASS with P0/P1=0 and exact successor tree binding",
+          "Original full scripts/r9_commit.sh PROBE exit 0, Ruff/Pyright and Git security scan PASS on the successor tree",
+          "Remote PR CI and required managed-premerge-evidence checks success; protected merge into latest main and post-merge main CI success",
+          "Root-owned Host script SHA matches protected main; real UID462 inspect, issue, one-time consume and unauthorized/replay/tamper/expiry negative tests PASS before activation"
+        ]
+      }
+    }
+  ]
+}

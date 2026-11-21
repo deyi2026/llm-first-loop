@@ -1,8 +1,8 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.55 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.56 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
 
-> **Source vs. published release (verified 2026-11-16):** `0.6.55` is the current source/build candidate version, **not a published stable release**. The latest published GitHub Release is still [v0.6.50](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.50). `v0.6.54` remains a Draft pending the macOS arm64 release artifact and finalization checks; `v0.6.55` has not been published as a GitHub Release. Install only from the live [latest published Release](https://github.com/deyi2026/llm-first-loop/releases/latest), never from a Draft.
+> **Source vs. published release (verified 2026-11-20):** `0.6.56` is a Deepin source/installation candidate based on merged `main`, **not a published stable release**. The latest published GitHub Release is [v0.6.54](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.54); `v0.6.56` has not been published as a GitHub Release. For public installs, consult the live [latest published Release](https://github.com/deyi2026/llm-first-loop/releases/latest), not a Draft.
 
 **Mobile Web V2:** Tap the `◂` arrow at the right screen edge to open the right panel; tap `▸` to close it. Use `☰` at the top left for session navigation. See the [mobile sidebar guide](docs/web-mobile-navigation.md).
 

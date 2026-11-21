@@ -89,6 +89,19 @@ CHECKPOINT_GOAL_TOOL_DEF: dict = {
                 "items": {"type": "string"},
                 "description": "关联证据引用（非授权证明，不能单独取得跨会话写权限）",
             },
+            "requirements_scope": {
+                "type": "object",
+                "description": (
+                    "可选：由Goal owner用expected_version CAS一次性绑定已批准REQ设计。"
+                    "需精确docs/design路径与SHA256，绑定后不可撤销/替换；旧Goal无此项不受影响。"
+                ),
+                "properties": {
+                    "design_path": {"type": "string"},
+                    "design_sha256": {"type": "string"},
+                },
+                "required": ["design_path", "design_sha256"],
+                "additionalProperties": False,
+            },
         },
         "required": ["goal_id", "what"],
     },
@@ -460,6 +473,35 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     _expected, _verr = _expected_version(args)
     if _verr:
         return ToolResult(ToolResultStatus.FAILURE, _verr, "", "checkpoint_goal")
+    scope = args.get("requirements_scope")
+    if scope is not None:
+        try:
+            import hashlib
+
+            from llm_loop.introspection.goal_coverage import (
+                parse_requirements,
+                resolve_design_path,
+            )
+
+            if _expected is None or not isinstance(scope, dict):
+                raise ValueError("REQ scope binding requires owner CAS and a scope object")
+            if set(scope) != {"design_path", "design_sha256"}:
+                raise ValueError("REQ scope must contain only design_path and design_sha256")
+            path = resolve_design_path(str(host.audit_dir), str(scope["design_path"]))
+            data = path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != scope["design_sha256"]:
+                raise ValueError("REQ scope design SHA256 mismatch")
+            design = data.decode("utf-8")
+            if design.count(f"<!-- LFL-REQ-GOAL: {gid} -->") != 1:
+                raise ValueError("REQ scope design Goal binding missing or mismatched")
+            parse_requirements(design)
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+            return ToolResult(
+                ToolResultStatus.FAILURE,
+                f"[REQ范围绑定拒绝] {exc}; Goal未修改",
+                "",
+                "checkpoint_goal",
+            )
     try:
         updated = store.checkpoint(
             gid,
@@ -468,6 +510,7 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             path=str(args.get("path", "")).strip(),
             next_step=str(args.get("next", "")).strip(),
             expected_version=_expected,
+            requirements_scope=scope,
         )
     except GoalVersionConflictError as exc:
         return ToolResult(ToolResultStatus.FAILURE, _version_conflict_text(exc), "", "checkpoint_goal")

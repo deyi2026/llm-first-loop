@@ -166,3 +166,19 @@
 - **verdict 四值语义**：pass/fail/mixed/insufficient——insufficient 是合法结论（证据不足就如实记，不硬凑 pass）。
 
 **判定权边界**：程序只证 episode 身份与 provenance；"方法是否有帮助/是否引入偏差/是否该精化"归模型判断（§7.3 Model Authority）。
+
+## 九、需求—测试同生与增量开发闭环（2026-11-20）
+
+本节为 `docs/ai_rules.md`「开发交付专项纪律」的操作解释，不构成第二套规则权威。设计与测试一起定义，避免代码写完才发现验收遗漏。
+
+小修复可以用简版设计，但至少明确：①目标/范围与 REQ ID；②实现触点及旧接口影响；③新增与受影响旧测试；④最终/真实验收方式；⑤Task/证据映射；⑥完成与回滚条件。复杂或高风险任务补充架构、并发、副作用、兼容与恢复设计。
+
+推荐流程：设计 REQ 与测试 → TaskStore/Lane 受管分配 → 开发时运行受影响增量测试 → 冻结完整交付切片 → 独立 Reviewer → 原版完整 R9 → 受保护 PR/CI → main CI → 统一受管部署与健康核验 → 逐 REQ 验收 → 全部完成才关闭 Goal。
+
+**当前实现边界（隔离候选，尚未合入/部署）**：`scripts/check_goal_coverage.py` 只读对账；`scripts/dev_gate.sh` 在受管 Lane 中核对精确 `origin/main` 基线、变更路径/依赖面、REQ/Task、测试与并行 Lane，再运行增量 Ruff/Pyright/Pytest；`PASS` **不代表** Reviewer、完整 R9、CI、部署或最终完成。未知影响、跨 Lane 依赖、共享 conftest 或过宽影响必须 `BLOCKED`，不能硬凑一个绿色子集；`--dry-run` 返回非零且不能当 PASS。开发回执仅存临时目录，正式证据由既有受管链签发。
+
+REQ 专项 Goal 可由原生 owner 通过 `checkpoint_goal(requirements_scope={design_path,design_sha256}, expected_version=...)` 一次性绑定经批准的 `docs/design` 矩阵；`GoalStore` CAS 固定范围，`complete_gate` 对已绑定 Goal 重新核对原始设计 SHA、Task 双向覆盖与实时证据。未绑定的旧 Goal 不改变终局语义。**本候选功能须合入部署后才能对真实原生 Goal 绑定并验证**，不能因本地单测通过宣称线上已生效。
+
+`scripts/r9_commit.sh --dev` 已在**隔离候选代码**中接入开发期锁/PROBE/安全扫描/增量门禁/独立 Host 一次性消费；**未安装/未激活生产 Host，实际仍拒绝（exit 78）**。独立 Host 只授权精确本地开发提交，开发回执不是 Reviewer/R9/CI/发布凭证；真实 Host OS 权限/签发/回放 E2E、独立安全审查及单独激活批准仍待完成，见 `docs/governance/dev-commit-host-activation.md`。默认完整 R9/CI/安全扫描/分支保护不变，禁止 `git commit --no-verify` 等绕过旧门禁。
+
+并行 Lane 先查文件与调用依赖面，合并后在精确集成树上终验。对未完成、延期、取消或未映射 REQ 明确披露，不把阶段完成写成整个 Goal 完成。评估效率时对比开发循环等待、全量次数、返工与缺陷的真实基线，不预先声称提速比例。
