@@ -87,6 +87,21 @@ def test_failed_recognition_retries_once_with_further_downsample(
     assert result.text
 
 
+def test_fallback_updates_reported_geometry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """兜底重试成功后，几何必须反映**实际送检尺寸**（source 仍为送检前尺寸）。"""
+    monkeypatch.setenv("WEB_VISION_BACKEND", "minimax")
+    monkeypatch.setenv("WEB_VISION_MAX_SIDE", "100")
+    calls = _install_backend(monkeypatch, fail_first=True)
+
+    result = vision_mod.describe_image_detailed(_png_bytes(400, 300), mime="image/png")
+
+    assert result.geometry.source_width == 400
+    assert result.geometry.source_height == 300
+    assert result.geometry.input_width == calls[1][0]
+    assert result.geometry.input_height == calls[1][1]
+    assert result.geometry.downsampled is True
+
+
 def test_total_failure_raises_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WEB_VISION_BACKEND", "minimax")
     monkeypatch.setenv("WEB_VISION_MAX_SIDE", "100")

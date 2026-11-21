@@ -2,23 +2,25 @@
 
 背景（本机实测，2026-11-21）：本机 Chrome 已登录但未开远程调试端口，CDP 端点
 "不可发现"——没有任何工具能回答"Chrome 有没有开调试端口"，只能盲写坐标脚本。
-本文件锁定探针的三条边界：
+本文件锁定探针的四条边界：
 
 1) 可达端点如实报告 browser/协议版本/目标数；不可达端点如实报错、不伪报可达；
-2) 探针只读 loopback 元信息，**不回传**页面标题/URL 等页面内容；
-3) 候选来源包含 DevToolsActivePort 文件（Chrome 开启调试端口时的落盘事实）。
+2) 探针只读 loopback 元信息，**不回传**页面标题/URL 等页面内容；非 loopback 直接拒绝；
+3) 候选来源包含 DevToolsActivePort 文件（Chrome 开启调试端口时的落盘事实）；
+4) 探针不属 browser_* 页面能力家族（既有"一只眼一只手"能力身份契约保持不变）。
 """
 
 from __future__ import annotations
 
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from llm_loop.browser import cdp_probe
-from llm_loop.tools.builtin.browser_probe import BrowserProbeTool
+from llm_loop.tools.builtin.cdp_probe import CdpProbeTool
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -73,6 +75,13 @@ def test_probe_reports_unreachable_endpoint_without_faking_success() -> None:
     assert report["error"]
 
 
+def test_probe_rejects_non_loopback_target() -> None:
+    report = cdp_probe.probe_cdp_endpoint("http://example.com:9222")
+
+    assert report["reachable"] is False
+    assert "loopback" in (report["error"] or "")
+
+
 def test_devtools_active_port_file_is_discovered(tmp_path) -> None:
     profile = tmp_path / "chrome-profile"
     profile.mkdir()
@@ -84,9 +93,23 @@ def test_devtools_active_port_file_is_discovered(tmp_path) -> None:
 
 
 def test_probe_tool_reports_candidates_and_opt_in_guidance(cdp_server: str) -> None:
-    result = BrowserProbeTool().execute(url=cdp_server)
+    result = CdpProbeTool().execute(url=cdp_server)
 
     assert result.status is not None
     assert "LFL_BROWSER_PERCEPTION_CDP_URL" in result.content
     assert "可达" in result.content
     assert "私密页面标题" not in result.content
+
+
+def test_probe_tool_does_not_write_configuration(cdp_server: str, monkeypatch) -> None:
+    monkeypatch.delenv("LFL_BROWSER_PERCEPTION_CDP_URL", raising=False)
+
+    CdpProbeTool().execute(url=cdp_server)
+
+    assert os.environ.get("LFL_BROWSER_PERCEPTION_CDP_URL") is None
+
+
+def test_probe_is_not_in_browser_page_capability_family() -> None:
+    """既有能力身份契约（provider-visible browser 面恰好一只眼一只手）不被本探针放宽."""
+    assert CdpProbeTool.name == "cdp_probe"
+    assert not CdpProbeTool.name.startswith("browser_")

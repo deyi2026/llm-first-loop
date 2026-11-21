@@ -479,7 +479,8 @@ def describe_image_detailed(
         text = _dispatch_vision(
             prepared.data, prepared.mime, _geometry_prompt(prompt, geometry), settings
         )
-    except RuntimeError:
+    except (RuntimeError, httpx.HTTPError):
+        # 传输层错误（httpx）此前直接冒泡、不走兜底降采样——这里补齐；仍不吞编程错误。
         if max_side <= 0 or source is None:
             raise
         retry = prepare_image(

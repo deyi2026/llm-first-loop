@@ -1,4 +1,4 @@
-"""browser_probe：CDP 端点可达性探针工具（EVO-20261121-efa320ab）。
+"""cdp_probe：CDP 端点可达性探针工具（EVO-20261121-efa320ab）。
 
 只读探针：发现候选端点 → 探测可达性 → 如实回报。它**不改配置、不启动浏览器、
 不放宽既有 browser 工具的显式 opt-in 门禁**；只是把"端点存在吗"这一此前
@@ -16,23 +16,24 @@ from llm_loop.browser.cdp_probe import (
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
 _ENV_HINT = "LFL_BROWSER_PERCEPTION_CDP_URL"
+MAX_TIMEOUT_S = 10.0
 _CHROME_POLICY_NOTE = (
     "Chrome 136+ 对默认用户目录禁用 --remote-debugging-port：需以非默认 --user-data-dir "
     "启动才会暴露 CDP 端点（已有登录态的默认配置无法直接开远程调试）。"
 )
 
 
-class BrowserProbeTool:
-    name = "browser_probe"
+class CdpProbeTool:
+    name = "cdp_probe"
     description = (
-        "探测本机 Chrome/Chromium 的 CDP(DevTools) 端点是否可达，只读回元信息。"
+        "探测本机 Chrome/Chromium 的 CDP(DevTools) 端点是否可达，只读回元信息（环境诊断，非页面能力）。"
         "何时用: 需要操作用户已打开、已登录的浏览器（头条/后台等）但不知道远程调试端口是否开启、"
         "CDP 端点地址是什么时；browser_perceive/browser_operate 未注册时先自查端点。"
         "何时不用: 需要页面内容或操作（用 browser_perceive/browser_operate）；需要本机文件（用 search_files/read_file）。"
         "输出: 逐端点的可达性、浏览器版本、协议版本、目标计数（**不含**页面标题/URL 等页面内容）"
         "与可直接采用的端点地址。"
-        "边界: 只探 loopback；不改任何配置、不启动浏览器；browser 工具仍需显式设置 "
-        f"{_ENV_HINT} 并重启服务后才会注册（本工具不放宽该 opt-in）。"
+        "边界: 只探 loopback；不改任何配置、不启动浏览器、不读页面内容；browser 工具仍需显式设置 "
+        f"{_ENV_HINT} 并重启服务后才会注册（本工具不放宽该 opt-in，也不属于 browser 页面能力家族）。"
     )
     parameters = {
         "type": "object",
@@ -57,7 +58,9 @@ class BrowserProbeTool:
             },
             "timeout_s": {
                 "type": "number",
-                "description": f"可选：单端点探测超时秒（默认 {DEFAULT_TIMEOUT_S}）",
+                "description": (
+                    f"可选：单端点探测超时秒（默认 {DEFAULT_TIMEOUT_S}，上限 {MAX_TIMEOUT_S:g}）"
+                ),
             },
         },
     }
@@ -69,6 +72,7 @@ class BrowserProbeTool:
             timeout = float(timeout_s)
         except (TypeError, ValueError):
             timeout = DEFAULT_TIMEOUT_S
+        timeout = min(max(timeout, 0.2), MAX_TIMEOUT_S)
         ports = kwargs.get("ports") or None
         if isinstance(ports, list):
             ports = [p for p in ports if isinstance(p, int) and not isinstance(p, bool)]

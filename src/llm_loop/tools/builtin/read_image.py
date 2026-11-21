@@ -191,6 +191,102 @@ def _mime_for(path: str) -> str:
     return _EXT_MIME.get(ext, "image/png")
 
 
+def _fail_result(content: str) -> ToolResult:
+    """FAILURE 回执（统一构造，避免 execute 过长）."""
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=content,
+        tool_call_id="",
+        tool_name="read_image",
+    )
+
+
+def _resolve_crop(
+    raw: object, orig_w: int | None, orig_h: int | None
+) -> tuple[tuple[int, int, int, int] | None, str | None]:
+    """解析并校验 crop（原图像素坐标）→ (crop, error_message).
+
+    error_message 非空即 fail-closed（不进入视觉链路）。
+    """
+    try:
+        crop = _parse_crop(raw)
+    except _CropError as exc:
+        return None, f"[裁剪参数错误] {exc}（crop 必须是 {{x,y,w,h}}，原图像素坐标）"
+    if crop is None:
+        return None, None
+    x, y, width, height = crop
+    if not orig_w or not orig_h:
+        return None, "[裁剪参数错误] 无法解析原图尺寸，crop 不可用。"
+    if x + width > orig_w or y + height > orig_h:
+        return None, (
+            f"[裁剪参数错误] 裁剪区域 (x={x},y={y},w={width},h={height}) "
+            f"超出原图 {orig_w}×{orig_h} 边界。"
+        )
+    return crop, None
+
+
+def _run_vision(
+    send_bytes: bytes, send_mime: str, prompt: str
+) -> tuple[str | None, str | None, object | None]:
+    """调用视觉后端 → (text, error, geometry)；失败如实降级，不伪装成功."""
+    try:
+        from llm_loop.web.vision import describe_image_detailed
+
+        result = describe_image_detailed(send_bytes, mime=send_mime, prompt=prompt)
+    except Exception as exc:  # noqa: BLE001 — 识别失败如实降级
+        return None, f"{type(exc).__name__}: {exc}", None
+    return result.text, None, result.geometry
+
+
+def _meta_lines(meta: dict, orig_w: int | None, orig_h: int | None) -> list[str]:
+    """元信息行（格式/尺寸/色彩模式）."""
+    lines = [f"[元信息] 格式={meta.get('format')}"]
+    if orig_w is not None and orig_h is not None:
+        line = f"[元信息] 尺寸={orig_w}×{orig_h}"
+        if meta.get("color_mode"):
+            line += f"  位深={meta.get('bit_depth')}  色彩模式={meta.get('color_mode')}"
+        lines.append(line)
+    return lines
+
+
+def _vision_block(text: str, crop: tuple[int, int, int, int] | None, scale_x: float, scale_y: float) -> list[str]:
+    """[内容识别] + 模型自报 bbox 的结构化坐标块（标注未经验证）."""
+    lines = ["[内容识别]", text]
+    boxes = _extract_bboxes(text)
+    if not boxes:
+        return lines
+    offset_x, offset_y = (crop[0], crop[1]) if crop else (0, 0)
+    rendered = []
+    for index, (bx1, by1, bx2, by2) in enumerate(boxes, start=1):
+        orig_box = (
+            int(round(bx1 / scale_x)) + offset_x,
+            int(round(by1 / scale_y)) + offset_y,
+            int(round(bx2 / scale_x)) + offset_x,
+            int(round(by2 / scale_y)) + offset_y,
+        )
+        rendered.append(
+            f"#{index} 原图=[{orig_box[0]},{orig_box[1]},{orig_box[2]},{orig_box[3]}] "
+            f"送检=[{bx1},{by1},{bx2},{by2}]"
+        )
+    lines.append(
+        "[坐标] 模型自报目标框（送检坐标→原图坐标；模型自报，未经验证）：" + "；".join(rendered)
+    )
+    return lines
+
+
+def _degrade_lines(vision_error: str) -> list[str]:
+    """识别降级说明 + 可操作指引（如实，不伪装成功）."""
+    lines = [
+        f"[识别降级] 视觉后端不可用/失败（{vision_error}）——仅返回元信息与坐标契约。"
+    ]
+    normalized = vision_error.lower().replace("_", " ")
+    if "not logged in" in normalized or "api key" in normalized:
+        lines.append("[指引] 请运行 `arkcli auth login volc-sso` 或 `arkcli auth apikey` 后重试。")
+    else:
+        lines.append("[指引] 可尝试配置视觉后端（WEB_VISION_BACKEND=arkcli/provider）后重试。")
+    return lines
+
+
 class ReadImageTool:
     name = "read_image"
     description = (
@@ -231,22 +327,13 @@ class ReadImageTool:
         path = str(kwargs.get("path", "") or "").strip()
         prompt = str(kwargs.get("prompt", "") or "").strip() or _DEFAULT_PROMPT
         if not path:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content="[参数错误] 缺少必填参数 'path'（本地图片路径）",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            return _fail_result("[参数错误] 缺少必填参数 'path'（本地图片路径）")
         p = Path(path).expanduser()
         if not p.is_absolute():
-
             p = Path(workspace_base()) / p
         if not p.exists() or not p.is_file():
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=f"[文件不存在] {p} 不存在或不是文件。请检查路径（可用 search_files 确认）。",
-                tool_call_id="",
-                tool_name=self.name,
+            return _fail_result(
+                f"[文件不存在] {p} 不存在或不是文件。请检查路径（可用 search_files 确认）。"
             )
         try:
             data = p.read_bytes()
@@ -258,125 +345,45 @@ class ReadImageTool:
                 tool_name=self.name,
             )
         if not data:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=f"[空文件] {p} 为空，无法识别。",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            return _fail_result(f"[空文件] {p} 为空，无法识别。")
         meta = _probe_meta(data[:_META_MAX_BYTES])
         orig_w = meta.get("width")
         orig_h = meta.get("height")
-        try:
-            crop = _parse_crop(kwargs.get("crop"))
-        except _CropError as exc:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=f"[裁剪参数错误] {exc}（crop 必须是 {{x,y,w,h}}，原图像素坐标）",
-                tool_call_id="",
-                tool_name=self.name,
-            )
-        send_bytes = data
-        send_mime = _mime_for(path)
+        crop, crop_error = _resolve_crop(kwargs.get("crop"), orig_w, orig_h)
+        if crop_error:
+            return _fail_result(crop_error)
+        send_bytes, send_mime = data, _mime_for(path)
         if crop is not None:
-            crop_x, crop_y, crop_w, crop_h = crop
-            if not orig_w or not orig_h:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content="[裁剪参数错误] 无法解析原图尺寸，crop 不可用。",
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
-            if crop_x + crop_w > orig_w or crop_y + crop_h > orig_h:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content=(
-                        f"[裁剪参数错误] 裁剪区域 (x={crop_x},y={crop_y},w={crop_w},h={crop_h}) "
-                        f"超出原图 {orig_w}×{orig_h} 边界。"
-                    ),
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
-            cropped = _crop_image_bytes(data, crop_x, crop_y, crop_w, crop_h)
+            cropped = _crop_image_bytes(data, crop[0], crop[1], crop[2], crop[3])
             if cropped is None:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content="[裁剪失败] 本地裁剪不可用（缺 Pillow 或图片无法解码）。",
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
-            send_bytes = cropped
-            send_mime = "image/png"
-        # 内容识别（复用 web/vision 后端链，fail-open 降级为仅元信息+坐标契约）
-        vision_text: str | None = None
-        vision_error: str | None = None
-        geometry = None
-        try:
-            from llm_loop.web.vision import describe_image_detailed
-
-            result = describe_image_detailed(send_bytes, mime=send_mime, prompt=prompt)
-            vision_text = result.text
-            geometry = result.geometry
-        except Exception as exc:  # noqa: BLE001 — 识别失败如实降级（不伪装成功）
-            vision_error = f"{type(exc).__name__}: {exc}"
+                return _fail_result("[裁剪失败] 本地裁剪不可用（缺 Pillow 或图片无法解码）。")
+            send_bytes, send_mime = cropped, "image/png"
+        vision_text, vision_error, geometry = _run_vision(send_bytes, send_mime, prompt)
+        estimated = geometry is None
         if geometry is not None:
-            sent_w = geometry.input_width
-            sent_h = geometry.input_height
-            scale_x = geometry.scale_x
-            scale_y = geometry.scale_y
+            sent_w, sent_h = geometry.input_width, geometry.input_height
+            scale_x, scale_y = geometry.scale_x, geometry.scale_y
         else:
             sent_w = crop[2] if crop else (orig_w or 0)
             sent_h = crop[3] if crop else (orig_h or 0)
             scale_x = scale_y = 1.0
-        meta_lines = [f"[元信息] 格式={meta.get('format')}"]
-        if orig_w is not None and orig_h is not None:
-            line = f"[元信息] 尺寸={orig_w}×{orig_h}"
-            if meta.get("color_mode"):
-                line += f"  位深={meta.get('bit_depth')}  色彩模式={meta.get('color_mode')}"
-            meta_lines.append(line)
-        meta_lines.append(
-            _format_contract(
-                orig_w=orig_w,
-                orig_h=orig_h,
-                crop=crop,
-                sent_w=sent_w,
-                sent_h=sent_h,
-                scale_x=scale_x,
-                scale_y=scale_y,
-            )
+        lines = _meta_lines(meta, orig_w, orig_h)
+        contract = _format_contract(
+            orig_w=orig_w,
+            orig_h=orig_h,
+            crop=crop,
+            sent_w=sent_w,
+            sent_h=sent_h,
+            scale_x=scale_x,
+            scale_y=scale_y,
         )
-        lines = list(meta_lines)
+        if estimated:
+            contract += "（送检尺寸为推定：视觉后端失败前未能回报实际送检尺寸）"
+        lines.append(contract)
         if vision_text and vision_text.strip():
-            lines.append("[内容识别]")
-            lines.append(vision_text.strip())
-            boxes = _extract_bboxes(vision_text)
-            if boxes:
-                offset_x, offset_y = (crop[0], crop[1]) if crop else (0, 0)
-                rendered = []
-                for index, (bx1, by1, bx2, by2) in enumerate(boxes, start=1):
-                    orig_box = (
-                        int(round(bx1 / scale_x)) + offset_x,
-                        int(round(by1 / scale_y)) + offset_y,
-                        int(round(bx2 / scale_x)) + offset_x,
-                        int(round(by2 / scale_y)) + offset_y,
-                    )
-                    rendered.append(
-                        f"#{index} 原图=[{orig_box[0]},{orig_box[1]},{orig_box[2]},{orig_box[3]}] "
-                        f"送检=[{bx1},{by1},{bx2},{by2}]"
-                    )
-                lines.append(
-                    "[坐标] 模型自报目标框（送检坐标→原图坐标；模型自报，未经验证）："
-                    + "；".join(rendered)
-                )
+            lines.extend(_vision_block(vision_text.strip(), crop, scale_x, scale_y))
         if vision_error:
-            lines.append(
-                f"[识别降级] 视觉后端不可用/失败（{vision_error}）——仅返回元信息与坐标契约。"
-            )
-            if "not logged in" in vision_error.lower() or "API Key" in vision_error:
-                lines.append("[指引] 请运行 `arkcli auth login volc-sso` 或 `arkcli auth apikey` 后重试。")
-            else:
-                lines.append("[指引] 可尝试配置视觉后端（WEB_VISION_BACKEND=arkcli/provider）后重试。")
-        content = "\n".join(lines)
+            lines.extend(_degrade_lines(vision_error))
         status = (
             ToolResultStatus.SUCCESS
             if vision_text and vision_text.strip()
@@ -384,7 +391,7 @@ class ReadImageTool:
         )
         return ToolResult(
             status=status,
-            content=content,
+            content="\n".join(lines),
             tool_call_id="",
             tool_name=self.name,
         )

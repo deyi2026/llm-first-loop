@@ -160,6 +160,51 @@ def test_geometry_contract_survives_vision_backend_failure(
     assert "[识别降级]" in result.content
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"x": -1, "y": 0, "w": 10, "h": 10},
+        {"x": 0, "y": 0, "w": 0, "h": 10},
+        {"x": 0, "y": 0, "h": 10},
+        {"x": "a", "y": 0, "w": 10, "h": 10},
+        "not-json",
+    ],
+)
+def test_invalid_crop_parameters_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: object
+) -> None:
+    _install_fake_vision(monkeypatch)
+    path = _write_png(tmp_path)
+
+    result = ReadImageTool().execute(path=str(path), crop=bad)
+
+    assert result.status is ToolResultStatus.FAILURE
+    assert "裁剪" in result.content
+
+
+def test_crop_without_pillow_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """本地裁剪不可用（缺 Pillow）→ 如实 FAILURE，不静默忽略 crop。"""
+    import builtins
+
+    _install_fake_vision(monkeypatch)
+    path = _write_png(tmp_path)
+    real_import = builtins.__import__
+
+    def _blocked_import(name, *args, **kwargs):
+        if name.startswith("PIL"):
+            raise ImportError("PIL blocked (测试注入)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked_import)
+
+    result = ReadImageTool().execute(path=str(path), crop={"x": 0, "y": 0, "w": 10, "h": 10})
+
+    assert result.status is ToolResultStatus.FAILURE
+    assert "裁剪" in result.content
+
+
 def test_prompt_is_passed_through_to_vision_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

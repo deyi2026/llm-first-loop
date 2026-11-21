@@ -138,12 +138,12 @@ from llm_loop.timekeeping import system_local_now, system_local_now_iso
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
-from llm_loop.tools.builtin.browser_probe import BrowserProbeTool
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.cdp_probe import CdpProbeTool
 from llm_loop.tools.builtin.desktop_operate import DesktopOperateTool
 from llm_loop.tools.builtin.desktop_perceive import DesktopPerceiveTool, make_jsonl_audit_sink
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
@@ -1687,10 +1687,11 @@ def build_engine(
             ),
         )
     # EVO-20261121-efa320ab: CDP 端点可达性探针（只读 loopback 元信息）。
-    # 与下方 browser 工具的显式 opt-in 门禁**并列而非替代**：本探针不改配置、不启动浏览器，
-    # 只把「端点存在吗/可达吗」这一此前无法回答的事实变成可回答的事实，供人工或模型自查后
-    # 再显式 opt-in（不放宽任何既有安全边界）。
-    _register_basic("browser_probe", BrowserProbeTool())
+    # 命名刻意**不进入 browser_* 家族**：既有能力身份契约（provider-visible browser 面
+    # 恰好一只眼 browser_perceive + 一只手 browser_operate）由测试锁定且不因本探针放宽——
+    # 本探针读不到页面、不能写页面，只是「端点存在吗/可达吗」的环境诊断。
+    # 与下方 browser 工具的显式 opt-in 门禁并列而非替代：不改配置、不启动浏览器。
+    _register_basic("cdp_probe", CdpProbeTool())
     # SMC Browser cognition-preserving surface: explicit loopback CDP opt-in only.
     # Provider-visible Browser capabilities are deliberately collapsed to `browser_perceive`
     # (read-only sensing/wait) and, when writes are enabled, `browser_operate`
