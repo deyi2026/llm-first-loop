@@ -19,7 +19,9 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,13 @@ DENIED_PREFIXES = (
     "docs/governance/", "src/llm_loop/tools/review_host_admission.py",
     "src/llm_loop/introspection/goal_gates.py",
 )
+
+
+def _protected_path(path: str) -> bool:
+    # macOS case-insensitive volumes can map a differently-cased Git path
+    # onto the same working-tree file. Reject aliases conservatively.
+    normalized = unicodedata.normalize("NFC", path).casefold()
+    return normalized.startswith(DENIED_PREFIXES)
 
 
 class HostHoldError(Exception):
@@ -110,15 +119,251 @@ def json_object(data: bytes) -> dict[str, Any]:
 
 
 def _git(root: Path, *args: str) -> str:
+    require("\n" not in str(root) and "\r" not in str(root),
+            "host_git_path_untrusted")
     result = subprocess.run(
         ["/usr/bin/git", "-c", f"safe.directory={root}", "-C", str(root), *args],
         capture_output=True, text=True, timeout=15, check=False,
         env={"PATH": "/usr/bin:/bin", "HOME": "/var/empty",
              "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
-             "LC_ALL": "C"},
+             "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"},
     )
     require(result.returncode == 0, "host_git_unavailable")
     return result.stdout.strip()
+
+
+def _verified_protected_tree_unchanged(
+    *, base: str, candidate: str, git_cmd: list[str], env: dict[str, str]
+) -> None:
+    """Compare protected Git entries using hash-verified object bytes.
+
+    The developer owns the alternate object store. Git plumbing can read a
+    corrupted loose object under a *different* OID without rejecting it, so
+    `git diff base candidate` alone is not a trusted protection check. Verify
+    the base commit and only the tree ancestors needed for protected paths.
+    No owner-controlled object is trusted after the bytes have been read.
+    """
+    objects: dict[tuple[str, str], bytes] = {}
+
+    def read_object(kind: str, oid: str) -> bytes:
+        require(bool(HEX40.fullmatch(oid)), "host_git_object_invalid")
+        key = (kind, oid)
+        if key not in objects:
+            result = subprocess.run(
+                [*git_cmd, "cat-file", kind, oid], capture_output=True,
+                timeout=15, check=False, env=env,
+            )
+            raw = result.stdout
+            require(result.returncode == 0 and len(raw) <= 16 * 1024 * 1024,
+                    "host_git_object_unavailable")
+            header = f"{kind} {len(raw)}\0".encode("ascii")
+            require(hashlib.sha1(header + raw).hexdigest() == oid,
+                    "host_git_object_integrity_failed")
+            objects[key] = raw
+        return objects[key]
+
+    commit = read_object("commit", base)
+    match = re.match(rb"tree ([0-9a-f]{40})\n", commit)
+    require(match is not None, "host_git_base_commit_invalid")
+    assert match is not None
+    base_tree = match.group(1).decode("ascii")
+
+    def entries(oid: str) -> list[tuple[str, str, str]]:
+        raw = read_object("tree", oid)
+        result: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        offset = 0
+        while offset < len(raw):
+            space = raw.find(b" ", offset)
+            end = raw.find(b"\0", space + 1)
+            require(space > offset and end > space + 1 and end + 21 <= len(raw),
+                    "host_git_tree_invalid")
+            try:
+                mode = raw[offset:space].decode("ascii")
+                name = raw[space + 1:end].decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise HostHoldError("host_git_tree_invalid") from exc
+            require(bool(name) and "/" not in name and "\n" not in name
+                    and "\r" not in name, "host_git_tree_invalid")
+            normalized = unicodedata.normalize("NFC", name).casefold()
+            require(normalized not in seen, "host_git_tree_alias_ambiguous")
+            seen.add(normalized)
+            result.append((name, mode, raw[end + 1:end + 21].hex()))
+            offset = end + 21
+        return result
+
+    def verify_subtree(entry: tuple[str, str, str] | None) -> None:
+        if entry is None:
+            return
+        _, mode, oid = entry
+        if mode in ("40000", "040000"):
+            for name, child_mode, child_oid in entries(oid):
+                verify_subtree((name, child_mode, child_oid))
+        else:
+            require(mode in ("100644", "100755", "120000"),
+                    "host_git_protected_mode_invalid")
+            read_object("blob", oid)
+
+    def entry_at(tree_oid: str, path: str) -> tuple[str, str, str] | None:
+        parts = path.rstrip("/").split("/")
+        for index, component in enumerate(parts):
+            aliases = [entry for entry in entries(tree_oid)
+                       if unicodedata.normalize("NFC", entry[0]).casefold()
+                       == component.casefold()]
+            require(len(aliases) <= 1, "host_git_tree_alias_ambiguous")
+            if not aliases:
+                return None
+            name, mode, oid = aliases[0]
+            if index == len(parts) - 1:
+                return name, mode, oid
+            if mode not in ("40000", "040000"):
+                return None
+            tree_oid = oid
+        return None
+
+    for protected in DENIED_PREFIXES:
+        old_entry = entry_at(base_tree, protected)
+        new_entry = entry_at(candidate, protected)
+        require(old_entry == new_entry,
+                "protected_change_requires_full_r9")
+        # Identical tree OIDs are not enough: an owner can replace a loose
+        # subtree or blob under its old filename. Verify the full protected
+        # object closure, not only the root/ancestor trees.
+        verify_subtree(old_entry)
+
+
+def _staged_tree_readonly(root: Path, *, owner_uid: int,
+                          base: str | None = None) -> tuple[str, list[str]]:
+    """Derive staged paths and tree from one Host-private index snapshot.
+
+    `git write-tree` creates `.git/index.lock` even for a read-only inspection.
+    The independent Host UID must never need write access to the developer's
+    index or object store. Use a private copy and a disposable object store,
+    with the repository's objects available as read-only alternates.
+    """
+    # `--git-path index` canonicalizes a symlink on macOS, hiding it from
+    # O_NOFOLLOW. Derive the literal index entry from the private Git dir.
+    dotgit = root / ".git"
+    dotgit_stat = dotgit.lstat()
+    require(dotgit_stat.st_uid == owner_uid and dotgit_stat.st_mode & 0o022 == 0
+            and (stat.S_ISDIR(dotgit_stat.st_mode)
+                 or stat.S_ISREG(dotgit_stat.st_mode)),
+            "host_git_metadata_untrusted")
+    git_dir = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-dir"))
+    common = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    require(git_dir.is_absolute() and common.is_absolute()
+            and git_dir.is_relative_to(common), "host_git_metadata_untrusted")
+    directories = [common]
+    for part in git_dir.relative_to(common).parts:
+        directories.append(directories[-1] / part)
+    for directory in directories:
+        st = directory.lstat()
+        require(stat.S_ISDIR(st.st_mode) and st.st_uid == owner_uid
+                and st.st_mode & 0o022 == 0, "host_git_metadata_untrusted")
+    index = git_dir / "index"
+    objects = common / "objects"
+    require(index.is_absolute() and objects.is_absolute()
+            and ":" not in str(objects), "host_git_paths_untrusted")
+    object_stat = objects.lstat()
+    info = objects / "info"
+    if os.path.lexists(info):
+        info_stat = info.lstat()
+        require(stat.S_ISDIR(info_stat.st_mode) and info_stat.st_uid == owner_uid
+                and info_stat.st_mode & 0o022 == 0,
+                "host_git_objects_untrusted")
+    require(stat.S_ISDIR(object_stat.st_mode) and object_stat.st_uid == owner_uid
+            and object_stat.st_mode & 0o022 == 0
+            and not os.path.lexists(info / "alternates"),
+            "host_git_objects_untrusted")
+    if base is not None:
+        require(bool(HEX40.fullmatch(base)), "main_base_changed")
+    fd = os.open(index, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(fd)
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == owner_uid
+                and before.st_mode & 0o022 == 0
+                and 0 < before.st_size <= 64 * 1024 * 1024,
+                "host_git_index_untrusted")
+        with tempfile.TemporaryDirectory(
+            prefix="lfl-dev-host-index-", dir="/private/tmp"
+        ) as directory:
+            temporary = Path(directory)
+            with (temporary / "index").open("xb") as output:
+                remaining = before.st_size
+                copied_digest = hashlib.sha256()
+                while remaining:
+                    chunk = os.read(fd, min(1024 * 1024, remaining))
+                    require(bool(chunk), "host_git_index_changed")
+                    output.write(chunk)
+                    copied_digest.update(chunk)
+                    remaining -= len(chunk)
+                require(not os.read(fd, 1), "host_git_index_changed")
+            (temporary / "objects").mkdir(mode=0o700)
+            env = {
+                "PATH": "/usr/bin:/bin", "HOME": "/var/empty",
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                "LC_ALL": "C", "GIT_INDEX_FILE": str(temporary / "index"),
+                "GIT_OBJECT_DIRECTORY": str(temporary / "objects"),
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects),
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_NO_LAZY_FETCH": "1",
+            }
+            git_cmd = ["/usr/bin/git", "-c", f"safe.directory={root}",
+                       "-C", str(root)]
+            def diff_paths(*diff_args: str) -> list[str]:
+                result = subprocess.run(
+                    [*git_cmd, "diff", "--name-only", "-z", "--no-renames",
+                     *diff_args],
+                    capture_output=True, timeout=15, check=False, env=env,
+                )
+                require(result.returncode == 0, "host_git_paths_unavailable")
+                raw = result.stdout
+                require(len(raw) <= 1024 * 1024 and (not raw or raw.endswith(b"\0")),
+                        "host_git_paths_invalid")
+                try:
+                    paths = [p.decode("utf-8") for p in raw[:-1].split(b"\0")] if raw else []
+                except UnicodeDecodeError as exc:
+                    raise HostHoldError("host_git_paths_invalid") from exc
+                require(all(paths) and len(set(paths)) == len(paths)
+                        and not any("\n" in p or "\r" in p for p in paths),
+                        "host_git_paths_invalid")
+                return paths
+
+            paths = diff_paths("--cached")
+            require(bool(paths), "host_git_paths_invalid")
+            result = subprocess.run(
+                [*git_cmd, "write-tree"],
+                capture_output=True, text=True, timeout=15, check=False, env=env,
+            )
+            require(result.returncode == 0, "host_git_tree_unavailable")
+            tree = result.stdout.strip()
+            require(bool(HEX40.fullmatch(tree)), "host_git_tree_invalid")
+            if base is not None:
+                # Read owner-controlled Git objects only after validating
+                # their content hashes. Comparing just Git's diff output is
+                # insufficient: Git accepts a replaced loose object by name.
+                _verified_protected_tree_unchanged(
+                    base=base, candidate=tree, git_cmd=git_cmd, env=env,
+                )
+            after = os.fstat(fd)
+            current = os.stat(index, follow_symlinks=False)
+            os.lseek(fd, 0, os.SEEK_SET)
+            verified_digest = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                verified_digest.update(chunk)
+            def fingerprint(st: os.stat_result) -> tuple[int, int, int, int, int]:
+                return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns,
+                        st.st_ctime_ns)
+            require(fingerprint(before) == fingerprint(after) == fingerprint(current),
+                    "host_git_index_changed")
+            require(copied_digest.digest() == verified_digest.digest(),
+                    "host_git_index_changed")
+            return tree, paths
+    finally:
+        os.close(fd)
 
 
 def inspect_repo(root: Path, *, goal: str, req: str, base: str,
@@ -148,11 +393,15 @@ def inspect_repo(root: Path, *, goal: str, req: str, base: str,
     require(not _git(root, "diff", "--name-only")
             and not _git(root, "ls-files", "--others", "--exclude-standard"),
             "worktree_not_staged_clean")
-    paths = _git(root, "diff", "--cached", "--name-only").splitlines()
+    tree, paths = _staged_tree_readonly(root, owner_uid=owner_uid, base=base)
     require(bool(paths) and not any(
-        path.startswith(DENIED_PREFIXES) for path in paths
+        _protected_path(path) for path in paths
     ), "protected_change_requires_full_r9")
-    tree = _git(root, "write-tree")
+    require(_git(root, "symbolic-ref", "--short", "HEAD") == branch
+            and _git(root, "rev-parse", "HEAD") == head
+            and _git(root, "rev-parse", "refs/remotes/origin/main") == base
+            and _git(root, "remote", "get-url", "origin") == origin,
+            "host_git_refs_changed")
     common = Path(_git(root, "rev-parse", "--path-format=absolute",
                        "--git-common-dir")).resolve()
     audit = common.parent / "data" / "audit"

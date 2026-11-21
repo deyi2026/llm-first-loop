@@ -256,7 +256,244 @@ def test_host_rederives_exact_git_tree_and_lane(live_repo):
     assert ctx["paths"] == ["src/llm_loop/pkg/feature.py"]
 
 
-@pytest.mark.parametrize("change", ["untracked", "unstaged", "protected", "base", "origin", "lane"])
+def test_host_tree_requires_no_write_to_owner_git_index_or_objects(live_repo):
+    root, base = live_repo
+    expected = _git(root, "write-tree")
+    git_dir = root / ".git"
+    objects = git_dir / "objects"
+    original_git_mode = git_dir.stat().st_mode & 0o777
+    original_objects_mode = objects.stat().st_mode & 0o777
+    try:
+        # Simulate an independent UID: reading is allowed, writing index.lock
+        # or new tree objects into the developer's .git is not.
+        git_dir.chmod(0o555)
+        objects.chmod(0o555)
+        ctx = host.inspect_repo(
+            root, goal=GOAL, req=REQ, base=base,
+            message_sha256="d" * 64, owner_uid=os.geteuid(),
+        )
+        assert ctx["tree"] == expected
+        assert not (git_dir / "index.lock").exists()
+    finally:
+        objects.chmod(original_objects_mode)
+        git_dir.chmod(original_git_mode)
+
+
+def test_host_tree_in_linked_git_worktree(live_repo, tmp_path):
+    root, base = live_repo
+    linked = tmp_path / "linked"
+    _git(root, "worktree", "add", "-q", "-b", "feat/host-linked", str(linked), base)
+    source = linked / "src" / "llm_loop" / "pkg" / "feature.py"
+    source.write_text("x = 3\n")
+    _git(linked, "add", "src/llm_loop/pkg/feature.py")
+    tree, paths = host._staged_tree_readonly(linked, owner_uid=os.geteuid())
+    assert tree == _git(linked, "write-tree")
+    assert paths == ["src/llm_loop/pkg/feature.py"]
+
+
+def test_host_snapshot_paths_include_both_rename_sides_and_unicode(live_repo):
+    root, _ = live_repo
+    (root / "docs").mkdir(exist_ok=True)
+    _git(root, "mv", "src/llm_loop/pkg/feature.py", "docs/重命名.py")
+    tree, paths = host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    assert tree == _git(root, "write-tree")
+    assert set(paths) == {"src/llm_loop/pkg/feature.py", "docs/重命名.py"}
+
+
+def test_host_detects_index_inplace_change_even_if_mtime_restored(
+    live_repo, monkeypatch
+):
+    root, _ = live_repo
+    index = root / ".git" / "index"
+    original_run = host.subprocess.run
+    triggered = False
+
+    def change_index_during_tree(args, **kwargs):
+        nonlocal triggered
+        if args[-1] == "write-tree" and not triggered:
+            triggered = True
+            previous = index.stat()
+            changed = bytearray(index.read_bytes())
+            changed[-1] ^= 1
+            index.write_bytes(changed)
+            os.utime(index, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(host.subprocess, "run", change_index_during_tree)
+    with pytest.raises(host.HostHoldError, match="host_git_index_changed"):
+        host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    assert triggered
+
+
+def test_host_denies_protected_change_already_committed_since_base(live_repo):
+    root, base = live_repo
+    protected = root / "scripts" / "ci_gate.sh"
+    protected.parent.mkdir(exist_ok=True)
+    protected.write_text("echo unreviewed\n")
+    _git(root, "add", "scripts/ci_gate.sh")
+    _git(root, "commit", "-qm", "unreviewed protected change")
+    feature = root / "src" / "llm_loop" / "pkg" / "feature.py"
+    feature.write_text("x = 4\n")
+    _git(root, "add", "src/llm_loop/pkg/feature.py")
+    with pytest.raises(host.HostHoldError, match="protected_change_requires_full_r9"):
+        host.inspect_repo(
+            root, goal=GOAL, req=REQ, base=base,
+            message_sha256="d" * 64, owner_uid=os.geteuid(),
+        )
+
+
+def test_host_denies_head_change_during_private_index_snapshot(
+    live_repo, monkeypatch
+):
+    root, base = live_repo
+    original = host._staged_tree_readonly
+    new_head = _git(root, "commit-tree", _git(root, "write-tree"),
+                    "-p", base, "-m", "alternate head")
+
+    def change_head_after_snapshot(*args, **kwargs):
+        result = original(*args, **kwargs)
+        _git(root, "update-ref", "HEAD", new_head)
+        return result
+
+    monkeypatch.setattr(host, "_staged_tree_readonly", change_head_after_snapshot)
+    with pytest.raises(host.HostHoldError, match="host_git_refs_changed"):
+        host.inspect_repo(
+            root, goal=GOAL, req=REQ, base=base,
+            message_sha256="d" * 64, owner_uid=os.geteuid(),
+        )
+
+
+def test_host_rejects_symlinked_object_store(live_repo):
+    root, _ = live_repo
+    objects = root / ".git" / "objects"
+    saved = objects.with_name("objects.saved")
+    objects.rename(saved)
+    try:
+        objects.symlink_to(saved.name, target_is_directory=True)
+        with pytest.raises(host.HostHoldError, match="host_git_objects_untrusted"):
+            host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    finally:
+        objects.unlink(missing_ok=True)
+        saved.rename(objects)
+
+
+def test_host_rejects_git_alternate_object_injection(live_repo):
+    root, _ = live_repo
+    alternates = root / ".git" / "objects" / "info" / "alternates"
+    alternates.parent.mkdir(exist_ok=True)
+    alternates.write_text("/private/tmp/attacker-objects\n")
+    with pytest.raises(host.HostHoldError, match="host_git_objects_untrusted"):
+        host._staged_tree_readonly(root, owner_uid=os.geteuid())
+
+
+def test_host_rejects_corrupted_base_tree_under_unchanged_oid(live_repo):
+    root, base = live_repo
+    candidate = _git(root, "write-tree")
+    base_tree = _git(root, "rev-parse", f"{base}^{{tree}}")
+    obj = root / ".git" / "objects" / base_tree[:2] / base_tree[2:]
+    replacement = root / ".git" / "objects" / candidate[:2] / candidate[2:]
+    original = obj.read_bytes()
+    mode = obj.stat().st_mode & 0o777
+    try:
+        obj.chmod(0o644)
+        obj.write_bytes(replacement.read_bytes())
+        with pytest.raises(host.HostHoldError, match="host_git_object_integrity_failed"):
+            host._verified_protected_tree_unchanged(
+                base=base, candidate=candidate,
+                git_cmd=["/usr/bin/git", "-C", str(root)],
+                env={"PATH": "/usr/bin:/bin", "HOME": "/var/empty"},
+            )
+    finally:
+        obj.write_bytes(original)
+        obj.chmod(mode)
+
+
+@pytest.mark.parametrize("corrupt_kind", ["blob", "nested_tree"])
+def test_host_rejects_corrupted_protected_object_closure(live_repo, corrupt_kind):
+    root, _ = live_repo
+    protected = root / "scripts" / "subdir" / "keep.sh"
+    protected.parent.mkdir(parents=True)
+    protected.write_text("echo protected\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "protected baseline")
+    base = _git(root, "rev-parse", "HEAD")
+    candidate = _git(root, "write-tree")
+    if corrupt_kind == "blob":
+        original_oid = _git(root, "rev-parse", "HEAD:scripts/subdir/keep.sh")
+        replacement_oid = _git(root, "rev-parse", "HEAD:src/llm_loop/pkg/feature.py")
+    else:
+        original_oid = _git(root, "rev-parse", "HEAD:scripts/subdir")
+        replacement_oid = _git(root, "rev-parse", "HEAD:src/llm_loop/pkg")
+    objects = root / ".git" / "objects"
+    original_path = objects / original_oid[:2] / original_oid[2:]
+    replacement_path = objects / replacement_oid[:2] / replacement_oid[2:]
+    saved = original_path.read_bytes()
+    mode = original_path.stat().st_mode & 0o777
+    try:
+        original_path.chmod(0o644)
+        original_path.write_bytes(replacement_path.read_bytes())
+        with pytest.raises(host.HostHoldError, match="host_git_object_integrity_failed"):
+            host._verified_protected_tree_unchanged(
+                base=base, candidate=candidate,
+                git_cmd=["/usr/bin/git", "-C", str(root)],
+                env={"PATH": "/usr/bin:/bin", "HOME": "/var/empty"},
+            )
+    finally:
+        original_path.write_bytes(saved)
+        original_path.chmod(mode)
+
+
+def test_host_rejects_symlinked_git_metadata_and_info_directory(live_repo):
+    root, _ = live_repo
+    git_dir = root / ".git"
+    saved_git = root / ".git.saved"
+    git_dir.rename(saved_git)
+    try:
+        git_dir.symlink_to(saved_git.name, target_is_directory=True)
+        with pytest.raises(host.HostHoldError, match="host_git_metadata_untrusted"):
+            host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    finally:
+        git_dir.unlink(missing_ok=True)
+        saved_git.rename(git_dir)
+
+    info = git_dir / "objects" / "info"
+    info.mkdir(exist_ok=True)
+    saved_info = info.with_name("info.saved")
+    info.rename(saved_info)
+    try:
+        info.symlink_to(saved_info.name, target_is_directory=True)
+        with pytest.raises(host.HostHoldError, match="host_git_objects_untrusted"):
+            host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    finally:
+        info.unlink(missing_ok=True)
+        saved_info.rename(info)
+
+
+def test_host_rejects_group_writable_or_symlinked_git_index(live_repo):
+    root, base = live_repo
+    index = root / ".git" / "index"
+    original_mode = index.stat().st_mode & 0o777
+    try:
+        index.chmod(0o664)
+        with pytest.raises(host.HostHoldError, match="host_git_index_untrusted"):
+            host.inspect_repo(
+                root, goal=GOAL, req=REQ, base=base,
+                message_sha256="d" * 64, owner_uid=os.geteuid(),
+            )
+    finally:
+        index.chmod(original_mode)
+    saved = index.with_name("index.saved")
+    index.rename(saved)
+    try:
+        index.symlink_to(saved.name)
+        with pytest.raises(OSError):
+            host._staged_tree_readonly(root, owner_uid=os.geteuid())
+    finally:
+        index.unlink(missing_ok=True)
+        saved.rename(index)
+
+
+@pytest.mark.parametrize("change", ["untracked", "unstaged", "protected", "case_protected", "base", "origin", "lane"])
 def test_host_rejects_untrusted_git_or_lane_state(live_repo, change):
     root, base = live_repo
     if change == "untracked":
@@ -268,6 +505,11 @@ def test_host_rejects_untrusted_git_or_lane_state(live_repo, change):
         script.parent.mkdir()
         script.write_text("echo bypass\n")
         _git(root, "add", "scripts/ci_gate.sh")
+    elif change == "case_protected":
+        script = root / "ScRiPtS" / "ci_gate.sh"
+        script.parent.mkdir()
+        script.write_text("echo case bypass\n")
+        _git(root, "add", "ScRiPtS/ci_gate.sh")
     elif change == "base":
         _git(root, "commit", "--allow-empty", "-qm", "remote main advanced")
         _git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
