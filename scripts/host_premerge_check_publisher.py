@@ -262,8 +262,8 @@ def publish_verified(
         assert live_state is not None
         live_state(envelope["payload"])
     existing = _lookup(
-        _checks(client, f"repos/{repo}", tested_merge),
-        _HOST_CHECK_CONTEXT, app_id, tested_merge,
+        _checks(client, f"repos/{repo}", candidate),
+        _HOST_CHECK_CONTEXT, app_id, candidate,
     )
     if existing is not None:
         _require(
@@ -273,7 +273,7 @@ def publish_verified(
             "host_check_existing_conflict", unavailable=False,
         )
         return {
-            "decision": "ALREADY_PUBLISHED", "head_sha": tested_merge,
+            "decision": "ALREADY_PUBLISHED", "head_sha": candidate,
             "app_id": app_id, "check_id": existing.get("id"),
             "snapshot_sha256": digest,
         }
@@ -325,7 +325,7 @@ def publish_verified(
     if not apply:
         return {
             "decision": "ELIGIBLE_TO_PUBLISH", "read_only": True,
-            "head_sha": tested_merge, "app_id": app_id,
+            "head_sha": candidate, "app_id": app_id,
             "snapshot_sha256": digest,
         }
     # Check the Lane/Queue again after the last GitHub identity read.
@@ -333,8 +333,8 @@ def publish_verified(
     live_state(envelope["payload"])
     body = {
         "name": _HOST_CHECK_CONTEXT,
-        # GitHub evaluates PR required checks on the tested merge ref.
-        "head_sha": tested_merge,
+        # Publish on the PR head; tested_merge is independently verified.
+        "head_sha": candidate,
         "status": "completed",
         "conclusion": "success",
         "external_id": external_id,
@@ -351,7 +351,7 @@ def publish_verified(
     result = post(repo, check_token, body)
     _require(
         result.get("name") == _HOST_CHECK_CONTEXT
-        and result.get("head_sha") == tested_merge
+        and result.get("head_sha") == candidate
         and (result.get("app") or {}).get("id") == app_id
         and result.get("external_id") == external_id
         and result.get("status") == "completed"
@@ -361,7 +361,7 @@ def publish_verified(
     )
     return {
         "decision": "PUBLISHED", "check_id": result["id"],
-        "head_sha": tested_merge, "app_id": app_id,
+        "head_sha": candidate, "app_id": app_id,
         "snapshot_sha256": digest,
     }
 
