@@ -64,24 +64,24 @@ def publish(facts, *, apply=False, token="", post=None):
 def test_green_ci_and_signed_host_pass_is_readonly_without_apply(facts):
     result = publish(facts)
     assert result["decision"] == "ELIGIBLE_TO_PUBLISH"
-    assert result["head_sha"] == MERGE
+    assert result["head_sha"] == CANDIDATE
     assert result["app_id"] == HOST_APP_ID
     assert result["read_only"] is True
 
 
-def test_real_host_app_publishes_only_tested_merge_sha(facts):
+def test_real_host_app_publishes_pr_head_with_tested_merge_identity(facts):
     observed = []
     def post(repo, token, body):
         observed.append((repo, token, body))
         return {**body, "id": 37, "app": {"id": HOST_APP_ID}}
     result = publish(facts, apply=True, token="host-app-token" * 3, post=post)
     assert result["decision"] == "PUBLISHED"
-    assert result["head_sha"] == MERGE
+    assert result["head_sha"] == CANDIDATE
     assert len(observed) == 1
     repo, token, body = observed[0]
     assert repo == "o/r" and token.startswith("host-app-token")
     assert body["name"] == "lfl-host-premerge"
-    assert body["head_sha"] == MERGE != CANDIDATE
+    assert body["head_sha"] == CANDIDATE != MERGE
     _, envelope = facts
     assert body["external_id"] == _external_id(
         PR_NUMBER, CANDIDATE, MERGE, _fingerprint(envelope),
@@ -168,10 +168,10 @@ def test_race_after_verified_host_preflight_holds(facts):
 
 
 def test_existing_conflicting_host_check_must_not_be_replaced(facts):
-    key = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+    key = f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"
     facts[0].data[key]["check_runs"].append({
         "id": 99, "name": "lfl-host-premerge",
-        "app": {"id": HOST_APP_ID}, "head_sha": MERGE,
+        "app": {"id": HOST_APP_ID}, "head_sha": CANDIDATE,
         "status": "completed", "conclusion": "success",
         "external_id": "stale-base-or-forged-snapshot",
     })
@@ -183,6 +183,13 @@ def test_existing_conflicting_host_check_must_not_be_replaced(facts):
 def test_wrong_app_identity_in_write_response_cannot_be_claimed_success(facts):
     def post(_repo, _token, body):
         return {**body, "id": 37, "app": {"id": APP_ID}}
+    with pytest.raises(HostHoldError, match="host_check_publish_identity_mismatch"):
+        publish(facts, apply=True, token="host-app-token" * 3, post=post)
+
+
+def test_host_app_write_response_on_merge_sha_cannot_be_claimed_success(facts):
+    def post(_repo, _token, body):
+        return {**body, "head_sha": MERGE, "id": 37, "app": {"id": HOST_APP_ID}}
     with pytest.raises(HostHoldError, match="host_check_publish_identity_mismatch"):
         publish(facts, apply=True, token="host-app-token" * 3, post=post)
 
