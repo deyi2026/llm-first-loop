@@ -1,0 +1,95 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261117-multiagent-final-closure",
+  "summary": "Freeze v1.9 unchanged; B1 Host gate defense superseded by PR65 main (merged as e9507bd9); isolate B2 readonly baseline projection and B3 evidence analyzer on M2-A strict-CAS base with honest HOLD boundaries.",
+  "components": [
+    {
+      "component_id": "baseline-impact-b2",
+      "paths": [
+        "src/llm_loop/introspection/baseline_impact.py",
+        "src/llm_loop/introspection/tools_merge_queue.py",
+        "tests/unit/test_baseline_impact_projection.py",
+        "tests/unit/test_tools_merge_queue.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Read-only local baseline impact advisory and optional lane queue view",
+      "disposition": "No new authority, no signed receipt, no Git mutation, default opt-in off.",
+      "evidence": [
+        "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
+        "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 38/38 (test_tools_merge_queue 14 + test_baseline_impact_projection 14 + test_multiagent_convergence_benchmark 10; sets overlap by design, do not sum as unique).",
+        "B2 availability fix: duplicate lane_id version history (append-only ledger per LaneStore last-write-wins+version CAS semantics) now deterministically resolves to the latest version only when strictly increasing + identity-identical + terminal-irreversible; real-audit repro (102 rows, duplicate selftest-guard v1/v2) was globally degraded before the fix and now resolves 101 lanes with selftest-guard=(v2,closed); version ties/regressions, identity drift and post-terminal rows still degrade the whole snapshot (fail-closed)."
+      ],
+      "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
+      "rollback_route": "Revert this isolated PR; no migration, Host signing or production restart.",
+      "declaration_id": "baseline-impact-b2"
+    },
+    {
+      "component_id": "multiagent-b3-evidence",
+      "paths": [
+        "scripts/benchmark_multiagent_convergence.py",
+        "tests/unit/test_multiagent_convergence_benchmark.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Evidence-only multi-Agent performance measurement and real Git mechanical contract test",
+      "disposition": "Do not claim actual LLM A/B performance without 18 comparable real receipts.",
+      "evidence": [
+        "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
+        "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 38/38 (test_tools_merge_queue 14 + test_baseline_impact_projection 14 + test_multiagent_convergence_benchmark 10; sets overlap by design, do not sum as unique)."
+      ],
+      "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
+      "rollback_route": "Revert this isolated PR; no migration, Host signing or production restart."
+    },
+    {
+      "component_id": "frozen-design-and-receipts",
+      "paths": [
+        "docs/design/IMPLEMENTATION-20261117-multiagent-v19-p1-closure.md",
+        "docs/results/RESULT-20261117-multiagent-convergence-final.md",
+        "docs/governance/submissions/20261117-multiagent-final-closure.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Immutable v1.9 design and truthful implementation ledger",
+      "disposition": "Keep frozen v1.9 in its original isolated worktree until independent P0/P1=0; stage only implementation appendix and truthful receipt.",
+      "evidence": [
+        "Frozen v1.9 SHA256 5e879243f09d0559b706189a1044cd6acf201352ce0c2e865e08095a9e41a4ea.",
+        "Prior independent design review REVISE P0=0/P1=2; implementation Reviewer/R9/CI not yet completed.",
+        "B1 Host gate defense superseded by PR65 main (merged as e9507bd9); on this candidate targeted B2+B3 tests re-passed 38/38 (test_tools_merge_queue 14 + test_baseline_impact_projection 14 + test_multiagent_convergence_benchmark 10; sets overlap by design, do not sum as unique)."
+      ],
+      "verification_level": "Focused negative tests only; exact SHA Reviewer, original full R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Any untrusted gate dependency, unverified main, unknown Git path, missing approval, Reviewer P1, R9/CI RED => HOLD.",
+      "rollback_route": "Revert this isolated PR; no migration, Host signing or production restart."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "baseline-impact-b2",
+      "g1": {
+        "necessity": "Read-only local baseline impact advisory and optional lane queue view; No new authority, no signed receipt, no Git mutation, default opt-in off."
+      },
+      "g2": {
+        "authority_owner": "GitHub protected main + Host signed issuer own merge authority; LFL Lane/Queue own coordination; this patch is advisory or fail-closed only.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing LaneStore/MergeQueueStore, assess_rebase_replay, Host premerge, GitHub CI; no new ledger or automatic merge."
+      },
+      "g3": {
+        "model_evidence": [
+          "Original v1.9 independent Reviewer REVISE P0=0/P1=2, not PASS.",
+          "B1 auxiliary gate closure superseded by PR65 main (merged as e9507bd9); Host execution identity now owned by main.",
+          "B2 real Git path/dirty/rebase tests; B3 real Git worktree mechanical integration only, not real LLM A/B."
+        ],
+        "recovery_or_reason": "Missing upgrade issuer, strict M2-A integration, true A/B, exact SHA review or main protection => HOLD; no self-issued approval."
+      },
+      "g4": {
+        "rollback": "Revert protected PR; retain audit and source branch; no runtime mutation in this patch.",
+        "verification": [
+          "Focused negative tests + Ruff/Pyright/A.5 first.",
+          "Independent Reviewer PASS P0/P1=0 before original full R9 exit0, PR/CI, protected main merge and managed deployment.",
+          "Do not close original Goal until M2-A, B2/B3, gate upgrade and real runtime acceptance are verified."
+        ]
+      }
+    }
+  ]
+}
