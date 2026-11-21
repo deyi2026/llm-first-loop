@@ -611,7 +611,9 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     )
     blobs = _verify_gate_blobs(client, main, candidate)
     main_runs = _checks(client, prefix, main)
-    pr_runs = _checks(client, prefix, tested_merge)
+    # GitHub Actions attaches PR checks to the head. The tested merge is
+    # independently pinned by its parents and the CI artifact below.
+    pr_runs = _checks(client, prefix, candidate)
     for item in pinned:
         context, app_id = item["context"], item["app_id"]
         if item["event_scope"] == "push_and_pr":
@@ -624,11 +626,11 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
                 expected_workflow_path=item["workflow_path"],
                 expected_workflow_id=item["workflow_id"],
             )
-        merged = _lookup(pr_runs, context, app_id, tested_merge)
-        _require(_passed(merged), "pr_required_checks_incomplete", unavailable=False)
-        assert merged is not None
+        pr_check = _lookup(pr_runs, context, app_id, candidate)
+        _require(_passed(pr_check), "pr_required_checks_incomplete", unavailable=False)
+        assert pr_check is not None
         _check_run_origin(
-            client, repo, merged, event="pull_request", main=main,
+            client, repo, pr_check, event="pull_request", main=main,
             candidate=candidate, tested_merge=tested_merge, pr_number=pr_number,
             expected_run_id=run_id if item["purpose"] == "managed_evidence" else None,
             expected_workflow_path=item["workflow_path"],
@@ -680,7 +682,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     )
     final_rulesets = client.get(f"{prefix}/rulesets?includes_parents=true")
     final_main_runs = _checks(client, prefix, main)
-    final_pr_runs = _checks(client, prefix, tested_merge)
+    final_pr_runs = _checks(client, prefix, candidate)
     final_run = client.get(f"{prefix}/actions/runs/{run_id}")
     final_artifacts = client.get(f"{prefix}/actions/runs/{run_id}/artifacts?per_page=100")
     _require(

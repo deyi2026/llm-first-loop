@@ -1,0 +1,78 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261122-host-sha-binding-fix",
+  "summary": "Minimal Host premerge SHA-binding repair: GitHub PR required checks and the Host App check-run attach to the candidate head, while the actual tested merge remains independently verified by exact two-parent identity and CI artifact. Main temporarily retains the original five strict required checks; the sixth Host check is re-enabled only after a protected merge, trusted Host update, and real positive/negative signing checks.",
+  "components": [
+    {
+      "component_id": "host-premerge-sha-binding",
+      "paths": ["scripts/premerge_host.py", "scripts/host_premerge_check_publisher.py"],
+      "control_machinery": true,
+      "owning_subsystem": "Host premerge verifier and GitHub App publisher",
+      "disposition": "modify existing authority without adding a new signer or relaxing required evidence",
+      "declaration_id": "host-sha-binding-authority",
+      "evidence": [
+        "Verifier queries and rechecks PR Actions check-runs on candidate head SHA; it still verifies tested_merge SHA and both parents, main-pinned gate blobs, and CI artifact pr_head/pr_base/pr_merge identity.",
+        "Publisher checks and writes lfl-host-premerge on candidate head SHA, validates the App identity and response SHA, and retains signed snapshot, live Lane/Queue, and write-before-publish rechecks."
+      ],
+      "verification_level": "Predecessor 152c38c: independent Reviewer PASS P0/P1=0, Host-managed review PASS, 112 focused tests PASS, original R9 exit 0 with disclosed FLAKY-PASS. New manifest successor SHA requires fresh exact-SHA review, full R9 and remote CI.",
+      "model_evidence_veto_recovery_exit": "Model text never signs Host evidence. Missing or mismatched signed snapshot, SHA, workflow, App identity, CI artifact, or live state must HOLD; recovery is a new Host-signed snapshot and exact-SHA revalidation. Disable the sixth required check on rollback, retaining the original five strict checks.",
+      "rollback_route": "Protected revert of this repair and trusted Host installation; preserve audit records and original five strict required checks. Do not enable the sixth check until real signing and permission-negative tests pass."
+    },
+    {
+      "component_id": "host-premerge-regression-tests",
+      "paths": ["tests/unit/test_premerge_gate_host.py", "tests/unit/test_host_premerge_check_publisher.py"],
+      "control_machinery": false,
+      "owning_subsystem": "Host premerge regression suite",
+      "disposition": "modify",
+      "evidence": [
+        "112 focused tests passed on predecessor 152c38c, including red PR-head checks not overridden by green merge checks, wrong check-run head SHA rejection, and wrong Host publish-response SHA rejection."
+      ],
+      "verification_level": "112 focused tests exit 0 on predecessor; repeat on successor and in original full R9.",
+      "model_evidence_veto_recovery_exit": "Not a signing authority; negative assertions must fail closed and are not substitutes for a real Host probe.",
+      "rollback_route": "Revert together with the corresponding Host verifier and publisher changes."
+    },
+    {
+      "component_id": "a5-submission-manifest",
+      "paths": ["docs/governance/submissions/20261122-host-sha-binding-fix.json"],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture governance",
+      "disposition": "add",
+      "evidence": [
+        "Local A.5 check on predecessor 152c38c returned exit 2 because the exact changed-path set had no submission manifest; this single new manifest declares all five successor changed paths."
+      ],
+      "verification_level": "A.5 exact changed-path coverage to be verified on successor SHA.",
+      "model_evidence_veto_recovery_exit": "Declaration only, not a signature, review verdict, or exception to any required status check.",
+      "rollback_route": "Revert with the repair; missing A.5 evidence must block the PR rather than waive the gate."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-sha-binding-authority",
+      "g1": {
+        "necessity": "GitHub PR checks were read from the tested merge SHA while GitHub attached them to the candidate head; the Host App publisher also wrote to the merge SHA. This mismatched required-check identity blocked safe integration."
+      },
+      "g2": {
+        "authority_owner": "Root-owned Host verifier and trusted GitHub Host App remain the only signers; protected main owns the required-check policy.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse the existing verifier, publisher, CI artifact and signed snapshot; change only GitHub check-run attachment to PR head, not tested-merge evidence or signing authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent GLM-5.3-flash Reviewer on predecessor 152c38c: PASS P0=0 P1=0 P2=3; this is not an approval for the manifest successor SHA.",
+          "Host review_admission tree-scope qualification PASS on predecessor 152c38c, bound to its original candidate fingerprint; successor must be independently requalified.",
+          "Predecessor original R9 exit 0, FLAKY-PASS: first xdist run had one unrelated terminal PTY SIGTERM timeout, serial file 15 passed, then identical full xdist rerun 16179 passed; no failure is concealed."
+        ],
+        "recovery_or_reason": "Any P0/P1, new R9 or remote CI failure, wrong candidate/merge identity, or untrusted Host installation keeps the PR on HOLD. Re-review the exact successor SHA; never reuse predecessor qualifications."
+      },
+      "g4": {
+        "rollback": "Keep main strict with its original five checks during repair; use protected revert and restore the previous root-owned Host binaries if the new verifier fails. The sixth check stays non-required until true signing and negative tests pass.",
+        "verification": [
+          "A.5 exact changed-path coverage for all five successor paths must PASS.",
+          "Independent Reviewer PASS P0/P1=0 and original full R9 exit 0 on exact successor SHA; preserve FLAKY-PASS details if present.",
+          "Managed push and PR remote CI including pytest/Ruff/Pyright, security, privacy, A.5 and managed-premerge-evidence must pass before protected main merge.",
+          "After main CI, update root-owned Host verifier and publisher to the exact protected main blobs; perform real signed positive and permission/SHA negative probes before re-enabling the sixth required check and revalidating PR #86."
+        ]
+      }
+    }
+  ]
+}
