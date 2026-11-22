@@ -231,7 +231,7 @@ def _resolve_crop(
 
 def _run_vision(
     send_bytes: bytes, send_mime: str, prompt: str
-) -> tuple[str | None, str | None, VisionGeometry | None]:
+) -> tuple[str | None, str | None, "VisionGeometry | None"]:
     """调用视觉后端 → (text, error, geometry)；失败如实降级，不伪装成功.
 
     后端失败时 geometry 取自 vision 模块挂在异常上的**本地预处理事实**
