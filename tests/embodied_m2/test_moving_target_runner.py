@@ -61,6 +61,56 @@ def test_target_moving_during_an_action_invalidates_that_actions_evidence() -> N
     assert result["stale_evidence_invalidated"] >= 1
     assert result["terminated_by"] == "place_verified_locally_pending_oracle"
     assert result["oracle_receipt"]["goal"]["pos"][0] == pytest.approx(0.07)
+    # The voided action stays visible, but is attributed to the goal it RAN
+    # against — never to the rebound goal whose evidence it cannot support.
+    voided = [e for e in result["trace"]
+              if e.get("event") == "tool_action" and e.get("stale_goal")]
+    assert voided, "the action voided by the mid-action move must stay visible"
+    assert all(e["goal_version"] < result["goal_version"] for e in voided)
+    assert all(e["goal_digest"] != result["goal"]["digest"] for e in voided)
+
+
+def test_target_moving_while_the_release_settles_replans_before_verification() -> None:
+    """The settle window after `release` belongs to no action: only `verify()`
+    re-observes there. Before the fix this path crashed instead of replanning.
+    """
+    scene = FakeScene()
+    iface = FakeIface(scene)
+    fired = {"done": False}
+
+    def on_step(step_scene: FakeScene, _n: int) -> None:
+        if not fired["done"] and step_scene.placed:
+            fired["done"] = True
+            step_scene.move_tray(0.06)  # external actor moves the target while the object settles
+
+    scene.on_step = on_step
+    moves = {"n": 0}
+
+    def move_to_now(_state: str) -> str:
+        moves["n"] += 1
+        return decision("move_to", f"move-{moves['n']}", x=scene.tray[0], y=scene.tray[1], z=0.12)
+
+    provider = ScriptedProvider([("grasp", {}), move_to_now, ("release", {}),
+                                 move_to_now, ("release", {})])
+    result = run_episode(iface, provider, BUDGET)
+
+    assert "GOAL_CHANGED_BEFORE_VERIFICATION" in _events(result)
+    assert result["goal_rebinds"] == 1
+    assert result["terminated_by"] == "place_verified_locally_pending_oracle"
+    assert result["oracle_receipt"]["goal"]["pos"][0] == pytest.approx(0.06)
+
+
+def test_tool_action_trace_keeps_execution_timing() -> None:
+    """M1 emitted `t_s` on every tool_action trace event; M2 must not drop it."""
+    scene = FakeScene()
+    iface = FakeIface(scene)
+    provider = ScriptedProvider([("grasp", {}), lambda _s: _move_to_tray(scene),
+                                 ("release", {})])
+    result = run_episode(iface, provider, BUDGET)
+
+    actions = [e for e in result["trace"] if e.get("event") == "tool_action"]
+    assert actions
+    assert all("t_s" in e and e["t_s"] >= 0 for e in actions)
 
 
 def test_target_moving_out_of_band_between_actions_is_detected_before_planning() -> None:

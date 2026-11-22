@@ -30,6 +30,7 @@ FROZEN_RECEIPT_SHA256 = {
     'M1-baseline-v1.6.4.json': '820b73cf54ddb13a0f86c179950b0fca58a7ddea632cbf565153772af5846f3d',
     'M1-baseline-v1.6.5.json': '3dedf7a8efa4288ef1a1ca785d1ae0e117b1e4b0e6e4cd2177f8677e24c71967',
     'M1-baseline-v1.7.json': '7f803cc1d54dcce350d953aa71bec200bba6b3cf4214f308176fcd39326d74f9',
+    'M1-baseline-v1.8.json': 'bbd7f255664eb949f7287da9779d888cdfb19197c956b5266c1cecf9bd294e6f',
     'M1-baseline-v1.6.json': '4e0f943a69910b8c9de3ad6f3459f5128b534c793f961d4e6cf8f4dfb37e819f',
     'M1-baseline-v1.json': 'f0ff6c636f8fbc188af95def72695e9b903c98fb4eb9abab6eb6ffb692919dcf',
 }
@@ -66,13 +67,13 @@ def test_is_unexpected_contact_hard_gate_matrix():
     assert f("cube_geom", "tray_floor") is False
 
 
-def test_v17_local_baseline_pass_metadata_consistent():
-    """v1.7 = M2 code (goal binding) over the unchanged v1.6.2 physics.
+def test_v18_local_baseline_pass_metadata_consistent():
+    """v1.8 = M2 review-fixed episode.py over the unchanged v1.6.2 physics.
 
-    v1.6.5 stays frozen for QA traceability; it is no longer the receipt that
-    describes the live code, so the code-hash pin moved to v1.7.
+    v1.7 stays frozen for QA traceability; it is no longer the receipt that
+    describes the live code, so the code-hash pin moved to v1.8.
     """
-    data = json.loads((CAL / "M1-baseline-v1.7.json").read_text())
+    data = json.loads((CAL / "M1-baseline-v1.8.json").read_text())
     assert data["verdict"] == "LOCAL_PHYSICS_BASELINE_PASS"
     assert data["independent_oracle"].startswith("PENDING_ORACLE")
     assert data["structural_whitelist_verification"]["adjacent_assembly_confirmed"] is True
@@ -88,6 +89,7 @@ def test_v17_local_baseline_pass_metadata_consistent():
     assert "z0.12->0.11" in reason and "z[0.14,0.18]->z[0.12,0.13]" in reason
     assert "kinematically fine" in reason
     assert "M2 (issue #79" in reason and "PHYSICS UNCHANGED" in reason
+    assert "M2 review fix" in reason and "only episode.py's digest moved" in reason
     # live scene XML must hash exactly to what the receipt recorded
     import hashlib
     sys.path.insert(0, str(ROOT / "src"))

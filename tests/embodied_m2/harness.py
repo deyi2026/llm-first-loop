@@ -34,6 +34,7 @@ class FakeScene:
         self.placed = False
         self.scene_epoch = 1
         self.step_calls = 0
+        self.on_step: Callable[[FakeScene, int], None] | None = None
         self._arm_after: int | None = None
         self._arm_dx = 0.0
         self._armed_observes = 0
@@ -80,6 +81,8 @@ class FakeScene:
 
     def step(self, n: int = 1) -> int:
         self.step_calls += int(n)
+        if self.on_step is not None:
+            self.on_step(self, int(n))
         return int(n)
 
     def oracle_snapshot(self) -> dict[str, Any]:

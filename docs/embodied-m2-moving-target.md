@@ -29,7 +29,7 @@ goal the claim was about.
 | point | check | on change |
 |---|---|---|
 | before each decision | epoch / digest vs baseline | invalidate claims, rebind, replan |
-| immediately after the action | epoch / digest | `SCENE_RESET` (all evidence) or `GOAL_CHANGED_MID_ACTION` (that action) |
+| immediately after the action | epoch / digest | `SCENE_RESET` (all evidence) or `GOAL_CHANGED_MID_ACTION` (that action: kept visible, tagged with the goal it ran against) |
 | at verification | fresh bind, used for `judge_place` | `GOAL_CHANGED_BEFORE_VERIFICATION`, replan |
 | duplicate intent | digest at execution vs now | `DUPLICATE_INTENT_STALE_GOAL`, replan |
 
@@ -55,10 +55,12 @@ VERIFIED, and that path is unchanged by this issue.
 
 ## Evidence
 
-* `tests/embodied_m2/test_moving_target_runner.py` — 7 deterministic fault
-  injections on a scripted world: target moves while the model decides, during
-  an action, out of band between actions, scene reset mid-episode, duplicate
-  intent after a move, indeterminate execution, rebind budget.
+* `tests/embodied_m2/test_moving_target_runner.py` — 9 deterministic scenarios
+  on a scripted world: target moves while the model decides, during an action
+  (the voided action stays visible, tagged with the goal it ran against), out
+  of band between actions, while `release` settles before verification, scene
+  reset mid-episode, duplicate intent after a move, indeterminate execution,
+  rebind budget, and the M1 `t_s` trace regression.
 * `tests/embodied_m2/test_goal_binding.py` — digest stability/noise, stale
   receipt, missing goal block, tampered block, stale epoch.
 * `tests/embodied_m2/test_mujoco_moving_target.py` — real MuJoCo, tray moved
@@ -66,9 +68,10 @@ VERIFIED, and that path is unchanged by this issue.
   L3 replan after the move, L4 reset recovery. Includes a discrimination proof:
   the same final snapshot **fails** against the old pose and **passes** against
   the new one.
-* `experiments/embodied/m1/calibration/M1-baseline-v1.7.json` — M1 physics
+* `experiments/embodied/m1/calibration/M1-baseline-v1.8.json` — M1 physics
   baseline revalidated under M2 code: 10/10 seeds, deterministic, negatives
-  fail-closed. Physics, tolerances, budgets and step counts unchanged.
+  fail-closed. Physics, tolerances, budgets and step counts unchanged (v1.7
+  stays frozen for QA; v1.8 records the post-review `episode.py` digest).
 
 ## Explicitly NOT implemented (M2 infra, disclosed not simulated)
 

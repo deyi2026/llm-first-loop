@@ -39,7 +39,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.7"
+BASELINE_VERSION = "M1-baseline-v1.8"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -379,7 +379,12 @@ def main() -> int:
                                   "PHYSICS UNCHANGED - no tolerance, budget, geometry or step "
                                   "count moved, which is why the same 10 engineering seeds must "
                                   "reproduce exactly. Moving-target behaviour is covered by "
-                                  "tests/embodied_m2/, not by this receipt."),
+                                  "tests/embodied_m2/, not by this receipt. "
+                                  "M2 review fix (M1-baseline-v1.8): episode.py's rebind now "
+                                  "returns REPLAN at every re-observation point, voided actions "
+                                  "stay attributed to the goal they ran against, and "
+                                  "tool_action trace events keep t_s; POLICIES AND PHYSICS STILL "
+                                  "UNCHANGED - only episode.py's digest moved."),
         "legacy_note_v13": ("TASK-008 approved minimal geometry fix: wrist_rod relocated "
                                   "from link3 z[0.14,0.18] (overlapping tool作用区 z~0.123..0.163 "
                                   "incl. tool_site 0.143) to wrist-rear conduit z[0.18,0.22]; "

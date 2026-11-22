@@ -117,9 +117,15 @@ class _GoalState:
                            "goal_digest": self.goal.digest, "scene_epoch": self.goal.scene_epoch})
         return True
 
-    def _rebind_or_abort(self, reason: str, **kwargs: Any) -> str | None:
+    def _rebind_or_abort(self, reason: str, **kwargs: Any) -> str:
+        """Void stale evidence, accept the fresh goal, and require a replan.
+
+        Every call site observes a goal change, so success means the episode
+        must plan again from the fresh observation — never fall through and use
+        the decision that was formed against the old goal.
+        """
         self.invalidate_claims(reason, **kwargs)
-        return _PROCEED if self.rebind(reason) else ABORT
+        return REPLAN if self.rebind(reason) else ABORT
 
     # -- observation points ------------------------------------------------
     def precheck(self) -> str | None:
@@ -156,13 +162,30 @@ class _GoalState:
                            "action_id": status.get("action_id"), "status": status})
         self.claim_state = CLAIM_HOLD
 
-    def record(self, decision: dict[str, Any], status: dict[str, Any], action_id: str) -> None:
+    def record(self, decision: dict[str, Any], status: dict[str, Any], action_id: str,
+               *, t_s: float) -> None:
         self.trace.append({"event": "tool_action", "decision": decision, "status": status,
-                           "goal_version": self.goal.version, "goal_digest": self.goal.digest})
+                           "t_s": t_s, "goal_version": self.goal.version,
+                           "goal_digest": self.goal.digest})
         self.history.append({"decision": decision, "status": status,
                              "goal_digest": self.goal.digest})
         self.action_history[action_id] = len(self.history) - 1
         self.action_goal[action_id] = self.goal.digest
+
+    def record_voided(self, decision: dict[str, Any], status: dict[str, Any],
+                      *, goal_version: int, goal_digest: str, t_s: float) -> None:
+        """Keep an executed action visible, tagged with the goal it RAN against.
+
+        Its evidence is void (the goal moved mid-action). Tagging it with the
+        rebound goal would attribute a stale-planned action to the new target,
+        so it carries the executed goal's version/digest and a `stale_goal`
+        marker instead.
+        """
+        self.trace.append({"event": "tool_action", "decision": decision, "status": status,
+                           "t_s": t_s, "goal_version": goal_version,
+                           "goal_digest": goal_digest, "stale_goal": True})
+        self.history.append({"decision": decision, "status": status,
+                             "goal_digest": goal_digest, "stale_goal": True})
 
     def verify(self) -> GoalBinding | str:
         """At verification: bind the goal observed *now*; never reuse an older one."""
@@ -323,6 +346,7 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             replans += 1 if verdict is REPLAN else 0
             continue
         tool_actions += 1
+        executed_version, executed_digest = goals.goal.version, goals.goal.digest
         status = _settle(iface, result, elapsed, budget)
         # M2: re-observe immediately after the action, before any judgement.
         verdict = goals.after_action(str(result["action_id"]), status)
@@ -330,13 +354,18 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             terminated_by = GOAL_REBIND_BUDGET_EXHAUSTED
             break
         if verdict is REPLAN:
+            # The action ran against the previous goal: keep it visible in the
+            # trace/history, but never attribute it to the goal it did not run
+            # against (its evidence was voided by the rebind).
+            goals.record_voided(decision, status, goal_version=executed_version,
+                                goal_digest=executed_digest, t_s=round(elapsed(), 3))
             replans += 1
             continue
         if status["state"] != "done":
             goals.hold(status)
             terminated_by = HOLD_UNKNOWN
             break
-        goals.record(decision, status, str(result["action_id"]))
+        goals.record(decision, status, str(result["action_id"]), t_s=round(elapsed(), 3))
         if decision["skill"] == "release" and status["state"] == "done":
             scene.step(150)  # let the released object settle before judging place
         # M2: verify against a goal observed at verification time, not earlier.
