@@ -88,6 +88,47 @@ def test_issuer_create_and_revoke_sync_parent_directory(tmp_path, monkeypatch):
         assert target.read_bytes() == b"revoked"
 
 
+def test_public_receipt_mode_survives_restrictive_host_umask(tmp_path):
+    original = os.umask(0o077)
+    try:
+        public = tmp_path / "signed-public.json"
+        private = tmp_path / "private-approval.json"
+        issuer._create(public, b"public", 0o644)
+        issuer._create(private, b"private", 0o600)
+    finally:
+        os.umask(original)
+    assert stat.S_IMODE(public.stat().st_mode) == 0o644
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
+
+
+def test_session_binding_directory_public_despite_umask(tmp_path, monkeypatch):
+    monkeypatch.setattr(issuer, "_ISSUER_UID", os.getuid())
+    original = os.umask(0o077)
+    try:
+        directory = tmp_path / "session-hash"
+        directory.mkdir(mode=0o755)
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+        issuer._publish_binding_directory(directory)
+    finally:
+        os.umask(original)
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+    directory.chmod(0o700)
+    issuer._publish_binding_directory(directory)
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+
+
+def test_session_binding_directory_rejects_symlink(tmp_path, monkeypatch):
+    monkeypatch.setattr(issuer, "_ISSUER_UID", os.getuid())
+    target = tmp_path / "real"
+    target.mkdir()
+    link = tmp_path / "session-hash"
+    link.symlink_to(target, target_is_directory=True)
+    before = stat.S_IMODE(target.stat().st_mode)
+    with pytest.raises(OSError):
+        issuer._publish_binding_directory(link)
+    assert stat.S_IMODE(target.stat().st_mode) == before
+
+
 def test_revoke_parent_sync_failure_never_reports_success(tmp_path, monkeypatch):
     target, temporary = tmp_path / "lease.json", tmp_path / "revoke.tmp"
     target.write_bytes(b"active")
