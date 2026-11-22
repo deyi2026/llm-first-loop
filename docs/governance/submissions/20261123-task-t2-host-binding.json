@@ -1,0 +1,97 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-task-t2-host-binding",
+  "summary": "Bind Task-scoped browser, IDE document and service restart effects to fresh Host evidence and exact signed Lease scope; detached service workers revalidate revocation and Lane/CAS before physical effects.",
+  "components": [
+    {
+      "component_id": "task-browser-host-cdp-binding",
+      "paths": [
+        "src/llm_loop/browser/action.py",
+        "tests/unit/test_browser_task_capability.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "task-host-bound-effect-lease",
+      "owning_subsystem": "Browser CDP Host attestation and Task capability enforcement",
+      "disposition": "Reuse the factory-shared BrowserChannelBindingCoordinator, dedicated-profile OS PID/native argv attestation and root-owned signed Task Lease. Require matching read-only and mutation Host channel, fresh browser process UUID, exact target binding and Lease revalidation both before admission and immediately before dispatch. Model scope_ref is never treated as Host identity.",
+      "evidence": [
+        "31 browser-specific tests passed, including dedicated-profile success, real-profile denial, cross-host mismatch, process/argv drift and revoke-at-dispatch negative cases.",
+        "Ruff and Pyright passed for the browser implementation and regression tests."
+      ],
+      "verification_level": "Local targeted pytest/Ruff/Pyright; Mac Host-signed browser mutation E2E, independent Reviewer, original R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Missing shared Host coordinator, missing/stale OS attestation, real-profile verdict, changed browser UUID/target, missing exact signed app resource, Lane/CAS conflict or revoked Lease all remain deterministic HOLD before dispatch. No user-data-dir or browser identity may be supplied by model arguments.",
+      "rollback_route": "Revert the exact protected PR; Task browser mutation returns to the prior fail-closed HOLD while legacy non-Task browser behavior remains unchanged."
+    },
+    {
+      "component_id": "task-ide-host-document-binding",
+      "paths": [
+        "src/llm_loop/desktop/backend_macos.py",
+        "src/llm_loop/desktop/macos_actuate.py",
+        "src/llm_loop/tools/builtin/desktop_operate.py",
+        "tests/unit/test_desktop_task_capability.py",
+        "tests/unit/test_task_ide_host_document.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "task-host-bound-effect-lease",
+      "owning_subsystem": "macOS native AX document identity and Task file capability enforcement",
+      "disposition": "Reuse the live native AX backend, exact window PID/ID and existing signed app/TCC checks. Obtain the document only from the live editable AX target's local canonical file:// AXDocument/AXURL, reject remote URLs, symlinks, read-only controls and terminal ancestry, then verify the exact project file write scope. Repeat document/ancestor and Lease checks immediately before AX delivery.",
+      "evidence": [
+        "131 desktop-related tests passed, including missing/remote/symlink/read-only document denial, signed project file scope, terminal ancestry denial and document swap at apply-time.",
+        "Ruff and Pyright passed. Mac live IDE/TCC E2E is not yet available: no IDE window was present and the probe process did not have AX trust."
+      ],
+      "verification_level": "Local targeted pytest/Ruff/Pyright; live Mac IDE/TCC test and Deepin backend support test pending.",
+      "model_evidence_veto_recovery_exit": "No title-derived or model-supplied file path may authorize typing. Any missing AXDocument, non-local URL, symlink, non-editable element, terminal ancestor, file-scope denial, foreground/window drift or revoked Lease remains HOLD.",
+      "rollback_route": "Revert the exact protected PR and restore the existing Task IDE document HOLD; retain existing TCC, foreground, confirmation and review gates."
+    },
+    {
+      "component_id": "task-service-detached-worker-fence",
+      "paths": [
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/tools/builtin/service_control.py",
+        "src/llm_loop/tools/task_execution.py",
+        "tests/unit/test_task_service_worker_fence.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "task-host-bound-effect-lease",
+      "owning_subsystem": "Managed service lifecycle and detached Task Lease revalidation",
+      "disposition": "Reuse the existing managed service action store, generation CAS, admission barriers, idle wait, lifecycle lock and detached worker. Permit only a single-service Task restart with an exact signed service.restart capability. Persist immutable Lease/Owner/worktree binding in the durable action and re-resolve the root-owned Host Lease in the detached worker before physical execution and again immediately before the restart subprocess. Keep publish/update/all/override/adopt/release and model-supplied authority fields blocked.",
+      "evidence": [
+        "43 service-control/task worker tests passed, including legacy action compatibility, missing/forged scope denial, generation and durable receipt behavior, and revocation before and between worker preflight and physical effect.",
+        "Ruff and Pyright passed. Real Mac Host-signed detached service restart/revoke E2E is pending."
+      ],
+      "verification_level": "Local targeted pytest/Ruff/Pyright; real Host worker Lease/revoke E2E, independent Reviewer, original R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "A Task Lease cannot publish code or bypass generation CAS, idle checks, review/Host approval, lifecycle lock or rollback. Missing/changed/revoked/expired Lease, inactive Goal/Task, changed Lane/CAS or unsupported service target fails before subprocess execution and releases only the action's own barriers.",
+      "rollback_route": "Revert the exact protected PR; restore task_service_worker_fence_unavailable for Task mutations while retaining legacy operator service_control behavior."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "task-host-bound-effect-lease",
+      "g1": {
+        "necessity": "Task Lease v1 already authenticates project, app and service resources, but browser mutation, IDE document writes and detached service workers lacked a complete Host-effect binding. The browser path always held; IDE document identity was not verified; service mutations were held because detached workers did not revalidate the Lease."
+      },
+      "g2": {
+        "authority_owner": "Existing root-owned Mac/Deepin Host Task Issuer, Ed25519 Task Lease domain, current Goal/Task ledger, parent write scope, Lane/CAS and OS-native browser/AX/service adapters.",
+        "relationship": "reuse",
+        "non_duplication": "No new signer, key domain, issuer, approval UI, sandbox backend, lifecycle controller or permission root. Reuse the existing Host Lease verifier, browser channel attestation, macOS AX backend and managed service-control worker. The GitHub premerge signing key is never used as a Task Lease."
+      },
+      "g3": {
+        "model_evidence": [
+          "Browser/IDE/service targeted tests passed locally; Ruff and Pyright passed for the three implementation stages.",
+          "The Host worker now persists the exact Task Lease identity and re-resolves the installed Host authority before physical service restart; negative tests prove revoke denial before effects.",
+          "Mac T1/T3 real Host E2E independently passed: real UID462 Host Lease signed, Seatbelt file/Git broker/CAS actions succeeded, exact app-scope denial returned capability_scope_missing, Lane version advanced under CAS, Host revoke published, held-context follow-up denied authority_lease_revoked, fresh activation denied no_active_lease, final exit 0. No push, merge or service restart was performed by that test."
+        ],
+        "recovery_or_reason": "If Host trust/UID, process/window/document identity, Lease signature/expiry/revocation, parent scope, Goal/Task lifecycle, Lane/CAS, OS permissions, sandbox, idle state or service generation cannot be verified, preserve deterministic HOLD and zero physical effects. Real Mac IDE and detached service-worker E2E, Deepin platform support and full cross-process recovery remain pending."
+      },
+      "g4": {
+        "rollback": "Revert the exact protected PR; browser/IDE/service Task effects return to their prior fail-closed HOLD. Preserve existing operator-only service control, Host issuer, Lease/revoke ledgers, generation CAS and old known-good deployment.",
+        "verification": [
+          "Independent Reviewer PASS with P0/P1=0 on the exact final PR SHA.",
+          "Original full R9 exits 0 and remote required pytest/Ruff/Pyright, security, privacy, A.5, D4 and platform checks pass.",
+          "Repeat real Mac browser and IDE Host-signed positive/negative tests with TCC; perform real detached service worker signed Lease/revocation test before subprocess; confirm no effect on revoke.",
+          "Deepin real environment probe and supported/unsupported capability report; multi-Lane concurrent mutation, interruption, process restart and no-duplicate-effect recovery tests.",
+          "Protected main merge, CI, one approved managed deployment, live SHA/PID/health/rollback verification and only then close the original Goal."
+        ]
+      }
+    }
+  ]
+}
