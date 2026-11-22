@@ -114,13 +114,20 @@ def test_task_worker_rejects_changed_lease_or_revocation(monkeypatch, tmp_path):
 
     task = _Task(worktree=str(tmp_path))
     monkeypatch.setattr(task_runtime, "resolve_task_execution_for_run", lambda **_kwargs: task)
-    assert sc._task_service_worker_fence(action, deployment) is None
-    assert task.calls == [("web", True)]
-    task.lease_id = "different-lease"
-    assert sc._task_service_worker_fence(action, deployment) == "task_service_lease_changed"
-    task.lease_id = action.task_lease_id
-    task.revoked = True
-    assert sc._task_service_worker_fence(action, deployment) == "authority_lease_revoked"
+    import json
+    from types import SimpleNamespace
+    responses = [
+        {"decision": "PASS", "action_id": action.action_id, "target": "web", "generation": 1},
+        {"decision": "DENY", "reason": "task_service_lease_changed"},
+        {"decision": "DENY", "reason": "authority_lease_revoked"},
+    ]
+    monkeypatch.setattr(sc.subprocess, "run", lambda *_a, **_k: SimpleNamespace(
+        returncode=0 if responses[0]["decision"] == "PASS" else 1,
+        stdout=json.dumps(responses.pop(0)),
+    ))
+    assert sc._task_service_worker_fence(store, action, deployment) is None
+    assert sc._task_service_worker_fence(store, action, deployment) == "task_service_lease_changed"
+    assert sc._task_service_worker_fence(store, action, deployment) == "authority_lease_revoked"
 
 
 def test_task_worker_revocation_denies_before_physical_restart(monkeypatch, tmp_path):
@@ -154,7 +161,7 @@ def test_task_worker_revocation_between_admission_and_effect_denies(monkeypatch,
     monkeypatch.setattr(sc, "_wait_for", lambda *_args, **_kwargs: True)
     checks = 0
 
-    def fence(_action, _deployment):
+    def fence(_store, _action, _deployment):
         nonlocal checks
         checks += 1
         return None if checks == 1 else "authority_lease_revoked"
@@ -166,3 +173,53 @@ def test_task_worker_revocation_between_admission_and_effect_denies(monkeypatch,
     assert final is not None and final.status == "failed"
     assert "authority_lease_revoked" in final.detail
     assert not (tmp_path / "marker.txt").exists()
+
+
+def test_tools_plane_worker_verifies_persisted_action_and_real_resolver(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from llm_loop.tools import task_service_worker
+
+    action = SimpleNamespace(
+        action_id="svc-task-1", task_lease_id="host-signed-lease-1",
+        origin="task-restart", target="web", status="running",
+        deployment_generation=4, deployment_id="deploy-4",
+        task_owner_session_id="sess-task", task_worktree=str(tmp_path),
+    )
+    desired = SimpleNamespace(generation=4, deployment_id="deploy-4")
+    class Store:
+        def __init__(self, _path): pass
+        def read_action(self, _id): return action
+        def read(self): return desired
+    task = _Task(worktree=str(tmp_path))
+    monkeypatch.setattr(task_service_worker, "ManagedServiceDeploymentStore", Store)
+    monkeypatch.setattr(task_service_worker, "resolve_task_execution_for_run", lambda **_kwargs: task)
+    result = task_service_worker.verify_action(str(tmp_path), action.action_id)
+    assert result == {"decision": "PASS", "action_id": "svc-task-1", "target": "web", "generation": 4}
+    assert task.calls == [("web", True)]
+    task.revoked = True
+    result = task_service_worker.verify_action(str(tmp_path), action.action_id)
+    assert result["decision"] == "DENY" and result["reason"] == "authority_lease_revoked"
+
+
+def test_tools_plane_worker_denies_action_generation_or_forged_fields(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from llm_loop.tools import task_service_worker
+
+    action = SimpleNamespace(
+        action_id="svc-task-2", task_lease_id="host-signed-lease-1",
+        origin="task-restart", target="all", status="running",
+        deployment_generation=3, deployment_id="deploy-3",
+        task_owner_session_id="sess-task", task_worktree=str(tmp_path),
+    )
+    desired = SimpleNamespace(generation=4, deployment_id="deploy-4")
+    class Store:
+        def __init__(self, _path): pass
+        def read_action(self, _id): return action
+        def read(self): return desired
+    monkeypatch.setattr(task_service_worker, "ManagedServiceDeploymentStore", Store)
+    monkeypatch.setattr(task_service_worker, "resolve_task_execution_for_run", lambda **_kwargs: pytest.fail("must not resolve a forged all action"))
+    result = task_service_worker.verify_action(str(tmp_path), action.action_id)
+    assert result["decision"] == "DENY"
+    assert result["reason"] == "task_service_action_binding_invalid"

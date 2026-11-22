@@ -4656,42 +4656,47 @@ def _recover_failed_restart(
 
 
 def _task_service_worker_fence(
-    action: ServiceControlAction, deployment: ManagedServiceDeployment,
+    store: ManagedServiceDeploymentStore,
+    action: ServiceControlAction,
+    deployment: ManagedServiceDeployment,
 ) -> str | None:
-    """Re-resolve exact Host Lease in the detached worker before any restart.
+    """Ask the detached Host tools-plane verifier to revalidate the Lease.
 
-    Task authority is never inherited from the model/parent process or a
-    serialized approval flag. Revoke, TTL, Goal/Task, parent and Lane/CAS are
-    verified again against the installed Host issuer and current ledgers.
+    This fixed subprocess boundary keeps runtime kernel imports one-way; it
+    reads the durable action itself and never trusts a serialized allow flag.
     """
     if not action.task_lease_id:
         return None
     if action.origin != "task-restart" or action.target == "all":
         return "task_service_action_binding_invalid"
-    from llm_loop.core.run_context import current_session_id, current_task_execution
-    from llm_loop.tools import task_runtime
-
-    data_dir = deployment.data_dir or str(Path(deployment.runtime_root) / "data")
     try:
-        task = task_runtime.resolve_task_execution_for_run(
-            session_id=action.task_owner_session_id,
-            workspace_root=action.task_worktree,
-            data_dir=data_dir,
+        proc = subprocess.run(
+            [
+                sys.executable, "-m", "llm_loop.tools.task_service_worker",
+                "--data-dir", str(store.data_dir), "--action-id", action.action_id,
+            ],
+            cwd=deployment.runtime_root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
         )
-        if task is None or task.lease_id != action.task_lease_id:
-            return "task_service_lease_changed"
-        if task.owner_session_id != action.task_owner_session_id:
-            return "task_service_owner_changed"
-        owner_token = current_session_id.set(task.owner_session_id)
-        task_token = current_task_execution.set(task)
-        try:
-            task.authorize_service(action.target, os_permission_granted=True)
-        finally:
-            current_task_execution.reset(task_token)
-            current_session_id.reset(owner_token)
-        return None
-    except Exception as exc:  # noqa: BLE001 - no trust/OS/ledger failure is an allow
-        return str(getattr(exc, "reason_code", "task_service_worker_fence_unavailable"))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"task_service_worker_fence_unavailable:{type(exc).__name__}"
+    try:
+        result = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return "task_service_worker_fence_invalid_receipt"
+    if (
+        proc.returncode != 0
+        or not isinstance(result, dict)
+        or result.get("decision") != "PASS"
+        or result.get("action_id") != action.action_id
+        or result.get("target") != action.target
+        or result.get("generation") != deployment.generation
+    ):
+        return str(result.get("reason") or "task_service_worker_fence_denied") if isinstance(result, dict) else "task_service_worker_fence_denied"
+    return None
 
 
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
@@ -4806,7 +4811,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             # A Task Lease is not a detached-worker capability. Re-resolve
             # from root-owned Host authority AFTER idle/CAS/binding and while
             # holding the physical lifecycle lease. Failure has zero effects.
-            task_denial = _task_service_worker_fence(latest, desired_now)
+            task_denial = _task_service_worker_fence(store, latest, desired_now)
             if task_denial is not None:
                 _mark_action(
                     store, latest, status="failed",
@@ -4830,7 +4835,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             restarted_at = _local_now()
             # Recheck again immediately before the physical subprocess; the
             # Lease may have been revoked during plan/env preparation.
-            task_denial = _task_service_worker_fence(running, desired_now)
+            task_denial = _task_service_worker_fence(store, running, desired_now)
             if task_denial is not None:
                 _mark_action(
                     store, running, status="failed",

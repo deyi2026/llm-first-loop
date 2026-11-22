@@ -49,15 +49,18 @@
         "src/llm_loop/tools/builtin/service_control.py",
         "src/llm_loop/tools/task_execution.py",
         "tests/unit/test_task_service_worker_fence.py",
-        "docs/governance/submissions/20261123-task-t2-host-binding.json"
+        "docs/governance/submissions/20261123-task-t2-host-binding.json",
+        "src/llm_loop/tools/task_service_worker.py",
+        "tests/guards/function_size_baseline.json"
       ],
       "control_machinery": true,
       "declaration_id": "task-host-bound-effect-lease",
       "owning_subsystem": "Managed service lifecycle and detached Task Lease revalidation",
-      "disposition": "Reuse the existing managed service action store, generation CAS, admission barriers, idle wait, lifecycle lock and detached worker. Permit only a single-service Task restart with an exact signed service.restart capability. Persist immutable Lease/Owner/worktree binding in the durable action and re-resolve the root-owned Host Lease in the detached worker before physical execution and again immediately before the restart subprocess. Keep publish/update/all/override/adopt/release and model-supplied authority fields blocked.",
+      "disposition": "Reuse the existing managed service action store, generation CAS, admission barriers, idle wait, lifecycle lock and detached worker. Permit only a single-service Task restart with an exact signed service.restart capability. Persist immutable Lease/Owner/worktree binding in the durable action and re-resolve the root-owned Host Lease in the detached worker before physical execution and again immediately before the restart subprocess. Keep publish/update/all/override/adopt/release and model-supplied authority fields blocked. Runtime invokes a fixed tools-plane verifier subprocess with only data_dir and opaque action_id; the runtime kernel does not import tools/task_runtime, preserving the frozen one-way kernel dependency graph.",
       "evidence": [
         "43 service-control/task worker tests passed, including legacy action compatibility, missing/forged scope denial, generation and durable receipt behavior, and revocation before and between worker preflight and physical effect.",
-        "Ruff and Pyright passed. Real Mac Host-signed detached service restart/revoke E2E is pending."
+        "Ruff and Pyright passed. Real Mac Host-signed detached service restart/revoke E2E is pending.",
+        "The architecture ratchet remains one-way: detached Task Lease verification executes in the tools plane as a fixed subprocess; the runtime kernel imports no tools modules. Official function-size baseline regeneration records the measured changes and new accept_restart function."
       ],
       "verification_level": "Local targeted pytest/Ruff/Pyright; real Host worker Lease/revoke E2E, independent Reviewer, original R9 and remote CI pending.",
       "model_evidence_veto_recovery_exit": "A Task Lease cannot publish code or bypass generation CAS, idle checks, review/Host approval, lifecycle lock or rollback. Missing/changed/revoked/expired Lease, inactive Goal/Task, changed Lane/CAS or unsupported service target fails before subprocess execution and releases only the action's own barriers.",
@@ -79,7 +82,8 @@
         "model_evidence": [
           "Browser/IDE/service targeted tests passed locally; Ruff and Pyright passed for the three implementation stages.",
           "The Host worker now persists the exact Task Lease identity and re-resolves the installed Host authority before physical service restart; negative tests prove revoke denial before effects.",
-          "Mac T1/T3 real Host E2E independently passed: real UID462 Host Lease signed, Seatbelt file/Git broker/CAS actions succeeded, exact app-scope denial returned capability_scope_missing, Lane version advanced under CAS, Host revoke published, held-context follow-up denied authority_lease_revoked, fresh activation denied no_active_lease, final exit 0. No push, merge or service restart was performed by that test."
+          "Mac T1/T3 real Host E2E independently passed: real UID462 Host Lease signed, Seatbelt file/Git broker/CAS actions succeeded, exact app-scope denial returned capability_scope_missing, Lane version advanced under CAS, Host revoke published, held-context follow-up denied authority_lease_revoked, fresh activation denied no_active_lease, final exit 0. No push, merge or service restart was performed by that test.",
+          "CI architecture guard initially exposed runtime->tools and function-size ratchet drift; worker verification was moved to a fixed tools-plane subprocess, the reverse import edge was removed, and official function-size baselines were regenerated without adding a kernel import edge."
         ],
         "recovery_or_reason": "If Host trust/UID, process/window/document identity, Lease signature/expiry/revocation, parent scope, Goal/Task lifecycle, Lane/CAS, OS permissions, sandbox, idle state or service generation cannot be verified, preserve deterministic HOLD and zero physical effects. Real Mac IDE and detached service-worker E2E, Deepin platform support and full cross-process recovery remain pending."
       },
