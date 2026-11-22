@@ -1,0 +1,70 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261122-task-sandbox-host-private-opaque",
+  "summary": "Minimal fail-closed Task sandbox scanner fix for an independent Host issuer private 0700 directory and idempotent external audit symlink file targets; no privilege or Lease policy widening.",
+  "components": [
+    {
+      "component_id": "task-sandbox-trusted-opaque-private",
+      "paths": [
+        "src/llm_loop/tools/sandbox.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "task-sandbox-host-private",
+      "owning_subsystem": "Task Seatbelt/bwrap protected-audit root compiler",
+      "disposition": "Reuse the existing signed Task Lease, protected audit roots and Seatbelt/bwrap policies. Skip recursive inspection only for a root-owned Host authority root with a root-owned trusted issuer UID receipt and an inaccessible issuer-owned private 0700 child. Continue scanning all public roots and reject hardlink/symlink aliases; accept verified regular-file audit targets idempotently and deny their exact file path.",
+      "evidence": [
+        "Mac Host signed real Lease after PR92 but normal Owner Seatbelt preflight failed on /Library/LFL-TaskHostIssuer/task-authority/private (UID462 0700) with PermissionError; Lease revoked without physical effect.",
+        "The first fix revealed a second existing issue: recursive audit scanner returned external regular-file symlink targets and then rejected those same paths on the second pass.",
+        "Five targeted regression tests and 91 related tests pass; real Mac protected-root Seatbelt profile compilation now passes without changing private permissions."
+      ],
+      "verification_level": "Local targeted 91 passed, Ruff PASS and real Mac sandbox profile compilation PASS; independent Reviewer, original full R9, remote CI and physical signed Lease retest pending.",
+      "model_evidence_veto_recovery_exit": "No Task may access Host private data, sign a Lease, or omit the Host authority root. Opaque treatment requires root-owned non-writable authority, root-owned trust receipt with matching issuer UID, inaccessible issuer-owned 0700 private directory. Any mismatch reverts to fail-closed recursion; public hardlink/symlink targets remain checked.",
+      "rollback_route": "Revert this exact protected PR, retain Host key/receipts and gen442 rollback checkout; Task sandbox fails closed until a safe patch is installed."
+    },
+    {
+      "component_id": "task-sandbox-host-private-regressions",
+      "paths": [
+        "tests/unit/test_sandbox_host_private.py",
+        "docs/governance/submissions/20261122-task-sandbox-host-private-opaque.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Sandbox regression and A.5 declaration coverage",
+      "disposition": "Add narrow negative tests for untrusted root/issuer UID, public hardlink alias, exact file deny and optional real Mac Host private permission check; document exact changed paths.",
+      "evidence": [
+        "Five new regression tests PASS.",
+        "Existing 86 sandbox/task/issuer tests also PASS, total targeted 91."
+      ],
+      "verification_level": "Targeted PASS, full R9 and CI pending.",
+      "model_evidence_veto_recovery_exit": "No test substitutes for real Host-signed Lease, independent reviewer or full R9; fail-closed negative cases must remain red if permissions are weakened.",
+      "rollback_route": "Revert with the same protected PR as the sandbox compiler change."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "task-sandbox-host-private",
+      "g1": {
+        "necessity": "The real Mac T1/T3 Task Lease cannot execute even though its Host signature and Owner/Lane/CAS pass, because the scanner recursively enters the deliberately unreadable UID462 private tree; an additional idempotence issue blocks external audit symlink targets."
+      },
+      "g2": {
+        "authority_owner": "Existing root-owned Host trust and UID462 issuer; Task authority remains exclusively the signed Lease and native Goal/Lane/CAS",
+        "relationship": "reuse",
+        "non_duplication": "No new issuer, signer, sandbox backend, tool, API or root grants; only an opaque trusted private child and exact audit file denies."
+      },
+      "g3": {
+        "model_evidence": [
+          "Real Host Lease SIGNED and then REVOKED after fail-closed sandbox preflight; no filesystem or Git effects.",
+          "91 targeted tests and real Mac sandbox profile compilation PASS; source and test changes are isolated."
+        ],
+        "recovery_or_reason": "If trust owner/UID/mode, protected path, hardlink, symlink or Seatbelt backend validation fails, deny execution; restore prior protected code if independent review or R9 fails."
+      },
+      "g4": {
+        "rollback": "Revert the exact PR under branch protection and retain Host and audit evidence.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0 on exact candidate.",
+          "Original complete R9 exit0 and remote required CI including A.5/privacy.",
+          "Protected main merge and managed Mac service update, then genuine UID462 signed <=600s external-worktree Lease Seatbelt/Git/CAS/revoke tests; no Deepin claim."
+        ]
+      }
+    }
+  ]
+}
