@@ -3,6 +3,7 @@
   "gate": "push",
   "rule": "RULE-AI-28",
   "recorded_at": "2026-11-23T00:18:00+08:00",
+  "filename_date_semantics": "文件名中的 20261122 = 合并事件的 UTC 日期（merged_at=2026-11-22T16:13:17Z）；recorded_at 为本地记录时刻，因跨本地午夜而落在 2026-11-23。本仓同族回执多为「文件名日期＝本地记录日」，此处按事件 UTC 日命名并在此显式声明，避免回溯时被读作同一天。",
   "path": "受保护分支 PR 路径（origin/main 受保护：直接推送 main 被远端拒绝，须走 PR + required status checks）",
   "pr": 95,
   "pr_url": "https://github.com/deyi2026/llm-first-loop/pull/95",
@@ -59,7 +60,8 @@
   "push_sha_remote_prev": "70ae9f5ca2a4bf19c730fe3be033530149ac2252",
   "remote_verified_by": "git ls-remote origin refs/heads/main → 50c0f0d38faa1c14ecd476d43d9294a1a633d56d（合并提交，parents=70ae9f5c…/634b8e70…）；git merge-base --is-ancestor 634b8e70 origin/main → 成立；git diff 50c0f0d3 634b8e70 → 空（合并提交与分支 head 树一致）",
   "local_tracking_ref_update": "本地 main 已 fast-forward 到 50c0f0d38faa1c14ecd476d43d9294a1a633d56d（git merge --ff-only origin/main）",
-  "local_verification": "A.5 机械覆盖校验 PASS（changed_paths=4、components=4）；隐私增量扫描通过；知识资产闸 pending 0；独立只读合并审查 PASS（P0=0/P1=0/P2=3，非阻断措辞项已在合并后补记 PR 修正）",
+  "local_verification": "A.5 机械覆盖校验 PASS（changed_paths=4、components=4）——命令形式 scripts/check_architecture_submission.py --base 70ae9f5ca2a4bf19c730fe3be033530149ac2252 --head 634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e；隐私增量扫描通过——scripts/git_security_scan.sh --range 70ae9f5ca2a4bf19c730fe3be033530149ac2252 634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e；知识资产闸 pending 0；独立只读合并审查 PASS（P0=0/P1=0/P2=3，非阻断措辞项已在合并后补记 PR 修正）",
+  "local_verification_command_note": "门禁命令一律以钉住的 base/head SHA 记录，避免用移动引用 origin/main 字面复跑时得到的不同结果（A.5 会因 diff 为空而 exit=2；隐私扫描会因空文件清单而 exit=0 且无输出）。",
   "independent_merge_review": {
     "child_id": "subagent_b29fe7accf44",
     "verdict": "PASS",

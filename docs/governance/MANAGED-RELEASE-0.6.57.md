@@ -194,3 +194,9 @@
     本地 `main` 已 fast-forward 到该合并提交；分支按仓库惯例保留（`delete_branch_on_merge=false`）。
 - 回执落点：`docs/governance/receipts/merge-release-0.6.57-managed-cutover-20261122.json`（gate=merge）与
   `docs/governance/receipts/push-release-0.6.57-managed-cutover-20261122.json`（gate=push）。
+- 补记 PR（本次落盘两份回执 + 本节的那一次）：独立只读合并审查 `subagent_91a5f3246c9d` **PASS**
+  （P0=0/P1=0/P2=2）——其两条 P2 已在本次补记中修正并复核：门禁命令一律以**钉住的 base/head SHA** 记录
+  （以移动引用 `origin/main` 字面复跑会得到不同结果：A.5 会因 diff 为空而 exit=2、隐私扫描会因空文件清单
+  而 exit=0 且无输出）；两份新回执的文件名日期为**事件 UTC 日**，而 `recorded_at` 因跨本地午夜落在次日，
+  已在回执内显式声明该口径。本 PR 自身的 push 回执与合并回执按仓库惯例随下一次 PR 落盘
+  （回执不可能包含于描述它自身的那次 PR）。
