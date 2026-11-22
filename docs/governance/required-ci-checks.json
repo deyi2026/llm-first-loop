@@ -7,7 +7,7 @@
       "purpose": "test",
       "event_scope": "push_and_pr",
       "workflow_path": ".github/workflows/ci.yml",
-      "workflow_blob_sha": "c6b90c0701ae16f172736fb79f9b8cbdd06f967a",
+      "workflow_blob_sha": "70404c658160e6687d9bfe00b0b4a675af6c7d5b",
       "workflow_id": 381673272
     },
     {
@@ -16,7 +16,7 @@
       "purpose": "security_scan",
       "event_scope": "push_and_pr",
       "workflow_path": ".github/workflows/ci.yml",
-      "workflow_blob_sha": "c6b90c0701ae16f172736fb79f9b8cbdd06f967a",
+      "workflow_blob_sha": "70404c658160e6687d9bfe00b0b4a675af6c7d5b",
       "workflow_id": 381673272
     },
     {
@@ -25,7 +25,7 @@
       "purpose": "managed_evidence",
       "event_scope": "push_and_pr",
       "workflow_path": ".github/workflows/ci.yml",
-      "workflow_blob_sha": "c6b90c0701ae16f172736fb79f9b8cbdd06f967a",
+      "workflow_blob_sha": "70404c658160e6687d9bfe00b0b4a675af6c7d5b",
       "workflow_id": 381673272
     },
     {
