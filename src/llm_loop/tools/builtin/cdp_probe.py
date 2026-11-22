@@ -91,14 +91,28 @@ class CdpProbeTool:
         ports = list(raw_ports) if isinstance(raw_ports, list) else None
         raw_dirs = kwargs.get("user_data_dirs") or None
         dirs = [str(d) for d in raw_dirs] if isinstance(raw_dirs, list) else None
+        # 整体时限从**候选发现之前**起算：发现阶段的读盘也算在这 10 秒内。
+        deadline = time.monotonic() + TOTAL_TIMEOUT_S
         if url:
             candidates: list[str] = [url]
-            meta = {"dropped_ports": 0, "dropped_dirs": 0, "dropped_candidates": 0}
+            meta = {
+                "dropped_ports": 0,
+                "dropped_dirs": 0,
+                "dropped_candidates": 0,
+                "skipped_dirs": 0,
+                "discovery_note": "",
+            }
         else:
             candidates, meta = discover_cdp_candidates_with_meta(
-                ports=ports, user_data_dirs=dirs
+                ports=ports, user_data_dirs=dirs, deadline=deadline, budget=TOTAL_TIMEOUT_S
             )
         lines = [f"[探测] 候选端点 {len(candidates)} 个（来源：已配置值 / 常见端口 / DevToolsActivePort）"]
+        if meta["discovery_note"]:
+            lines.append(f"[说明] {meta['discovery_note']}（候选发现阶段）")
+        if meta["skipped_dirs"]:
+            lines.append(
+                f"[说明] 已达整体探测时限，{meta['skipped_dirs']} 个用户数据目录未读取。"
+            )
         if meta["dropped_ports"]:
             lines.append(
                 f"[说明] 额外端口超出上限 {MAX_EXTRA_PORTS} 个或非整数，已丢弃 {meta['dropped_ports']} 个未探测。"
@@ -114,7 +128,6 @@ class CdpProbeTool:
         lines.append(
             f"[说明] 整体探测时限 {TOTAL_TIMEOUT_S:g} 秒；单端点超时上限 {MAX_TIMEOUT_S:g} 秒。"
         )
-        deadline = time.monotonic() + TOTAL_TIMEOUT_S
         reachable: list[str] = []
         for candidate in candidates:
             remaining = deadline - time.monotonic()

@@ -134,20 +134,15 @@ def merged_user_data_dirs(extra: Sequence[str] | None = None) -> tuple[list[str]
     return merged, dropped
 
 
-def discover_cdp_candidates_with_meta(
-    *,
-    env_url: str | None = None,
-    ports: tuple[int, ...] | list[int] | None = None,
-    user_data_dirs: tuple[str, ...] | list[str] | None = None,
-) -> tuple[list[str], dict[str, int]]:
-    """候选 CDP base url + 截断元数据 → (候选列表, dropped_* 计数).
+def _discover_candidates_impl(
+    env_url: str | None,
+    ports: tuple[int, ...] | list[int] | None,
+    user_data_dirs: tuple[str, ...] | list[str] | None,
+    deadline: float | None,
+) -> tuple[list[str], dict[str, Any]]:
+    """候选发现实现（合并 + 读盘 + 上界）；时限已到即停止读盘."""
+    import time
 
-    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口（+ 额外端口）
-    ③ Chrome 用户数据目录下的 DevToolsActivePort（+ 额外目录）。
-
-    ``ports`` / ``user_data_dirs`` 语义是**额外**输入（与缺省合并，不是替换）。
-    任何被丢弃的输入都计数上报，供调用方在回执里写明（不静默少探）。
-    """
     out: list[str] = []
     dropped_candidates = 0
 
@@ -169,7 +164,11 @@ def discover_cdp_candidates_with_meta(
     for port in merged_ports:
         _add(f"http://127.0.0.1:{int(port)}")
     merged_dirs, dropped_dirs = merged_user_data_dirs(user_data_dirs)
-    for directory in merged_dirs:
+    skipped_dirs = 0
+    for index, directory in enumerate(merged_dirs):
+        if deadline is not None and time.monotonic() >= deadline:
+            skipped_dirs = len(merged_dirs) - index
+            break
         found = read_devtools_active_port(directory)
         if found:
             _add(found)
@@ -177,7 +176,48 @@ def discover_cdp_candidates_with_meta(
         "dropped_ports": dropped_ports,
         "dropped_dirs": dropped_dirs,
         "dropped_candidates": dropped_candidates,
+        "skipped_dirs": skipped_dirs,
+        "discovery_note": "",
     }
+
+
+def discover_cdp_candidates_with_meta(
+    *,
+    env_url: str | None = None,
+    ports: tuple[int, ...] | list[int] | None = None,
+    user_data_dirs: tuple[str, ...] | list[str] | None = None,
+    deadline: float | None = None,
+    budget: float | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """候选 CDP base url + 截断元数据 → (候选列表, dropped_* 计数).
+
+    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口（+ 额外端口）
+    ③ Chrome 用户数据目录下的 DevToolsActivePort（+ 额外目录）。
+
+    ``ports`` / ``user_data_dirs`` 语义是**额外**输入（与缺省合并，不是替换）。
+    任何被丢弃的输入都计数上报，供调用方在回执里写明（不静默少探）。
+
+    ``deadline`` / ``budget`` 把**候选发现**也纳入整体时限：目录读盘在挂起的文件系统上
+    可能无限阻塞，故发现阶段同样跑在守护线程里、受同一墙钟预算约束
+    （review P2：10 秒上限此前不含候选发现阶段）。
+    """
+    if deadline is None and budget is None:
+        return _discover_candidates_impl(env_url, ports, user_data_dirs, deadline)
+    found, note = call_with_deadline(
+        lambda: _discover_candidates_impl(env_url, ports, user_data_dirs, deadline),
+        budget if budget is not None else 10.0,
+        deadline,
+    )
+    if note:
+        return [], {
+            "dropped_ports": 0,
+            "dropped_dirs": 0,
+            "dropped_candidates": 0,
+            "skipped_dirs": 0,
+            "discovery_note": note,
+        }
+    candidates, meta = found
+    return candidates, meta
 
 
 def discover_cdp_candidates(
@@ -206,14 +246,14 @@ def _bounded_timeout(request_timeout: float, deadline: float | None) -> float | 
     return min(request_timeout, remaining)
 
 
-def _call_with_deadline(
-    client: Any, url: str, request_timeout: float, deadline: float | None
+def call_with_deadline(
+    call: Any, budget: float, deadline: float | None
 ) -> tuple[Any, str | None]:
-    """在绝对墙钟预算内完成一次 GET → (响应, 超时说明).
+    """在绝对墙钟预算内执行阻塞调用 → (结果, 超时说明).
 
     httpx 的超时是**无活动超时**：对端只要持续滴字节就能把一次请求拖到任意长，
-    因此它不构成绝对时限（review P2-1）。这里把请求放进独立守护线程，调用方只等
-    「剩余预算」：预算用尽即放弃该请求并如实回报（线程为 daemon，不阻塞进程退出）。
+    因此它不构成绝对时限（review P2-1）。这里把调用放进独立守护线程，调用方只等
+    「剩余预算」：预算用尽即放弃并如实回报（线程为 daemon，不阻塞进程退出）。
     """
     import threading
     import time
@@ -222,18 +262,18 @@ def _call_with_deadline(
 
     def _runner() -> None:
         try:
-            box["value"] = client.get(url, timeout=httpx.Timeout(request_timeout))
+            box["value"] = call()
         except BaseException as exc:  # noqa: BLE001 - 异常回传调用方如实回报
             box["error"] = exc
 
     thread = threading.Thread(target=_runner, daemon=True)
     thread.start()
-    remaining = request_timeout
+    remaining = budget
     if deadline is not None:
-        remaining = min(request_timeout, max(0.0, deadline - time.monotonic()))
+        remaining = min(budget, max(0.0, deadline - time.monotonic()))
     thread.join(remaining)
     if thread.is_alive():
-        return None, "已达整体探测时限（请求未在时限内完成）"
+        return None, "已达整体探测时限（调用未在时限内完成）"
     if "error" in box:
         raise box["error"]
     return box.get("value"), None
@@ -277,8 +317,12 @@ def probe_cdp_endpoint(
             if first_timeout is None:
                 report["error"] = "已达整体探测时限，未发起请求"
                 return report
-            response, timeout_note = _call_with_deadline(
-                client, f"{base}/json/version", first_timeout, deadline
+            response, timeout_note = call_with_deadline(
+                lambda: client.get(
+                    f"{base}/json/version", timeout=httpx.Timeout(first_timeout)
+                ),
+                first_timeout,
+                deadline,
             )
             if timeout_note:
                 report["error"] = timeout_note
@@ -297,8 +341,12 @@ def probe_cdp_endpoint(
                 report["note"] = "已达整体探测时限，目标计数未读取"
             else:
                 try:
-                    targets, timeout_note = _call_with_deadline(
-                        client, f"{base}/json/list", second_timeout, deadline
+                    targets, timeout_note = call_with_deadline(
+                        lambda: client.get(
+                            f"{base}/json/list", timeout=httpx.Timeout(second_timeout)
+                        ),
+                        second_timeout,
+                        deadline,
                     )
                 except Exception:  # noqa: BLE001 - 目标计数失败不影响可达性判定
                     targets, timeout_note = None, "目标计数读取失败（目标数未知）"

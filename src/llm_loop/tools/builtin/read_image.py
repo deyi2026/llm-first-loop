@@ -385,7 +385,10 @@ class ReadImageTool:
             scale_y=scale_y,
         )
         if estimated:
-            contract += "（送检尺寸取自本地预处理事实：视觉后端失败，未回报几何）"
+            if geometry is not None:
+                contract += "（送检尺寸取自本地预处理事实：视觉后端失败，未回报几何）"
+            else:
+                contract += "（送检尺寸为上限推定：视觉后端失败，未回报实际送检尺寸）"
         lines.append(contract)
         if vision_text and vision_text.strip():
             lines.extend(_vision_block(vision_text.strip(), crop, scale_x, scale_y))

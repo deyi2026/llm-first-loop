@@ -286,3 +286,25 @@ def test_probe_endpoint_enforces_wall_clock_deadline_against_drip_endpoint() -> 
     assert elapsed < 1.5
     assert report["reachable"] is False
     assert "时限" in (report["error"] or "")
+
+
+def test_candidate_discovery_also_respects_overall_deadline(monkeypatch) -> None:
+    """候选发现阶段同样受整体时限约束（挂起的文件系统不得拖过上限）."""
+    import time
+
+    def _slow_read(user_data_dir):
+        time.sleep(2.0)
+        return None
+
+    monkeypatch.setattr(cdp_probe, "read_devtools_active_port", _slow_read)
+
+    started = time.monotonic()
+    candidates, meta = cdp_probe.discover_cdp_candidates_with_meta(
+        env_url="", user_data_dirs=["/tmp/lfl-cdp-hang"], deadline=time.monotonic() + 0.3,
+        budget=0.3,
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert candidates == []
+    assert "时限" in (meta["discovery_note"] or "")
