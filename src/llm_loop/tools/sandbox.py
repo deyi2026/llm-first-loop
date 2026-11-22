@@ -41,6 +41,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -356,6 +357,58 @@ def _inside(path: str, root: str) -> bool:
         return False
 
 
+def _trusted_opaque_host_private(root: str, directory: str, name: str, info: os.stat_result) -> bool:
+    """Do not traverse the independent issuer's inaccessible 0700 private subtree.
+
+    The root and trust receipt must be root-owned and non-writable, and the
+    private owner must match the published issuer UID. Any uncertainty falls
+    back to the normal recursive scan (and its fail-closed PermissionError).
+    The entire authority root remains denied for sandbox writes.
+    """
+    if (
+        directory != root
+        or name != "private"
+        or not stat.S_ISDIR(info.st_mode)
+        or info.st_uid in (0, os.geteuid())
+        or info.st_mode & 0o077
+        or info.st_mode & 0o700 != 0o700
+    ):
+        return False
+    try:
+        base = os.lstat(root)
+        if not stat.S_ISDIR(base.st_mode) or base.st_uid != 0 or base.st_mode & 0o022:
+            return False
+        fd = os.open(
+            os.path.join(root, "trust.json"),
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        try:
+            trusted = os.fstat(fd)
+            if (
+                not stat.S_ISREG(trusted.st_mode)
+                or trusted.st_uid != 0
+                or trusted.st_nlink != 1
+                or trusted.st_mode & 0o022
+                or not 0 < trusted.st_size <= 4096
+            ):
+                return False
+            raw = os.read(fd, 4097)
+            if len(raw) != trusted.st_size:
+                return False
+        finally:
+            os.close(fd)
+        receipt = json.loads(raw)
+        return (
+            isinstance(receipt, dict)
+            and receipt.get("schema") == "lfl.task-authority-trust/v1"
+            and type(receipt.get("issuer_uid")) is int
+            and receipt["issuer_uid"] == info.st_uid
+            and not os.access(os.path.join(directory, name), os.R_OK | os.X_OK)
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _prepare_protected_roots(roots: Iterable[str]) -> list[str]:
     """Preflight trusted audit roots; reject existing hardlink aliases.
 
@@ -373,10 +426,21 @@ def _prepare_protected_roots(roots: Iterable[str]) -> list[str]:
         if os.path.islink(path):
             raise RuntimeError("protected audit root is a symlink (fail-closed)")
         real = os.path.realpath(path)
-        if real == os.sep or not os.path.isdir(real):
+        if real == os.sep or not os.path.exists(real):
             raise RuntimeError("protected audit root is missing or unsafe (fail-closed)")
         if real in prepared:
             continue
+        if os.path.isfile(real):
+            # A symlink in an audit directory may resolve to an external
+            # regular file. Revalidating the returned target must be
+            # idempotent; it still needs an exact Seatbelt file deny.
+            info = os.lstat(real)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise RuntimeError("protected audit file has hardlink alias (fail-closed)")
+            prepared.append(real)
+            continue
+        if not os.path.isdir(real):
+            raise RuntimeError("protected audit root is missing or unsafe (fail-closed)")
         try:
             for directory, dirs, files in os.walk(
                 real, followlinks=False,
@@ -385,6 +449,12 @@ def _prepare_protected_roots(roots: Iterable[str]) -> list[str]:
                 for name in (*dirs, *files):
                     item = os.path.join(directory, name)
                     info = os.lstat(item)
+                    if _trusted_opaque_host_private(real, directory, name, info):
+                        # This directory is owned exclusively by the separate
+                        # Host issuer. No unprivileged Task can inspect or
+                        # hardlink its files; keep the enclosing root denied.
+                        dirs.remove(name)
+                        continue
                     if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
                         raise RuntimeError(
                             "protected audit contains pre-existing hardlink alias (fail-closed)"
@@ -576,10 +646,17 @@ def sandbox_exec_profile(
     seen: set[str] = set()
     for root in protected_roots:
         real = os.path.realpath(os.fspath(root))
+        # Preserve the established subtree deny for compatibility; add an
+        # exact file deny when a protected audit symlink targets a file.
         rule = f'(deny file-write* (subpath "{_sbx_escape(real)}"))'
         if rule not in seen:
             seen.add(rule)
             denies.append(rule)
+        if os.path.isfile(real):
+            exact = f'(deny file-write* (literal "{_sbx_escape(real)}"))'
+            if exact not in seen:
+                seen.add(exact)
+                denies.append(exact)
         parent = os.path.dirname(real)
         while parent and parent != os.sep:
             rule = f'(deny file-write* (literal "{_sbx_escape(parent)}"))'
