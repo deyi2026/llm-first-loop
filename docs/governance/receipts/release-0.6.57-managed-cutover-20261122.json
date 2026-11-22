@@ -1,0 +1,127 @@
+{
+  "schema": "lfl.managed-cutover-convergence-receipt/v1",
+  "release": "0.6.57",
+  "target_version": "0.6.57",
+  "recorded_at": "2026-11-22T23:55:00+08:00",
+  "authority_channel": "service_control 受管入口（durable action 回执 + desired deployment 状态 + 各服务 live 状态 + 本地 /health 实测），全程只读核验，未重放 publish/restart",
+  "action": {
+    "action_id": "svc-aeede211c4b94219b58420f8c4fb72f7",
+    "action": "restart",
+    "target": "all",
+    "deployment_generation": 20,
+    "status": "succeeded",
+    "verify_verdict": "confirmed_ok",
+    "created_at": "2026-11-22T23:44:30.296865+08:00",
+    "succeeded_at": "2026-11-22T23:48:39.360009+08:00",
+    "verify_evidence": "verify=confirmed_ok web[ok pid=274778 head=unknown] feishu[ok pid=274946 head=3f233585d961] learning[ok pid=274991 head=3f233585d961]",
+    "detail": "restart_mirror rc=0; identity generation=20 key=wheel:0.6.57@105f981515fe; all 批量=web/feishu/learning，wecom 不在其中（契约），需更新 wecom 请单独 restart wecom",
+    "physical_batch": ["web", "feishu", "learning"],
+    "uncovered_by_contract": ["wecom"]
+  },
+  "desired_deployment": {
+    "deployment_id": "deploy-bdb7fc6d97c04dbd844f4ff1cc8973d1",
+    "generation": 20,
+    "version": "0.6.57",
+    "artifact_kind": "wheel_release",
+    "wheel_sha256": "105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e",
+    "webui_artifact_sha256": "9588bef89871843d47c3a1ae9f2d785d9ef110e51849fa423af4496ee00a27a7",
+    "release_dir": "$HOME/.local/share/lfl/releases/LFL-0.6.57"
+  },
+  "live_services": {
+    "web": {
+      "pid": 274778,
+      "started_at": "2026-11-22T23:48:34+08:00",
+      "release_version": "0.6.57",
+      "wheel_sha256": "105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e",
+      "matches_desired_generation": true,
+      "restart_required": false,
+      "reasons": [],
+      "guard_code_drift": "current",
+      "git_head": "unknown（live 推断值，web 进程未回填 git head）"
+    },
+    "feishu": {
+      "pid": 274946,
+      "started_at": "2026-11-22T23:48:37+08:00",
+      "release_version": "0.6.57",
+      "wheel_sha256": "105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e",
+      "matches_desired_generation": true,
+      "restart_required": false,
+      "reasons": [],
+      "guard_code_drift": "current",
+      "git_head": "3f233585d961a68bc352a4c4df45529ae2f30888"
+    },
+    "learning": {
+      "pid": 274991,
+      "started_at": "2026-11-22T23:48:39+08:00",
+      "release_version": "0.6.57",
+      "wheel_sha256": "105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e",
+      "matches_desired_generation": true,
+      "restart_required": false,
+      "reasons": [],
+      "guard_code_drift": "current",
+      "git_head": "3f233585d961a68bc352a4c4df45529ae2f30888"
+    },
+    "wecom": {
+      "covered_by_target_all": false,
+      "matches_desired_generation": false,
+      "restart_required": true,
+      "reasons": ["live_manifest_missing"],
+      "conclusion": "不在 --target all 物理执行面内（契约：批量面=web/feishu/learning），本回执不把 wecom 记为已验收；如需更新须单独 restart wecom"
+    }
+  },
+  "health_probe": {
+    "endpoint": "GET /health（web 服务本地端口 8903）",
+    "status": "ok",
+    "service": "llm-first-loop-web",
+    "version": "0.6.57",
+    "build_release_version": "0.6.57",
+    "build_artifact_kind": "wheel_release",
+    "build_wheel_sha256": "105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e",
+    "build_release_dir": "$HOME/.local/share/lfl/releases/LFL-0.6.57",
+    "identity_section_service": "learning（同一 code_root / knowledge 绑定下的身份段字段；不影响 version 与 wheel 指纹）"
+  },
+  "acceptance_criteria": [
+    {
+      "id": 1,
+      "requirement": "service_control(action=status, action_id=svc-aeede211c4b94219b58420f8c4fb72f7) → status=succeeded 且 verify_verdict=confirmed_ok",
+      "measured": "status=succeeded；verify_verdict=confirmed_ok；succeeded_at=2026-11-22T23:48:39.360009+08:00",
+      "met": true
+    },
+    {
+      "id": 2,
+      "requirement": "service_control(action=status, target=all) → deployment.generation=20 / version=0.6.57；三服务 live release_version=0.6.57、wheel_sha256=105f9815…、matches_desired_generation=true、restart_required=false、reasons 为空",
+      "measured": "deployment.generation=20、version=0.6.57、wheel_sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e；web/feishu/learning 三者 release_version=0.6.57、wheel_sha256=105f9815…、matches_desired_generation=true、restart_required=false、reasons=[]",
+      "met": true
+    },
+    {
+      "id": 3,
+      "requirement": "GET /health → version=0.6.57 且 build.wheel_sha256=105f9815…",
+      "measured": "version=0.6.57；build.wheel_sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e",
+      "met": true
+    }
+  ],
+  "conclusion": "三条完成判据同时成立：0.6.57 受管切换已物理生效（generation 20），web/feishu/learning 三服务与 web /health 指纹一致。",
+  "not_verified_in_this_run": [
+    {
+      "item": "宿主侧官方验收器 $HOME/.local/share/lfl/audit/verify_managed_release.py 的 systemd 单元交叉核对",
+      "observed": "在本会话沙盒内执行返回 result=FAIL，problems=[CalledProcessError: systemctl --user show lfl.service … returned non-zero exit status 1]，前置 stderr 为「Failed to connect to bus: 没有那个文件或目录」——沙盒内无 systemd user bus，属执行环境不可达，非切换失败证据；脚本因目标回执已存在而未写入、未覆盖任何文件。",
+      "impact": "该项为宿主 shell 侧补充交叉核对，不属于本轮三条完成判据；本回执不声称该项已通过。"
+    },
+    {
+      "item": "wecom 服务",
+      "observed": "target=all 契约不含 wecom；其 live manifest 缺失（live_manifest_missing）、restart_required=true。",
+      "impact": "wecom 未切代，本回执不把它计入已收敛集合。"
+    }
+  ],
+  "evidence": {
+    "durable_action_file": "$HOME/.local/share/lfl/data/runtime/service-control-actions/svc-aeede211c4b94219b58420f8c4fb72f7.json",
+    "cutover_audit_receipt": "$HOME/.local/share/lfl/audit/managed-cutover-0.6.57-gen20-20261122.json（其中 acceptance.status 仍记为 pending_physical_restart，为物理重启前的落盘状态）",
+    "repository_doc": "docs/governance/MANAGED-RELEASE-0.6.57.md 第 8 节",
+    "reads": ["service_control status(action_id)", "service_control status(target=all, view=full)", "curl /health", "durable action json", "cutover audit json"]
+  },
+  "residual_risks": [
+    "web live 的 git_head 为 unknown（live 推断未回填）；三服务的 release 版本与 wheel 指纹一致，版本身份不依赖该字段。",
+    "audit 目录下 managed-cutover-0.6.57-gen20-20261122.json 的 acceptance 段仍为物理重启前状态，未在本轮改写（受管审计目录只读留痕，历史事实不改写）。",
+    "本回执描述的是本机一次受管切换的事实；宿主 systemd 单元交叉核对仍待宿主 shell 侧补做。"
+  ]
+}
