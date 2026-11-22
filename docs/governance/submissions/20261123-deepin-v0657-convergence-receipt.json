@@ -48,9 +48,9 @@
       "owning_subsystem": "A.5 架构提交声明机制（清单自身）",
       "disposition": "声明本次合并与上行留痕的精确 changed-path 集合，供 A.5 机械校验覆盖。",
       "evidence": [
-        "本清单的 components.paths 与 origin/main（50c0f0d38faa1c14ecd476d43d9294a1a633d56d）之间的 changed-path 集合精确一致（4 条：合并回执、push 回执、发行文档、本清单自身）。"
+        "本清单的 components.paths 与 origin/main（74ee5ded5a7e34f657c95758952fe4b71595cb80，PR #96 合并提交）之间的 changed-path 集合精确一致（4 条：合并回执、push 回执、发行文档、本清单自身）。本分支已合并该 origin/main 尖端，故两点差集与三点差集给出同一 4 条集合。"
       ],
-      "verification_level": "scripts/check_architecture_submission.py 以 base=origin/main、head=本提交运行并 PASS。",
+      "verification_level": "scripts/check_architecture_submission.py 以 base=origin/main（74ee5ded…）、head=本提交运行并 PASS（changed_paths=4、components=3）。",
       "model_evidence_veto_recovery_exit": "覆盖不精确即 FAIL；不得放宽校验或改写路径集合凑数。",
       "rollback_route": "回退该提交即移除本清单。"
     }
