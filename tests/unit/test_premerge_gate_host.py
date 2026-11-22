@@ -150,14 +150,14 @@ class FakeGitHub:
                 ],
             },
             f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all": {
+                "total_count": 0, "check_runs": [],
+            },
+            f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all": {
                 "total_count": 4, "check_runs": [
-                    runcheck(c["context"], MERGE,
+                    runcheck(c["context"], CANDIDATE,
                              run_id=33333 if c["event_scope"] == "pr_only" else RUN_ID)
                     for c in checks
                 ],
-            },
-            f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all": {
-                "total_count": 0, "check_runs": [],
             },
             f"{PREFIX}/actions/runs/2000": {
                 "id": 2000, "event": "push", "status": "completed",
@@ -298,7 +298,7 @@ def test_t21_missing_managed_required_pin_holds(fixture):
 
 
 def test_t25_pr_only_architecture_pending_holds(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"]["check_runs"][3]["status"] = "in_progress"
+    fixture[0].data[f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"]["check_runs"][3]["status"] = "in_progress"
     holds(fixture, "pr_required_checks_incomplete")
 
 
@@ -330,7 +330,7 @@ def test_t23_required_check_origin_url_untrusted_holds(fixture):
 
 
 def test_t24_managed_check_run_other_run_id_holds(fixture):
-    fixture[0].data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"]["check_runs"][2]["details_url"] = (
+    fixture[0].data[f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"]["check_runs"][2]["details_url"] = (
         "https://github.com/o/r/actions/runs/33333/job/77"
     )
     holds(fixture, "managed_run_identity_mismatch")
@@ -398,9 +398,25 @@ def test_t07_queue_cas_drift_holds(fixture):
     holds(fixture, "host_snapshot_signature_invalid")
 
 
+def test_t07_host_snapshot_valid_within_fifteen_minutes(fixture):
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 899}))
+    assert evaluate(fixture)["decision"] == "ELIGIBLE_FOR_MANAGED_MERGE"
+
+
 def test_t07_host_snapshot_stale_holds(fixture):
-    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 100}))
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 901}))
     holds(fixture, "host_snapshot_stale")
+
+
+def test_t07_host_snapshot_rejects_future_timestamp(fixture):
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW + 1}))
+    holds(fixture, "host_snapshot_stale")
+
+
+def test_t07_host_snapshot_expires_during_final_recheck(fixture):
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 899}))
+    with pytest.raises(HostHoldError, match="host_snapshot_stale"):
+        evaluate(fixture, final_now=NOW + 2)
 
 
 def test_t25_main_check_run_pagination_holds(fixture):
@@ -438,10 +454,10 @@ def test_cli_host_missing_credentials_returns_hold_without_git_writes(tmp_path: 
 
 def test_p0_same_context_fake_workflow_cannot_override_red_check(fixture):
     client = fixture[0]
-    key = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+    key = f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"
     client.data[key]["check_runs"][0]["conclusion"] = "failure"
     client.data[key]["check_runs"].append(
-        runcheck("CI / test", MERGE, run_id=44444)
+        runcheck("CI / test", CANDIDATE, run_id=44444)
     )
     client.data[key]["total_count"] = 5
     holds(fixture, "check_context_ambiguous")
@@ -473,14 +489,20 @@ def test_p1_candidate_gate_dependency_self_upgrade_rejected(fixture, path):
     holds(fixture, "gate_version_untrusted")
 
 
-def test_p2_head_only_green_does_not_override_tested_merge_red(fixture):
+def test_p2_tested_merge_green_does_not_override_pr_head_red(fixture):
     client = fixture[0]
-    key = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+    key = f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"
     client.data[key]["check_runs"][0]["conclusion"] = "failure"
-    client.data[f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"] = {
+    client.data[f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"] = {
         "total_count": 1,
-        "check_runs": [runcheck("CI / test", CANDIDATE)],
+        "check_runs": [runcheck("CI / test", MERGE)],
     }
+    holds(fixture, "pr_required_checks_incomplete")
+
+
+def test_pr_head_check_with_merge_sha_cannot_pass(fixture):
+    key = f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"
+    fixture[0].data[key]["check_runs"][0]["head_sha"] = MERGE
     holds(fixture, "pr_required_checks_incomplete")
 
 
@@ -538,6 +560,30 @@ def test_p2_http_error_classification(monkeypatch, path, code, reason):
         client.get(path)
 
 
+def test_p2_malformed_github_json_is_retried_once_without_writes(monkeypatch):
+    from premerge_host import GitHubReadOnly
+
+    client = GitHubReadOnly("o/r", "x" * 30)
+    reads = iter((b"<html>temporary gateway</html>", b'{"ok":true}'))
+    observed = []
+    monkeypatch.setattr(client, "_open", lambda path: (observed.append(path), next(reads))[1])
+    monkeypatch.setattr("premerge_host.time.sleep", lambda delay: None)
+    assert client.get("branches/main") == {"ok": True}
+    assert observed == ["branches/main", "branches/main"]
+
+
+def test_p2_persistently_invalid_github_json_fails_closed(monkeypatch):
+    from premerge_host import GitHubReadOnly
+
+    client = GitHubReadOnly("o/r", "x" * 30)
+    observed = []
+    monkeypatch.setattr(client, "_open", lambda path: (observed.append(path), b"not-json")[1])
+    monkeypatch.setattr("premerge_host.time.sleep", lambda delay: None)
+    with pytest.raises(HostHoldError, match="github_response_invalid"):
+        client.get("branches/main")
+    assert len(observed) == 2
+
+
 def test_api_redirect_cannot_forward_host_authorization():
     import urllib.request
 
@@ -557,7 +603,7 @@ def test_p2_check_run_turns_red_during_final_recheck_holds(fixture):
     client = fixture[0]
     original_get = client.get
     calls = 0
-    target = f"{PREFIX}/commits/{MERGE}/check-runs?per_page=100&filter=all"
+    target = f"{PREFIX}/commits/{CANDIDATE}/check-runs?per_page=100&filter=all"
 
     def flip_after_first_read(path: str):
         nonlocal calls
@@ -620,7 +666,7 @@ def test_draft_pr_cannot_be_eligible(fixture):
 
 def test_snapshot_expires_during_host_recheck(fixture):
     with pytest.raises(HostHoldError, match="host_snapshot_stale"):
-        evaluate(fixture, final_now=NOW + 91)
+        evaluate(fixture, final_now=NOW + 901)
 
 
 @pytest.mark.parametrize("path", [
@@ -799,3 +845,16 @@ def test_issue73_branch_protection_changes_during_host_check_fails_closed(fixtur
 
     client.get = mutate_on_final_read
     holds(fixture, "premerge_race_detected")
+
+
+def test_repository_required_ci_workflow_pins_match_checked_out_blobs():
+    """Fail CI when a trusted workflow changes without updating its Host policy pin."""
+    root = Path(__file__).resolve().parents[2]
+    policy = json.loads((root / POLICY).read_text(encoding="utf-8"))
+    assert policy["schema"] == "lfl.required_checks.v1"
+    for check in policy["checks"]:
+        path = check["workflow_path"]
+        assert path.startswith(".github/workflows/")
+        workflow = root / path
+        assert workflow.is_file(), path
+        assert check["workflow_blob_sha"] == _blob_sha(workflow.read_bytes()), path

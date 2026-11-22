@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from collections.abc import Iterator
@@ -77,6 +78,8 @@ class Goal:
     # 声明后 complete 须过 spec_archive 归档门（归档清单或显式不适用）；
     # 未声明的旧 Goal 零行为变化（仅 complete 时一次性提示补充）。
     spec_change_ref: str = ""
+    # One-time owner/CAS-bound REQ scope. Legacy Goals have no binding.
+    requirements_scope: dict[str, str] = field(default_factory=dict)
     # DESIGN-20261101 §2.4 (L4): 乐观并发版本号。每次 checkpoint/update 成功后 +1，
     # 供跨会话写侧 CAS（expected_version）。旧记录缺字段按 1 起算，不重写历史。
     version: int = 1
@@ -156,6 +159,7 @@ class GoalStore:
         path: str = "",
         next_step: str = "",
         expected_version: int | None = None,
+        requirements_scope: dict[str, str] | None = None,
     ) -> dict | None:
         """里程碑 checkpoint（四要素: What/Evidence/Path/Next）.
 
@@ -164,6 +168,20 @@ class GoalStore:
         """
         if not what:
             raise ValueError("checkpoint 必填 'what'（本里程碑变化）")
+        if requirements_scope is not None:
+            if expected_version is None:
+                raise ValueError("requirements_scope binding requires expected_version CAS")
+            if (
+                not isinstance(requirements_scope, dict)
+                or set(requirements_scope) != {"design_path", "design_sha256"}
+                or not isinstance(requirements_scope.get("design_path"), str)
+                or not isinstance(requirements_scope.get("design_sha256"), str)
+                or not requirements_scope["design_path"].startswith("docs/design/")
+                or not requirements_scope["design_path"].endswith(".md")
+                or ".." in Path(requirements_scope["design_path"]).parts
+                or not re.fullmatch(r"[0-9a-f]{64}", requirements_scope["design_sha256"])
+            ):
+                raise ValueError("requirements_scope must pin safe design path and SHA256")
         with self._file_lock():
             lines = self._read_lines()
             out: list[str] = []
@@ -194,6 +212,10 @@ class GoalStore:
                             owner_session_id=str(entry.get("session_id") or ""),
                             last_checkpoint=(entry.get("checkpoints") or [{}])[-1],
                         )
+                    if requirements_scope is not None:
+                        if entry.get("requirements_scope"):
+                            raise ValueError("requirements_scope is immutable once bound")
+                        entry["requirements_scope"] = dict(requirements_scope)
                     cp = {
                         "ts": system_local_now().isoformat(),
                         "what": what,

@@ -840,9 +840,10 @@ wheels = [
 
 [[package]]
 name = "llm-first-loop"
-version = "0.6.55"
+version = "0.6.57"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx", extra = ["socks"] },
     { name = "lark-oapi" },
@@ -874,6 +875,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=43" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.0" },

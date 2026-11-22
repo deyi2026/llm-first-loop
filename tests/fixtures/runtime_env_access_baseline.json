@@ -1,13 +1,13 @@
 {
   "access_class_counts": {
     "bootstrap_os": 3,
-    "business_config": 138,
+    "business_config": 139,
     "debug_test": 12,
-    "dynamic_or_bulk": 62,
+    "dynamic_or_bulk": 63,
     "dynamic_secret": 9,
     "secret": 9
   },
-  "access_count": 211,
+  "access_count": 213,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -120,13 +120,13 @@
   },
   "class_key_counts": {
     "bootstrap_os": 2,
-    "business_config": 72,
+    "business_config": 73,
     "debug_test": 10,
     "dynamic_or_bulk": 2,
     "dynamic_secret": 1,
     "secret": 6
   },
-  "direct_access_count": 211,
+  "direct_access_count": 213,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -137,9 +137,9 @@
     "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>",
     "src/llm_loop/wecom/config.py|load_wecom_config|read|<dynamic>"
   ],
-  "effective_access_count": 233,
-  "effective_file_count": 70,
-  "file_count": 70,
+  "effective_access_count": 235,
+  "effective_file_count": 71,
+  "file_count": 71,
   "helper_class_key_counts": {
     "business_config": 17,
     "dynamic_secret": 1
@@ -451,7 +451,7 @@
         "src/llm_loop/workspace/store.py"
       ],
       "module_import_reads": 0,
-      "reads": 33,
+      "reads": 34,
       "writes": 3
     },
     "COG_RUNTIME_MODE": {
@@ -777,6 +777,18 @@
       ],
       "files": [
         "src/llm_loop/net_guard.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_BROWSER_PERCEPTION_CDP_URL": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/browser/cdp_probe.py"
       ],
       "module_import_reads": 0,
       "reads": 1,
@@ -1762,10 +1774,71 @@
       "parent_commit": "ff47b7dbeda13af36f73fc7fdb9ff91417b1318a",
       "reason": "Deepin P0 host-grant state-home safety reads configured grant, data and sandbox roots for fail-closed isolation; six explicit signatures with two retired Feishu signatures",
       "relaxations": true
+    },
+    {
+      "added_helper_signatures": {},
+      "added_keys": [
+        "LFL_BROWSER_PERCEPTION_CDP_URL"
+      ],
+      "added_module_import_signatures": {},
+      "added_signatures": {
+        "src/llm_loop/browser/cdp_probe.py|discover_cdp_candidates|read|LFL_BROWSER_PERCEPTION_CDP_URL": 1,
+        "src/llm_loop/web/vision.py|vision_max_side|read|<dynamic>": 1
+      },
+      "at": "2026-11-22T08:58:44+00:00",
+      "cap_changes": {
+        "access_count": {
+          "delta": 2,
+          "from": 211,
+          "to": 213
+        },
+        "direct_access_count": {
+          "delta": 2,
+          "from": 211,
+          "to": 213
+        },
+        "effective_access_count": {
+          "delta": 2,
+          "from": 233,
+          "to": 235
+        },
+        "effective_file_count": {
+          "delta": 1,
+          "from": 70,
+          "to": 71
+        },
+        "file_count": {
+          "delta": 1,
+          "from": 70,
+          "to": 71
+        },
+        "unique_key_count": {
+          "delta": 1,
+          "from": 92,
+          "to": 93
+        }
+      },
+      "parent_commit": "a07fdbe67866c9aa98a229c587ff21d9c7d4e306",
+      "reason": "EVO-20261121-efa320ab 新增两处环境读取，均沿用本仓库既有范式：(1) src/llm_loop/web/vision.py|vision_max_side|read|<dynamic>——新增 WEB_VISION_MAX_SIDE 降采样阈值开关，与同文件 _vision_backend/_vision_timeout/_vision_model 五个既有旋钮完全同模式直读 os.environ.get；(2) src/llm_loop/browser/cdp_probe.py|discover_cdp_candidates|read|LFL_BROWSER_PERCEPTION_CDP_URL——只读 CDP 端点发现读取显式 opt-in 端点配置，与既有关联配置读取同模式。独立合并审查 PASS（merge-review-gate 子代理 subagent_1d3a2a1b1a01，base=5708f28/head=59d6dff，P0=0/P1=0）+ 窄复审 PASS（subagent_1b64000ce4ff，head=e9b2a35）。棘轮仍单向：此后任何新增环境访问仍须再次显式登记，否则 tests/unit/test_runtime_env_access_gate.py 转红",
+      "relaxations": true
+    },
+    {
+      "added_helper_signatures": {},
+      "added_keys": [],
+      "added_module_import_signatures": {},
+      "added_signatures": {
+        "src/llm_loop/browser/cdp_probe.py|_discover_candidates_impl|read|LFL_BROWSER_PERCEPTION_CDP_URL": 1
+      },
+      "at": "2026-11-22T12:44:25+00:00",
+      "cap_changes": {},
+      "parent_commit": "e870806a16f5d9b8914751890f2870459826c7ab",
+      "reason": "函数拆分导致的登记键迁移：cdp_probe 的候选发现实现拆出 _discover_candidates_impl（为把候选发现纳入整体探测时限），其中的 os.environ 读取随实现一同迁入；访问范围未变——同一文件、同一配置键 LFL_BROWSER_PERCEPTION_CDP_URL、同一只读方式、仍为 1 处，无新增环境变量或新读取点。棘轮仍单向：此后任何新增环境访问仍须再次显式登记。",
+      "relaxations": true
     }
   ],
   "schema_version": 2,
   "signature_counts": {
+    "src/llm_loop/browser/cdp_probe.py|_discover_candidates_impl|read|LFL_BROWSER_PERCEPTION_CDP_URL": 1,
     "src/llm_loop/cache_guard/guard.py|_check_privacy|read|<dynamic>": 1,
     "src/llm_loop/codearts/audit.py|_redact|bulk:items|<all>": 1,
     "src/llm_loop/cognitive/cache_tags.py|tagging_enabled_for|bulk:raw|<all>": 1,
@@ -1951,6 +2024,7 @@
     "src/llm_loop/web/vision.py|_vision_timeout|read|WEB_VISION_TIMEOUT": 1,
     "src/llm_loop/web/vision.py|vision_enabled|read|MINIMAX_API_KEY": 2,
     "src/llm_loop/web/vision.py|vision_enabled|read|WEB_VISION_MODEL": 1,
+    "src/llm_loop/web/vision.py|vision_max_side|read|<dynamic>": 1,
     "src/llm_loop/wecom/__init__.py|main|bulk:setdefault|<all>": 1,
     "src/llm_loop/wecom/__init__.py|main|read|DATA_DIR": 1,
     "src/llm_loop/wecom/bridge.py|WeComBridge/__init__|read|DATA_DIR": 1,
@@ -1968,5 +2042,5 @@
     "src/llm_loop/workspace/archive_stale.py|_env_number|read|<dynamic>": 1,
     "src/llm_loop/workspace/store.py|_workspace_allowed_roots|read|<dynamic>": 1
   },
-  "unique_key_count": 92
+  "unique_key_count": 93
 }

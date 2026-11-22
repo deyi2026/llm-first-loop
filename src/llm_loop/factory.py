@@ -135,6 +135,7 @@ from llm_loop.runtime.service_control import (
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.timekeeping import system_local_now, system_local_now_iso
+from llm_loop.tools import task_runtime as _task_runtime
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
@@ -143,6 +144,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.cdp_probe import CdpProbeTool
 from llm_loop.tools.builtin.desktop_operate import DesktopOperateTool
 from llm_loop.tools.builtin.desktop_perceive import DesktopPerceiveTool, make_jsonl_audit_sink
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
@@ -172,6 +174,7 @@ from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
+from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
 from llm_loop.tools.builtin.task_state import TaskStateTool
 from llm_loop.tools.builtin.verify_path_scope import VerifyPathScopeTool
 from llm_loop.tools.builtin.video_generation import VideoGenerationTool
@@ -1685,6 +1688,12 @@ def build_engine(
                 max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
             ),
         )
+    # EVO-20261121-efa320ab: CDP 端点可达性探针（只读 loopback 元信息）。
+    # 命名刻意**不进入 browser_* 家族**：既有能力身份契约（provider-visible browser 面
+    # 恰好一只眼 browser_perceive + 一只手 browser_operate）由测试锁定且不因本探针放宽——
+    # 本探针读不到页面、不能写页面，只是「端点存在吗/可达吗」的环境诊断。
+    # 与下方 browser 工具的显式 opt-in 门禁并列而非替代：不改配置、不启动浏览器。
+    _register_basic("cdp_probe", CdpProbeTool())
     # SMC Browser cognition-preserving surface: explicit loopback CDP opt-in only.
     # Provider-visible Browser capabilities are deliberately collapsed to `browser_perceive`
     # (read-only sensing/wait) and, when writes are enabled, `browser_operate`
@@ -1885,6 +1894,16 @@ def build_engine(
             safety_audit_dir=settings.audit_dir,
         ),
     )
+    # Task Git is available only after the independent Host authority has
+    # been installed. No model-supplied Lease/worktree/Git argv is accepted.
+    # The legacy tool surface remains unchanged before Host bootstrap.
+    _task_authority_root = _task_runtime._installed_authority_root()
+    if _task_authority_root is not None and _task_authority_root.is_dir():
+        try:
+            (Path(settings.audit_dir) / "git-locks").mkdir(mode=0o700, exist_ok=True)
+        except OSError:
+            logger.warning("Task Git lock root unavailable; broker will HOLD", exc_info=True)
+        _register_basic("task_git_commit", TaskGitCommitTool())
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.
     _register_service_tools(_register_basic, settings, _review_gate_recorder)
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）

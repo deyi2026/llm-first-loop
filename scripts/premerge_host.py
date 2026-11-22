@@ -52,6 +52,9 @@ _GATE_PATHS = (
 _POLICY_PATH = "docs/governance/required-ci-checks.json"
 _MAX_ARTIFACT = 1024 * 1024
 _HOST_CHECK_CONTEXT = "lfl-host-premerge"
+# Snapshot is SHA/CAS-bound; live identities and branch protection are rechecked.
+_HOST_SNAPSHOT_MAX_AGE_SECONDS = 15 * 60
+_GITHUB_JSON_READ_ATTEMPTS = 2
 
 
 class HostHoldError(Exception):
@@ -125,12 +128,21 @@ class GitHubReadOnly:
         return raw
 
     def get(self, path: str) -> Any:
-        try:
-            value = json.loads(self._open(path))
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise HostHoldError("github_response_invalid") from exc
-        _require(isinstance(value, (dict, list)), "github_response_invalid")
-        return value
+        # Retry malformed read-only API responses once; never retry a security
+        # denial, mutate GitHub state, or treat an invalid response as success.
+        for attempt in range(_GITHUB_JSON_READ_ATTEMPTS):
+            try:
+                value = json.loads(self._open(path))
+            except (ValueError, UnicodeDecodeError) as exc:
+                if attempt + 1 == _GITHUB_JSON_READ_ATTEMPTS:
+                    raise HostHoldError("github_response_invalid") from exc
+            else:
+                if isinstance(value, (dict, list)):
+                    return value
+                if attempt + 1 == _GITHUB_JSON_READ_ATTEMPTS:
+                    raise HostHoldError("github_response_invalid")
+            time.sleep(0.2)
+        raise HostHoldError("github_response_invalid")
 
     def blob(self, path: str, ref: str) -> tuple[str, bytes]:
         _require(_sha(ref), "blob_ref_invalid")
@@ -239,7 +251,7 @@ def _verified_snapshot(envelope: dict, public_key_pem: str, now: float) -> dict:
     stamp = payload.get("checked_at")
     if not isinstance(stamp, (int, float)):
         raise HostHoldError("host_snapshot_stale")
-    _require(0 <= now - stamp <= 90, "host_snapshot_stale")
+    _require(0 <= now - stamp <= _HOST_SNAPSHOT_MAX_AGE_SECONDS, "host_snapshot_stale")
     return payload
 
 def _check_local(snapshot: dict, main: str, candidate: str, *,
@@ -611,7 +623,9 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     )
     blobs = _verify_gate_blobs(client, main, candidate)
     main_runs = _checks(client, prefix, main)
-    pr_runs = _checks(client, prefix, tested_merge)
+    # GitHub Actions attaches PR checks to the head. The tested merge is
+    # independently pinned by its parents and the CI artifact below.
+    pr_runs = _checks(client, prefix, candidate)
     for item in pinned:
         context, app_id = item["context"], item["app_id"]
         if item["event_scope"] == "push_and_pr":
@@ -624,11 +638,11 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
                 expected_workflow_path=item["workflow_path"],
                 expected_workflow_id=item["workflow_id"],
             )
-        merged = _lookup(pr_runs, context, app_id, tested_merge)
-        _require(_passed(merged), "pr_required_checks_incomplete", unavailable=False)
-        assert merged is not None
+        pr_check = _lookup(pr_runs, context, app_id, candidate)
+        _require(_passed(pr_check), "pr_required_checks_incomplete", unavailable=False)
+        assert pr_check is not None
         _check_run_origin(
-            client, repo, merged, event="pull_request", main=main,
+            client, repo, pr_check, event="pull_request", main=main,
             candidate=candidate, tested_merge=tested_merge, pr_number=pr_number,
             expected_run_id=run_id if item["purpose"] == "managed_evidence" else None,
             expected_workflow_path=item["workflow_path"],
@@ -680,7 +694,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     )
     final_rulesets = client.get(f"{prefix}/rulesets?includes_parents=true")
     final_main_runs = _checks(client, prefix, main)
-    final_pr_runs = _checks(client, prefix, tested_merge)
+    final_pr_runs = _checks(client, prefix, candidate)
     final_run = client.get(f"{prefix}/actions/runs/{run_id}")
     final_artifacts = client.get(f"{prefix}/actions/runs/{run_id}/artifacts?per_page=100")
     _require(
@@ -698,7 +712,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     )
     _require(
         0 <= (time.time() if final_now is None else final_now)
-        - snapshot["checked_at"] <= 90,
+        - snapshot["checked_at"] <= _HOST_SNAPSHOT_MAX_AGE_SECONDS,
         "host_snapshot_stale",
     )
     # This is a read-side recheck, NOT an atomic main ref CAS.

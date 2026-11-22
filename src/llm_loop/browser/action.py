@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
 from llm_loop.config import _raw_env
-from llm_loop.core.run_context import current_workspace_root
+from llm_loop.core.run_context import current_task_execution, current_workspace_root
 from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
 from llm_loop.net_guard import browser_allowed_hosts, check_url
 
@@ -1197,7 +1197,9 @@ class BrowserActionAdapter:
             ):
                 raise ValueError(f"Browser SemanticAction contract rejected: {validation_error}")
             return self._append_rejected(session_id, action, validation_error)
-
+        # Model-owned scope_ref is not an OS-attested CDP process identity.
+        if current_task_execution.get() is not None:
+            return self._append_rejected(session_id, action, "task_browser_host_binding_unavailable")
         fingerprint = _sha256_json(
             {
                 "scope_ref": action["scope_ref"],
@@ -1213,7 +1215,6 @@ class BrowserActionAdapter:
         )
         if not self.receipt_store.reserve(session_id, action_id, fingerprint):
             return self._append_rejected(session_id, action, "duplicate_action_id")
-
         before = self._observe_before_dispatch(session_id, action)
         if before.rejected is not None:
             return before.rejected
@@ -1222,7 +1223,6 @@ class BrowserActionAdapter:
         before_version = before.before_version
         before_ref = before.before_ref
         light_mode = before.light_mode
-
         if not light_mode:
             assessment = self.perception.assess_version_precondition(
                 session_id,
