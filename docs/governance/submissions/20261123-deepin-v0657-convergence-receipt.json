@@ -1,0 +1,59 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-deepin-v0657-convergence-receipt",
+  "summary": "0.6.57 受管切换收敛证据面的合并与上行留痕：PR #95 的 push 回执与合并回执落盘，并对发行文档做两处经独立合并审查复核实后的措辞消歧（0.6.56 版本身份提交标注、附加 check 名称与 workflow job 名对齐）。本清单不新增控制机制、不放宽任何既有门禁；合并与上行事实已由受保护合并端点与远端 required checks 证明。",
+  "components": [
+    {
+      "component_id": "deepin-v0657-convergence-merge-push-receipts",
+      "paths": [
+        "docs/governance/receipts/merge-release-0.6.57-managed-cutover-20261122.json",
+        "docs/governance/receipts/push-release-0.6.57-managed-cutover-20261122.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "RULE-AI-28 push 闸与 RULE-AI-34 合并闸的事实留痕面",
+      "disposition": "落盘 PR #95 的三态审查链（3 轮 push 审查：两轮 REVISE 一轮 PASS）、远端 CI 的 check-run 逐项状态、受保护合并端点产生的 merge commit 与后置核对、以及独立只读合并审查（PASS，P0=0/P1=0/P2=3）与其三条非阻断措辞 finding 的处置。只记录事实，不新增控制机制。",
+      "evidence": [
+        "push 审查三轮：subagent_35961e04adea REVISE（P0=0/P1=1/P2=2）→ subagent_fea4bbca27b9 REVISE（P0=0/P1=0/P2=2）→ subagent_b818fe229d3e PASS（candidate_sha256=2864d8f560623c6d65324d49420dbc24e51f0d7a3855c1d81ccd5660d98c2d46，scope=tree）。",
+        "远端 CI（PR #95，head 634b8e70）：共 10 项＝8 success（门禁、安全扫描、privacy-gate、A.5、managed-premerge-evidence、部署 env 泄漏门禁 D4、Linux 安装验收 x86_64 / glibc 与 aarch64 / glibc）＋2 项 nightly skipped＋0 项 failed。",
+        "合并：受保护 GitHub 合并端点 merge-commit，merge_commit=50c0f0d38faa1c14ecd476d43d9294a1a633d56d（parents=70ae9f5c…/634b8e70…），merged_by=deyi2026，merged_at=2026-11-22T16:13:17Z；git diff 50c0f0d3 634b8e70 为空；本地 main 已 fast-forward 到该 merge commit。",
+        "独立合并审查 subagent_b29fe7accf44：PASS，P0=0/P1=0/P2=3；P2-1/P2-2 经复核后在发行文档中修正措辞，P2-3（本 PR 自身的 push 回执）按仓库惯例在合并后的补记 PR 落盘。"
+      ],
+      "verification_level": "回执内每条 SHA、计数与结论均可回源：git ls-remote / git log / git diff / git merge-base、GitHub PR 与 check-runs API、Host review_admission 与独立审查子代理回执文件；主机身份与本机绝对路径不写入版本库，改用 $HOME 形态。",
+      "model_evidence_veto_recovery_exit": "任一实测值与回源结果不符时以回源为准并更正回执；合并后置条件（merge commit 树与分支 head 一致、本地 main 已同步）任一不成立即不得称已并入 main。",
+      "rollback_route": "回退该回执提交即移除本记录；不影响运行态、已安装 release 与远端 main 的合并事实。"
+    },
+    {
+      "component_id": "deepin-v0657-release-document-wording",
+      "paths": [
+        "docs/governance/MANAGED-RELEASE-0.6.57.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "本机受管发行的候选证据与切换计划记录面",
+      "disposition": "两处经独立合并审查复核实后的措辞消歧：把 07fd45f0 明确标注为发行增量的代码基线、另标 0.6.56 的版本身份提交 6e014654；把两项附加 check 的名称补齐为与 workflow job 名一致的「（x86_64 / glibc）」「（aarch64 / glibc）」；并补记 PR #95 的上行与合并事实。只改措辞与记录，不改任何判定结论。",
+      "evidence": [
+        "复核 1：git show 07fd45f0:pyproject.toml → version = 0.6.55；git log -1 6e014654 → 「chore(r9): prepare Deepin v0.6.56 from integrated main」，即 0.6.56 的版本身份提交是 6e014654，07fd45f0 是其代码基线。",
+        "复核 2：.github/workflows/ci.yml 的 job 名为「Linux 用户级安装/卸载真实成品验收（<arch> / glibc）」，与 push 回执中的完整名称一致。",
+        "补记事实来源：PR #95 的 check-runs 与合并回执（docs/governance/receipts/merge-release-0.6.57-managed-cutover-20261122.json）。"
+      ],
+      "verification_level": "两条措辞修正的每一处均可用 git 与 workflow 文件当场复核；文档原有判定结论（本地门禁红、远端绿、三条判据成立、未覆盖项）不变。",
+      "model_evidence_veto_recovery_exit": "若与仓库事实文件不符，以事实文件为准并再次更正；不得为措辞美观牺牲与 git/workflow 的一致性。",
+      "rollback_route": "回退该文档提交即恢复原措辞（会重新引入两处歧义）。"
+    },
+    {
+      "component_id": "a5-deepin-v0657-convergence-receipt-submission",
+      "paths": [
+        "docs/governance/submissions/20261123-deepin-v0657-convergence-receipt.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交声明机制（清单自身）",
+      "disposition": "声明本次合并与上行留痕的精确 changed-path 集合，供 A.5 机械校验覆盖。",
+      "evidence": [
+        "本清单的 components.paths 与 origin/main（50c0f0d38faa1c14ecd476d43d9294a1a633d56d）之间的 changed-path 集合精确一致（4 条：合并回执、push 回执、发行文档、本清单自身）。"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py 以 base=origin/main、head=本提交运行并 PASS。",
+      "model_evidence_veto_recovery_exit": "覆盖不精确即 FAIL；不得放宽校验或改写路径集合凑数。",
+      "rollback_route": "回退该提交即移除本清单。"
+    }
+  ],
+  "declarations": []
+}

@@ -1,0 +1,80 @@
+{
+  "schema": "lfl.push-gate-receipt/v1",
+  "gate": "push",
+  "rule": "RULE-AI-28",
+  "recorded_at": "2026-11-23T00:18:00+08:00",
+  "path": "受保护分支 PR 路径（origin/main 受保护：直接推送 main 被远端拒绝，须走 PR + required status checks）",
+  "pr": 95,
+  "pr_url": "https://github.com/deyi2026/llm-first-loop/pull/95",
+  "branch": "docs/release-0.6.57-managed-cutover-convergence",
+  "base": "main",
+  "reviewer": "Host review_admission(kind=git_push) 独立审查子代理（reviewer=minimax-review/MiniMax-M3.1-Flash，只读独立子代理，发起方未参与）",
+  "verdict": "PASS",
+  "qualification": "PASS",
+  "candidate_sha256": "2864d8f560623c6d65324d49420dbc24e51f0d7a3855c1d81ccd5660d98c2d46",
+  "review_child_id": "subagent_b818fe229d3e",
+  "review_history": "3 轮独立审查：第 1 轮 child=subagent_35961e04adea 判 REVISE（P0=0/P1=1/P2=2）——P1「umask 修复被回退」与 P2「A.5 覆盖不符」经回源为审查侧口径误差（该轮冻结的是 origin/main..HEAD 两点差集，而分支当时未含 origin/main 最新 2 个提交，差集里出现 umask 修复文件与其 A.5 清单的删除形态），处置＝把 origin/main 合并进分支（无冲突），合并后两点/三点差集同为 4 条文档路径，umask 修复、其两条回归测试与其 A.5 清单完整保留；同轮 P2「push 回执未逐项区分 success/skipped」属实，处置＝在回执 remote_ci 下新增 pr_head_check_runs 与 merge_commit_check_runs 两段，逐项给出 total/succeeded/skipped/failed 与检查名。第 2 轮 child=subagent_fea4bbca27b9 判 REVISE（P0=0/P1=0/P2=2），明确认定第 1 轮的 P1 与 P2#1 已在当前产物中消解，剩余两条 P2 均为措辞精度：A.5 清单称 10 项 check-runs「全为 success」却同时说两项 nightly skipped（属实，改为逐项区分）；文档把 ci_gate.sh --release 称作「本地完整门禁」又写它 exit 1，易被读成本地门禁已通过（属实，改写为「本地 canonical 全量门禁在本机未通过（退出码 1）」并写明「本地全量门禁红、远端同一门禁绿」）。第 3 轮 child=subagent_b818fe229d3e 判 PASS（candidate_sha256=2864d8f5…，scope=tree）。每轮修订后均重跑 A.5 机械覆盖（changed_paths=4、components=4）与隐私扫描。",
+  "commit_count": 7,
+  "remote": "origin",
+  "remote_url": "https://github.com/deyi2026/llm-first-loop.git",
+  "target_ref": "refs/heads/main",
+  "carried_content": [
+    "0.6.57 受管切换收敛验收回执：docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json（三条完成判据的逐条实测值、未覆盖项与残余风险）",
+    "发行文档执行状态段：docs/governance/MANAGED-RELEASE-0.6.57.md（restart 由「已受理」改记为「已完成」并补记三服务 live 身份、/health 版本与 wheel 指纹、未覆盖项）",
+    "A.5 清单同步：docs/governance/submissions/20261122-deepin-v0657-release-identity.json（新增收敛验收回执组件，changed-path 集合精确覆盖 4 条）",
+    "PR #93 push 回执的 check-run 状态逐项化：docs/governance/receipts/push-080ec908-origin-main-20261122.json"
+  ],
+  "sensitive_checks": "clean（本地：pre-push hook 的 git_security_scan 通过（20 个文件无敏感/错误内容）、scripts/git_security_scan.sh --range origin/main HEAD 通过、scripts/knowledge_flush.py --check pending 0；独立合并审查另行复扫 4 条变更文件：家目录用户名 0 命中、/home/<user> 绝对路径 0 命中、私网 IP 0 命中、凭据类 0 命中、主机名 0 命中、占位标记 0 命中；远端 CI：安全扫描（敏感/私密/错误文件拦截）与 privacy-gate 均 pass）",
+  "remote_ci": {
+    "pr_head_sha": "634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e",
+    "total": 10,
+    "succeeded": 8,
+    "skipped": 2,
+    "failed": 0,
+    "succeeded_names": [
+      "门禁（pytest + ruff + pyright）",
+      "安全扫描（敏感/私密/错误文件拦截）",
+      "privacy-gate",
+      "A.5 架构提交审查（机械 presence/coverage）",
+      "managed-premerge-evidence",
+      "部署 env 泄漏门禁（D4）",
+      "Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）",
+      "Linux 用户级安装/卸载真实成品验收（aarch64 / glibc）"
+    ],
+    "skipped_names": [
+      "nightly 真实 LLM 冒烟 + 评测集",
+      "nightly 信号类测试 50 次稳定性"
+    ],
+    "note": "A.5 为 pr_only，在 PR 事件上运行；nightly 两项按仓库惯例 skipped；本次无 failed 项。"
+  },
+  "merge": {
+    "method": "受保护 GitHub 合并端点（merge commit）",
+    "repo_tool_verdict": "scripts/managed_pr_integrate.py 只读裁决 HOLD / high_risk_requires_independent_review（docs/governance/ 属该仓声明的高风险前缀）——按该仓声明，高风险改动走独立 Host 审查路径（本分支已有 Host push 审查 PASS + 独立合并审查 PASS + 远端 required checks 全绿）",
+    "merged_by": "deyi2026",
+    "merged_at": "2026-11-22T16:13:17Z",
+    "merge_commit": "50c0f0d38faa1c14ecd476d43d9294a1a633d56d"
+  },
+  "push_sha_local": "634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e",
+  "push_sha_remote": "50c0f0d38faa1c14ecd476d43d9294a1a633d56d",
+  "push_sha_remote_prev": "70ae9f5ca2a4bf19c730fe3be033530149ac2252",
+  "remote_verified_by": "git ls-remote origin refs/heads/main → 50c0f0d38faa1c14ecd476d43d9294a1a633d56d（合并提交，parents=70ae9f5c…/634b8e70…）；git merge-base --is-ancestor 634b8e70 origin/main → 成立；git diff 50c0f0d3 634b8e70 → 空（合并提交与分支 head 树一致）",
+  "local_tracking_ref_update": "本地 main 已 fast-forward 到 50c0f0d38faa1c14ecd476d43d9294a1a633d56d（git merge --ff-only origin/main）",
+  "local_verification": "A.5 机械覆盖校验 PASS（changed_paths=4、components=4）；隐私增量扫描通过；知识资产闸 pending 0；独立只读合并审查 PASS（P0=0/P1=0/P2=3，非阻断措辞项已在合并后补记 PR 修正）",
+  "independent_merge_review": {
+    "child_id": "subagent_b29fe7accf44",
+    "verdict": "PASS",
+    "counts": "P0=0/P1=0/P2=3",
+    "scope": "只读合并审查（完成证据、分支卫生、基线新鲜、测试面、合并方式、合并后处置）",
+    "receipt": "docs/governance/receipts/merge-release-0.6.57-managed-cutover-20261122.json"
+  },
+  "residual_risks": [
+    "本回执在 PR #95 合并之后落盘，随下一次 PR 上行（回执不可能包含于描述它自身的那次 PR）",
+    "远端分支 docs/release-0.6.57-managed-cutover-convergence 按仓库惯例保留（delete_branch_on_merge=false）",
+    "本次 PR 只含文档路径，不触发 RULE-AI-28 代码闸；全量测试义务归远端 CI 的 canonical 门禁（门禁 job success）"
+  ],
+  "related_receipts": [
+    "docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json",
+    "docs/governance/receipts/merge-release-0.6.57-managed-cutover-20261122.json",
+    "docs/governance/receipts/push-080ec908-origin-main-20261122.json"
+  ]
+}
