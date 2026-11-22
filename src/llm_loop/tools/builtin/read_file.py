@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import logging
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
     current_evidence_shadow_enabled,
     current_session_id,
+    current_task_execution,
     workspace_base,
 )
 from llm_loop.sealed_paths import seal_enabled, sealed_path_reason
@@ -21,9 +24,12 @@ from llm_loop.tools.source_recovery_contract import (
 )
 from llm_loop.workspace.artifacts import ARTIFACT_SCHEME, ArtifactError, WorkspaceArtifactStore
 from llm_loop.workspace.file_effects import FileArtifactProvenance
-from llm_loop.workspace.file_service import FileService, FileServiceError
+from llm_loop.workspace.file_service import FileService, FileServiceError, _pinned_task_target
 
 logger = logging.getLogger(__name__)
+_task_read_reentrant: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "lfl_task_read_reentrant", default=False
+)
 
 # R8.24-C C-3.2（C-D6/C-G7）: 短路说明中被指名工具的声明式白名单——T8 式静态扫描
 # 对照注册表逐一校验存在性（R8.7 注册事实原则：不得指名未注册工具）。
@@ -65,7 +71,8 @@ class ReadFileTool:
         "无法内联时该次复用按 failure 如实回执（evidence_force_refresh=true 显式要求物理重读）。"
         "evidence_force_refresh 只改变 Evidence 复用/读取来源，不创建 snapshot_ref，也不能替代 snapshot=true 的版本 baseline；"
         "legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
-        "snapshot=true 时强制物理观察当前完整文件并返回 file_contract_version=1 的 immutable baseline ref；"
+        "snapshot=true 时普通模式强制物理观察当前完整文件并返回 file_contract_version=1 的 immutable baseline ref；"
+        "受信 Task Lease 模式返回 sha256:<完整字节哈希> 作为精确写前置条件，非 immutable artifact；"
         "versioned write 的机械配对是 read_file(snapshot=true) 取得当前完整字节 baseline，再由 "
         "edit_file(expected_snapshot_ref=<snapshot_ref>) 使用该 baseline；普通 snapshot=false 读取不会产生这个精确写前置条件；"
         "path 也可为 artifact://v1/...；此时读取当前工作区绑定的 immutable artifact snapshot，"
@@ -99,7 +106,123 @@ class ReadFileTool:
             FileService(artifact_store=artifact_store) if artifact_store is not None else None
         )
 
+    def _task_read(self, kwargs: dict) -> ToolResult:
+        """Task-only read scope and exact SHA baseline; legacy path unchanged."""
+        from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+        task = current_task_execution.get()
+        if not isinstance(task, TrustedTaskExecution):
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content="[任务授权拒绝] 未受信的 Task Context",
+                tool_call_id="", tool_name=self.name, error_type="task_context_untrusted",
+            )
+        path_text = str(kwargs.get("path", "") or "").strip()
+        if path_text.startswith((ARTIFACT_SCHEME, "evidence://")):
+            token = _task_read_reentrant.set(True)
+            try:
+                return self.execute(**kwargs)
+            finally:
+                _task_read_reentrant.reset(token)
+        target = Path(path_text).expanduser()
+        if not target.is_absolute():
+            target = Path(workspace_base()) / target
+        sealed = sealed_path_reason(target) if seal_enabled() else None
+        if sealed is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[held-out 封条] {sealed}",
+                tool_call_id="", tool_name=self.name, error_type="HeldoutSealed",
+            )
+        try:
+            root = task.authorize_file(str(target), "read")
+        except TaskExecutionError as exc:
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content=f"[任务授权拒绝] {exc.reason_code}",
+                tool_call_id="", tool_name=self.name, error_type=exc.reason_code,
+            )
+        snapshot = bool(kwargs.get("snapshot", False))
+        if snapshot and sensitive_path_reason(target) is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[敏感文件] 任务级 SHA 基线拒绝敏感路径；可用 snapshot=false 脱敏读取。",
+                tool_call_id="", tool_name=self.name,
+                error_type="SensitivePathSnapshotRefused",
+            )
+        try:
+            with _pinned_task_target(target, root) as pinned:
+                raw, before_stat = pinned.read()
+                if snapshot:
+                    after, after_stat = pinned.read()
+                    if (
+                        raw != after
+                        or (before_stat.st_dev, before_stat.st_ino)
+                        != (after_stat.st_dev, after_stat.st_ino)
+                    ):
+                        return ToolResult(
+                            status=ToolResultStatus.FAILURE,
+                            content="[任务快照冲突] 文件在读取期间变化；重新读取后再编辑。",
+                            tool_call_id="", tool_name=self.name, error_type="TaskSnapshotChanged",
+                        )
+        except (OSError, FileServiceError) as exc:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[任务读取失败] 无法通过受信 FD 绑定读取当前文件",
+                tool_call_id="", tool_name=self.name,
+                error_type=(
+                    exc.error_type if isinstance(exc, FileServiceError)
+                    else "TaskReadUnavailable"
+                ),
+            )
+        text = raw.decode("utf-8", errors="replace")
+        sensitive_note = ""
+        reason = sensitive_path_reason(target)
+        if reason is not None:
+            text, redactions = redact_sensitive_content(text)
+            sensitive_note = (
+                f"\n[敏感内容已脱敏] 该路径命中敏感判定（{reason}）——"
+                f"{redactions} 处敏感值已替换为占位符，明文未进入模型上下文"
+            )
+        lines = text.splitlines()
+        total = len(lines)
+        offset = max(0, int(kwargs.get("offset", 0) or 0))
+        start = min(offset, total)
+        selected = lines[start:]
+        if kwargs.get("limit") is not None:
+            selected = selected[: max(0, int(kwargs["limit"]))]
+        if selected:
+            numbered = "\n".join(f"{start + i + 1} | {line}" for i, line in enumerate(selected))
+            note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
+            content = (
+                f"[read_file] {target} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
+                f"\n{numbered}{note}{sensitive_note}"
+            )
+        else:
+            content = f"[空文件] {target} 为空或无内容。{sensitive_note}"
+        if snapshot:
+            content += (
+                f"\n[task_file_contract] snapshot_ref=sha256:{hashlib.sha256(raw).hexdigest()} "
+                "version=sha256-exact-byte (不是 artifact:// 快照)"
+            )
+        from llm_loop.tools.path_registry import register_seen
+
+        register_seen(
+            str(target), mtime=before_stat.st_mtime_ns, size=before_stat.st_size, kind="file",
+        )
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
+            tool_call_id="", tool_name=self.name,
+            raw_observation=(content if current_evidence_shadow_enabled.get() else None),
+            evidence_source_version_token=(
+                f"stat:{before_stat.st_mtime_ns}:{before_stat.st_size}"
+            ),
+        )
+
     def execute(self, **kwargs) -> ToolResult:
+        if current_task_execution.get() is not None and not _task_read_reentrant.get():
+            return self._task_read(kwargs)
         path = str(kwargs.get("path", "")).strip()
         if path.startswith(ARTIFACT_SCHEME):
             return self._read_artifact(path, kwargs)
@@ -138,7 +261,6 @@ class ReadFileTool:
         p = Path(path).expanduser()
         # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
         if not p.is_absolute():
-
             p = Path(workspace_base()) / p
         # held-out 读侧封条: 在任何磁盘 IO / path_registry 登记之前判定（命中即拒，回显类别）
         _sealed_on = seal_enabled()
@@ -221,7 +343,6 @@ class ReadFileTool:
             # 元信息首行提供路径/总行数/选定范围；正文保持真实字节直到统一 hard cap。
             meta = f"[read_file] {p} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
             content = meta + "\n" + numbered + note + _link_note + sensitive_note
-
             raw_observation = content if current_evidence_shadow_enabled.get() else None
             # EVO-20260823-12be9cac: 成功翻转 + 登记正帧（存在 + 元数据，查询时 stat 对账）
             from llm_loop.tools.path_registry import register_seen

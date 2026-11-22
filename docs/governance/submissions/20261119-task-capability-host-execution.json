@@ -1,0 +1,189 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261119-task-capability-host-execution",
+  "summary": "Bounded Task Host capability foundation for staged integration; browser/service Task mutations remain HOLD and no production Host is installed.",
+  "components": [
+    {
+      "component_id": "host-authority-runtime",
+      "paths": [
+        "scripts/host_task_lease_issuer.py",
+        "src/llm_loop/core/loop/lifecycle.py",
+        "src/llm_loop/core/run_context.py",
+        "src/llm_loop/core/task_capabilities.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/task_authority.py",
+        "src/llm_loop/tools/task_execution.py",
+        "src/llm_loop/tools/task_runtime.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host-signed Task Lease, session binding, Goal/Task/Lane/CAS validation and Run ContextVar activation",
+      "disposition": "Introduce a root-owned Host trust/issuer contract and a fail-closed resolver; no production Host install is part of this PR.",
+      "evidence": [
+        "Ed25519, revocation, Goal/Task and Run tests pass; macOS exact /Library root:admin exception, dedicated-root rejection and issuer file+directory fsync are negative-tested.",
+        "Production root-owned trust and real GLM Run are not yet tested."
+      ],
+      "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
+      "model_evidence_veto_recovery_exit": "Only a verified Host binding plus active Goal/in-progress Task can grant a Task context; missing/partial anchors HOLD; no model text can self-sign.",
+      "rollback_route": "Revert the feature via protected PR; Host install and physical service restart are separate Owner-approved actions.",
+      "declaration_id": "host-authority"
+    },
+    {
+      "component_id": "file-command-git-sandbox",
+      "paths": [
+        "src/llm_loop/config.py",
+        "src/llm_loop/tools/builtin/edit_file.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/builtin/read_file.py",
+        "src/llm_loop/tools/builtin/task_git_commit.py",
+        "src/llm_loop/tools/managed_git.py",
+        "src/llm_loop/tools/task_files.py",
+        "src/llm_loop/tools/task_sandbox.py",
+        "src/llm_loop/workspace/file_service.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Task-scoped file, command, sandbox and bounded managed Git commit adapters",
+      "disposition": "Allow explicitly signed project roots and Lane files through FD-fixed operations and native Seatbelt; expose commit-only broker, never arbitrary Git/push/merge.",
+      "evidence": [
+        "Mac Seatbelt cross-project create/rename and linked-worktree unit E2E passed.",
+        "Model-facing Git commit and hardlink/Task-done negative tests passed; Linux bwrap real-host validation pending."
+      ],
+      "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
+      "model_evidence_veto_recovery_exit": "Any missing signature, owner, file identity, sandbox or Lane/CAS evidence denies effects; unknown commit outcome requires reconciliation before retry.",
+      "rollback_route": "Revert the feature via protected PR; Host install and physical service restart are separate Owner-approved actions.",
+      "declaration_id": "file-git"
+    },
+    {
+      "component_id": "desktop-browser-service",
+      "paths": [
+        "src/llm_loop/browser/action.py",
+        "src/llm_loop/tools/builtin/desktop_operate.py",
+        "src/llm_loop/tools/builtin/service_control.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Exact application/window desktop authorization and safe browser/service Task hold",
+      "disposition": "Keep Task IDE AX type HOLD until Host can attest editor-document identity independently of AXTextArea role; reject Task browser mutation until OS CDP binding and Task service restart until worker-side fence exist.",
+      "evidence": [
+        "Desktop targeted tests cover signed bundle/TCC and VS Code integrated-terminal AXTextArea negative cases; browser/service targeted tests 101 passed.",
+        "No real LFL process TCC, browser OS CDP mapping or detached worker physical-effect verification claimed."
+      ],
+      "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
+      "model_evidence_veto_recovery_exit": "IDE Task type, browser and service Task mutations HOLD until independently attested target/worker identity; desktop PID/window/bundle and TCC are still rechecked; never downgrade release gates.",
+      "rollback_route": "Revert the feature via protected PR; Host install and physical service restart are separate Owner-approved actions.",
+      "declaration_id": "desktop-browser-service"
+    },
+    {
+      "component_id": "design-tests-receipts",
+      "paths": [
+        "docs/design/DESIGN-20261119-task-capability-host-execution-v1.md",
+        "docs/governance/HOST-TASK-LEASE-BOOTSTRAP-20261119.md",
+        "docs/governance/submissions/20261119-task-capability-host-execution.json",
+        "tests/guards/function_size_baseline.json",
+        "tests/unit/test_browser_task_capability.py",
+        "tests/unit/test_desktop_task_capability.py",
+        "tests/unit/test_execute_command_scrubs_env.py",
+        "tests/unit/test_execute_command_task_capability.py",
+        "tests/unit/test_file_service_task_hash.py",
+        "tests/unit/test_host_task_lease_issuer.py",
+        "tests/unit/test_managed_git.py",
+        "tests/unit/test_service_control_task_capability.py",
+        "tests/unit/test_task_authority.py",
+        "tests/unit/test_task_capabilities.py",
+        "tests/unit/test_task_file_tools.py",
+        "tests/unit/test_task_files.py",
+        "tests/unit/test_task_git_commit_tool.py",
+        "tests/unit/test_task_runtime.py",
+        "tests/unit/test_task_sandbox.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Frozen design, Host bootstrap runbook, architecture coverage and negative regression tests",
+      "disposition": "Record exact changed paths and measured limits; do not treat simulated tests as production Host authorization.",
+      "evidence": [
+        "Architecture guards 52 passed; Task/Git/factory/Run broad suite 269 passed, 4 skipped; environment-access and local-time guards pass; Ruff/Pyright ratchets new diagnostics 0.",
+        "Earlier Reviewer PASS and full R9 exit 1 were bound to a previous SHA; the new candidate must pass independent review and original full R9 exit 0, remote CI and protected merge before production Host install."
+      ],
+      "verification_level": "Local verification only; independent Reviewer/R9/CI and production Host install are not complete.",
+      "model_evidence_veto_recovery_exit": "Failed architecture coverage or review is a merge blocker; preserve historical receipts and roll back by protected PR.",
+      "rollback_route": "Revert the feature via protected PR; Host install and physical service restart are separate Owner-approved actions."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-authority",
+      "g1": {
+        "necessity": "Eliminate capability/OS execution mismatch without widening the global shell sandbox."
+      },
+      "g2": {
+        "authority_owner": "Root-owned Host issuer and OS TCC/Seatbelt or bwrap own physical authorization; LFL may only consume verified grants.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses native OS policy and existing Goal/Lane/Host review and protected GitHub gates; no self-signed root authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "Unit tests for real Ed25519 bindings, revocation, Goal/Task state and generator resume pass.",
+          "Production root-owned trust and real GLM Run are not yet tested."
+        ],
+        "recovery_or_reason": "Only a verified Host binding plus active Goal/in-progress Task can grant a Task context; missing/partial anchors HOLD; no model text can self-sign."
+      },
+      "g4": {
+        "rollback": "Revert via protected PR; do not silently remove or install OS identities.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0 on exact SHA before full R9",
+          "Original full R9 exit 0 and remote CI before protected main merge",
+          "Separate Owner approval before Host install and real GLM Run"
+        ]
+      }
+    },
+    {
+      "declaration_id": "file-git",
+      "g1": {
+        "necessity": "Eliminate capability/OS execution mismatch without widening the global shell sandbox."
+      },
+      "g2": {
+        "authority_owner": "Root-owned Host issuer and OS TCC/Seatbelt or bwrap own physical authorization; LFL may only consume verified grants.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses native OS policy and existing Goal/Lane/Host review and protected GitHub gates; no self-signed root authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "Mac Seatbelt cross-project create/rename and linked-worktree unit E2E passed.",
+          "Model-facing Git commit and hardlink/Task-done negative tests passed; Linux bwrap real-host validation pending."
+        ],
+        "recovery_or_reason": "Any missing signature, owner, file identity, sandbox or Lane/CAS evidence denies effects; unknown commit outcome requires reconciliation before retry."
+      },
+      "g4": {
+        "rollback": "Revert via protected PR; do not silently remove or install OS identities.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0 on exact SHA before full R9",
+          "Original full R9 exit 0 and remote CI before protected main merge",
+          "Separate Owner approval before Host install and real GLM Run"
+        ]
+      }
+    },
+    {
+      "declaration_id": "desktop-browser-service",
+      "g1": {
+        "necessity": "Eliminate capability/OS execution mismatch without widening the global shell sandbox."
+      },
+      "g2": {
+        "authority_owner": "Root-owned Host issuer and OS TCC/Seatbelt or bwrap own physical authorization; LFL may only consume verified grants.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses native OS policy and existing Goal/Lane/Host review and protected GitHub gates; no self-signed root authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "Desktop targeted tests 240 passed; browser/service targeted tests 101 passed.",
+          "No real LFL process TCC, browser OS CDP mapping or detached worker physical-effect verification claimed."
+        ],
+        "recovery_or_reason": "Browser and service Task mutations HOLD; desktop PID/window/bundle and TCC are rechecked before delivery; never downgrade release gates."
+      },
+      "g4": {
+        "rollback": "Revert via protected PR; do not silently remove or install OS identities.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0 on exact SHA before full R9",
+          "Original full R9 exit 0 and remote CI before protected main merge",
+          "Separate Owner approval before Host install and real GLM Run"
+        ]
+      }
+    }
+  ]
+}

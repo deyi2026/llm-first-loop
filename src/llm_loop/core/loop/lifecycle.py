@@ -36,6 +36,9 @@ from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
 )
 from llm_loop.core.run_context import (
+    current_task_execution as _current_task_execution,
+)
+from llm_loop.core.run_context import (
     current_workspace_root as _current_workspace_root,
 )
 from llm_loop.core.trace_leak.ingress_token import (
@@ -53,6 +56,14 @@ if TYPE_CHECKING:
     from llm_loop.llm.client import StreamDelta
 
 logger = logging.getLogger(__name__)
+
+def _resolve_run_task(session_id: str, run_workspace: str, data_dir: Any) -> Any:
+    """Only a Host-owned binding after the real Run lease can activate a Task."""
+    from llm_loop.tools.task_runtime import resolve_task_execution_for_run
+
+    return resolve_task_execution_for_run(
+        session_id=session_id, workspace_root=run_workspace, data_dir=data_dir
+    )
 
 
 def _dispatch_operator_event_budget(
@@ -237,10 +248,10 @@ class _RunEntrypointMixin:
                 runner.is_cancelled(session_id)
                 and self.session.active_run_generation(session_id) == run_generation
             )
-
         _run_stack = ExitStack()
         _run_save_token: object | None = None
         _budget_execution: Any = None
+        _task_execution: Any = None
         _event_step_scope: ExitStack | None = None
         inner = None
 
@@ -248,6 +259,7 @@ class _RunEntrypointMixin:
         def _bound_run_context():
             nonlocal _event_step_scope
             sid_token = _current_session_id.set(session_id)
+            task_token = _current_task_execution.set(_task_execution)
             generation_token = _current_run_generation.set(run_generation)
             wait_budget_token = current_wait_budget.set(run_wait_budget)
             wait_cancel_token = current_wait_cancel_check.set(_wait_cancelled)
@@ -288,17 +300,17 @@ class _RunEntrypointMixin:
                 current_wait_cancel_check.reset(wait_cancel_token)
                 current_wait_budget.reset(wait_budget_token)
                 _current_run_generation.reset(generation_token)
+                _current_task_execution.reset(task_token)
                 _current_session_id.reset(sid_token)
-
         try:
             self._run_state_mgr.activate(session_id)
             if not _run_stack.enter_context(self.session.run_lease(session_id)):
                 from llm_loop.core.loop.runner import SessionBusyError
-
                 raise SessionBusyError(f"会话 {session_id} 正由另一进程执行，请稍后重试")
             _run_save_token = self.session._activate_run_save_token(
                 session_id, run_generation=run_generation
             )
+            _task_execution = _resolve_run_task(session_id, run_workspace, self.settings.data_dir)
             # I5-A: a separately operator-signed, zero-send Web intent may be
             # consumed only after the real Run lease, generation and human
             # ingress exist. Ordinary production routes install no intent.
@@ -371,7 +383,6 @@ class _RunEntrypointMixin:
                     )
             if _budget_execution is not None:
                 _register_budget(_budget_execution)
-
             def _on_human_event(event: Any) -> None:
                 nonlocal _budget_execution
                 if _event_plan is None and _admin_plan is None and _t1_plan is None:
