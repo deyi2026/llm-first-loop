@@ -466,6 +466,16 @@
       "source": "local",
       "tree_sha256": "e053bdf800bf555170df6063085d3fbe4af280b033e75e274f552325e6bbc007"
     },
+    "owner-finality-verify": {
+      "approved_at": "2026-11-22T23:42:23+08:00",
+      "approved_by": "baseline",
+      "files": {
+        "SKILL.md": "d6ce9f7917ced81aacd7d02e92a3698d39915cde24f68071abf7733bd1d3913d"
+      },
+      "sha256": "d6ce9f7917ced81aacd7d02e92a3698d39915cde24f68071abf7733bd1d3913d",
+      "source": "local",
+      "tree_sha256": "b52dcf667f0603c2a4ee95eb505d2cadfba8bbe2a72da04514ee35f8a2408870"
+    },
     "paper-search-pro": {
       "approved_at": "2026-11-01T11:37:25+08:00",
       "approved_by": "baseline",
