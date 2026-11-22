@@ -134,6 +134,9 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
         # EVO-20261106-fbcfb3e6: 自动复核（可选参数字段；旧记录缺失即默认）。
         "auto_verify",
         "auto_verify_receipt",
+        "task_lease_id",
+        "task_owner_session_id",
+        "task_worktree",
     }
 )
 _MANAGED_SERVICES = ("web", "feishu", "wecom", "learning")
@@ -703,6 +706,11 @@ class ServiceControlAction:
     # 自动复核回执（JSON 文本；空=未请求或未到终态）：
     # {"verified_at","desired_generation","verdict","converged","summary"}
     auto_verify_receipt: str = ""
+    # Task restart only: immutable Host-derived Lease binding for detached
+    # worker-side revalidation. Empty on all legacy/operator actions.
+    task_lease_id: str = ""
+    task_owner_session_id: str = ""
+    task_worktree: str = ""
 
     def __post_init__(self) -> None:
         if self.schema != _ACTION_SCHEMA:
@@ -717,6 +725,15 @@ class ServiceControlAction:
             raise ValueError("deployment_generation must be positive")
         if self.status not in _ACTION_STATUSES:
             raise ValueError(f"invalid action status: {self.status}")
+        task_fields = (self.task_lease_id, self.task_owner_session_id, self.task_worktree)
+        if (any(task_fields) or self.origin == "task-restart") and (
+            not all(task_fields)
+            or self.origin != "task-restart"
+            or self.target == "all"
+            or not os.path.isabs(self.task_worktree)
+            or os.path.realpath(self.task_worktree) != self.task_worktree
+        ):
+            raise ValueError("task_service_action_binding_invalid")
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -753,6 +770,9 @@ class ServiceControlAction:
             worker_pid=int(raw.get("worker_pid") or 0),
             auto_verify=bool(raw.get("auto_verify") or False),
             auto_verify_receipt=str(raw.get("auto_verify_receipt") or ""),
+            task_lease_id=str(raw.get("task_lease_id") or ""),
+            task_owner_session_id=str(raw.get("task_owner_session_id") or ""),
+            task_worktree=str(raw.get("task_worktree") or ""),
         )
 
 
@@ -1507,6 +1527,9 @@ class ManagedServiceDeploymentStore:
         requester_session_id: str,
         origin: str = "",
         auto_verify: bool = False,
+        task_lease_id: str = "",
+        task_owner_session_id: str = "",
+        task_worktree: str = "",
     ) -> ServiceControlAction:
         if target not in _ACTION_TARGETS:
             raise ValueError(f"unsupported restart target: {target}")
@@ -1536,6 +1559,9 @@ class ManagedServiceDeploymentStore:
                 # svc_deploy 5.3：审计可区分动作来源（update = publish+restart 单语义）。
                 origin=origin,
                 auto_verify=bool(auto_verify),
+                task_lease_id=task_lease_id,
+                task_owner_session_id=task_owner_session_id,
+                task_worktree=task_worktree,
             )
             self._write_action_unlocked(action)
             # §8.2-4：受理与屏障建立原子化——屏障建立失败时受理一并失败，
@@ -4629,6 +4655,45 @@ def _recover_failed_restart(
         )
 
 
+def _task_service_worker_fence(
+    action: ServiceControlAction, deployment: ManagedServiceDeployment,
+) -> str | None:
+    """Re-resolve exact Host Lease in the detached worker before any restart.
+
+    Task authority is never inherited from the model/parent process or a
+    serialized approval flag. Revoke, TTL, Goal/Task, parent and Lane/CAS are
+    verified again against the installed Host issuer and current ledgers.
+    """
+    if not action.task_lease_id:
+        return None
+    if action.origin != "task-restart" or action.target == "all":
+        return "task_service_action_binding_invalid"
+    from llm_loop.core.run_context import current_session_id, current_task_execution
+    from llm_loop.tools import task_runtime
+
+    data_dir = deployment.data_dir or str(Path(deployment.runtime_root) / "data")
+    try:
+        task = task_runtime.resolve_task_execution_for_run(
+            session_id=action.task_owner_session_id,
+            workspace_root=action.task_worktree,
+            data_dir=data_dir,
+        )
+        if task is None or task.lease_id != action.task_lease_id:
+            return "task_service_lease_changed"
+        if task.owner_session_id != action.task_owner_session_id:
+            return "task_service_owner_changed"
+        owner_token = current_session_id.set(task.owner_session_id)
+        task_token = current_task_execution.set(task)
+        try:
+            task.authorize_service(action.target, os_permission_granted=True)
+        finally:
+            current_task_execution.reset(task_token)
+            current_session_id.reset(owner_token)
+        return None
+    except Exception as exc:  # noqa: BLE001 - no trust/OS/ledger failure is an allow
+        return str(getattr(exc, "reason_code", "task_service_worker_fence_unavailable"))
+
+
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
     # 生命周期加固（GOAL-20261008-f143e051）：本进程即执行 worker，进入任何
     # 检查/等待前先盖章 pid——deployment 缺失即时退出的孤儿场景同样受益
@@ -4738,6 +4803,17 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                     next_step=encode_next_steps(binding_next_steps(binding_facts)),
                 )
                 return 4, None, "", None
+            # A Task Lease is not a detached-worker capability. Re-resolve
+            # from root-owned Host authority AFTER idle/CAS/binding and while
+            # holding the physical lifecycle lease. Failure has zero effects.
+            task_denial = _task_service_worker_fence(latest, desired_now)
+            if task_denial is not None:
+                _mark_action(
+                    store, latest, status="failed",
+                    detail=f"task_service_worker_fence_denied: {task_denial}",
+                    release_barriers=_barrier_services_for_target(latest.target),
+                )
+                return 7, desired_now, "", True
             running = _mark_action(store, latest, status="running")
 
             # L3/5.x: 把模型经结构化出口举证推进的一致性门禁注入脚本；物理门
@@ -4752,6 +4828,16 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 extra=extra_env,
             )
             restarted_at = _local_now()
+            # Recheck again immediately before the physical subprocess; the
+            # Lease may have been revoked during plan/env preparation.
+            task_denial = _task_service_worker_fence(running, desired_now)
+            if task_denial is not None:
+                _mark_action(
+                    store, running, status="failed",
+                    detail=f"task_service_worker_fence_denied: {task_denial}",
+                    release_barriers=_barrier_services_for_target(running.target),
+                )
+                return 7, desired_now, "", True
             # S4a（2026-09-22 15:12 gen66 事故 svc-8011bb79）：物理重启绝不能
             # 继承调用方 stdio 的生命周期。S3 的 inline CLI 把自身管道交给
             # restart_mirror，读端先死时 bash 在写输出瞬间被 SIGPIPE 杀死
