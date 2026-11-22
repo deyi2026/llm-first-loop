@@ -1821,11 +1821,24 @@
       "parent_commit": "a07fdbe67866c9aa98a229c587ff21d9c7d4e306",
       "reason": "EVO-20261121-efa320ab 新增两处环境读取，均沿用本仓库既有范式：(1) src/llm_loop/web/vision.py|vision_max_side|read|<dynamic>——新增 WEB_VISION_MAX_SIDE 降采样阈值开关，与同文件 _vision_backend/_vision_timeout/_vision_model 五个既有旋钮完全同模式直读 os.environ.get；(2) src/llm_loop/browser/cdp_probe.py|discover_cdp_candidates|read|LFL_BROWSER_PERCEPTION_CDP_URL——只读 CDP 端点发现读取显式 opt-in 端点配置，与既有关联配置读取同模式。独立合并审查 PASS（merge-review-gate 子代理 subagent_1d3a2a1b1a01，base=5708f28/head=59d6dff，P0=0/P1=0）+ 窄复审 PASS（subagent_1b64000ce4ff，head=e9b2a35）。棘轮仍单向：此后任何新增环境访问仍须再次显式登记，否则 tests/unit/test_runtime_env_access_gate.py 转红",
       "relaxations": true
+    },
+    {
+      "added_helper_signatures": {},
+      "added_keys": [],
+      "added_module_import_signatures": {},
+      "added_signatures": {
+        "src/llm_loop/browser/cdp_probe.py|_discover_candidates_impl|read|LFL_BROWSER_PERCEPTION_CDP_URL": 1
+      },
+      "at": "2026-11-22T12:44:25+00:00",
+      "cap_changes": {},
+      "parent_commit": "e870806a16f5d9b8914751890f2870459826c7ab",
+      "reason": "函数拆分导致的登记键迁移：cdp_probe 的候选发现实现拆出 _discover_candidates_impl（为把候选发现纳入整体探测时限），其中的 os.environ 读取随实现一同迁入；访问范围未变——同一文件、同一配置键 LFL_BROWSER_PERCEPTION_CDP_URL、同一只读方式、仍为 1 处，无新增环境变量或新读取点。棘轮仍单向：此后任何新增环境访问仍须再次显式登记。",
+      "relaxations": true
     }
   ],
   "schema_version": 2,
   "signature_counts": {
-    "src/llm_loop/browser/cdp_probe.py|discover_cdp_candidates|read|LFL_BROWSER_PERCEPTION_CDP_URL": 1,
+    "src/llm_loop/browser/cdp_probe.py|_discover_candidates_impl|read|LFL_BROWSER_PERCEPTION_CDP_URL": 1,
     "src/llm_loop/cache_guard/guard.py|_check_privacy|read|<dynamic>": 1,
     "src/llm_loop/codearts/audit.py|_redact|bulk:items|<all>": 1,
     "src/llm_loop/cognitive/cache_tags.py|tagging_enabled_for|bulk:raw|<all>": 1,

@@ -175,3 +175,14 @@ PR #93 的首次 CI 中「门禁（pytest + ruff + pyright）」红：pyright �
 已修：`_run_vision` 返回类型改为 `VisionGeometry | None`（`TYPE_CHECKING` 导入，不引入
 运行期依赖），本地 pyright 对 13 个改动文件复核 **errorCount=0**；ruff 与 44 项定向用例
 仍全绿。
+
+## 13. 远端 CI 第二轮失败（环境访问棘轮登记键迁移，2026-11-22）
+
+PR #93 的第二次 CI 中「门禁」红：`tests/unit/test_runtime_env_access_gate.py` 的**单向棘轮**
+判定「新增/扩大」——本演进把候选发现实现拆出 `_discover_candidates_impl`（为把候选发现纳入
+整体探测时限），其中那处 `os.environ` 读取随之迁入新函数，而基线按「文件+函数+键」登记，
+故登记键随之变化。这**不是**访问范围扩大：同一文件、同一配置键、同一只读方式、仍为 1 处。
+已按仓库既定通道 `scripts/audit_runtime_env.py --update-baseline` 显式登记（reason +
+parent_commit=e870806…；基线 diff 仅为键改名 + 一条登记日志），并按 RULE-AI-35 复测：向
+`src/llm_loop/` 注入一次 `os.environ` 读取后，棘轮仍以 AssertionError 拦下并指认新签名；
+移除注入后 11 项转绿。
