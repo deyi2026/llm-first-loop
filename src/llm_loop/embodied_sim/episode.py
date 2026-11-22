@@ -21,7 +21,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from llm_loop.embodied_sim.contract import GrantRevokedError
+from llm_loop.embodied_sim.contract import (
+    GrantRevokedError,
+    VerificationStatus,
+    verify_receipt_fields,
+)
 from llm_loop.embodied_sim.goal_binding import GoalBinding, bind_goal
 from llm_loop.embodied_sim.oracle import judge_place, make_receipt
 from llm_loop.embodied_sim.policy import DecisionError
@@ -78,7 +82,7 @@ class _GoalState:
         self.last_local: dict[str, Any] = {"ok": False, "evidence": {}}
         self.receipt: dict[str, Any] | None = None
         self.goal_history: list[dict[str, Any]] = [{"event": "GOAL_BOUND", **self.goal.receipt_fields()}]
-        self.action_goal: dict[str, str] = {}
+        self.action_goal: dict[str, tuple[str, int]] = {}
         self.action_history: dict[str, int] = {}
 
     # -- invalidation ------------------------------------------------------
@@ -144,8 +148,10 @@ class _GoalState:
         """A duplicate intent is only replayable for the goal it ran against."""
         prior = self.action_goal.get(action_id)
         current = bind_goal(self.scene, version=self.goal.version)
-        if prior is not None and (current.digest != prior
-                                  or current.scene_epoch != self.goal.scene_epoch):
+        if prior is not None and (current.digest, current.scene_epoch) != prior:
+            # Compare against the goal the action RAN against, not the currently
+            # bound one: after a reset the bound epoch moves with the rebind, so a
+            # same-pose replay would otherwise be silently absorbed.
             return self._rebind_or_abort(DUPLICATE_STALE, action_id=action_id)
         self.trace.append({"event": "duplicate_intent_key", "action_id": action_id})
         return _PROCEED
@@ -173,10 +179,11 @@ class _GoalState:
         self.history.append({"decision": decision, "status": status,
                              "goal_digest": self.goal.digest})
         self.action_history[action_id] = len(self.history) - 1
-        self.action_goal[action_id] = self.goal.digest
+        self.action_goal[action_id] = (self.goal.digest, self.goal.scene_epoch)
 
     def record_voided(self, decision: dict[str, Any], status: dict[str, Any], action_id: str,
-                      *, goal_version: int, goal_digest: str, t_s: float) -> None:
+                      *, goal_version: int, goal_digest: str, goal_epoch: int,
+                      t_s: float) -> None:
         """Keep an executed action visible, tagged with the goal it RAN against.
 
         Its evidence is void (the goal moved mid-action). Tagging it with the
@@ -191,7 +198,7 @@ class _GoalState:
                            "goal_digest": goal_digest, "stale_goal": True})
         self.history.append({"decision": decision, "status": status,
                              "goal_digest": goal_digest, "stale_goal": True})
-        self.action_goal[action_id] = goal_digest
+        self.action_goal[action_id] = (goal_digest, goal_epoch)
 
     def verify(self) -> GoalBinding | str:
         """At verification: bind the goal observed *now*; never reuse an older one."""
@@ -202,14 +209,31 @@ class _GoalState:
             return self._rebind_or_abort(GOAL_MOVED_BEFORE_VERIFICATION)
         return verify_goal
 
-    def judge_place(self, binding: GoalBinding, experiment_id: str) -> dict[str, Any]:
+    def judge_place(self, binding: GoalBinding, experiment_id: str,
+                    executed: tuple[str, int] | None = None) -> dict[str, Any]:
         snap = self.scene.oracle_snapshot()
         ok, evidence = judge_place(snap, list(binding.pos))
         self.last_local = {"ok": ok, "evidence": evidence, "goal": binding.receipt_fields()}
         self.receipt = make_receipt(snap, "place", ok, evidence, experiment_id,
                                     self.scene.scene_epoch, goal_binding=binding.receipt_fields())
-        if ok:
+        # M2 self-check: a claim may only become pending when its receipt names the
+        # goal the action RAN against and that receipt verifies against it. This is
+        # not tautological with `binding`: `executed` is the goal captured before
+        # the action completed, so a later rebind cannot lend its goal to an older
+        # action's evidence (fail closed -> hold).
+        status = verify_receipt_fields(self.receipt, self.scene.scene_epoch,
+                                       expected_goal_digest=binding.digest)
+        executed_matches = executed is None or (binding.digest, binding.scene_epoch) == executed
+        if ok and status is VerificationStatus.PENDING_ORACLE and executed_matches:
             self.claim_state = CLAIM_PENDING
+            return self.receipt
+        self.claim_state = CLAIM_HOLD
+        if ok and not executed_matches:
+            self.trace.append({"event": "RECEIPT_GOAL_MISMATCH",
+                               "goal_digest": binding.digest,
+                               "executed_digest": executed[0] if executed else None})
+        elif ok:
+            self.trace.append({"event": "RECEIPT_SELF_CHECK_FAILED", "status": str(status)})
         return self.receipt
 
 
@@ -365,7 +389,7 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             goals.hold(status)
             terminated_by = HOLD_UNKNOWN
             break
-        executed_version, executed_digest = goals.goal.version, goals.goal.digest
+        executed = (goals.goal.version, goals.goal.digest, goals.goal.scene_epoch)
         # M2: re-observe immediately after the action, before any judgement.
         verdict = goals.after_action(str(result["action_id"]), status)
         if verdict is ABORT:
@@ -376,8 +400,8 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             # trace/history, but never attribute it to the goal it did not run
             # against (its evidence was voided by the rebind).
             goals.record_voided(decision, status, str(result["action_id"]),
-                                goal_version=executed_version,
-                                goal_digest=executed_digest, t_s=round(elapsed(), 3))
+                                goal_version=executed[0], goal_digest=executed[1],
+                                goal_epoch=executed[2], t_s=round(elapsed(), 3))
             replans += 1
             continue
         goals.record(decision, status, str(result["action_id"]), t_s=round(elapsed(), 3))
@@ -394,7 +418,8 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
         if not isinstance(verify_goal, GoalBinding):
             raise AssertionError(f"verify() returned {verify_goal!r} past ABORT/REPLAN")
         if claim_kind == "place":
-            goals.judge_place(verify_goal, experiment_id)
+            goals.judge_place(verify_goal, experiment_id,
+                              executed=goals.action_goal.get(str(result["action_id"])))
             if goals.claim_state == CLAIM_PENDING:
                 terminated_by = "place_verified_locally_pending_oracle"
                 break

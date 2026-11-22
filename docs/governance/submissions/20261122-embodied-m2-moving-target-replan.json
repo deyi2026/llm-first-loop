@@ -14,13 +14,16 @@
       ],
       "control_machinery": true,
       "owning_subsystem": "Embodied M2 episode runner, claim receipts and Oracle verification surface",
-      "disposition": "Add goal_binding.py (GoalBinding: canonical pose at 1e-6 m, sha256(kind, pos), scene_epoch, monotonic version). run_episode re-observes the target and epoch at four points and, on change, invalidates claims, rebinds and replans (SCENE_RESET / GOAL_CHANGED_MID_ACTION / GOAL_CHANGED_BEFORE_VERIFICATION / DUPLICATE_INTENT_STALE_GOAL). make_receipt records the binding; verify_receipt, verify_receipt_fields and ClaimGuard.evaluate_claim accept expected_goal_digest and fail closed on a missing block, a tampered block or a block for another goal. max_goal_rebinds (default 4) bounds endless motion and ends in hold_unknown, never success. Indeterminate execution outranks a concurrent move and ends in hold_unknown_pending_reconciliation without a verdict. No new authority: VERIFIED still requires the UID463-signed Oracle acceptance.",
+      "disposition": "Add goal_binding.py (GoalBinding: canonical pose at 1e-6 m, sha256(kind, pos), scene_epoch, monotonic version). run_episode re-observes the target and epoch at four points and, on change, invalidates claims, rebinds and replans (SCENE_RESET / GOAL_CHANGED_MID_ACTION / GOAL_CHANGED_BEFORE_VERIFICATION / DUPLICATE_INTENT_STALE_GOAL). make_receipt records the binding; verify_receipt, verify_receipt_fields and ClaimGuard.evaluate_claim accept expected_goal_digest and fail closed on a missing block, a tampered block or a block for another goal. Second review round: a present block is validated even when the caller passes no expected digest, the duplicate-intent key stores the scene epoch the action actually ran against (a same-pose reset can no longer absorb a replay), and judge_place verifies its own receipt against the bound goal before a claim becomes pending (RECEIPT_GOAL_MISMATCH when the executed goal differs), and a block's scene_epoch must agree with the receipt. max_goal_rebinds (default 4) bounds endless motion and ends in hold_unknown, never success. Indeterminate execution outranks a concurrent move and ends in hold_unknown_pending_reconciliation without a verdict. No new authority: VERIFIED still requires the UID463-signed Oracle acceptance.",
       "evidence": [
         "Defect and fix are stated against M1 code in docs/embodied-m2-moving-target.md: M1 cached the observed tray_pos once before the action loop and judged every place claim against it; the receipt carried only scene_epoch, so the evidence did not name the goal the claim was about.",
-        "tests/embodied_m2/test_moving_target_runner.py: 11 deterministic scenarios (move while deciding; move during an action, with the voided action kept visible and tagged with the goal it ran against; out-of-band move between actions; move while release settles before verification; scene reset mid-episode; duplicate intent after a move; indeterminate execution; indeterminate execution plus concurrent move where HOLD wins; replay of a voided action surfacing as stale-duplicate; rebind budget; M1 t_s trace regression).",
+        "tests/embodied_m2/test_moving_target_runner.py: 12 deterministic scenarios (move while deciding; move during an action, with the voided action kept visible and tagged with the goal it ran against; out-of-band move between actions; move while release settles before verification; scene reset mid-episode; scene reset with the same pose then a replay of the previous epoch's intent; duplicate intent after a move; indeterminate execution; indeterminate execution plus concurrent move where HOLD wins; replay of a voided action surfacing as stale-duplicate; rebind budget; M1 t_s trace regression). Duplicate detection is per episode; a replay carried over from a previous episode is not attributed to the new goal and emits no event in this slice.",
         "tests/embodied_m2/test_goal_binding.py: digest stability and noise, stale receipt, missing goal block, tampered block, stale epoch — every case fails closed.",
+        "tests/embodied_m2/test_goal_binding.py::test_tampered_goal_block_fails_even_without_an_expected_digest, ::test_self_consistent_goal_block_without_expectation_stays_pending_oracle and ::test_goal_block_epoch_must_agree_with_the_receipt: a present block is validated even when the caller passes no expectation, and a block epoch that disagrees with the receipt fails closed.",
+        "tests/embodied_m2/test_goal_binding.py::test_judge_place_holds_when_the_receipt_names_another_actions_goal: with the happy path asserted first, a receipt naming a goal the action did not run against ends in hold with RECEIPT_GOAL_MISMATCH — the self-check is not tautological with the binding.",
+        "tests/embodied_m2/test_moving_target_runner.py::test_same_pose_after_a_scene_reset_cannot_replay_a_prior_intent: a reset keeps the pose but not the goal, and the replay surfaces as DUPLICATE_INTENT_STALE_GOAL where a digest-only key would have absorbed it.",
         "tests/embodied_m2/test_mujoco_moving_target.py: real MuJoCo scene with the tray moved environment-side (model.body_pos + mj_forward) and real contact physics; includes a discrimination proof — the same final snapshot fails against the old pose and passes against the new one.",
-        "M1 physics revalidated under the M2 runner: experiments/embodied/m1/calibration/M1-baseline-v1.8.json records 10/10 engineering seeds deterministic with policies, tolerances, budgets and step counts unchanged; v1.7 stays frozen as the pre-M2 record.",
+        "M1 physics revalidated under the M2 runner: M1-baseline-v1.8.json and M1-baseline-v1.9.json both record 10/10 engineering seeds deterministic with policies, tolerances, budgets and step counts unchanged (v1.8 = first M2 pass, v1.9 = after the second review round's code fixes); v1.7 stays frozen as the pre-M2 record.",
         "Full local gate R9 reached exit 0 (ci_gate 全链路通过) on tree 5bbfb5424 before this manifest was added; the manifest-amended SHA must establish its own R9 exit 0 and independent reviewer PASS."
       ],
       "verification_level": "R9 exit 0 and an independent reviewer PASS exist for 5bbfb5424. A.5, full R9, a fresh exact-SHA reviewer PASS and remote CI must all be re-established on the manifest-amended SHA before merge.",
@@ -34,15 +37,17 @@
         "experiments/embodied/m1/calibration/M1-baseline-v1.7.json.sha256",
         "experiments/embodied/m1/calibration/M1-baseline-v1.8.json",
         "experiments/embodied/m1/calibration/M1-baseline-v1.8.json.sha256",
+        "experiments/embodied/m1/calibration/M1-baseline-v1.9.json",
+        "experiments/embodied/m1/calibration/M1-baseline-v1.9.json.sha256",
         "scripts/embodied/m1_calibrate.py"
       ],
       "control_machinery": false,
       "owning_subsystem": "Embodied M1 physics calibration artifact and its generator script",
-      "disposition": "Add M1-baseline-v1.7.json (pre-M2 record) and M1-baseline-v1.8.json (M1 physics revalidated under the M2 runner) with their sha256 sidecars; m1_calibrate.py bumps BASELINE_VERSION to v1.8, pins goal_binding.py into code_sha256 and records why policies and physics are unchanged. This is evidence, not authority: no tolerance, budget, geometry or step count moved.",
+      "disposition": "Add M1-baseline-v1.7.json (pre-M2 record), M1-baseline-v1.8.json (first M2 pass) and M1-baseline-v1.9.json (after the second review round's code fixes) with their sha256 sidecars; m1_calibrate.py bumps BASELINE_VERSION to v1.9, pins goal_binding.py into code_sha256 and records why policies and physics are unchanged. This is evidence, not authority: no tolerance, budget, geometry or step count moved.",
       "evidence": [
-        "git diff origin/main...HEAD -- scripts/embodied/m1_calibrate.py touches only BASELINE_VERSION, the goal_binding.py pin in code_shas() and the provenance note; the simulation constants come from src/llm_loop/embodied_sim/scene.py and sim.py, which this PR does not modify.",
-        "tests/embodied_m1/test_calibration.py pins the sha256 of v1.7 and v1.8 in FROZEN_RECEIPT_SHA256 and retargets the metadata-consistency case to v1.8 while keeping v1.7 frozen.",
-        "The recorded sidecars under experiments/embodied/m1/calibration/ match the baselines they describe (M1-baseline-v1.8.json.sha256 = 98dabd78d0e852c3d7a1e95e5bacaf28b2e7121790b32bee8ace232ded1719ce)."
+        "git diff origin/main...HEAD -- scripts/embodied/m1_calibrate.py touches only BASELINE_VERSION, the goal_binding.py pin in code_shas() and the provenance notes; the simulation constants come from src/llm_loop/embodied_sim/scene.py and sim.py, which this PR does not modify.",
+        "tests/embodied_m1/test_calibration.py pins the sha256 of v1.7, v1.8 and v1.9 in FROZEN_RECEIPT_SHA256 and targets the metadata-consistency case at v1.9 (asserting BASELINE_VERSION agrees) while keeping v1.7/v1.8 frozen.",
+        "The recorded sidecars under experiments/embodied/m1/calibration/ match the baselines they describe (v1.8 = 98dabd78d0e852c3d7a1e95e5bacaf28b2e7121790b32bee8ace232ded1719ce, v1.9 = eac131254de8efa786a248c2d48d8cd1e9e37f7fe97072d386bbecced29898e7)."
       ],
       "verification_level": "Baselines are generated by scripts/embodied/m1_calibrate.py and asserted by tests/embodied_m1/test_calibration.py; the amended SHA must still pass full R9 and remote CI.",
       "model_evidence_veto_recovery_exit": "A calibration file is an observation record, not a review verdict; it cannot substitute for the required R9, reviewer PASS or CI status.",
@@ -101,7 +106,7 @@
       "disposition": "Add the single manifest that declares this PR's exact changed-path set. It is required because scripts/check_architecture_submission.py on 5bbfb5424 returned exit 2 with 'found 0' submission manifests for the changed-path set.",
       "evidence": [
         "python scripts/check_architecture_submission.py --base 080ec9083f9e292dd31045f6b5be3d285b1c5d9c --head HEAD returned exit 2 (no manifest) before this file existed.",
-        "The manifest partitions all 21 pre-existing changed paths plus itself into five components with no path owned twice."
+        "The manifest partitions all 23 pre-existing changed paths plus itself into five components with no path owned twice."
       ],
       "verification_level": "To be verified by the exact changed-path coverage check on the amended SHA.",
       "model_evidence_veto_recovery_exit": "A declaration is not a signature, review verdict or exception; missing A.5 evidence must block the PR rather than waive the gate.",
@@ -117,13 +122,14 @@
       "g2": {
         "authority_owner": "The UID463-signed Oracle acceptance and the Host review gates remain the only verifier and signer; the episode runner and ClaimGuard stay enforcement-only and cannot mint VERIFIED.",
         "relationship": "reuse",
-        "non_duplication": "make_receipt, verify_receipt, verify_receipt_fields and ClaimGuard.evaluate_claim are reused and only gain a goal block plus expected_goal_digest. A missing block, a block whose digest does not match its own pose, or a block for another goal all return FAILED_CLAIM. Indeterminate execution and an exhausted rebind budget end in hold_unknown, which is not success."
+        "non_duplication": "make_receipt, verify_receipt, verify_receipt_fields and ClaimGuard.evaluate_claim are reused and only gain a goal block plus expected_goal_digest. A missing block, a block whose digest does not match its own pose, or a block for another goal all return FAILED_CLAIM. A present block is validated even when the caller passes no expectation; the duplicate-intent key carries the epoch the action ran against; and judge_place refuses to leave a claim pending unless its own receipt verifies against the bound goal. Indeterminate execution and an exhausted rebind budget end in hold_unknown, which is not success."
       },
       "g3": {
         "model_evidence": [
           "tests/embodied_m2/test_moving_target_runner.py covers the four re-observation points and the HOLD-over-move precedence deterministically.",
           "tests/embodied_m2/test_mujoco_moving_target.py proves discrimination on real MuJoCo physics: the same final snapshot fails against the old pose and passes against the new one.",
-          "M1-baseline-v1.8.json records 10/10 seeds deterministic under the M2 runner with unchanged policies and physics.",
+          "M1-baseline-v1.8.json (first M2 pass) and M1-baseline-v1.9.json (after the second review round) each record 10/10 seeds deterministic under the M2 runner with unchanged policies and physics.",
+          "tests/embodied_m2/test_goal_binding.py::test_tampered_goal_block_fails_even_without_an_expected_digest and test_moving_target_runner.py::test_same_pose_after_a_scene_reset_cannot_replay_a_prior_intent cover the two fail-open holes the second review round found.",
           "R9 exit 0 (ci_gate 全链路通过) and an independent reviewer PASS exist for 5bbfb5424, the tree before this manifest."
         ],
         "recovery_or_reason": "Model narrative, HOLD/pending states and receipts bound to earlier SHAs are not acceptance. The only recovery path is a fresh observation, a fresh receipt bound to the current goal digest and a real UID463-signed Oracle acceptance."

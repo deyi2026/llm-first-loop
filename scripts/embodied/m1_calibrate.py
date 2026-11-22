@@ -39,7 +39,7 @@ from llm_loop.embodied_sim.scene import SCENE_CONSTANTS, build_scene_xml  # noqa
 from llm_loop.embodied_sim.skills import GRASP_MECHANISM, EmbodiedInterface  # noqa: E402
 
 OUT_DIR = ROOT / "experiments" / "embodied" / "m1" / "calibration"
-BASELINE_VERSION = "M1-baseline-v1.8"
+BASELINE_VERSION = "M1-baseline-v1.9"
 CALIBRATION_SEEDS = list(range(10))  # engineering baseline seeds; prereg paired seeds (20261117+) remain Gate D
 LIFT_SETTLE_STEPS = 30
 PLACE_SETTLE_STEPS = 150
@@ -389,7 +389,15 @@ def main() -> int:
                                   "fail-closed missing-receipt guard); POLICIES AND PHYSICS STILL "
                                   "UNCHANGED - of the code_sha256 pins, only episode.py's "
                                   "behavior-relevant digest moved (m1_calibrate.py also differs by "
-                                  "this version bump and note)."),
+                                  "this version bump and note). "
+                                  "M2 second review round (M1-baseline-v1.9): verify_receipt_fields "
+                                  "now validates a present goal block even when the caller passes no "
+                                  "expected digest (a tampered block can no longer ride on the absent "
+                                  "expectation), the duplicate-intent key stores the scene epoch the "
+                                  "action actually ran against (a same-pose scene reset no longer "
+                                  "absorbs a replay of the previous epoch), and judge_place "
+                                  "self-checks its own receipt against the bound goal before a claim "
+                                  "becomes pending. POLICIES AND PHYSICS STILL UNCHANGED."),
         "legacy_note_v13": ("TASK-008 approved minimal geometry fix: wrist_rod relocated "
                                   "from link3 z[0.14,0.18] (overlapping tool作用区 z~0.123..0.163 "
                                   "incl. tool_site 0.143) to wrist-rear conduit z[0.18,0.22]; "

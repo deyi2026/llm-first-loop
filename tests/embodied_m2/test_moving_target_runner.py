@@ -241,3 +241,27 @@ def test_goal_rebind_budget_bounds_a_continuously_moving_target() -> None:
     assert result["claim_state"] == "hold_unknown"
     assert result["goal_rebinds"] == 2
     assert result["oracle_receipt"] is None
+
+
+def test_same_pose_after_a_scene_reset_cannot_replay_a_prior_intent() -> None:
+    """The pose can survive a reset; the goal cannot. Replaying an intent recorded
+    in the previous epoch must surface as stale — a digest-only duplicate key misses
+    it because the pose, and therefore the digest, is unchanged."""
+    scene = FakeScene()
+    iface = FakeIface(scene)
+    reset = {"done": False}
+
+    def on_advance(_iface: FakeIface) -> None:
+        if not reset["done"]:
+            reset["done"] = True
+            scene.reset()  # same tray pose, new scene epoch
+
+    iface.on_advance = on_advance
+    replay = decision("move_to", "replay-key", x=0.0, y=0.18, z=0.12)
+    provider = ScriptedProvider([lambda _s: replay, lambda _s: replay])
+    result = run_episode(iface, provider, BUDGET)
+
+    assert "SCENE_RESET" in _events(result)
+    assert "DUPLICATE_INTENT_STALE_GOAL" in _events(result)
+    assert result["goal_rebinds"] >= 1
+    assert result["claim_state"] != "pending_oracle"

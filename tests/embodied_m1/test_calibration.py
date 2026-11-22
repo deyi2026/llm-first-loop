@@ -31,6 +31,7 @@ FROZEN_RECEIPT_SHA256 = {
     'M1-baseline-v1.6.5.json': '3dedf7a8efa4288ef1a1ca785d1ae0e117b1e4b0e6e4cd2177f8677e24c71967',
     'M1-baseline-v1.7.json': '7f803cc1d54dcce350d953aa71bec200bba6b3cf4214f308176fcd39326d74f9',
     'M1-baseline-v1.8.json': '98dabd78d0e852c3d7a1e95e5bacaf28b2e7121790b32bee8ace232ded1719ce',
+    'M1-baseline-v1.9.json': 'eac131254de8efa786a248c2d48d8cd1e9e37f7fe97072d386bbecced29898e7',
     'M1-baseline-v1.6.json': '4e0f943a69910b8c9de3ad6f3459f5128b534c793f961d4e6cf8f4dfb37e819f',
     'M1-baseline-v1.json': 'f0ff6c636f8fbc188af95def72695e9b903c98fb4eb9abab6eb6ffb692919dcf',
 }
@@ -67,13 +68,14 @@ def test_is_unexpected_contact_hard_gate_matrix():
     assert f("cube_geom", "tray_floor") is False
 
 
-def test_v18_local_baseline_pass_metadata_consistent():
-    """v1.8 = M2 review-fixed episode.py over the unchanged v1.6.2 physics.
+def test_v19_local_baseline_pass_metadata_consistent():
+    """v1.9 = the receipt for the review-fixed M2 code over the unchanged v1.6.2 physics.
 
-    v1.7 stays frozen for QA traceability; it is no longer the receipt that
-    describes the live code, so the code-hash pin moved to v1.8.
+    v1.7/v1.8 stay frozen for QA traceability; neither describes the live code any
+    more, so the live code-hash pin moved to v1.9.
     """
-    data = json.loads((CAL / "M1-baseline-v1.8.json").read_text())
+    assert m1_calibrate.BASELINE_VERSION == "M1-baseline-v1.9"
+    data = json.loads((CAL / "M1-baseline-v1.9.json").read_text())
     assert data["verdict"] == "LOCAL_PHYSICS_BASELINE_PASS"
     assert data["independent_oracle"].startswith("PENDING_ORACLE")
     assert data["structural_whitelist_verification"]["adjacent_assembly_confirmed"] is True

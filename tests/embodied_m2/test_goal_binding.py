@@ -109,3 +109,44 @@ def test_malformed_goal_block_is_failed_claim(bad: dict) -> None:
     receipt = _receipt(scene)
     receipt["goal"] = bad
     assert verify_receipt(receipt, scene.scene_epoch, expected_goal_digest="anything") is VerificationStatus.FAILED_CLAIM
+
+
+def test_tampered_goal_block_fails_even_without_an_expected_digest() -> None:
+    """A caller that passes no expectation must not become a fail-open bypass."""
+    scene = FakeScene()
+    receipt = _receipt(scene)
+    receipt["goal"]["pos"] = [0.5, 0.5, 0.01]  # digest no longer matches pos
+    assert verify_receipt(receipt, scene.scene_epoch) is VerificationStatus.FAILED_CLAIM
+
+
+def test_self_consistent_goal_block_without_expectation_stays_pending_oracle() -> None:
+    scene = FakeScene()
+    receipt = _receipt(scene)
+    assert verify_receipt(receipt, scene.scene_epoch) is VerificationStatus.PENDING_ORACLE
+
+
+def test_goal_block_epoch_must_agree_with_the_receipt() -> None:
+    scene = FakeScene()
+    receipt = _receipt(scene)
+    receipt["goal"]["scene_epoch"] = scene.scene_epoch + 1
+    assert verify_receipt(receipt, scene.scene_epoch) is VerificationStatus.FAILED_CLAIM
+
+
+def test_judge_place_holds_when_the_receipt_names_another_actions_goal() -> None:
+    """The self-check is not tautological: `executed` is the goal captured before
+    the action completed, so a later rebind cannot lend its goal to older evidence."""
+    from llm_loop.embodied_sim.episode import CLAIM_PENDING, EpisodeBudget, _GoalState
+
+    scene = FakeScene()
+    scene.placed = True  # a genuinely placed cube, so the judgement itself passes
+    state = _GoalState(scene, EpisodeBudget())
+    binding = state.goal
+
+    state.judge_place(binding, "exp", executed=(binding.digest, binding.scene_epoch))
+    assert state.claim_state == CLAIM_PENDING
+
+    state.claim_state = "none"
+    state.trace.clear()
+    state.judge_place(binding, "exp", executed=("some-other-goal", binding.scene_epoch))
+    assert state.claim_state != CLAIM_PENDING
+    assert any(e.get("event") == "RECEIPT_GOAL_MISMATCH" for e in state.trace)

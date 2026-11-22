@@ -238,6 +238,26 @@ class ClaimGuard:
 INDEPENDENT_ORACLE_EXECUTION = "host_uid_463_managed"
 
 
+def _goal_block_matches(goal: Any, expected_goal_digest: str | None) -> bool:
+    """A `goal` block is self-consistent and (when given) matches the expected goal."""
+    if not isinstance(goal, dict):
+        return False
+    kind = goal.get("kind")
+    pos = goal.get("pos")
+    digest = goal.get("digest")
+    if not isinstance(kind, str) or not isinstance(digest, str):
+        return False
+    if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+        return False
+    try:
+        recomputed = goal_digest(kind, pos)
+    except (TypeError, ValueError):
+        return False
+    if recomputed != digest:
+        return False
+    return expected_goal_digest is None or digest == str(expected_goal_digest)
+
+
 def verify_receipt_fields(receipt: dict[str, Any], expected_scene_epoch: int, *,
                           expected_goal_digest: str | None = None) -> VerificationStatus:
     """Fail-closed receipt validation. Anything missing/stale/mismatched is FAILED_CLAIM.
@@ -247,31 +267,33 @@ def verify_receipt_fields(receipt: dict[str, Any], expected_scene_epoch: int, *,
     by construction (see INDEPENDENT_ORACLE_EXECUTION note above).
 
     `expected_goal_digest` binds the receipt to the goal observed for THIS claim
-    (M2). When supplied, a receipt without a well-formed `goal` block, a block
-    whose digest does not match its own pose, or a block for a different goal is
-    all FAILED_CLAIM — a stale goal is never silently accepted.
+    (M2). A `goal` block is validated whenever it is present — a block whose
+    digest does not match its own pose, or a block for a different goal than the
+    one the caller observed, is FAILED_CLAIM. A receipt that carries no goal block
+    is FAILED_CLAIM as soon as the caller supplies an expected digest; only the
+    legacy M1 shape (no block, no expectation) keeps its old epoch/verdict path.
     """
     required = ("experiment_id", "scene_epoch", "verdict", "oracle_impl", "oracle_execution",
                 "snapshot_sha256", "evidence")
     if any(k not in receipt for k in required):
         return VerificationStatus.FAILED_CLAIM
-    if expected_goal_digest is not None:
-        goal = receipt.get("goal")
-        if not isinstance(goal, dict):
+    goal = receipt.get("goal")
+    if goal is None:
+        if expected_goal_digest is not None:
             return VerificationStatus.FAILED_CLAIM
-        kind = goal.get("kind")
-        pos = goal.get("pos")
-        digest = goal.get("digest")
-        if not isinstance(kind, str) or not isinstance(digest, str):
-            return VerificationStatus.FAILED_CLAIM
-        if not isinstance(pos, (list, tuple)) or len(pos) < 3:
-            return VerificationStatus.FAILED_CLAIM
-        try:
-            recomputed = goal_digest(kind, pos)
-        except (TypeError, ValueError):
-            return VerificationStatus.FAILED_CLAIM
-        if recomputed != digest or digest != str(expected_goal_digest):
-            return VerificationStatus.FAILED_CLAIM
+    elif not _goal_block_matches(goal, expected_goal_digest):
+        # Fail closed even when the caller passed no expectation: a tampered block
+        # must never be waved through by the absence of an expected digest.
+        return VerificationStatus.FAILED_CLAIM
+    elif goal.get("scene_epoch") is not None:
+        # The block claims a scene epoch; it must agree with the receipt's own.
+        block_epoch = goal.get("scene_epoch")
+        receipt_epoch = receipt.get("scene_epoch")
+        if block_epoch is not None:
+            if not isinstance(block_epoch, int) or not isinstance(receipt_epoch, int):
+                return VerificationStatus.FAILED_CLAIM
+            if block_epoch != receipt_epoch:
+                return VerificationStatus.FAILED_CLAIM
     if int(receipt["scene_epoch"]) != int(expected_scene_epoch):
         return VerificationStatus.FAILED_CLAIM
     if str(receipt["verdict"]).lower() != "success":
