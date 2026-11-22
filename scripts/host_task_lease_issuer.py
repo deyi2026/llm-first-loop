@@ -393,10 +393,33 @@ def _create(path: Path, raw: bytes, mode: int) -> None:
             written = stream.write(raw)
             require(written == len(raw), "issuer_write_incomplete")
             stream.flush()
+            # os.open's mode is masked by the Host process umask (normally 077).
+            # Public signed receipts must remain readable by the Owner process.
+            os.fchmod(fd, mode)
             os.fsync(stream.fileno())
     finally:
         os.close(fd)
     _sync_parent_directory(path)
+
+
+def _publish_binding_directory(directory: Path) -> None:
+    """Make only an issuer-owned, non-symlink session directory readable."""
+    fd = os.open(
+        directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    )
+    try:
+        info = os.fstat(fd)
+        require(
+            stat.S_ISDIR(info.st_mode)
+            and info.st_uid == _ISSUER_UID
+            and info.st_mode & 0o022 == 0,
+            "issuer_binding_dir_untrusted",
+        )
+        os.fchmod(fd, 0o755)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    _sync_parent_directory(directory)
 
 
 def _replace_state_durable(temporary: Path, state_path: Path) -> None:
@@ -484,14 +507,7 @@ def main(argv: list[str] | None = None) -> int:
                 binding_dir = _BASE / "bindings" / session_digest
                 with contextlib.suppress(FileExistsError):
                     binding_dir.mkdir(mode=0o755)
-                _sync_parent_directory(binding_dir)
-                binding_info = binding_dir.lstat()
-                require(
-                    stat.S_ISDIR(binding_info.st_mode)
-                    and binding_info.st_uid == _ISSUER_UID
-                    and binding_info.st_mode & 0o022 == 0,
-                    "issuer_binding_dir_untrusted",
-                )
+                _publish_binding_directory(binding_dir)
                 _create(
                     binding_dir / f"{ident}.json",
                     canonical(
