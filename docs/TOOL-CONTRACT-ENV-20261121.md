@@ -165,3 +165,13 @@ ruff 对改动文件全部通过。
   守护线程里受同一墙钟预算约束，且逐目录检查时限（到点即停止读盘并如实回报未读取数）。
 
 五轮共 9 条 P2 全部修复，并补 10 条回归用例。
+
+## 12. 远端 CI 首轮失败（pyright 新诊断，2026-11-22）
+
+PR #93 的首次 CI 中「门禁（pytest + ruff + pyright）」红：pyright 报 4 条**新**诊断
+（`read_image.py` 里送检几何对象声明为 `object`，却访问 `input_width` / `input_height` /
+`scale_x` / `scale_y`），「改动文件零红」门禁因此 DENIED；`managed-premerge-evidence` 为
+连带失败（A.5 / 安全扫描 / privacy-gate / 两个 Linux 安装验收 / env 泄漏门禁均绿）。
+已修：`_run_vision` 返回类型改为 `VisionGeometry | None`（`TYPE_CHECKING` 导入，不引入
+运行期依赖），本地 pyright 对 13 个改动文件复核 **errorCount=0**；ruff 与 44 项定向用例
+仍全绿。
