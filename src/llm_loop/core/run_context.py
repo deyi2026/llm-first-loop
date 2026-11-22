@@ -76,6 +76,13 @@ current_write_scope: contextvars.ContextVar[WriteScope | None] = contextvars.Con
     "llm_loop_current_write_scope", default=None
 )
 
+# Task Capability v1 opt-in: only a trusted Host/Runtime may seed a verified
+# TrustedTaskExecution. Never populate from model/tool arguments or webpage text.
+# No context = legacy sandbox semantics, with no implicit capability grant.
+current_task_execution: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "llm_loop_current_task_execution", default=None
+)
+
 # EVO-20261012-65475c5a (E5): child 会话内的取消事件与等待预算。
 # runner 在 child context 内注入（父会话保持 None，互不影响）；
 # wait 工具读取它们实现「可取消的只读等待 + 每 child 累计上限」。

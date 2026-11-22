@@ -152,7 +152,9 @@ def _strip_quotes(val: str) -> str:
     return val
 
 
-def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
+def _raw_env(
+    name: str, env: Mapping[str, str] | None = None, *, preserve_raw: bool = False
+) -> str:
     """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
 
     防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
@@ -161,6 +163,8 @@ def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
     """
     values = os.environ if env is None else env
     if name in values:
+        if preserve_raw:
+            return values[name]
         return _strip_quotes(_strip_inline_comment(values[name]))
     return ""
 
