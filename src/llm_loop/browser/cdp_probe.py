@@ -206,14 +206,47 @@ def _bounded_timeout(request_timeout: float, deadline: float | None) -> float | 
     return min(request_timeout, remaining)
 
 
+def _call_with_deadline(
+    client: Any, url: str, request_timeout: float, deadline: float | None
+) -> tuple[Any, str | None]:
+    """在绝对墙钟预算内完成一次 GET → (响应, 超时说明).
+
+    httpx 的超时是**无活动超时**：对端只要持续滴字节就能把一次请求拖到任意长，
+    因此它不构成绝对时限（review P2-1）。这里把请求放进独立守护线程，调用方只等
+    「剩余预算」：预算用尽即放弃该请求并如实回报（线程为 daemon，不阻塞进程退出）。
+    """
+    import threading
+    import time
+
+    box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            box["value"] = client.get(url, timeout=httpx.Timeout(request_timeout))
+        except BaseException as exc:  # noqa: BLE001 - 异常回传调用方如实回报
+            box["error"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    remaining = request_timeout
+    if deadline is not None:
+        remaining = min(request_timeout, max(0.0, deadline - time.monotonic()))
+    thread.join(remaining)
+    if thread.is_alive():
+        return None, "已达整体探测时限（请求未在时限内完成）"
+    if "error" in box:
+        raise box["error"]
+    return box.get("value"), None
+
+
 def probe_cdp_endpoint(
     base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S, deadline: float | None = None
 ) -> dict[str, Any]:
     """探测单个 CDP 端点（只读元信息）.
 
     ``deadline`` 是整体探测时限的绝对时刻（``time.monotonic()`` 时基）。给定后，
-    端点内的两次请求**共享**这一预算：预算用尽后第二次请求不再发出
-    （review P2-2：单请求超时不是整体上界）。
+    端点内的两次请求**共享**这一预算，且每次请求都受**墙钟**上限约束
+    （review P2-1/P2-2：单请求无活动超时不是绝对时限）。
 
     Returns:
         dict: url / reachable / browser / protocol_version / target_count / error。
@@ -244,9 +277,12 @@ def probe_cdp_endpoint(
             if first_timeout is None:
                 report["error"] = "已达整体探测时限，未发起请求"
                 return report
-            response = client.get(
-                f"{base}/json/version", timeout=httpx.Timeout(first_timeout)
+            response, timeout_note = _call_with_deadline(
+                client, f"{base}/json/version", first_timeout, deadline
             )
+            if timeout_note:
+                report["error"] = timeout_note
+                return report
             if response.status_code >= 400:
                 report["error"] = f"HTTP {response.status_code}"
                 return report
@@ -261,15 +297,16 @@ def probe_cdp_endpoint(
                 report["note"] = "已达整体探测时限，目标计数未读取"
             else:
                 try:
-                    targets = client.get(
-                        f"{base}/json/list", timeout=httpx.Timeout(second_timeout)
+                    targets, timeout_note = _call_with_deadline(
+                        client, f"{base}/json/list", second_timeout, deadline
                     )
-                    if targets.status_code < 400:
-                        listed = targets.json()
-                        report["target_count"] = len(listed) if isinstance(listed, list) else None
                 except Exception:  # noqa: BLE001 - 目标计数失败不影响可达性判定
-                    report["target_count"] = None
-                    report["note"] = "目标计数读取失败（目标数未知）"
+                    targets, timeout_note = None, "目标计数读取失败（目标数未知）"
+                if timeout_note:
+                    report["note"] = timeout_note
+                elif targets is not None and targets.status_code < 400:
+                    listed = targets.json()
+                    report["target_count"] = len(listed) if isinstance(listed, list) else None
             report["reachable"] = True
             return report
     except Exception as exc:  # noqa: BLE001 - 连接失败如实回报

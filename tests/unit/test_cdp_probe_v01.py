@@ -246,3 +246,43 @@ def test_probe_tool_reports_truncated_extra_inputs() -> None:
 
     assert "已丢弃 4 个未探测" in result.content
     assert result.content.count("已丢弃 4 个未探测") == 2
+
+
+def test_probe_endpoint_enforces_wall_clock_deadline_against_drip_endpoint() -> None:
+    """对端持续滴字节时也必须在绝对时限内返回（无活动超时不是墙钟上限）."""
+    import time
+
+    class _DripHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 约定
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            try:
+                while True:
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                    time.sleep(0.05)
+            except OSError:
+                return
+
+        def log_message(self, *args) -> None:  # pragma: no cover - 静默测试服务器
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _DripHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        started = time.monotonic()
+        report = cdp_probe.probe_cdp_endpoint(
+            url, timeout_s=5.0, deadline=time.monotonic() + 0.4
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert elapsed < 1.5
+    assert report["reachable"] is False
+    assert "时限" in (report["error"] or "")
