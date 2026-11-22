@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import env_channel
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKER = ROOT / "scripts/embodied/m1_host_oracle_worker_macos.py"
 PROFILE = ROOT / "scripts/embodied/m1_host_oracle_macos.sb"
@@ -101,7 +103,10 @@ def test_fixed_installation_contract():
     assert "root_dir=/Library/PrivilegedHelperTools/lfl-oracle-v1" in installer
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS Seatbelt only")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or env_channel.nested_sandbox_exec(),
+    reason="macOS Seatbelt only (nested sandbox-exec cannot apply profiles)",
+)
 def test_kernel_profile_denies_network_device_and_write(tmp_path):
     script = """
 import errno,json,socket,sys
