@@ -41,7 +41,7 @@ DUPLICATE_STALE = "DUPLICATE_INTENT_STALE_GOAL"
 
 REPLAN = "replan"
 ABORT = "abort"
-_PROCEED = None
+_PROCEED = "proceed"
 
 
 @dataclass(frozen=True)
@@ -128,7 +128,7 @@ class _GoalState:
         return REPLAN if self.rebind(reason) else ABORT
 
     # -- observation points ------------------------------------------------
-    def precheck(self) -> str | None:
+    def precheck(self) -> str:
         """Before each decision: never plan against a goal that already moved."""
         observed = bind_goal(self.scene, version=self.goal.version)
         if observed.scene_epoch != self.goal.scene_epoch:
@@ -137,7 +137,7 @@ class _GoalState:
             return self._rebind_or_abort(GOAL_MOVED_BETWEEN_ACTIONS)
         return _PROCEED
 
-    def duplicate(self, action_id: str) -> str | None:
+    def duplicate(self, action_id: str) -> str:
         """A duplicate intent is only replayable for the goal it ran against."""
         prior = self.action_goal.get(action_id)
         current = bind_goal(self.scene, version=self.goal.version)
@@ -147,7 +147,7 @@ class _GoalState:
         self.trace.append({"event": "duplicate_intent_key", "action_id": action_id})
         return _PROCEED
 
-    def after_action(self, action_id: str, status: dict[str, Any]) -> str | None:
+    def after_action(self, action_id: str, status: dict[str, Any]) -> str:
         """Immediately after the action: epoch reset voids everything, a moved
         goal voids this action's evidence."""
         post = bind_goal(self.scene, version=self.goal.version)
@@ -338,6 +338,11 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
         if failure is REPLAN:
             replans += 1
             continue
+        if result is None:  # fail closed: no receipt, no claim, no judgement
+            replans += 1
+            goals.trace.append({"event": "execution_without_receipt",
+                                "attempts": attempts, "failure": failure})
+            continue
         if result.get("idempotent"):
             verdict = goals.duplicate(str(result["action_id"]))
             if verdict is ABORT:
@@ -376,6 +381,8 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
         if verify_goal is REPLAN:
             replans += 1
             continue
+        if not isinstance(verify_goal, GoalBinding):
+            raise AssertionError(f"verify() returned {verify_goal!r} past ABORT/REPLAN")
         if claim_kind == "place":
             goals.judge_place(verify_goal, experiment_id)
             if goals.claim_state == CLAIM_PENDING:

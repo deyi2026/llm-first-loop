@@ -13,9 +13,9 @@
     9
   ],
   "code_sha256": {
-    "scripts/embodied/m1_calibrate.py": "d0122456c4f548a0f1b61262c8bdd905c3adf385ec59b02e29e3b769a70a8aba",
+    "scripts/embodied/m1_calibrate.py": "96a92102b790f17c598b06395512acda4f94c7d0476dadbae858302ec2fd301f",
     "src/llm_loop/embodied_sim/contract.py": "d548c8fee20022541e770015e78338497353fa18acc239c17b11cab8d339ea17",
-    "src/llm_loop/embodied_sim/episode.py": "6a17037a180d78febd123ac11d8bcbd0f727c21690219be89004ed8cfc2a0864",
+    "src/llm_loop/embodied_sim/episode.py": "c116a5ba6dc87647ae2bb210353b9ccce0ad3a1a8dc98232a9d843b456f57792",
     "src/llm_loop/embodied_sim/goal_binding.py": "815de2d84651ba00a2e38b3b62d3d93f49a18aa791dd34a941708c2b95523f22",
     "src/llm_loop/embodied_sim/oracle.py": "45deb108fa399a9e44ad2ffdb019b2f99dfb3f347b6c701c824495e097c2d829",
     "src/llm_loop/embodied_sim/policy.py": "26915aee1294dbba4072a3002a97dbf4cbed7b7613073b08fadc75145cf264b4",
@@ -65,7 +65,7 @@
   "prereg_note": "engineering baseline seeds 0..9; prereg paired_seed_start=20261117 is reserved for the Gate D B1/B2 comparison and untouched",
   "revision_note": "v1.2: unexpected non-gripper cube contacts promoted to a HARD verdict gate (no_unexpected_contacts); per-stage attribution and first-contact geometry added. Tolerances and oracle thresholds remain UNCHANGED. v1 initial-fail preserved as M1-baseline-v1-initial-fail.json; v1.1 (pre-safety-gate) preserved as M1-baseline-v1.1-pre-safety-gate.json",
   "scene_constants_digest": "bf4224d8b7100831746564a04d601f269fb4d98d7ae5381040853dcc535e7a21",
-  "scene_revision_reason": "v1.6.2 approved geometry (collision ENABLED on both changed geoms): l3 capsule end z0.12->0.11 and wrist_rod z[0.14,0.18]->z[0.12,0.13]; move_to physics-step budget 600->750 (same 2ms timestep); _MOVE_TOL_M 13mm, 20-step settle, oracle thresholds and 180s episode budget unchanged. IK reachability is kinematically fine - the prior blockers were DYNAMIC CONTACTS (rod-cube scuffing then rod-floor obstruction), not pose unreachability. Failed candidates preserved: M1-baseline-v1.3-fail-rod-rear.json (0/10, approach_down 46.7mm), M1-baseline-v1.4.json (0/10, grasp miss), M1-baseline-v1.6-pre-metadata-fix.json (10/10 physics PASS but stale v1.2-era metadata, corrected here). M2 (issue #79, M1-baseline-v1.7): episode.py now re-observes the target and scene epoch after every action and at goal verification, and binds each claim to that goal digest (goal_binding.py, oracle/contract goal checks); POLICIES AND PHYSICS UNCHANGED - no tolerance, budget, geometry or step count moved, which is why the same 10 engineering seeds must reproduce exactly. Moving-target behaviour is covered by tests/embodied_m2/, not by this receipt. M2 review fix (M1-baseline-v1.8): episode.py's rebind now returns REPLAN at every re-observation point, voided actions stay attributed to the goal they ran against, and tool_action trace events keep t_s; POLICIES AND PHYSICS STILL UNCHANGED - only episode.py's digest moved.",
+  "scene_revision_reason": "v1.6.2 approved geometry (collision ENABLED on both changed geoms): l3 capsule end z0.12->0.11 and wrist_rod z[0.14,0.18]->z[0.12,0.13]; move_to physics-step budget 600->750 (same 2ms timestep); _MOVE_TOL_M 13mm, 20-step settle, oracle thresholds and 180s episode budget unchanged. IK reachability is kinematically fine - the prior blockers were DYNAMIC CONTACTS (rod-cube scuffing then rod-floor obstruction), not pose unreachability. Failed candidates preserved: M1-baseline-v1.3-fail-rod-rear.json (0/10, approach_down 46.7mm), M1-baseline-v1.4.json (0/10, grasp miss), M1-baseline-v1.6-pre-metadata-fix.json (10/10 physics PASS but stale v1.2-era metadata, corrected here). M2 (issue #79, M1-baseline-v1.7): episode.py now re-observes the target and scene epoch after every action and at goal verification, and binds each claim to that goal digest (goal_binding.py, oracle/contract goal checks); POLICIES AND PHYSICS UNCHANGED - no tolerance, budget, geometry or step count moved, which is why the same 10 engineering seeds must reproduce exactly. Moving-target behaviour is covered by tests/embodied_m2/, not by this receipt. M2 review fix (M1-baseline-v1.8): episode.py's rebind now returns REPLAN at every re-observation point, voided actions stay attributed to the goal they ran against, tool_action trace events keep t_s, and the None-vs-REPLAN ambiguity is gone (explicit string verdicts + a fail-closed missing-receipt guard); POLICIES AND PHYSICS STILL UNCHANGED - only episode.py's digest moved.",
   "scene_xml_sha256": "73c60557b93e8b2b1bf3b5061034a574ba504420707a6bbb03880dfc26409e13",
   "seed_results": [
     {
@@ -396,7 +396,7 @@
       "unexpected_collisions_final_snapshot_only": [],
       "unexpected_collisions_full_trajectory": [],
       "unexpected_contacts_by_stage": {},
-      "wall_s": 0.047
+      "wall_s": 0.046
     },
     {
       "failure_reason": null,
@@ -726,7 +726,7 @@
       "unexpected_collisions_final_snapshot_only": [],
       "unexpected_collisions_full_trajectory": [],
       "unexpected_contacts_by_stage": {},
-      "wall_s": 0.044
+      "wall_s": 0.045
     },
     {
       "failure_reason": null,
@@ -1056,7 +1056,7 @@
       "unexpected_collisions_final_snapshot_only": [],
       "unexpected_collisions_full_trajectory": [],
       "unexpected_contacts_by_stage": {},
-      "wall_s": 0.045
+      "wall_s": 0.046
     },
     {
       "failure_reason": null,
@@ -1386,7 +1386,7 @@
       "unexpected_collisions_final_snapshot_only": [],
       "unexpected_collisions_full_trajectory": [],
       "unexpected_contacts_by_stage": {},
-      "wall_s": 0.046
+      "wall_s": 0.047
     },
     {
       "failure_reason": null,
@@ -1716,7 +1716,7 @@
       "unexpected_collisions_final_snapshot_only": [],
       "unexpected_collisions_full_trajectory": [],
       "unexpected_contacts_by_stage": {},
-      "wall_s": 0.047
+      "wall_s": 0.046
     }
   ],
   "structural_whitelist_verification": {
@@ -1729,5 +1729,5 @@
     "shared_joint": "shoulder_pan"
   },
   "verdict": "LOCAL_PHYSICS_BASELINE_PASS",
-  "wall_total_s": 0.603
+  "wall_total_s": 0.601
 }

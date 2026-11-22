@@ -382,9 +382,11 @@ def main() -> int:
                                   "tests/embodied_m2/, not by this receipt. "
                                   "M2 review fix (M1-baseline-v1.8): episode.py's rebind now "
                                   "returns REPLAN at every re-observation point, voided actions "
-                                  "stay attributed to the goal they ran against, and "
-                                  "tool_action trace events keep t_s; POLICIES AND PHYSICS STILL "
-                                  "UNCHANGED - only episode.py's digest moved."),
+                                  "stay attributed to the goal they ran against, tool_action trace "
+                                  "events keep t_s, and the None-vs-REPLAN ambiguity is gone "
+                                  "(explicit string verdicts + a fail-closed missing-receipt "
+                                  "guard); POLICIES AND PHYSICS STILL UNCHANGED - only episode.py's "
+                                  "digest moved."),
         "legacy_note_v13": ("TASK-008 approved minimal geometry fix: wrist_rod relocated "
                                   "from link3 z[0.14,0.18] (overlapping tool作用区 z~0.123..0.163 "
                                   "incl. tool_site 0.143) to wrist-rear conduit z[0.18,0.22]; "
