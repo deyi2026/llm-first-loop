@@ -48,7 +48,8 @@
         "src/llm_loop/runtime/service_control.py",
         "src/llm_loop/tools/builtin/service_control.py",
         "src/llm_loop/tools/task_execution.py",
-        "tests/unit/test_task_service_worker_fence.py"
+        "tests/unit/test_task_service_worker_fence.py",
+        "docs/governance/submissions/20261123-task-t2-host-binding.json"
       ],
       "control_machinery": true,
       "declaration_id": "task-host-bound-effect-lease",
