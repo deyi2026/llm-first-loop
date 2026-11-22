@@ -1,7 +1,7 @@
 # 0.6.57 受管发行：候选证据与切换计划（Deepin 本机）
 
 - 日期：2026-11-22
-- 状态：候选已由官方 committed-build 入口产出并通过远端 CI；本机切换在本文落盘时尚未执行
+- 状态：候选已由官方 committed-build 入口产出并通过远端 CI；本机切换已完成 stage 与 `publish-wheel` CAS（generation 19→20），物理重启已受理但**延迟到本轮 requester run 结束后**才执行（action `svc-aeede211c4b94219b58420f8c4fb72f7`）；收敛验收须等该动作终态 `succeeded` + `verify_verdict=confirmed_ok` 后据实补记，未满足前不得称已生效
 - 上一发行基线：已安装 0.6.56 / desired generation 19
 - 依据通道：`$HOME/.local/share/lfl/audit/MANAGED_RELEASE_GATE.md`（本机权威受管发行闸）
 
@@ -99,3 +99,34 @@
   处置：按回源结果统一为「10 轮、PASS 在第 6/9/10 轮、其余 7 轮 REVISE」，
   并按权威文件重列 required checks（5 项）与其在 PR head / 合并提交上的 check-run 构成；
   push 回执 `review_history` 字段同步更正计数（原写法 9+3 与 10 轮不能同时成立），结论与 child/candidate 未变。
+
+## 8. 本机切换执行记录（2026-11-22）
+
+- 切换前基线：desired generation 19 / version 0.6.56 / wheel `74a9e0f2…`；
+  live web pid 4159536、feishu pid 4159642、learning pid 1140303，均 `release_version=0.6.56`、
+  `matches_desired_generation=true`；`admission_barriers=[]`。
+- 独立审查：两次 Host `review_admission(kind=full_test)`——首轮 REVISE（P0=0/P1=0/P2=2，两条 P2
+  均为本方证据内部不一致，已按回源结果更正，见第 7 节），次轮
+  `child=subagent_b76916051a6b` PASS（`candidate_sha256=53bb4276…`）。
+- 本地完整门禁 `bash scripts/ci_gate.sh --release`：ruff / 测试环境声明 / pyright / WebUI Vitest
+  （612 passed）/ serial_signal（7 passed）/ serial_perf（6 passed）全绿；全量套件
+  **5 failed, 16376 passed, 179 skipped, 3 xfailed**；退出码 1 的唯一原因是「CI 红数对账」存在
+  5 条未登记新红——这 5 条在 base `07fd45f0` 与 head `080ec90` 同环境同 node id 集合下**完全一致**
+  （同 5 红同 7 绿），且所在 6 个测试文件均未被本次发行增量改动，属宿主/沙盒环境红
+  （bwrap 沙盒内 grant-home 隔离判据、沙盒挂载 mtime 秒级粒度、宿主 127.0.0.1:8000 被非 mlx 服务占用等）；
+  同一提交在 GitHub runner 上同一门禁 exit 0。环境对齐动作：锁定工具链（ruff 0.16.5）、
+  按 CI 方式补装 `mujoco==4.0.1`、`umask 022`、`git fetch --unshallow`（后者使 7 条锚点用例转绿，
+  本地环境红由 462 条收敛到 5 条）。
+- stage：官方安装器 `scripts/install_linux.sh --candidate <wheel> --expected-sha256 105f9815… --no-start`
+  → `.LFL-active-version=0.6.57`、`.LFL-previous-version=0.6.56`，安装后 wheel SHA 与候选一致，
+  0.6.56 完整保留可回滚。
+  （沙盒可见性垫片：沙盒内的用户数据目录是 tmpfs 影子，宿主 uv python 树不可见，
+  既有 0.6.56 的 `venv/bin/python` 软链在沙盒内悬空；垫片只写沙盒 tmpfs、宿主不可见且无宿主改动。）
+- publish：`publish-wheel --lfl-home ROOT --data-dir ROOT/data --expected-generation 19` → CAS
+  19→20，`deployment_id=deploy-bdb7fc6d97c04dbd844f4ff1cc8973d1`，version `0.6.57`，
+  `wheel_sha256=105f9815…`，`webui_artifact_sha256=9588bef8…`（WebUI 源码未变，指纹与 0.6.56 一致）。
+- restart：受管重启已受理，action `svc-aeede211c4b94219b58420f8c4fb72f7`；回执明示
+  `deferred_effect.effective_after_session_end=true`——物理切代在本轮 requester run 结束后由
+  worker 接手，**受理≠完成**。
+- 待补：终态 `confirmed_ok` 后的三服务 live 身份、Web health 版本/SHA、以及宿主侧官方验收器
+  （`audit/verify_managed_release.py` 的 systemd 单元交叉核对在本会话沙盒内不可执行）。
