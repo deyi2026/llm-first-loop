@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261122-deepin-v0657-release-identity",
-  "summary": "0.6.57 受管发行的证据面声明：候选 wheel 由官方 scripts/build_committed_distribution.py 从已合并 main 提交 080ec9083f9e292dd31045f6b5be3d285b1c5d9c 产出（sha256 105f9815…），合并提交上的远端 required checks 全绿，本机受管切换（stage → publish-wheel CAS → restart → 收敛验收）的事实与序列在证据文档中逐步记录。版本身份递增（0.6.56→0.6.57，提交 24036f6）已随 PR #93 由清单 20261122-evo-20261121-efa320ab-vision-contract-upstream.json 覆盖，不在本清单重复声明。本清单不新增控制机制、不放宽任何既有门禁。",
+  "summary": "0.6.57 受管发行的证据面声明：候选 wheel 由官方 scripts/build_committed_distribution.py 从已合并 main 提交 080ec9083f9e292dd31045f6b5be3d285b1c5d9c 产出（sha256 105f9815…），合并提交上的远端 push_and_pr required checks（4 项）全 success、A.5 为 pr_only 不在 push 事件上运行，本机受管切换（stage → publish-wheel CAS → restart → 收敛验收）的事实与序列在证据文档中逐步记录。版本身份递增（0.6.56→0.6.57，提交 24036f6）已随 PR #93 由清单 20261122-evo-20261121-efa320ab-vision-contract-upstream.json 覆盖，不在本清单重复声明。本清单不新增控制机制、不放宽任何既有门禁。",
   "components": [
     {
       "component_id": "deepin-v0657-managed-release-evidence",
@@ -13,7 +13,7 @@
       "disposition": "落盘 0.6.57 候选的实测身份（源 commit、wheel/sdist SHA、构建 provenance、增量统计）、受保护分支 required checks 的权威集合与其在 PR head / 合并提交上的 check-run 构成、独立审查链、本机切换前基线、受管切换序列与回滚判据；只记录事实与既定通道，不新增任何控制机制。",
       "evidence": [
         "候选 wheel sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e，由 scripts/build_committed_distribution.py --ref 080ec9083f9e… 产出，provenance.json 记录 source_commit=080ec90…、webui_source_sha256=e8c515fc…（147 tracked files）、tracked_python_modules=648、offline_build=true。",
-        "required checks 集合以 docs/governance/required-ci-checks.json 为准（5 项）：门禁、安全扫描、managed-premerge-evidence、privacy-gate（均 push_and_pr）与 A.5 架构提交审查（pr_only）；PR #93 head 4678fe6 的 10 项 check-runs 与合并提交 080ec90 的 9 项 check-runs 全为 success（nightly 两项 skipped）。",
+        "required checks 集合以 docs/governance/required-ci-checks.json 为准（5 项）：门禁、安全扫描、managed-premerge-evidence、privacy-gate（均 push_and_pr）与 A.5 架构提交审查（pr_only）。check-run 状态逐项区分：PR #93 head 4678fe6 共 10 项＝8 项 success（5 项 required + 部署 env 泄漏门禁 D4 + 2 项 Linux 用户级安装/卸载真实成品验收 x86_64/aarch64）＋2 项 nightly skipped（真实 LLM 冒烟 + 评测集、信号类测试 50 次稳定性）＋0 项 failed；合并提交 080ec90 共 9 项＝7 项 success（4 项 push_and_pr required + env 泄漏门禁 D4 + 2 项 Linux 安装验收）＋2 项 nightly skipped＋0 项 failed（A.5 为 pr_only，不在 push 事件上运行，故不在该提交的 check-runs 之列）。",
         "切换前基线：desired generation 19 / version 0.6.56 / wheel 74a9e0f2…；web、feishu、learning 三者 live 版本与 wheel SHA 均匹配 desired，matches_desired_generation=true，admission_barriers 为空；wecom 无 live manifest，不在 --target all 物理执行面内，本次不报为已验收。",
         "独立审查：PR #93 上行审查共 10 轮，PASS 出现在第 6/9/10 轮（最终第 10 轮 child=subagent_7cde5c9a6e83），其余 7 轮 REVISE；所审 head 与候选源 080ec90 的树完全一致；视觉契约另有两次 Host full_test PASS。",
         "收敛验收（2026-11-22 补记）：受管重启 action svc-aeede211c4b94219b58420f8c4fb72f7（target=all，generation 20）终态 status=succeeded 且 verify_verdict=confirmed_ok；desired deployment generation=20 / version=0.6.57 / wheel 105f9815…；web、feishu、learning 三者 live release_version=0.6.57、wheel_sha256=105f9815…、matches_desired_generation=true、restart_required=false、reasons 为空；web /health 返回 version=0.6.57 且 build.wheel_sha256=105f9815…。逐条实测值见 docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json；wecom 不在 --target all 物理执行面内（未切代，不计入已收敛集合），宿主侧 systemd 单元交叉核对在本会话沙盒内不可执行（systemctl --user 无 user bus），该两项均如实记为未覆盖。"

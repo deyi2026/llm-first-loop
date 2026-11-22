@@ -38,11 +38,11 @@
 | privacy-gate | push_and_pr | success |
 | A.5 架构提交审查（机械 presence/coverage） | pr_only | success（PR #93 上运行） |
 
-- PR #93 head `4678fe6` 的 check-runs 共 10 项：上表 5 项 required 全 success，
+- PR #93 head `4678fe6` 的 check-runs 共 10 项＝**8 success ＋ 2 skipped ＋ 0 failed**：上表 5 项 required 全 success，
   另有 `部署 env 泄漏门禁（D4）`、`Linux 用户级安装/卸载真实成品验收（x86_64）`、
   `Linux 用户级安装/卸载真实成品验收（aarch64）` success，`nightly 真实 LLM 冒烟 + 评测集`、
   `nightly 信号类测试 50 次稳定性` skipped。
-- 合并提交 `080ec90` 的 check-runs 共 9 项：A.5 检查为 `pr_only`、不在 push 事件上运行，
+- 合并提交 `080ec90` 的 check-runs 共 9 项＝**7 success ＋ 2 skipped ＋ 0 failed**：A.5 检查为 `pr_only`、不在 push 事件上运行，
   故该提交上是 4 项 push_and_pr required + env 泄漏门禁 + 2 项 Linux 安装验收 success，2 项 nightly skipped。
 - run 记录：CI `45024908374` success；privacy-scan `45024908270` success。
 - 说明：`部署 env 泄漏门禁（D4）` 与两项 Linux 安装验收是附加检查，**不属于** required status check 集合。
@@ -114,6 +114,16 @@
     处置：在回执 `remote_ci` 下新增 `pr_head_check_runs` 与 `merge_commit_check_runs` 两段，逐项给出
     total/succeeded/skipped/failed 与检查名（PR head 10 项＝8 success＋2 项 nightly skipped；合并提交 9 项
     ＝7 success＋2 项 nightly skipped；无 failed），与本文第 2 节口径一致。
+- 2026-11-22（本次上行审查第 2 轮 REVISE 的处置）：`child=subagent_fea4bbca27b9` 判 REVISE（P0=0/P1=0/P2=2），
+  明确认定第 1 轮的 P1（umask 修复被回退）与 P2（A.5 覆盖不符）均已在当前产物中消解；剩余两条 P2 均为措辞精度问题，
+  已按其建议逐条修正：
+  - P2「A.5 清单称 PR 的 10 项 check-runs『全为 success』却同时说两项 nightly skipped」：属实——该措辞在
+    A.5 清单的 evidence 段。处置：清单与本文第 2 节一并改为逐项区分 success/skipped/failed
+    （PR head 10 项＝8 success＋2 skipped＋0 failed；合并提交 9 项＝7 success＋2 skipped＋0 failed），
+    并补写 push 回执新增的两段口径来源。
+  - P2「本文把 `scripts/ci_gate.sh --release` 称作『本地完整门禁』，随后又写它 exit 1，容易被读成本地门禁已通过」：
+    属实。处置：该条改写为「本地 canonical 全量门禁**在本机未通过（退出码 1）**」，并显式写明
+    「本地全量门禁红、远端同一门禁绿」，不把本地门禁记为通过。
 
 ## 8. 本机切换执行记录（2026-11-22）
 
@@ -123,15 +133,16 @@
 - 独立审查：两次 Host `review_admission(kind=full_test)`——首轮 REVISE（P0=0/P1=0/P2=2，两条 P2
   均为本方证据内部不一致，已按回源结果更正，见第 7 节），次轮
   `child=subagent_b76916051a6b` PASS（`candidate_sha256=53bb4276…`）。
-- 本地完整门禁 `bash scripts/ci_gate.sh --release`：ruff / 测试环境声明 / pyright / WebUI Vitest
-  （612 passed）/ serial_signal（7 passed）/ serial_perf（6 passed）全绿；全量套件
-  **5 failed, 16376 passed, 179 skipped, 3 xfailed**；退出码 1 的唯一原因是「CI 红数对账」存在
-  5 条未登记新红——这 5 条在 base `07fd45f0` 与 head `080ec90` 同环境同 node id 集合下**完全一致**
-  （同 5 红同 7 绿），且所在 6 个测试文件均未被本次发行增量改动，属宿主/沙盒环境红
-  （bwrap 沙盒内 grant-home 隔离判据、沙盒挂载 mtime 秒级粒度、宿主 127.0.0.1:8000 被非 mlx 服务占用等）；
-  同一提交在 GitHub runner 上同一门禁 exit 0。环境对齐动作：锁定工具链（ruff 0.16.5）、
-  按 CI 方式补装 `mujoco==4.0.1`、`umask 022`、`git fetch --unshallow`（后者使 7 条锚点用例转绿，
-  本地环境红由 462 条收敛到 5 条）。
+- 本地 canonical 全量门禁 `bash scripts/ci_gate.sh --release`：**该门禁在本机未通过（退出码 1）**——
+  门禁内各前置检查 ruff / 测试环境声明 / pyright / WebUI Vitest（612 passed）/ serial_signal（7 passed）/
+  serial_perf（6 passed）均通过，但全量套件为 **5 failed, 16376 passed, 179 skipped, 3 xfailed**，
+  「CI 红数对账」存在 5 条未登记新红而使整条门禁 exit 1。退出码 1 的唯一原因是这 5 条红——它们在 base
+  `07fd45f0` 与 head `080ec90` 同环境同 node id 集合下**完全一致**（同 5 红同 7 绿），且所在 6 个测试文件
+  均未被本次发行增量改动，属宿主/沙盒环境红（bwrap 沙盒内 grant-home 隔离判据、沙盒挂载 mtime 秒级粒度、
+  宿主 127.0.0.1:8000 被非 mlx 服务占用等）；同一提交在 GitHub runner 上同一门禁 exit 0。
+  即：**本地全量门禁红，远端同一门禁绿**，本回执不把本地门禁记为通过。
+  环境对齐动作：锁定工具链（ruff 0.16.5）、按 CI 方式补装 `mujoco==4.0.1`、`umask 022`、
+  `git fetch --unshallow`（后者使 7 条锚点用例转绿，本地环境红由 462 条收敛到 5 条）。
 - stage：官方安装器 `scripts/install_linux.sh --candidate <wheel> --expected-sha256 105f9815… --no-start`
   → `.LFL-active-version=0.6.57`、`.LFL-previous-version=0.6.56`，安装后 wheel SHA 与候选一致，
   0.6.56 完整保留可回滚。
