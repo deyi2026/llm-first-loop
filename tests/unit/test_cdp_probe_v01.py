@@ -144,7 +144,7 @@ def test_probe_tool_stops_at_total_deadline(monkeypatch) -> None:
 
     calls: list[tuple[str, float]] = []
 
-    def fake_probe(base_url: str, timeout_s: float = 2.0) -> dict:
+    def fake_probe(base_url: str, timeout_s: float = 2.0, deadline=None) -> dict:
         calls.append((base_url, timeout_s))
         return {
             "url": base_url,
@@ -171,3 +171,56 @@ def test_probe_tool_stops_at_total_deadline(monkeypatch) -> None:
     assert len(calls) == 1
     assert calls[0][1] <= cdp_probe_tool.TOTAL_TIMEOUT_S
     assert "时限" in result.content
+
+
+def test_probe_endpoint_does_not_probe_after_deadline() -> None:
+    """整体时限已到：不再发起请求（如实回报，不伪报可达）."""
+    import time
+
+    report = cdp_probe.probe_cdp_endpoint(
+        "http://127.0.0.1:9222", timeout_s=1.0, deadline=time.monotonic() - 1
+    )
+
+    assert report["reachable"] is False
+    assert "时限" in (report["error"] or "")
+
+
+def test_probe_endpoint_shares_budget_between_two_requests() -> None:
+    """端点内两次请求共享整体预算：预算耗尽后不再发第二次请求."""
+    import time
+
+    class _SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 约定
+            time.sleep(0.3)
+            if self.path == "/json/list":
+                payload = [{"title": "标题", "url": "http://127.0.0.1/"}]
+            else:
+                payload = {"Browser": "Chrome/138.0.0.0", "Protocol-Version": "1.3"}
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args) -> None:  # pragma: no cover - 静默测试服务器
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _SlowHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        started = time.monotonic()
+        report = cdp_probe.probe_cdp_endpoint(
+            url, timeout_s=1.0, deadline=time.monotonic() + 0.4
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert report["reachable"] is True
+    assert report["target_count"] is None
+    assert report.get("note")
+    assert elapsed < 1.0

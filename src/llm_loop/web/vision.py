@@ -467,26 +467,30 @@ def describe_image_detailed(
     source = image_size(image_bytes)
     prepared = prepare_image(image_bytes, mime, max_side)
     fallback_used = False
+    geometry = VisionGeometry(
+        source_width=source[0] if source else prepared.width,
+        source_height=source[1] if source else prepared.height,
+        input_width=prepared.width,
+        input_height=prepared.height,
+        max_side=max_side,
+        downsampled=bool(source) and (prepared.width, prepared.height) != source,
+    )
     try:
-        geometry = VisionGeometry(
-            source_width=source[0] if source else prepared.width,
-            source_height=source[1] if source else prepared.height,
-            input_width=prepared.width,
-            input_height=prepared.height,
-            max_side=max_side,
-            downsampled=bool(source) and (prepared.width, prepared.height) != source,
-        )
         text = _dispatch_vision(
             prepared.data, prepared.mime, _geometry_prompt(prompt, geometry), settings
         )
-    except (RuntimeError, httpx.HTTPError):
+    except (RuntimeError, httpx.HTTPError) as exc:
         # 传输层错误（httpx）此前直接冒泡、不走兜底降采样——这里补齐；仍不吞编程错误。
+        # 失败时把**本次尝试的送检几何**挂到异常上：调用方据此如实回报送检尺寸
+        # （review P2-2：失败路径原本回报的是原图/裁剪尺寸，不是实际送检尺寸）。
         if max_side <= 0 or source is None:
+            exc.vision_geometry = geometry  # type: ignore[attr-defined]
             raise
         retry = prepare_image(
             prepared.data, prepared.mime, max(_FALLBACK_MIN_SIDE, max_side // 2)
         )
         if (retry.width, retry.height) == (prepared.width, prepared.height):
+            exc.vision_geometry = geometry  # type: ignore[attr-defined]
             raise
         retry_geometry = VisionGeometry(
             source_width=source[0],
@@ -496,12 +500,19 @@ def describe_image_detailed(
             max_side=max_side,
             downsampled=True,
         )
-        text = _dispatch_vision(
-            retry.data, retry.mime, _geometry_prompt(prompt, retry_geometry), settings
-        )
+        try:
+            text = _dispatch_vision(
+                retry.data, retry.mime, _geometry_prompt(prompt, retry_geometry), settings
+            )
+        except Exception as retry_exc:  # noqa: BLE001 - 任何失败都挂上本次尝试的几何
+            retry_exc.vision_geometry = retry_geometry  # type: ignore[attr-defined]
+            raise
         prepared = retry
         geometry = retry_geometry
         fallback_used = True
+    except Exception as exc:  # noqa: BLE001 - 非传输层失败（如配置缺失）同样挂上几何
+        exc.vision_geometry = geometry  # type: ignore[attr-defined]
+        raise
     return VisionResult(
         text=(text or "").strip(),
         geometry=geometry,

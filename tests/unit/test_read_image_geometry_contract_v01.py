@@ -160,6 +160,29 @@ def test_geometry_contract_survives_vision_backend_failure(
     assert "[识别降级]" in result.content
 
 
+def test_failure_path_reports_actual_preprocessed_send_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """后端失败时回报的是**实际送检尺寸**（本地降采样后），不是原图尺寸（review P2-2）."""
+    monkeypatch.setenv("WEB_VISION_MAX_SIDE", "1568")
+
+    def _boom(image_bytes: bytes, mime: str = "", prompt: str = "", settings=None):
+        raise RuntimeError("视觉后端不可用（测试注入）")
+
+    monkeypatch.setattr(vision_mod, "_describe_minimax", _boom)
+    monkeypatch.setattr(vision_mod, "_describe_provider", _boom)
+    path = _write_png(tmp_path, width=4000, height=3000)
+
+    result = ReadImageTool().execute(path=str(path))
+
+    assert result.status is ToolResultStatus.FAILURE
+    assert "原图=4000×3000" in result.content
+    # 实际送检尺寸是本地降采样（并兜底再降采样一半）后的尺寸，不是 4000×3000
+    assert "送检=4000×3000" not in result.content
+    assert "送检=784×588" in result.content
+    assert "缩放=0.196" in result.content
+
+
 @pytest.mark.parametrize(
     "bad",
     [

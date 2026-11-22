@@ -228,13 +228,18 @@ def _resolve_crop(
 def _run_vision(
     send_bytes: bytes, send_mime: str, prompt: str
 ) -> tuple[str | None, str | None, object | None]:
-    """调用视觉后端 → (text, error, geometry)；失败如实降级，不伪装成功."""
+    """调用视觉后端 → (text, error, geometry)；失败如实降级，不伪装成功.
+
+    后端失败时 geometry 取自 vision 模块挂在异常上的**本地预处理事实**
+    （最后一次实际送检的尺寸与缩放），而不是原图/裁剪尺寸。
+    """
     try:
         from llm_loop.web.vision import describe_image_detailed
 
         result = describe_image_detailed(send_bytes, mime=send_mime, prompt=prompt)
     except Exception as exc:  # noqa: BLE001 — 识别失败如实降级
-        return None, f"{type(exc).__name__}: {exc}", None
+        geometry = getattr(exc, "vision_geometry", None)
+        return None, f"{type(exc).__name__}: {exc}", geometry
     return result.text, None, result.geometry
 
 
@@ -359,7 +364,9 @@ class ReadImageTool:
                 return _fail_result("[裁剪失败] 本地裁剪不可用（缺 Pillow 或图片无法解码）。")
             send_bytes, send_mime = cropped, "image/png"
         vision_text, vision_error, geometry = _run_vision(send_bytes, send_mime, prompt)
-        estimated = geometry is None
+        # 后端失败时 geometry 来自 vision 模块挂在异常上的**本地预处理事实**
+        # （最后一次实际送检的尺寸）；此时仍需标注「非后端回报」（review P2-2）。
+        estimated = geometry is None or vision_error is not None
         if geometry is not None:
             sent_w, sent_h = geometry.input_width, geometry.input_height
             scale_x, scale_y = geometry.scale_x, geometry.scale_y
@@ -378,7 +385,7 @@ class ReadImageTool:
             scale_y=scale_y,
         )
         if estimated:
-            contract += "（送检尺寸为推定：视觉后端失败前未能回报实际送检尺寸）"
+            contract += "（送检尺寸取自本地预处理事实：视觉后端失败，未回报几何）"
         lines.append(contract)
         if vision_text and vision_text.strip():
             lines.extend(_vision_block(vision_text.strip(), crop, scale_x, scale_y))

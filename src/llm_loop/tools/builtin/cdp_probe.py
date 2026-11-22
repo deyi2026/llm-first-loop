@@ -113,7 +113,9 @@ class CdpProbeTool:
             if remaining <= 0:
                 lines.append("[说明] 已达整体探测时限，剩余候选端点未探测。")
                 break
-            report = probe_cdp_endpoint(candidate, timeout_s=min(timeout, remaining))
+            report = probe_cdp_endpoint(
+                candidate, timeout_s=min(timeout, remaining), deadline=deadline
+            )
             if report["reachable"]:
                 reachable.append(report["url"])
                 lines.append(
@@ -121,6 +123,8 @@ class CdpProbeTool:
                     f"browser={report['browser'] or '未知'} 协议={report['protocol_version'] or '未知'} "
                     f"目标数={report['target_count'] if report['target_count'] is not None else '未知'}"
                 )
+                if report.get("note"):
+                    lines.append(f"[说明] {report['note']}")
             else:
                 lines.append(f"[端点] {report['url']} → 不可达（{report['error']}）")
         if reachable:

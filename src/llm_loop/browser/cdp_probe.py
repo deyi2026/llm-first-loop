@@ -158,12 +158,31 @@ def discover_cdp_candidates(
     return out
 
 
-def probe_cdp_endpoint(base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S) -> dict[str, Any]:
+def _bounded_timeout(request_timeout: float, deadline: float | None) -> float | None:
+    """单次请求的超时预算：受整体时限约束；时限已到 → None（不再发起请求）."""
+    import time
+
+    if deadline is None:
+        return request_timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    return max(0.2, min(request_timeout, remaining))
+
+
+def probe_cdp_endpoint(
+    base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S, deadline: float | None = None
+) -> dict[str, Any]:
     """探测单个 CDP 端点（只读元信息）.
+
+    ``deadline`` 是整体探测时限的绝对时刻（``time.monotonic()`` 时基）。给定后，
+    端点内的两次请求**共享**这一预算：预算用尽后第二次请求不再发出
+    （review P2-2：单请求超时不是整体上界）。
 
     Returns:
         dict: url / reachable / browser / protocol_version / target_count / error。
         不可达时 reachable=False 且 error 非空（**不伪报可达**）。
+        可达但目标计数未取到时附带 note（如实说明原因）。
     """
     base = _normalize_base(base_url)
     report: dict[str, Any] = {
@@ -180,11 +199,18 @@ def probe_cdp_endpoint(base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S) -> d
     if not _is_loopback(base):
         report["error"] = "仅允许 loopback 端点（探针不探测非本机目标）"
         return report
+    request_timeout = max(0.2, float(timeout_s))
     try:
         with httpx.Client(
-            timeout=max(0.2, float(timeout_s)), trust_env=False, follow_redirects=False
+            timeout=request_timeout, trust_env=False, follow_redirects=False
         ) as client:
-            response = client.get(f"{base}/json/version")
+            first_timeout = _bounded_timeout(request_timeout, deadline)
+            if first_timeout is None:
+                report["error"] = "已达整体探测时限，未发起请求"
+                return report
+            response = client.get(
+                f"{base}/json/version", timeout=httpx.Timeout(first_timeout)
+            )
             if response.status_code >= 400:
                 report["error"] = f"HTTP {response.status_code}"
                 return report
@@ -194,13 +220,20 @@ def probe_cdp_endpoint(base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S) -> d
                 return report
             report["browser"] = str(payload.get("Browser") or "") or None
             report["protocol_version"] = str(payload.get("Protocol-Version") or "") or None
-            try:
-                targets = client.get(f"{base}/json/list")
-                if targets.status_code < 400:
-                    listed = targets.json()
-                    report["target_count"] = len(listed) if isinstance(listed, list) else None
-            except Exception:  # noqa: BLE001 - 目标计数失败不影响可达性判定
-                report["target_count"] = None
+            second_timeout = _bounded_timeout(request_timeout, deadline)
+            if second_timeout is None:
+                report["note"] = "已达整体探测时限，目标计数未读取"
+            else:
+                try:
+                    targets = client.get(
+                        f"{base}/json/list", timeout=httpx.Timeout(second_timeout)
+                    )
+                    if targets.status_code < 400:
+                        listed = targets.json()
+                        report["target_count"] = len(listed) if isinstance(listed, list) else None
+                except Exception:  # noqa: BLE001 - 目标计数失败不影响可达性判定
+                    report["target_count"] = None
+                    report["note"] = "目标计数读取失败（目标数未知）"
             report["reachable"] = True
             return report
     except Exception as exc:  # noqa: BLE001 - 连接失败如实回报
