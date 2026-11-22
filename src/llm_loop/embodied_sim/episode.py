@@ -134,7 +134,10 @@ class _GoalState:
         if observed.scene_epoch != self.goal.scene_epoch:
             return self._rebind_or_abort(SCENE_RESET, all_history=True)
         if observed.digest != self.goal.digest:
-            return self._rebind_or_abort(GOAL_MOVED_BETWEEN_ACTIONS)
+            # Every prior action was planned against the old pose: mark them
+            # stale like the SCENE_RESET path does, so the audit counter tells
+            # the truth about how much evidence the move invalidated.
+            return self._rebind_or_abort(GOAL_MOVED_BETWEEN_ACTIONS, all_history=True)
         return _PROCEED
 
     def duplicate(self, action_id: str) -> str:
@@ -172,20 +175,23 @@ class _GoalState:
         self.action_history[action_id] = len(self.history) - 1
         self.action_goal[action_id] = self.goal.digest
 
-    def record_voided(self, decision: dict[str, Any], status: dict[str, Any],
+    def record_voided(self, decision: dict[str, Any], status: dict[str, Any], action_id: str,
                       *, goal_version: int, goal_digest: str, t_s: float) -> None:
         """Keep an executed action visible, tagged with the goal it RAN against.
 
         Its evidence is void (the goal moved mid-action). Tagging it with the
         rebound goal would attribute a stale-planned action to the new target,
         so it carries the executed goal's version/digest and a `stale_goal`
-        marker instead.
+        marker instead. The action still binds to that digest, so an idempotent
+        replay is detected as `DUPLICATE_INTENT_STALE_GOAL` rather than silently
+        absorbed.
         """
         self.trace.append({"event": "tool_action", "decision": decision, "status": status,
                            "t_s": t_s, "goal_version": goal_version,
                            "goal_digest": goal_digest, "stale_goal": True})
         self.history.append({"decision": decision, "status": status,
                              "goal_digest": goal_digest, "stale_goal": True})
+        self.action_goal[action_id] = goal_digest
 
     def verify(self) -> GoalBinding | str:
         """At verification: bind the goal observed *now*; never reuse an older one."""
@@ -351,8 +357,15 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             replans += 1 if verdict is REPLAN else 0
             continue
         tool_actions += 1
-        executed_version, executed_digest = goals.goal.version, goals.goal.digest
         status = _settle(iface, result, elapsed, budget)
+        if status["state"] != "done":
+            # Indeterminate execution dominates a concurrent goal change: an
+            # unreconciled action must stop the episode as HOLD, never be
+            # replanned away (that would let a later claim cover it up).
+            goals.hold(status)
+            terminated_by = HOLD_UNKNOWN
+            break
+        executed_version, executed_digest = goals.goal.version, goals.goal.digest
         # M2: re-observe immediately after the action, before any judgement.
         verdict = goals.after_action(str(result["action_id"]), status)
         if verdict is ABORT:
@@ -362,14 +375,11 @@ def run_episode(iface: Any, provider: Any, budget: EpisodeBudget = _DEFAULT_BUDG
             # The action ran against the previous goal: keep it visible in the
             # trace/history, but never attribute it to the goal it did not run
             # against (its evidence was voided by the rebind).
-            goals.record_voided(decision, status, goal_version=executed_version,
+            goals.record_voided(decision, status, str(result["action_id"]),
+                                goal_version=executed_version,
                                 goal_digest=executed_digest, t_s=round(elapsed(), 3))
             replans += 1
             continue
-        if status["state"] != "done":
-            goals.hold(status)
-            terminated_by = HOLD_UNKNOWN
-            break
         goals.record(decision, status, str(result["action_id"]), t_s=round(elapsed(), 3))
         if decision["skill"] == "release" and status["state"] == "done":
             scene.step(150)  # let the released object settle before judging place

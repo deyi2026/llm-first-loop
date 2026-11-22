@@ -185,6 +185,50 @@ def test_indeterminate_execution_holds_unknown_instead_of_claiming() -> None:
     assert "HOLD_UNKNOWN" in _events(result)
 
 
+def test_indeterminate_execution_dominates_a_concurrent_target_move() -> None:
+    """Both faults in the same settle window: HOLD wins. An unreconciled action
+    must never be replanned away and then covered by a later claim."""
+    scene = FakeScene()
+    fake_now = [0.0]
+    iface = FakeIface(scene, clock=lambda: fake_now[0])
+    iface.hold_actions = True
+
+    def on_advance(_iface: FakeIface) -> None:
+        scene.move_tray(0.05)      # the target moves...
+        fake_now[0] += 1000.0      # ...and the settle window expires
+
+    iface.on_advance = on_advance
+    provider = ScriptedProvider([("grasp", {})])
+    result = run_episode(iface, provider, EpisodeBudget(deadline_s=1.0))
+
+    assert result["terminated_by"] == "hold_unknown_pending_reconciliation"
+    assert result["claim_state"] == "hold_unknown"
+    assert result["oracle_receipt"] is None
+    assert result["goal_rebinds"] == 0, "an unresolved action must not be replanned away"
+
+
+def test_replaying_a_voided_action_is_detected_as_stale_not_absorbed() -> None:
+    """A voided action still binds to the goal it ran against, so replaying the
+    same intent surfaces DUPLICATE_INTENT_STALE_GOAL instead of being absorbed."""
+    scene = FakeScene()
+    iface = FakeIface(scene)
+    moved = {"done": False}
+
+    def on_advance(_iface: FakeIface) -> None:
+        if not moved["done"]:
+            moved["done"] = True
+            scene.move_tray(0.02)
+
+    iface.on_advance = on_advance
+    replay = decision("move_to", "move-once", x=0.0, y=0.18, z=0.12)
+    provider = ScriptedProvider([lambda _s: replay, lambda _s: replay])
+    result = run_episode(iface, provider, BUDGET)
+
+    assert "GOAL_CHANGED_MID_ACTION" in _events(result)
+    assert "DUPLICATE_INTENT_STALE_GOAL" in _events(result)
+    assert result["goal_rebinds"] == 2
+
+
 def test_goal_rebind_budget_bounds_a_continuously_moving_target() -> None:
     scene = FakeScene()
     iface = FakeIface(scene)

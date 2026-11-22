@@ -30,7 +30,7 @@ FROZEN_RECEIPT_SHA256 = {
     'M1-baseline-v1.6.4.json': '820b73cf54ddb13a0f86c179950b0fca58a7ddea632cbf565153772af5846f3d',
     'M1-baseline-v1.6.5.json': '3dedf7a8efa4288ef1a1ca785d1ae0e117b1e4b0e6e4cd2177f8677e24c71967',
     'M1-baseline-v1.7.json': '7f803cc1d54dcce350d953aa71bec200bba6b3cf4214f308176fcd39326d74f9',
-    'M1-baseline-v1.8.json': 'bfcb4787ee50c61ee1da924ea13bfa5033bc1326549f58ef57a4d85e35506e46',
+    'M1-baseline-v1.8.json': '98dabd78d0e852c3d7a1e95e5bacaf28b2e7121790b32bee8ace232ded1719ce',
     'M1-baseline-v1.6.json': '4e0f943a69910b8c9de3ad6f3459f5128b534c793f961d4e6cf8f4dfb37e819f',
     'M1-baseline-v1.json': 'f0ff6c636f8fbc188af95def72695e9b903c98fb4eb9abab6eb6ffb692919dcf',
 }
@@ -89,7 +89,7 @@ def test_v18_local_baseline_pass_metadata_consistent():
     assert "z0.12->0.11" in reason and "z[0.14,0.18]->z[0.12,0.13]" in reason
     assert "kinematically fine" in reason
     assert "M2 (issue #79" in reason and "PHYSICS UNCHANGED" in reason
-    assert "M2 review fix" in reason and "only episode.py's digest moved" in reason
+    assert "M2 review fix" in reason and "behavior-relevant digest moved" in reason
     # live scene XML must hash exactly to what the receipt recorded
     import hashlib
     sys.path.insert(0, str(ROOT / "src"))

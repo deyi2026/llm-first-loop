@@ -42,24 +42,31 @@ is never silently accepted.
 
 `max_goal_rebinds` (default 4) bounds a target that never stops moving; the
 episode then terminates `goal_rebind_budget_exhausted` with
-`claim_state="hold_unknown"` — never a success.
+`claim_state="hold_unknown"` — never a success. `max_provider_attempts`
+counts **every** `provider.decide` call (M1 counted only provider exceptions),
+so the budget now also bounds invalid-decision loops.
 
 ## Execution state vs verification
 
 `claim_state` is `none` / `pending_oracle` / `hold_unknown`. An action whose
 execution state is indeterminate (deadline break, status not `done`) stops the
 episode as `hold_unknown_pending_reconciliation` **without** issuing a verdict:
-UNKNOWN stays HOLD until a trusted reconciliation decides. `pending_oracle` is
+UNKNOWN stays HOLD until a trusted reconciliation decides. Indeterminate
+execution takes precedence over a concurrent goal change — if the target moves
+in the same settle window, the episode still holds, because replanning away an
+unreconciled action would let a later claim cover it up. `pending_oracle` is
 still not success — only a UID463-signed Oracle acceptance can produce
 VERIFIED, and that path is unchanged by this issue.
 
 ## Evidence
 
-* `tests/embodied_m2/test_moving_target_runner.py` — 9 deterministic scenarios
-  on a scripted world: target moves while the model decides, during an action
-  (the voided action stays visible, tagged with the goal it ran against), out
-  of band between actions, while `release` settles before verification, scene
-  reset mid-episode, duplicate intent after a move, indeterminate execution,
+* `tests/embodied_m2/test_moving_target_runner.py` — 11 deterministic
+  scenarios on a scripted world: target moves while the model decides, during
+  an action (the voided action stays visible, tagged with the goal it ran
+  against), out of band between actions, while `release` settles before
+  verification, scene reset mid-episode, duplicate intent after a move,
+  indeterminate execution, indeterminate execution **plus** a concurrent move
+  (HOLD wins), replay of a voided action (stale-duplicate, not absorbed),
   rebind budget, and the M1 `t_s` trace regression.
 * `tests/embodied_m2/test_goal_binding.py` — digest stability/noise, stale
   receipt, missing goal block, tampered block, stale epoch.
