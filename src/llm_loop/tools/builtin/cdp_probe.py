@@ -15,7 +15,7 @@ from llm_loop.browser.cdp_probe import (
     MAX_CANDIDATES,
     MAX_EXTRA_PORTS,
     MAX_EXTRA_USER_DATA_DIRS,
-    discover_cdp_candidates,
+    discover_cdp_candidates_with_meta,
     probe_cdp_endpoint,
 )
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -87,21 +87,29 @@ class CdpProbeTool:
         except (TypeError, ValueError):
             timeout = DEFAULT_TIMEOUT_S
         timeout = min(max(timeout, 0.2), MAX_TIMEOUT_S)
-        ports = kwargs.get("ports") or None
-        if isinstance(ports, list):
-            ports = [p for p in ports if isinstance(p, int) and not isinstance(p, bool)]
-        else:
-            ports = None
+        raw_ports = kwargs.get("ports") or None
+        ports = list(raw_ports) if isinstance(raw_ports, list) else None
         raw_dirs = kwargs.get("user_data_dirs") or None
         dirs = [str(d) for d in raw_dirs] if isinstance(raw_dirs, list) else None
-        candidates = [url] if url else discover_cdp_candidates(ports=ports, user_data_dirs=dirs)
-        truncated = len(candidates) > MAX_CANDIDATES
-        if truncated:
-            candidates = candidates[:MAX_CANDIDATES]
+        if url:
+            candidates: list[str] = [url]
+            meta = {"dropped_ports": 0, "dropped_dirs": 0, "dropped_candidates": 0}
+        else:
+            candidates, meta = discover_cdp_candidates_with_meta(
+                ports=ports, user_data_dirs=dirs
+            )
         lines = [f"[探测] 候选端点 {len(candidates)} 个（来源：已配置值 / 常见端口 / DevToolsActivePort）"]
-        if truncated:
+        if meta["dropped_ports"]:
             lines.append(
-                f"[说明] 候选端点超过上限 {MAX_CANDIDATES} 个，已截断，只探测前 {MAX_CANDIDATES} 个。"
+                f"[说明] 额外端口超出上限 {MAX_EXTRA_PORTS} 个或非整数，已丢弃 {meta['dropped_ports']} 个未探测。"
+            )
+        if meta["dropped_dirs"]:
+            lines.append(
+                f"[说明] 额外用户数据目录超出上限 {MAX_EXTRA_USER_DATA_DIRS} 个，已丢弃 {meta['dropped_dirs']} 个未探测。"
+            )
+        if meta["dropped_candidates"]:
+            lines.append(
+                f"[说明] 候选端点超过上限 {MAX_CANDIDATES} 个，已截断 {meta['dropped_candidates']} 个未探测。"
             )
         lines.append(
             f"[说明] 整体探测时限 {TOTAL_TIMEOUT_S:g} 秒；单端点超时上限 {MAX_TIMEOUT_S:g} 秒。"

@@ -92,31 +92,92 @@ def read_devtools_active_port(user_data_dir: str | Path) -> str | None:
         return None
 
 
-def merged_probe_ports(extra: Sequence[int] | None = None) -> list[int]:
-    """缺省端口 + 额外端口（去重保序；额外项至多 MAX_EXTRA_PORTS 个）.
+def merged_probe_ports(extra: Sequence[int] | None = None) -> tuple[list[int], int]:
+    """缺省端口 + 额外端口 → (合并结果, 被丢弃数量).
 
     契约：``extra`` 是**额外**端口，与缺省端口**合并**而不是替换——工具描述写的是
     「额外」，此前实现却是替换（review P2-1），此处以合并为准并由测试锁定。
+    超出上限或非整数的项计入丢弃数，由调用方如实回报（review P2-3：不得静默少探）。
     """
     merged: list[int] = list(DEFAULT_PROBE_PORTS)
-    for port in list(extra or [])[:MAX_EXTRA_PORTS]:
+    dropped = 0
+    for port in list(extra or []):
+        if len(merged) - len(DEFAULT_PROBE_PORTS) >= MAX_EXTRA_PORTS:
+            dropped += 1
+            continue
+        if isinstance(port, bool):
+            dropped += 1
+            continue
         try:
             value = int(port)
         except (TypeError, ValueError):
+            dropped += 1
             continue
         if value not in merged:
             merged.append(value)
-    return merged
+    return merged, dropped
 
 
-def merged_user_data_dirs(extra: Sequence[str] | None = None) -> list[str]:
-    """缺省用户数据目录 + 额外目录（去重保序；额外项至多 MAX_EXTRA_USER_DATA_DIRS 个）."""
+def merged_user_data_dirs(extra: Sequence[str] | None = None) -> tuple[list[str], int]:
+    """缺省用户数据目录 + 额外目录 → (合并结果, 被丢弃数量)."""
     merged: list[str] = list(LINUX_PROFILE_DIRS)
-    for directory in list(extra or [])[:MAX_EXTRA_USER_DATA_DIRS]:
+    dropped = 0
+    for directory in list(extra or []):
+        if len(merged) - len(LINUX_PROFILE_DIRS) >= MAX_EXTRA_USER_DATA_DIRS:
+            dropped += 1
+            continue
         text = str(directory).strip()
-        if text and text not in merged:
-            merged.append(text)
-    return merged
+        if not text or text in merged:
+            dropped += 1
+            continue
+        merged.append(text)
+    return merged, dropped
+
+
+def discover_cdp_candidates_with_meta(
+    *,
+    env_url: str | None = None,
+    ports: tuple[int, ...] | list[int] | None = None,
+    user_data_dirs: tuple[str, ...] | list[str] | None = None,
+) -> tuple[list[str], dict[str, int]]:
+    """候选 CDP base url + 截断元数据 → (候选列表, dropped_* 计数).
+
+    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口（+ 额外端口）
+    ③ Chrome 用户数据目录下的 DevToolsActivePort（+ 额外目录）。
+
+    ``ports`` / ``user_data_dirs`` 语义是**额外**输入（与缺省合并，不是替换）。
+    任何被丢弃的输入都计数上报，供调用方在回执里写明（不静默少探）。
+    """
+    out: list[str] = []
+    dropped_candidates = 0
+
+    def _add(candidate: str) -> None:
+        nonlocal dropped_candidates
+        base = _normalize_base(candidate)
+        if not base or base in out:
+            return
+        if len(out) >= MAX_CANDIDATES:
+            dropped_candidates += 1
+            return
+        out.append(base)
+
+    configured = env_url if env_url is not None else os.environ.get(
+        "LFL_BROWSER_PERCEPTION_CDP_URL", ""
+    )
+    _add(configured)
+    merged_ports, dropped_ports = merged_probe_ports(ports)
+    for port in merged_ports:
+        _add(f"http://127.0.0.1:{int(port)}")
+    merged_dirs, dropped_dirs = merged_user_data_dirs(user_data_dirs)
+    for directory in merged_dirs:
+        found = read_devtools_active_port(directory)
+        if found:
+            _add(found)
+    return out, {
+        "dropped_ports": dropped_ports,
+        "dropped_dirs": dropped_dirs,
+        "dropped_candidates": dropped_candidates,
+    }
 
 
 def discover_cdp_candidates(
@@ -125,37 +186,11 @@ def discover_cdp_candidates(
     ports: tuple[int, ...] | list[int] | None = None,
     user_data_dirs: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
-    """候选 CDP base url 列表（去重、保序、最多 MAX_CANDIDATES 个）.
-
-    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口（+ 额外端口）
-    ③ Chrome 用户数据目录下的 DevToolsActivePort（+ 额外目录）。
-
-    ``ports`` / ``user_data_dirs`` 语义是**额外**输入（与缺省合并，不是替换）。
-    """
-    out: list[str] = []
-
-    def _add(candidate: str) -> None:
-        base = _normalize_base(candidate)
-        if not base or base in out:
-            return
-        if len(out) >= MAX_CANDIDATES:
-            return
-        out.append(base)
-
-    configured = env_url if env_url is not None else os.environ.get(
-        "LFL_BROWSER_PERCEPTION_CDP_URL", ""
+    """候选 CDP base url 列表（去重、保序、最多 MAX_CANDIDATES 个）."""
+    candidates, _ = discover_cdp_candidates_with_meta(
+        env_url=env_url, ports=ports, user_data_dirs=user_data_dirs
     )
-    _add(configured)
-    for port in merged_probe_ports(ports):
-        try:
-            _add(f"http://127.0.0.1:{int(port)}")
-        except (TypeError, ValueError):
-            continue
-    for directory in merged_user_data_dirs(user_data_dirs):
-        found = read_devtools_active_port(directory)
-        if found:
-            _add(found)
-    return out
+    return candidates
 
 
 def _bounded_timeout(request_timeout: float, deadline: float | None) -> float | None:
@@ -167,7 +202,8 @@ def _bounded_timeout(request_timeout: float, deadline: float | None) -> float | 
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return None
-    return max(0.2, min(request_timeout, remaining))
+    # 不设下限：给超时兜底会越过绝对时限（review P2-1）——预算不足就用剩余值。
+    return min(request_timeout, remaining)
 
 
 def probe_cdp_endpoint(

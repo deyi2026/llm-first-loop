@@ -224,3 +224,25 @@ def test_probe_endpoint_shares_budget_between_two_requests() -> None:
     assert report["target_count"] is None
     assert report.get("note")
     assert elapsed < 1.0
+
+
+def test_bounded_timeout_never_exceeds_remaining_budget() -> None:
+    """剩余预算不足 200ms 时也不放大超时——不得越过绝对时限（review P2-1）."""
+    import time
+
+    deadline = time.monotonic() + 0.05
+    bounded = cdp_probe._bounded_timeout(1.0, deadline)
+
+    assert bounded is not None
+    assert bounded <= 0.05
+
+
+def test_probe_tool_reports_truncated_extra_inputs() -> None:
+    """额外输入被截断时必须在回执里写明（不静默少探，review P2-2）."""
+    result = CdpProbeTool().execute(
+        ports=[9300 + index for index in range(12)],
+        user_data_dirs=[f"/tmp/lfl-cdp-dir-{index}" for index in range(12)],
+    )
+
+    assert "已丢弃 4 个未探测" in result.content
+    assert result.content.count("已丢弃 4 个未探测") == 2
