@@ -1,0 +1,70 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261122-task-host-public-receipt-umask",
+  "summary": "Minimal fail-closed correction for Mac Task Host UID462 public signed receipts and session binding directories under restrictive umask 077; preserves independent Host signing, private key and approval permissions.",
+  "components": [
+    {
+      "component_id": "task-host-public-receipt-creation",
+      "paths": [
+        "scripts/host_task_lease_issuer.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "task-host-public-receipt-umask",
+      "owning_subsystem": "Independent Task Host Lease issuer and UID462-owned public receipt publication",
+      "disposition": "Reuse the installed Host issuer and Ed25519 authority. Set requested public file mode on the already open O_EXCL/O_NOFOLLOW descriptor before fsync, and publish a validated UID462-owned session binding directory at 0755; preserve 0600 private files.",
+      "evidence": [
+        "Physical Mac T1/T3 Host signed a real Lease, but Owner activation failed with authority_bindings_unavailable because umask 077 yielded 0700 binding directory and 0600 public receipts; that Lease was revoked with a real Host REVOKED receipt.",
+        "Source review identified mode masking in os.open and Path.mkdir; patch changes only publication modes, not signing or authorization.",
+        "Isolated POSIX smoke validated 0644 public receipts, 0600 private receipts, 0755 session directory, and symlink denial; complete project R9 and Mac retest remain pending."
+      ],
+      "verification_level": "Isolated POSIX mode smoke PASS; independent Reviewer, original full R9, remote CI and installed Host retest pending. No production installation or T1/T3 acceptance claimed.",
+      "model_evidence_veto_recovery_exit": "Only independent UID462 Host may issue/revoke; root-owned trust and signed Lease/State verification remain mandatory. Ownership, O_NOFOLLOW, no group/other-write and durability checks remain fail closed. Old 0600 receipts need separately verified one-time Host migration before physical retest.",
+      "rollback_route": "Revert this exact protected PR and restore previously SHA-verified Host issuer. No key rotation or broad filesystem permission changes; retain audit and revoked receipts."
+    },
+    {
+      "component_id": "task-host-umask-regression-and-a5",
+      "paths": [
+        "tests/unit/test_host_task_lease_issuer.py",
+        "docs/governance/submissions/20261122-task-host-public-receipt-umask.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Host issuer regression tests and A.5 changed-path coverage",
+      "disposition": "Add umask 077 public/private file mode, existing binding-directory repair and symlink rejection tests; declare exact changed paths.",
+      "evidence": [
+        "Tests explicitly check 0644 public, 0600 private, 0755 binding directory and O_NOFOLLOW symlink rejection.",
+        "A.5 manifest records one narrow Host control change and two supporting test/evidence paths."
+      ],
+      "verification_level": "New tests authored; CI pending. Mechanical A.5 gate validates coverage, not reviewer independence or Host authority.",
+      "model_evidence_veto_recovery_exit": "Regression tests and manifest confer no signing or merge privileges; signed Host state and existing protected branch checks remain required.",
+      "rollback_route": "Revert test and manifest together with the issuer patch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "task-host-public-receipt-umask",
+      "g1": {
+        "necessity": "An actual Mac T1/T3 signed Task Lease could not be consumed by its original Owner because UID462's umask masked publicly readable session binding and signed receipt modes."
+      },
+      "g2": {
+        "authority_owner": "Dedicated UID462 Task Host issuer and OS filesystem ACL; no model or application signing authority",
+        "relationship": "reuse",
+        "non_duplication": "No new issuer, token, approval source or reviewer. Reuses the existing Host key, exact Goal/Task/Lane/CAS checks and trusted directory layout."
+      },
+      "g3": {
+        "model_evidence": [
+          "Real Host signed Lease then revoked it on failure, with no test write or Git side effect; issuer source shows os.open/mkdir mode masked by umask 077.",
+          "Targeted isolated POSIX smoke PASS for file modes and symlink denial; independent reviewer and full R9 not yet performed."
+        ],
+        "recovery_or_reason": "Public receipts and session directories receive explicit validated modes; old revoked receipts require a narrow separately verified Host migration. If any owner, symlink, signature, mode or fsync check fails, HOLD without changing private keys."
+      },
+      "g4": {
+        "rollback": "Revert protected PR and restore previous verified Host issuer; retain Host audit and revoked receipts. Do not loosen private/approval file permissions.",
+        "verification": [
+          "Remote PR CI including A.5 and privacy gates must pass on exact SHA.",
+          "Independent Reviewer PASS with P0/P1=0 and original full R9 exit0 required before protected merge.",
+          "After merge, separate trusted Host install and legacy public receipt migration, then real Mac T1/T3 Seatbelt/Git/CAS/revoke retest; Deepin remains separate."
+        ]
+      }
+    }
+  ]
+}
