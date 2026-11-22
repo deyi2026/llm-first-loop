@@ -11,7 +11,7 @@
   "qualification": "PASS",
   "candidate_sha256": "ef0fb04ec5b3b6abc2ae17004dc822b2948b085a746dceececc4a604b2bffdab",
   "review_child_id": "subagent_7cde5c9a6e83",
-  "review_history": "10 轮：REVISE×9（前 9 轮：ports 契约与实现不一致、10 秒超时非整体上界、总时限未贯穿端点内两次请求、失败路径送检尺寸错误、超时下限会越过绝对时限、截断静默无法回报、httpx 无活动超时非墙钟上限、README 版本与发布状态段矛盾、候选发现阶段不在时限内；另有 1 条 P1 为误判——文件确有 from __future__ import annotations，已用可见于增量 diff 的 future import 注释消除歧义）→ PASS×3（第 6/9/10 轮）。逐条处置见 docs/TOOL-CONTRACT-ENV-20261121.md 第 7–13 节",
+  "review_history": "10 轮：PASS 出现在第 6/9/10 轮（最终第 10 轮 child=subagent_7cde5c9a6e83，candidate_sha256=ef0fb04e…），其余 7 轮判定 REVISE；REVISE 轮次共涉及 9 条 P2：ports 契约与实现不一致、10 秒超时非整体上界、总时限未贯穿端点内两次请求、失败路径送检尺寸错误、超时下限会越过绝对时限、截断静默无法回报、httpx 无活动超时非墙钟上限、README 版本与发布状态段矛盾、候选发现阶段不在时限内；其中 1 条被判为 P1 的意见经复核为误判——文件确有 from __future__ import annotations，已让该行进入可见的增量 diff 消除歧义。逐条处置见 docs/TOOL-CONTRACT-ENV-20261121.md 第 7–13 节。（2026-11-22 更正：原文写作「REVISE×9 → PASS×3（第 6/9/10 轮）」，与「共 10 轮」不能同时成立（9+3>10）；现按「10 轮 + PASS 轮次集合 {6,9,10}」更正为 REVISE×7、PASS×3。结论、child_id 与 candidate_sha256 未变。）",
   "commit_count": 23,
   "remote": "origin",
   "remote_url": "https://github.com/deyi2026/llm-first-loop.git",
@@ -64,4 +64,3 @@
   ],
   "recorded_at": "2026-11-22T20:57:40+08:00"
 }
-

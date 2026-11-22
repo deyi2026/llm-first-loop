@@ -1,0 +1,57 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261122-deepin-v0657-release-identity",
+  "summary": "0.6.57 受管发行的证据面声明：候选 wheel 由官方 scripts/build_committed_distribution.py 从已合并 main 提交 080ec9083f9e292dd31045f6b5be3d285b1c5d9c 产出（sha256 105f9815…），合并提交上的远端 required checks 全绿，本机受管切换（stage → publish-wheel CAS → restart → 收敛验收）的事实与序列在证据文档中逐步记录。版本身份递增（0.6.56→0.6.57，提交 24036f6）已随 PR #93 由清单 20261122-evo-20261121-efa320ab-vision-contract-upstream.json 覆盖，不在本清单重复声明。本清单不新增控制机制、不放宽任何既有门禁。",
+  "components": [
+    {
+      "component_id": "deepin-v0657-managed-release-evidence",
+      "paths": [
+        "docs/governance/MANAGED-RELEASE-0.6.57.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "本机受管发行的候选证据与切换计划记录面",
+      "disposition": "落盘 0.6.57 候选的实测身份（源 commit、wheel/sdist SHA、构建 provenance、增量统计）、受保护分支 required checks 的权威集合与其在 PR head / 合并提交上的 check-run 构成、独立审查链、本机切换前基线、受管切换序列与回滚判据；只记录事实与既定通道，不新增任何控制机制。",
+      "evidence": [
+        "候选 wheel sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e，由 scripts/build_committed_distribution.py --ref 080ec9083f9e… 产出，provenance.json 记录 source_commit=080ec90…、webui_source_sha256=e8c515fc…（147 tracked files）、tracked_python_modules=648、offline_build=true。",
+        "required checks 集合以 docs/governance/required-ci-checks.json 为准（5 项）：门禁、安全扫描、managed-premerge-evidence、privacy-gate（均 push_and_pr）与 A.5 架构提交审查（pr_only）；PR #93 head 4678fe6 的 10 项 check-runs 与合并提交 080ec90 的 9 项 check-runs 全为 success（nightly 两项 skipped）。",
+        "切换前基线：desired generation 19 / version 0.6.56 / wheel 74a9e0f2…；web、feishu、learning 三者 live 版本与 wheel SHA 均匹配 desired，matches_desired_generation=true，admission_barriers 为空；wecom 无 live manifest，不在 --target all 物理执行面内，本次不报为已验收。",
+        "独立审查：PR #93 上行审查共 10 轮，PASS 出现在第 6/9/10 轮（最终第 10 轮 child=subagent_7cde5c9a6e83），其余 7 轮 REVISE；所审 head 与候选源 080ec90 的树完全一致；视觉契约另有两次 Host full_test PASS。"
+      ],
+      "verification_level": "文中每条事实均可回源：git 提交与树比较、GitHub check-runs API、docs/governance/required-ci-checks.json、构建 provenance.json、本机 /api/v1/services/status 与 /health、部署指针文件；主机身份与本机绝对路径不写入版本库。",
+      "model_evidence_veto_recovery_exit": "任一事实与回源结果不符时以回源为准并更正本文；候选 SHA、CI 结论或 live 状态不符即不得继续切换。",
+      "rollback_route": "回退该文档提交即可移除本记录；不影响运行态与已安装 release。"
+    },
+    {
+      "component_id": "push-receipt-review-history-correction",
+      "paths": [
+        "docs/governance/receipts/push-080ec908-origin-main-20261122.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "RULE-AI-28 推送回执的事实留痕面",
+      "disposition": "更正 push 回执 review_history 字段的轮次计数：原文「REVISE×9 → PASS×3（第 6/9/10 轮）」与「共 10 轮」不能同时成立（9+3>10）；改为「PASS 出现在第 6/9/10 轮，其余 7 轮 REVISE」。结论、child_id、candidate_sha256 与其余字段不变。",
+      "evidence": [
+        "首次受管发行独立审查（child=subagent_9834c3f37b45）P2-1：回执与发行证据文档的轮次叙述互相矛盾。",
+        "回源依据：回执自身记录 10 轮且 PASS 轮次集合为 {6,9,10}，故 REVISE 轮次为 10-3=7。"
+      ],
+      "verification_level": "更正面向计数自洽性，不改变任何判定结论或标识。",
+      "model_evidence_veto_recovery_exit": "若与逐轮原始回执冲突，以逐轮原始回执为准并再次更正。",
+      "rollback_route": "回退该更正即恢复原措辞（但会重新引入计数不自洽）。"
+    },
+    {
+      "component_id": "a5-deepin-v0657-submission",
+      "paths": [
+        "docs/governance/submissions/20261122-deepin-v0657-release-identity.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交声明机制（清单自身）",
+      "disposition": "声明本次发行证据面的精确 changed-path 集合，供 A.5 机械校验覆盖。",
+      "evidence": [
+        "本清单的 components.paths 与 b3630a4（PR #93 上行回执提交）到本提交之间的 changed-path 集合精确一致（3 条：发行证据文档、push 回执更正、本清单自身）。"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py 以 base=b3630a4、head=本提交运行并 PASS。",
+      "model_evidence_veto_recovery_exit": "覆盖不精确即 FAIL；不得放宽校验或改写路径集合凑数。",
+      "rollback_route": "回退该提交即移除本清单。"
+    }
+  ],
+  "declarations": []
+}
