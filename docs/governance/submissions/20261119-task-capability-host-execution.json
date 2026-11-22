@@ -30,8 +30,6 @@
     {
       "component_id": "file-command-git-sandbox",
       "paths": [
-        "pyproject.toml",
-        "uv.lock",
         "src/llm_loop/config.py",
         "src/llm_loop/tools/builtin/edit_file.py",
         "src/llm_loop/tools/builtin/execute_command.py",

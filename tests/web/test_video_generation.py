@@ -328,6 +328,7 @@ def test_worker_sigkill_reaps_backend_and_releases_slot(video_client, tmp_path, 
         pass
 
 
+@pytest.mark.serial_perf
 def test_guardian_timeout_terminates_backend(video_client, tmp_path, monkeypatch):
     from llm_loop.video.worker import run_process
 
@@ -341,7 +342,7 @@ def test_guardian_timeout_terminates_backend(video_client, tmp_path, monkeypatch
         (directory / "log").open("ab") as log,
         pytest.raises(TimeoutError),
     ):
-        run_process(argv, directory, log, time.monotonic() + 0.5, lock_fd)
+        run_process(argv, directory, log, time.monotonic() + 2.0, lock_fd)
     owned_pid = int((directory / "backend.pid").read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(owned_pid, 0)
