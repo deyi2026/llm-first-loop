@@ -1,0 +1,68 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261122-host-premerge-efficiency",
+  "summary": "Bounded Host premerge freshness and transient GitHub JSON-read reliability, without relaxing the independent Host signature, immutable SHA/CAS, branch protection, or fail-closed publication rules.",
+  "components": [
+    {
+      "component_id": "host-premerge-verifier-and-regression",
+      "paths": [
+        "scripts/premerge_host.py",
+        "tests/unit/test_premerge_gate_host.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "host-signed-premerge-fastpath",
+      "owning_subsystem": "Independent Host premerge evidence verifier and read-only GitHub authority checks",
+      "disposition": "REUSE existing independent Host authority; only increase SHA/CAS-bound signed snapshot freshness to 900 seconds and retry malformed read-only GitHub JSON once.",
+      "evidence": [
+        "Existing 90-second snapshot timeout failed after legitimate slow remote API checks; user explicitly requested a longer bounded window.",
+        "Live PR86 publisher reported github_response_invalid after a valid signed snapshot; malformed JSON reads now receive one bounded read-only retry.",
+        "140 related unit tests passed, including expired/future timestamp and final recheck boundaries, malformed JSON retry and fail-closed behavior; Ruff and Pyright passed."
+      ],
+      "verification_level": "Relevant Host verifier/publisher/issuer pytest 140 passed; Ruff passed; Pyright 0 errors; remote CI and independent security review still required before integration.",
+      "model_evidence_veto_recovery_exit": "The Host remains sole signer; models cannot grant merge authority. Signature, immutable main/head SHA, Lane/Queue CAS, remote CI, protection and live rechecks remain mandatory. Malformed reads fail closed after two attempts.",
+      "rollback_route": "Revert the exact verifier and test changes and restore the previous trusted Host installation; no persisted data migration."
+    },
+    {
+      "component_id": "host-premerge-a5-metadata",
+      "paths": [
+        "docs/governance/submissions/20261122-host-premerge-efficiency.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 mechanical changed-path evidence",
+      "disposition": "Exact manifest coverage for this narrow Host verifier fix.",
+      "evidence": [
+        "One changed manifest declares the exact base-to-head changed paths."
+      ],
+      "verification_level": "scripts/check_architecture_submission.py local mechanical validation.",
+      "model_evidence_veto_recovery_exit": "The manifest has no runtime or approval authority; human/independent model review remains necessary.",
+      "rollback_route": "Revert together with the Host verifier patch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-signed-premerge-fastpath",
+      "g1": {
+        "necessity": "Remote GitHub checks may exceed 90 seconds despite unchanged exact signed candidate identity; a bounded 15-minute window avoids redundant admin authentication and signature issuance."
+      },
+      "g2": {
+        "authority_owner": "Independent UID462 Host signer and the existing protected GitHub merge policy",
+        "relationship": "reuse",
+        "non_duplication": "No new merge authority, approval source, bypass token, or separate reviewer process; the same verifier and signature are reused."
+      },
+      "g3": {
+        "model_evidence": [
+          "Live PR86 signed snapshot passed, but publisher expired it after remote validation; a subsequent publisher returned malformed GitHub JSON.",
+          "Boundary tests prove expiry at 901 seconds, rejection of future timestamps, and recheck fail-closed on elapsed time."
+        ],
+        "recovery_or_reason": "Retry only read-only malformed JSON once; if still invalid, preserve HOLD. Any identity/CAS/protection drift also remains HOLD."
+      },
+      "g4": {
+        "rollback": "Revert this change and restore trusted Host verifier from the last approved main SHA.",
+        "verification": [
+          "140 related Host tests passed; Ruff passed; Pyright 0 errors.",
+          "Independent reviewer, remote CI, and controlled trusted Host installation are required before declaring deployed."
+        ]
+      }
+    }
+  ]
+}
