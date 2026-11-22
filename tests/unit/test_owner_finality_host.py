@@ -227,13 +227,20 @@ def test_real_cli_query_dispatch_with_bound_host_roots(tmp_path, monkeypatch, ca
 
 
 def test_wheel_resource_list_includes_skill_manifest_without_other_dotfiles(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
-    import runpy
-    from unittest.mock import patch
+    import ast
 
-    with patch("setuptools.setup"):
-        scope = runpy.run_path(str(REPO / "setup.py"))
+    # CI test environments intentionally need not install setuptools. Extract
+    # the real resource enumerator from setup.py rather than importing the
+    # build backend just to inspect its file selection.
+    setup_path = REPO / "setup.py"
+    syntax = ast.parse(setup_path.read_text(encoding="utf-8"), filename=str(setup_path))
+    functions = [
+        node for node in syntax.body
+        if isinstance(node, ast.FunctionDef) and node.name == "resource_files"
+    ]
+    assert len(functions) == 1
     bundle = tmp_path / "fake-source"
     for name in ("skills/owner-finality-verify", "methods", "webui/dist", "docs"):
         (bundle / name).mkdir(parents=True, exist_ok=True)
@@ -242,7 +249,13 @@ def test_wheel_resource_list_includes_skill_manifest_without_other_dotfiles(
     (bundle / "skills" / "owner-finality-verify" / "SKILL.md").write_text("steps")
     (bundle / "webui" / "dist" / "index.html").write_text("html")
     (bundle / "webui" / "dist" / ".hidden").write_text("hidden")
-    scope["resource_files"].__globals__["ROOT"] = bundle
+    scope = {
+        "ROOT": bundle,
+        "DOCS": (),
+        "EXCLUDED": {"__pycache__", "node_modules"},
+        "Path": Path,
+    }
+    exec(compile(ast.Module(body=[functions[0]], type_ignores=[]), str(setup_path), "exec"), scope)
     names = [str(relative) for _source, relative in scope["resource_files"]()]
     assert "skills/.manifest.json" in names
     assert "skills/owner-finality-verify/SKILL.md" in names
