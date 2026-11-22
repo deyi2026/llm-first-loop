@@ -1,0 +1,78 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-owner-finality-host-v1",
+  "summary": "Narrow, explicit, read-only Host verification for already completed Goals: authenticate current Task EvidenceRefs under exact OwnerScope and complete Rule/Skill assets, return NO_WRITE_VERIFIED without Provider calls or HOLD fail closed. No automatic Web/Feishu interception or write authority.",
+  "components": [
+    {
+      "component_id": "owner-finality-host-readonly-gate",
+      "paths": [
+        "src/llm_loop/introspection/owner_finality_preflight.py",
+        "src/llm_loop/introspection/owner_finality_host.py",
+        "src/llm_loop/terminal/queries.py",
+        "skills/owner-finality-verify/SKILL.md",
+        "skills/.manifest.json",
+        "setup.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "owner-finality-readonly-host",
+      "owning_subsystem": "Goal/Task/EvidenceRef integrity, exact OwnerScope, local Host CLI and immutable wheel Skill assets",
+      "disposition": "Add a separate read-only Host query with deterministic HOLD on missing/invalid evidence, wrong owner/session, incomplete Goal/Task, stale or missing Rule/Skill integrity, missing evidence lock. Include the approved Skill manifest in wheel resources without broadening hidden-file packaging.",
+      "evidence": [
+        "Real Mac completed Goal with 7 Task records and 44 current EvidenceRefs returned NO_WRITE_VERIFIED twice with zero Provider calls and unchanged audited files.",
+        "Wrong workspace returned HOLD. An isolated unpacked wheel built from the reviewed candidate included the Skill manifest and returned the same true positive and false negative.",
+        "Independent glm/glm-5.3 reviewer reviewed identical functional patch SHA256 77444634e7275de8d1b6fb519de6968f001fcb17ef65fc6b181c74f992cbf47e, PASS P0=0 P1=0, and a second independent packaging delta review PASS P0=0 P1=0."
+      ],
+      "verification_level": "Real Mac Host and unpacked-wheel smoke PASS, 174 targeted tests PASS, original full R9 on earlier main base exit 0 (16424 passed). Updated main introduced PR96 sandbox changes; exact new candidate full R9 and remote PR98 required CI pending. This manifest repairs A.5 presence failure.",
+      "model_evidence_veto_recovery_exit": "Only trusted Host invoking explicit CLI may skip the repeated terminal model call. The receipt does not grant execution, signing, publishing or Goal mutation; if current EvidenceRef, Rule/Skill or OwnerScope is not valid, return HOLD and preserve existing execution/approval path. No model output can override HOLD.",
+      "rollback_route": "Revert the exact protected PR, keep original Goal/Task/Evidence ledger untouched; original model execution path remains unchanged."
+    },
+    {
+      "component_id": "owner-finality-tests-docs-a5",
+      "paths": [
+        "tests/unit/test_owner_finality_host.py",
+        "tests/unit/test_owner_finality_preflight.py",
+        "docs/cli.md",
+        "docs/results/RESULT-20261122-LFL-owner-finality-host-v1.md",
+        "docs/governance/submissions/20261123-owner-finality-host-v1.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Host finality regression, user-facing CLI contract, evidence and A.5 exact path coverage",
+      "disposition": "Test positive/negative integrity, owner mismatch, no-write, subprocess and wheel resource behavior; document explicit invocation and narrow scope, with one A.5 declaration covering every changed file.",
+      "evidence": [
+        "174 focused tests PASS; real Host evidence and no-write fingerprints recorded in local test report.",
+        "A.5 presence gate initially failed on draft PR98 because no submission existed; this manifest is the minimal deterministic fix."
+      ],
+      "verification_level": "Local targeted regression PASS before A.5 addition; exact new SHA full R9, A.5, privacy and protected CI must pass before merge.",
+      "model_evidence_veto_recovery_exit": "Tests and this declaration do not sign Host actions, prove semantic completion, or authorize merge/deploy. Any missing evidence remains HOLD.",
+      "rollback_route": "Revert tests/docs/A.5 with the feature PR; do not mutate historical Goal or evidence."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "owner-finality-readonly-host",
+      "g1": {
+        "necessity": "A completed Goal with valid evidence was still repeatedly sent to the model for terminal verification, wasting time and risking hallucinated NO_WRITE_VERIFIED when EvidenceRef was absent."
+      },
+      "g2": {
+        "authority_owner": "Existing trusted local Host, GoalStore/TaskStore, immutable Evidence ledger and bundled Rule/Skill sources",
+        "relationship": "reuse",
+        "non_duplication": "No new signer, approval authority, tool schema or Goal mutation; reuse current Goal/Task/Evidence/Rule/Skill stores through an explicit read-only Host command."
+      },
+      "g3": {
+        "model_evidence": [
+          "Earlier prompt-only E1/E1-K trial failed on missing EvidenceRef; B2 incorrectly asserted NO_WRITE_VERIFIED and was stopped.",
+          "Deterministic Host preflight now returns HOLD on missing/stale/wrong-Owner EvidenceRef; real Mac positive case verifies 44 refs and zero Provider calls; unpacked wheel repeats the same checks."
+        ],
+        "recovery_or_reason": "If current Goal/session/OwnerScope, Task finality, EvidenceRef existence/ledger/blob integrity, Rule/Skill manifest, or evidence lock fails, return HOLD, no writes and no model-based assertion of completion."
+      },
+      "g4": {
+        "rollback": "Revert protected PR and restore existing ordinary model path; preserve Goal/Task/Evidence state and review logs.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0 for functional patch; exact remote tree/blob identity must be rechecked after A.5-only change.",
+          "Original complete R9 exit 0 on final code/main baseline, plus PR required A.5, privacy, security and CI success.",
+          "Protected merge main, main CI and one managed Host deployment followed by true Host CLI positive/negative tests, live SHA and rollback validation."
+        ]
+      }
+    }
+  ]
+}
