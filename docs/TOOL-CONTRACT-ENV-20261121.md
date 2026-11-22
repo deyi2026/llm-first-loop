@@ -34,6 +34,10 @@ browser 面恰好「一只眼 `browser_perceive` + 一只手 `browser_operate`�
 
 - 发现来源：① 已配置的 `LFL_BROWSER_PERCEPTION_CDP_URL` ② 常见端口（9222/9223/9229）
   ③ Chrome 用户数据目录下的 `DevToolsActivePort`（Chrome 开远程调试时的落盘事实）。
+- 额外输入是**加法**：工具参数 `ports` / `user_data_dirs` 与缺省来源**合并**（不是替换）——
+  额外端口/目录各至多 8 个，候选端点合计至多 32 个。
+- 时间边界：单端点超时上限 10 秒，**另有 10 秒整体探测时限**——到点即停并在回执里写明
+  （截断与超时都如实回报，不静默少探）。
 - 只读：仅取 `/json/version` 与 `/json/list` 的**元信息**（浏览器版本、协议版本、目标计数），
   **不回传**页面标题/URL 等页面内容；只探 loopback，非 loopback 目标直接拒绝。
 - **不放宽 opt-in**：探针不改配置、不启动浏览器（补用例断言）。`browser_perceive` / `browser_operate`
@@ -71,7 +75,8 @@ browser 面恰好「一只眼 `browser_perceive` + 一只手 `browser_operate`�
 - `tests/unit/test_vision_downsample_v01.py`：阈值生效/禁用、兜底重试、总失败抛错、
   送检尺寸写进提示词。
 - `tests/unit/test_cdp_probe_v01.py`：可达/不可达如实回报、不回传页面内容、非 loopback 拒绝、
-  `DevToolsActivePort` 发现、工具回执含 opt-in 指引。
+  `DevToolsActivePort` 发现、工具回执含 opt-in 指引、额外端口与缺省合并、额外输入与候选数上界、
+  整体时限到点即停。
 
 ## 6. 独立审查后的修复（P1/P2）
 
@@ -87,3 +92,18 @@ browser 面恰好「一只眼 `browser_perceive` + 一只手 `browser_operate`�
 - **P2**：探针 timeout 上限 10s；非 loopback 直接拒绝；视觉兜底重试覆盖 httpx 传输层错误；
   失败路径「送检尺寸」标注为推定；降级指引判定归一；compact 描述收紧（控 schema token 成本）；
   60s 表述精确化（`TOOL_TIMEOUT_S` 可配、creative 模式 ×1.5）。
+
+## 7. Host 推送审查的 P2（受保护分支落地前，2026-11-22）
+
+Host `review_admission(kind=git_push)`（child=`subagent_654883c3dd6a`，reviewer=
+`minimax-review/MiniMax-M3.1-Flash`）判定 **REVISE（P0=0 P1=0 P2=2）**，两条 P2 均属实，已修：
+
+- **P2-1（契约与实现不一致）**：工具参数 `ports` 描述写「额外探测的端口」，实现却是**替换**
+  默认端口（`ports: [9333]` 会丢掉 9222/9223/9229）→ 改为**与缺省端口合并去重**，
+  `user_data_dirs` 同语义对齐；契约文本同步改写。
+- **P2-2（10 秒不是整体上界）**：`timeout_s` 只作用于单次 HTTP 请求，端点数无界时总耗时可
+  线性膨胀 → 补**候选端点总数上界 32**、**额外端口/目录各 8**，并加 **10 秒整体探测时限**
+  （到点即停并在回执写明「已达整体探测时限」），同时补 3 条回归用例锁定上述契约。
+
+修复后定向门禁：cdp_probe / read_image / 几何契约 / 降采样共 **37 项单元测试通过**，
+ruff 对改动文件全部通过。

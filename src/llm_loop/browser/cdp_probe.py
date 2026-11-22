@@ -9,12 +9,15 @@
 - 只取 /json/version 与 /json/list 的**元信息**（浏览器版本、协议版本、目标计数）；
   **不回传**页面标题/URL 等页面内容。
 - 不改任何配置、不启动浏览器、不放宽既有 browser 工具的显式 opt-in 门禁。
+- 额外输入有上界：额外端口/目录各至多 MAX_EXTRA_* 个，候选端点至多 MAX_CANDIDATES 个
+  （review P2：无界输入会让总耗时随参数线性膨胀）。
 """
 
 from __future__ import annotations
 
 import ipaddress
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -24,6 +27,12 @@ import httpx
 DEFAULT_PROBE_PORTS: tuple[int, ...] = (9222, 9223, 9229)
 DEFAULT_TIMEOUT_S = 2.0
 ACTIVE_PORT_FILENAME = "DevToolsActivePort"
+
+# 上界（review P2-1/P2-2）：额外端口/目录各至多 MAX_EXTRA_* 个，
+# 候选端点合计至多 MAX_CANDIDATES 个。
+MAX_EXTRA_PORTS = 8
+MAX_EXTRA_USER_DATA_DIRS = 8
+MAX_CANDIDATES = 32
 
 # Linux 常见 Chrome/Chromium/Edge 用户数据目录（DevToolsActivePort 落盘位置）
 LINUX_PROFILE_DIRS: tuple[str, ...] = (
@@ -83,35 +92,66 @@ def read_devtools_active_port(user_data_dir: str | Path) -> str | None:
         return None
 
 
+def merged_probe_ports(extra: Sequence[int] | None = None) -> list[int]:
+    """缺省端口 + 额外端口（去重保序；额外项至多 MAX_EXTRA_PORTS 个）.
+
+    契约：``extra`` 是**额外**端口，与缺省端口**合并**而不是替换——工具描述写的是
+    「额外」，此前实现却是替换（review P2-1），此处以合并为准并由测试锁定。
+    """
+    merged: list[int] = list(DEFAULT_PROBE_PORTS)
+    for port in list(extra or [])[:MAX_EXTRA_PORTS]:
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            continue
+        if value not in merged:
+            merged.append(value)
+    return merged
+
+
+def merged_user_data_dirs(extra: Sequence[str] | None = None) -> list[str]:
+    """缺省用户数据目录 + 额外目录（去重保序；额外项至多 MAX_EXTRA_USER_DATA_DIRS 个）."""
+    merged: list[str] = list(LINUX_PROFILE_DIRS)
+    for directory in list(extra or [])[:MAX_EXTRA_USER_DATA_DIRS]:
+        text = str(directory).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
+
+
 def discover_cdp_candidates(
     *,
     env_url: str | None = None,
     ports: tuple[int, ...] | list[int] | None = None,
     user_data_dirs: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
-    """候选 CDP base url 列表（去重、保序）.
+    """候选 CDP base url 列表（去重、保序、最多 MAX_CANDIDATES 个）.
 
-    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口
-    ③ Chrome 用户数据目录下的 DevToolsActivePort。
+    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口（+ 额外端口）
+    ③ Chrome 用户数据目录下的 DevToolsActivePort（+ 额外目录）。
+
+    ``ports`` / ``user_data_dirs`` 语义是**额外**输入（与缺省合并，不是替换）。
     """
     out: list[str] = []
 
     def _add(candidate: str) -> None:
         base = _normalize_base(candidate)
-        if base and base not in out:
-            out.append(base)
+        if not base or base in out:
+            return
+        if len(out) >= MAX_CANDIDATES:
+            return
+        out.append(base)
 
     configured = env_url if env_url is not None else os.environ.get(
         "LFL_BROWSER_PERCEPTION_CDP_URL", ""
     )
     _add(configured)
-    for port in ports if ports is not None else DEFAULT_PROBE_PORTS:
+    for port in merged_probe_ports(ports):
         try:
             _add(f"http://127.0.0.1:{int(port)}")
         except (TypeError, ValueError):
             continue
-    dirs = list(user_data_dirs) if user_data_dirs is not None else list(LINUX_PROFILE_DIRS)
-    for directory in dirs:
+    for directory in merged_user_data_dirs(user_data_dirs):
         found = read_devtools_active_port(directory)
         if found:
             _add(found)

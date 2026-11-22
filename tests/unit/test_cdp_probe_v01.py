@@ -113,3 +113,61 @@ def test_probe_is_not_in_browser_page_capability_family() -> None:
     """既有能力身份契约（provider-visible browser 面恰好一只眼一只手）不被本探针放宽."""
     assert CdpProbeTool.name == "cdp_probe"
     assert not CdpProbeTool.name.startswith("browser_")
+
+
+def test_extra_ports_are_merged_with_defaults() -> None:
+    """额外端口是加法：与缺省端口合并，不替换（review P2-1）。"""
+    candidates = cdp_probe.discover_cdp_candidates(env_url="", ports=[9333])
+
+    assert "http://127.0.0.1:9222" in candidates
+    assert "http://127.0.0.1:9223" in candidates
+    assert "http://127.0.0.1:9229" in candidates
+    assert "http://127.0.0.1:9333" in candidates
+
+
+def test_extra_inputs_and_candidates_are_bounded() -> None:
+    """额外端口/目录与候选端点总数都有上界（review P2-2）。"""
+    candidates = cdp_probe.discover_cdp_candidates(
+        env_url="",
+        ports=list(range(9300, 9400)),
+        user_data_dirs=[f"/tmp/lfl-cdp-dir-{index}" for index in range(50)],
+    )
+
+    extra_ports = [c for c in candidates if ":93" in c]
+    assert len(extra_ports) <= cdp_probe.MAX_EXTRA_PORTS
+    assert len(candidates) <= cdp_probe.MAX_CANDIDATES
+
+
+def test_probe_tool_stops_at_total_deadline(monkeypatch) -> None:
+    """整体时限到点即停：剩余候选不再逐个探测（如实回报而非静默少探）。"""
+    from llm_loop.tools.builtin import cdp_probe as cdp_probe_tool
+
+    calls: list[tuple[str, float]] = []
+
+    def fake_probe(base_url: str, timeout_s: float = 2.0) -> dict:
+        calls.append((base_url, timeout_s))
+        return {
+            "url": base_url,
+            "reachable": False,
+            "browser": None,
+            "protocol_version": None,
+            "target_count": None,
+            "error": "测试占位",
+        }
+
+    class _FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def monotonic(self) -> float:
+            self.now += 6.0
+            return self.now
+
+    monkeypatch.setattr(cdp_probe_tool, "time", _FakeClock())
+    monkeypatch.setattr(cdp_probe_tool, "probe_cdp_endpoint", fake_probe)
+
+    result = CdpProbeTool().execute(ports=[9300, 9301, 9302])
+
+    assert len(calls) == 1
+    assert calls[0][1] <= cdp_probe_tool.TOTAL_TIMEOUT_S
+    assert "时限" in result.content

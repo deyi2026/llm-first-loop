@@ -7,9 +7,14 @@
 
 from __future__ import annotations
 
+import time
+
 from llm_loop.browser.cdp_probe import (
     DEFAULT_PROBE_PORTS,
     DEFAULT_TIMEOUT_S,
+    MAX_CANDIDATES,
+    MAX_EXTRA_PORTS,
+    MAX_EXTRA_USER_DATA_DIRS,
     discover_cdp_candidates,
     probe_cdp_endpoint,
 )
@@ -17,6 +22,8 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 _ENV_HINT = "LFL_BROWSER_PERCEPTION_CDP_URL"
 MAX_TIMEOUT_S = 10.0
+# 整体探测时限（review P2-2：单请求超时不是整体上界——端点数无界时总耗时可线性膨胀）
+TOTAL_TIMEOUT_S = 10.0
 _CHROME_POLICY_NOTE = (
     "Chrome 136+ 对默认用户目录禁用 --remote-debugging-port：需以非默认 --user-data-dir "
     "启动才会暴露 CDP 端点（已有登录态的默认配置无法直接开远程调试）。"
@@ -34,6 +41,9 @@ class CdpProbeTool:
         "与可直接采用的端点地址。"
         "边界: 只探 loopback；不改任何配置、不启动浏览器、不读页面内容；browser 工具仍需显式设置 "
         f"{_ENV_HINT} 并重启服务后才会注册（本工具不放宽该 opt-in，也不属于 browser 页面能力家族）。"
+        f"上界: 整体探测 ≤{TOTAL_TIMEOUT_S:g} 秒，候选端点 ≤{MAX_CANDIDATES} 个，"
+        f"额外端口/用户目录各 ≤{MAX_EXTRA_PORTS}/{MAX_EXTRA_USER_DATA_DIRS} 个"
+        "（超出即截断并在回执里写明，不静默少探）。"
     )
     parameters = {
         "type": "object",
@@ -46,20 +56,24 @@ class CdpProbeTool:
                 "type": "array",
                 "items": {"type": "integer"},
                 "description": (
-                    "可选：额外探测的端口（缺省为 "
+                    "可选：在默认端口（"
                     + ", ".join(str(p) for p in DEFAULT_PROBE_PORTS)
-                    + "）"
+                    + f"）之外额外探测的端口；与默认端口合并去重，额外至多 {MAX_EXTRA_PORTS} 个"
                 ),
             },
             "user_data_dirs": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "可选：Chrome 用户数据目录（读取 DevToolsActivePort 落盘事实）",
+                "description": (
+                    "可选：额外探测的 Chrome 用户数据目录（读取 DevToolsActivePort 落盘事实）；"
+                    f"与缺省常见目录合并，额外至多 {MAX_EXTRA_USER_DATA_DIRS} 个"
+                ),
             },
             "timeout_s": {
                 "type": "number",
                 "description": (
-                    f"可选：单端点探测超时秒（默认 {DEFAULT_TIMEOUT_S}，上限 {MAX_TIMEOUT_S:g}）"
+                    f"可选：单端点探测超时秒（默认 {DEFAULT_TIMEOUT_S}，上限 {MAX_TIMEOUT_S:g}）；"
+                    f"整体探测另有 {TOTAL_TIMEOUT_S:g} 秒总时限"
                 ),
             },
         },
@@ -81,10 +95,25 @@ class CdpProbeTool:
         raw_dirs = kwargs.get("user_data_dirs") or None
         dirs = [str(d) for d in raw_dirs] if isinstance(raw_dirs, list) else None
         candidates = [url] if url else discover_cdp_candidates(ports=ports, user_data_dirs=dirs)
+        truncated = len(candidates) > MAX_CANDIDATES
+        if truncated:
+            candidates = candidates[:MAX_CANDIDATES]
         lines = [f"[探测] 候选端点 {len(candidates)} 个（来源：已配置值 / 常见端口 / DevToolsActivePort）"]
+        if truncated:
+            lines.append(
+                f"[说明] 候选端点超过上限 {MAX_CANDIDATES} 个，已截断，只探测前 {MAX_CANDIDATES} 个。"
+            )
+        lines.append(
+            f"[说明] 整体探测时限 {TOTAL_TIMEOUT_S:g} 秒；单端点超时上限 {MAX_TIMEOUT_S:g} 秒。"
+        )
+        deadline = time.monotonic() + TOTAL_TIMEOUT_S
         reachable: list[str] = []
         for candidate in candidates:
-            report = probe_cdp_endpoint(candidate, timeout_s=timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                lines.append("[说明] 已达整体探测时限，剩余候选端点未探测。")
+                break
+            report = probe_cdp_endpoint(candidate, timeout_s=min(timeout, remaining))
             if report["reachable"]:
                 reachable.append(report["url"])
                 lines.append(
