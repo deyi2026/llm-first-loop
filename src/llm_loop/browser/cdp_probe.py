@@ -1,0 +1,362 @@
+"""CDP 端点可达性探针（EVO-20261121-efa320ab）。
+
+为什么需要（本机实测，2026-11-21）：Chrome 已登录但未开远程调试端口时，
+"CDP 端点存在吗"这一事实**没有任何工具能回答**——只能盲写坐标脚本反复试错。
+本模块提供**只读**探针：发现候选端点 → 探测可达性 → 如实回报元信息。
+
+边界（刻意收紧，不得放宽）：
+- 只探 loopback（127.0.0.1 / localhost / ::1）；非 loopback 目标直接拒绝。
+- 只取 /json/version 与 /json/list 的**元信息**（浏览器版本、协议版本、目标计数）；
+  **不回传**页面标题/URL 等页面内容。
+- 不改任何配置、不启动浏览器、不放宽既有 browser 工具的显式 opt-in 门禁。
+- 额外输入有上界：额外端口/目录各至多 MAX_EXTRA_* 个，候选端点至多 MAX_CANDIDATES 个
+  （review P2：无界输入会让总耗时随参数线性膨胀）。
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import os
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
+
+DEFAULT_PROBE_PORTS: tuple[int, ...] = (9222, 9223, 9229)
+DEFAULT_TIMEOUT_S = 2.0
+ACTIVE_PORT_FILENAME = "DevToolsActivePort"
+
+# 上界（review P2-1/P2-2）：额外端口/目录各至多 MAX_EXTRA_* 个，
+# 候选端点合计至多 MAX_CANDIDATES 个。
+MAX_EXTRA_PORTS = 8
+MAX_EXTRA_USER_DATA_DIRS = 8
+MAX_CANDIDATES = 32
+
+# Linux 常见 Chrome/Chromium/Edge 用户数据目录（DevToolsActivePort 落盘位置）
+LINUX_PROFILE_DIRS: tuple[str, ...] = (
+    "~/.config/google-chrome",
+    "~/.config/google-chrome-beta",
+    "~/.config/google-chrome-unstable",
+    "~/.config/chromium",
+    "~/.config/chromium-browser",
+    "~/.config/microsoft-edge",
+    "~/.config/brave",
+)
+
+
+def _normalize_base(url: str) -> str:
+    """规范化 base url（补 scheme、去尾斜杠）."""
+    text = (url or "").strip().rstrip("/")
+    if not text:
+        return ""
+    if "://" not in text:
+        text = "http://" + text
+    return text
+
+
+def _is_loopback(url: str) -> bool:
+    """目标是否为 loopback（探针只允许本机端点）."""
+    host = (urlparse(url).hostname or "").strip()
+    if not host:
+        return False
+    if host.lower() in {"localhost", "ip6-localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def read_devtools_active_port(user_data_dir: str | Path) -> str | None:
+    """读 DevToolsActivePort（Chrome 开远程调试端口时的落盘事实）→ base url.
+
+    文件首行是端口、次行是浏览器 ws 路径；只取端口构造 loopback base url。
+    """
+    try:
+        candidate = Path(user_data_dir).expanduser() / ACTIVE_PORT_FILENAME
+        if not candidate.is_file():
+            return None
+        first_line = candidate.read_text(encoding="utf-8", errors="replace").splitlines()[:1]
+        if not first_line:
+            return None
+        port_text = first_line[0].strip()
+        if not port_text.isdigit():
+            return None
+        port = int(port_text)
+        if not 0 < port < 65536:
+            return None
+        return f"http://127.0.0.1:{port}"
+    except OSError:
+        return None
+
+
+def merged_probe_ports(extra: Sequence[int] | None = None) -> tuple[list[int], int]:
+    """缺省端口 + 额外端口 → (合并结果, 被丢弃数量).
+
+    契约：``extra`` 是**额外**端口，与缺省端口**合并**而不是替换——工具描述写的是
+    「额外」，此前实现却是替换（review P2-1），此处以合并为准并由测试锁定。
+    超出上限或非整数的项计入丢弃数，由调用方如实回报（review P2-3：不得静默少探）。
+    """
+    merged: list[int] = list(DEFAULT_PROBE_PORTS)
+    dropped = 0
+    for port in list(extra or []):
+        if len(merged) - len(DEFAULT_PROBE_PORTS) >= MAX_EXTRA_PORTS:
+            dropped += 1
+            continue
+        if isinstance(port, bool):
+            dropped += 1
+            continue
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            dropped += 1
+            continue
+        if value not in merged:
+            merged.append(value)
+    return merged, dropped
+
+
+def merged_user_data_dirs(extra: Sequence[str] | None = None) -> tuple[list[str], int]:
+    """缺省用户数据目录 + 额外目录 → (合并结果, 被丢弃数量)."""
+    merged: list[str] = list(LINUX_PROFILE_DIRS)
+    dropped = 0
+    for directory in list(extra or []):
+        if len(merged) - len(LINUX_PROFILE_DIRS) >= MAX_EXTRA_USER_DATA_DIRS:
+            dropped += 1
+            continue
+        text = str(directory).strip()
+        if not text or text in merged:
+            dropped += 1
+            continue
+        merged.append(text)
+    return merged, dropped
+
+
+def _discover_candidates_impl(
+    env_url: str | None,
+    ports: tuple[int, ...] | list[int] | None,
+    user_data_dirs: tuple[str, ...] | list[str] | None,
+    deadline: float | None,
+) -> tuple[list[str], dict[str, Any]]:
+    """候选发现实现（合并 + 读盘 + 上界）；时限已到即停止读盘."""
+    import time
+
+    out: list[str] = []
+    dropped_candidates = 0
+
+    def _add(candidate: str) -> None:
+        nonlocal dropped_candidates
+        base = _normalize_base(candidate)
+        if not base or base in out:
+            return
+        if len(out) >= MAX_CANDIDATES:
+            dropped_candidates += 1
+            return
+        out.append(base)
+
+    configured = env_url if env_url is not None else os.environ.get(
+        "LFL_BROWSER_PERCEPTION_CDP_URL", ""
+    )
+    _add(configured)
+    merged_ports, dropped_ports = merged_probe_ports(ports)
+    for port in merged_ports:
+        _add(f"http://127.0.0.1:{int(port)}")
+    merged_dirs, dropped_dirs = merged_user_data_dirs(user_data_dirs)
+    skipped_dirs = 0
+    for index, directory in enumerate(merged_dirs):
+        if deadline is not None and time.monotonic() >= deadline:
+            skipped_dirs = len(merged_dirs) - index
+            break
+        found = read_devtools_active_port(directory)
+        if found:
+            _add(found)
+    return out, {
+        "dropped_ports": dropped_ports,
+        "dropped_dirs": dropped_dirs,
+        "dropped_candidates": dropped_candidates,
+        "skipped_dirs": skipped_dirs,
+        "discovery_note": "",
+    }
+
+
+def discover_cdp_candidates_with_meta(
+    *,
+    env_url: str | None = None,
+    ports: tuple[int, ...] | list[int] | None = None,
+    user_data_dirs: tuple[str, ...] | list[str] | None = None,
+    deadline: float | None = None,
+    budget: float | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """候选 CDP base url + 截断元数据 → (候选列表, dropped_* 计数).
+
+    来源：① 已配置的 LFL_BROWSER_PERCEPTION_CDP_URL ② 常见调试端口（+ 额外端口）
+    ③ Chrome 用户数据目录下的 DevToolsActivePort（+ 额外目录）。
+
+    ``ports`` / ``user_data_dirs`` 语义是**额外**输入（与缺省合并，不是替换）。
+    任何被丢弃的输入都计数上报，供调用方在回执里写明（不静默少探）。
+
+    ``deadline`` / ``budget`` 把**候选发现**也纳入整体时限：目录读盘在挂起的文件系统上
+    可能无限阻塞，故发现阶段同样跑在守护线程里、受同一墙钟预算约束
+    （review P2：10 秒上限此前不含候选发现阶段）。
+    """
+    if deadline is None and budget is None:
+        return _discover_candidates_impl(env_url, ports, user_data_dirs, deadline)
+    found, note = call_with_deadline(
+        lambda: _discover_candidates_impl(env_url, ports, user_data_dirs, deadline),
+        budget if budget is not None else 10.0,
+        deadline,
+    )
+    if note:
+        return [], {
+            "dropped_ports": 0,
+            "dropped_dirs": 0,
+            "dropped_candidates": 0,
+            "skipped_dirs": 0,
+            "discovery_note": note,
+        }
+    candidates, meta = found
+    return candidates, meta
+
+
+def discover_cdp_candidates(
+    *,
+    env_url: str | None = None,
+    ports: tuple[int, ...] | list[int] | None = None,
+    user_data_dirs: tuple[str, ...] | list[str] | None = None,
+) -> list[str]:
+    """候选 CDP base url 列表（去重、保序、最多 MAX_CANDIDATES 个）."""
+    candidates, _ = discover_cdp_candidates_with_meta(
+        env_url=env_url, ports=ports, user_data_dirs=user_data_dirs
+    )
+    return candidates
+
+
+def _bounded_timeout(request_timeout: float, deadline: float | None) -> float | None:
+    """单次请求的超时预算：受整体时限约束；时限已到 → None（不再发起请求）."""
+    import time
+
+    if deadline is None:
+        return request_timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    # 不设下限：给超时兜底会越过绝对时限（review P2-1）——预算不足就用剩余值。
+    return min(request_timeout, remaining)
+
+
+def call_with_deadline(
+    call: Any, budget: float, deadline: float | None
+) -> tuple[Any, str | None]:
+    """在绝对墙钟预算内执行阻塞调用 → (结果, 超时说明).
+
+    httpx 的超时是**无活动超时**：对端只要持续滴字节就能把一次请求拖到任意长，
+    因此它不构成绝对时限（review P2-1）。这里把调用放进独立守护线程，调用方只等
+    「剩余预算」：预算用尽即放弃并如实回报（线程为 daemon，不阻塞进程退出）。
+    """
+    import threading
+    import time
+
+    box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            box["value"] = call()
+        except BaseException as exc:  # noqa: BLE001 - 异常回传调用方如实回报
+            box["error"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    remaining = budget
+    if deadline is not None:
+        remaining = min(budget, max(0.0, deadline - time.monotonic()))
+    thread.join(remaining)
+    if thread.is_alive():
+        return None, "已达整体探测时限（调用未在时限内完成）"
+    if "error" in box:
+        raise box["error"]
+    return box.get("value"), None
+
+
+def probe_cdp_endpoint(
+    base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S, deadline: float | None = None
+) -> dict[str, Any]:
+    """探测单个 CDP 端点（只读元信息）.
+
+    ``deadline`` 是整体探测时限的绝对时刻（``time.monotonic()`` 时基）。给定后，
+    端点内的两次请求**共享**这一预算，且每次请求都受**墙钟**上限约束
+    （review P2-1/P2-2：单请求无活动超时不是绝对时限）。
+
+    Returns:
+        dict: url / reachable / browser / protocol_version / target_count / error。
+        不可达时 reachable=False 且 error 非空（**不伪报可达**）。
+        可达但目标计数未取到时附带 note（如实说明原因）。
+    """
+    base = _normalize_base(base_url)
+    report: dict[str, Any] = {
+        "url": base,
+        "reachable": False,
+        "browser": None,
+        "protocol_version": None,
+        "target_count": None,
+        "error": None,
+    }
+    if not base:
+        report["error"] = "空端点"
+        return report
+    if not _is_loopback(base):
+        report["error"] = "仅允许 loopback 端点（探针不探测非本机目标）"
+        return report
+    request_timeout = max(0.2, float(timeout_s))
+    try:
+        with httpx.Client(
+            timeout=request_timeout, trust_env=False, follow_redirects=False
+        ) as client:
+            first_timeout = _bounded_timeout(request_timeout, deadline)
+            if first_timeout is None:
+                report["error"] = "已达整体探测时限，未发起请求"
+                return report
+            response, timeout_note = call_with_deadline(
+                lambda: client.get(
+                    f"{base}/json/version", timeout=httpx.Timeout(first_timeout)
+                ),
+                first_timeout,
+                deadline,
+            )
+            if timeout_note:
+                report["error"] = timeout_note
+                return report
+            if response.status_code >= 400:
+                report["error"] = f"HTTP {response.status_code}"
+                return report
+            payload = response.json()
+            if not isinstance(payload, dict):
+                report["error"] = "/json/version 响应不是 JSON 对象"
+                return report
+            report["browser"] = str(payload.get("Browser") or "") or None
+            report["protocol_version"] = str(payload.get("Protocol-Version") or "") or None
+            second_timeout = _bounded_timeout(request_timeout, deadline)
+            if second_timeout is None:
+                report["note"] = "已达整体探测时限，目标计数未读取"
+            else:
+                try:
+                    targets, timeout_note = call_with_deadline(
+                        lambda: client.get(
+                            f"{base}/json/list", timeout=httpx.Timeout(second_timeout)
+                        ),
+                        second_timeout,
+                        deadline,
+                    )
+                except Exception:  # noqa: BLE001 - 目标计数失败不影响可达性判定
+                    targets, timeout_note = None, "目标计数读取失败（目标数未知）"
+                if timeout_note:
+                    report["note"] = timeout_note
+                elif targets is not None and targets.status_code < 400:
+                    listed = targets.json()
+                    report["target_count"] = len(listed) if isinstance(listed, list) else None
+            report["reachable"] = True
+            return report
+    except Exception as exc:  # noqa: BLE001 - 连接失败如实回报
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        return report

@@ -144,6 +144,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.cdp_probe import CdpProbeTool
 from llm_loop.tools.builtin.desktop_operate import DesktopOperateTool
 from llm_loop.tools.builtin.desktop_perceive import DesktopPerceiveTool, make_jsonl_audit_sink
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
@@ -1687,6 +1688,12 @@ def build_engine(
                 max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
             ),
         )
+    # EVO-20261121-efa320ab: CDP 端点可达性探针（只读 loopback 元信息）。
+    # 命名刻意**不进入 browser_* 家族**：既有能力身份契约（provider-visible browser 面
+    # 恰好一只眼 browser_perceive + 一只手 browser_operate）由测试锁定且不因本探针放宽——
+    # 本探针读不到页面、不能写页面，只是「端点存在吗/可达吗」的环境诊断。
+    # 与下方 browser 工具的显式 opt-in 门禁并列而非替代：不改配置、不启动浏览器。
+    _register_basic("cdp_probe", CdpProbeTool())
     # SMC Browser cognition-preserving surface: explicit loopback CDP opt-in only.
     # Provider-visible Browser capabilities are deliberately collapsed to `browser_perceive`
     # (read-only sensing/wait) and, when writes are enabled, `browser_operate`
