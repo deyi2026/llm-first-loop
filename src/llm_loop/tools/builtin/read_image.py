@@ -11,17 +11,20 @@ describe_image 后端链: arkcli 团队识别工具优先 → 注册表 multimod
 本演进把该隐式假设变成显式契约。
 """
 
-from __future__ import annotations
+from __future__ import annotations  # 注解惰性求值：类型仅供静态检查，运行期不求值
 
 import io
 import json
 import re
 import struct
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import workspace_base
+
+if TYPE_CHECKING:
+    from llm_loop.web.vision import VisionGeometry
 
 # 图片扩展名 → mime（与 web/routes.py 上传通道一致）
 _EXT_MIME = {
@@ -228,7 +231,7 @@ def _resolve_crop(
 
 def _run_vision(
     send_bytes: bytes, send_mime: str, prompt: str
-) -> tuple[str | None, str | None, Any]:
+) -> tuple[str | None, str | None, VisionGeometry | None]:
     """调用视觉后端 → (text, error, geometry)；失败如实降级，不伪装成功.
 
     后端失败时 geometry 取自 vision 模块挂在异常上的**本地预处理事实**
