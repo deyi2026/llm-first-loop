@@ -1,7 +1,7 @@
 # 0.6.57 受管发行：候选证据与切换计划（Deepin 本机）
 
 - 日期：2026-11-22
-- 状态：候选已由官方 committed-build 入口产出并通过远端 CI；本机切换已完成 stage 与 `publish-wheel` CAS（generation 19→20），物理重启已受理但**延迟到本轮 requester run 结束后**才执行（action `svc-aeede211c4b94219b58420f8c4fb72f7`）；收敛验收须等该动作终态 `succeeded` + `verify_verdict=confirmed_ok` 后据实补记，未满足前不得称已生效
+- 状态：候选已由官方 committed-build 入口产出并通过远端 CI；本机切换已完成 stage 与 `publish-wheel` CAS（generation 19→20）与物理重启——action `svc-aeede211c4b94219b58420f8c4fb72f7` 终态 `succeeded` + `verify_verdict=confirmed_ok`（2026-11-22T23:48:39+08:00），web/feishu/learning 三服务 live 身份与 Web health 均收敛到 0.6.57 / wheel `105f9815…`；**0.6.57 已生效**（wecom 不在 `--target all` 物理执行面内，未切代，见第 8 节）
 - 上一发行基线：已安装 0.6.56 / desired generation 19
 - 依据通道：`$HOME/.local/share/lfl/audit/MANAGED_RELEASE_GATE.md`（本机权威受管发行闸）
 
@@ -125,8 +125,28 @@
 - publish：`publish-wheel --lfl-home ROOT --data-dir ROOT/data --expected-generation 19` → CAS
   19→20，`deployment_id=deploy-bdb7fc6d97c04dbd844f4ff1cc8973d1`，version `0.6.57`，
   `wheel_sha256=105f9815…`，`webui_artifact_sha256=9588bef8…`（WebUI 源码未变，指纹与 0.6.56 一致）。
-- restart：受管重启已受理，action `svc-aeede211c4b94219b58420f8c4fb72f7`；回执明示
-  `deferred_effect.effective_after_session_end=true`——物理切代在本轮 requester run 结束后由
-  worker 接手，**受理≠完成**。
-- 待补：终态 `confirmed_ok` 后的三服务 live 身份、Web health 版本/SHA、以及宿主侧官方验收器
-  （`audit/verify_managed_release.py` 的 systemd 单元交叉核对在本会话沙盒内不可执行）。
+- restart：受管重启**已完成**——action `svc-aeede211c4b94219b58420f8c4fb72f7`（target=all，generation 20）
+  终态 `status=succeeded` + `verify_verdict=confirmed_ok`，`succeeded_at=2026-11-22T23:48:39.360009+08:00`；
+  durable 回执 `restart_mirror rc=0; identity generation=20 key=wheel:0.6.57@105f981515fe`，
+  verify 证据 `web[ok pid=274778] feishu[ok pid=274946] learning[ok pid=274991]`。
+  先前受理时的 `deferred_effect.effective_after_session_end=true`（物理切代在本轮 requester run 结束后
+  由 worker 接手）已由 worker 兑现，收敛判据据实补记如下。
+- 收敛验收（三条判据同时成立，逐条只读实测）：
+  1. `service_control(action=status, action_id=svc-aeede211c4b94219b58420f8c4fb72f7)` →
+     `status=succeeded`、`verify_verdict=confirmed_ok`；
+  2. `service_control(action=status, target=all)` → `deployment.generation=20`、`version=0.6.57`、
+     `wheel_sha256=105f9815…`；web/feishu/learning 三者 `live.release_version=0.6.57`、
+     `live.wheel_sha256=105f9815…`、`matches_desired_generation=true`、`restart_required=false`、`reasons=[]`；
+     live 进程：web pid 274778（起 23:48:34）、feishu pid 274946（起 23:48:37）、learning pid 274991（起 23:48:39），
+     `guard_code_drift=current`；web 的 live `git_head` 为 `unknown`（live 推断未回填，不影响版本身份）。
+  3. `GET /health` → `version=0.6.57`、`build.wheel_sha256=105f9815…`、`build.release_dir` 指向
+     `$HOME/.local/share/lfl/releases/LFL-0.6.57`。
+- 本轮未覆盖项（如实记录，不计入已收敛集合）：
+  - `wecom` 不在 `--target all` 物理执行面内（契约：批量面=web/feishu/learning），其 live manifest 缺失
+    （`live_manifest_missing`）、`restart_required=true`；如需切代须单独 `restart wecom`。
+  - 宿主侧官方验收器 `$HOME/.local/share/lfl/audit/verify_managed_release.py` 的 systemd 单元交叉核对
+    在本会话沙盒内不可执行：实跑返回 `result=FAIL`，`systemctl --user show lfl.service` 报
+    「Failed to connect to bus」（沙盒内无 systemd user bus），属执行环境不可达而非切换失败证据；
+    该脚本因目标 audit 回执已存在未写入、未覆盖任何文件。此项须在宿主 shell 侧补做。
+- 收敛回执落盘：`docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json`
+  （含三条判据的实测值、未覆盖项与残余风险）。

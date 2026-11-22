@@ -15,7 +15,8 @@
         "候选 wheel sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e，由 scripts/build_committed_distribution.py --ref 080ec9083f9e… 产出，provenance.json 记录 source_commit=080ec90…、webui_source_sha256=e8c515fc…（147 tracked files）、tracked_python_modules=648、offline_build=true。",
         "required checks 集合以 docs/governance/required-ci-checks.json 为准（5 项）：门禁、安全扫描、managed-premerge-evidence、privacy-gate（均 push_and_pr）与 A.5 架构提交审查（pr_only）；PR #93 head 4678fe6 的 10 项 check-runs 与合并提交 080ec90 的 9 项 check-runs 全为 success（nightly 两项 skipped）。",
         "切换前基线：desired generation 19 / version 0.6.56 / wheel 74a9e0f2…；web、feishu、learning 三者 live 版本与 wheel SHA 均匹配 desired，matches_desired_generation=true，admission_barriers 为空；wecom 无 live manifest，不在 --target all 物理执行面内，本次不报为已验收。",
-        "独立审查：PR #93 上行审查共 10 轮，PASS 出现在第 6/9/10 轮（最终第 10 轮 child=subagent_7cde5c9a6e83），其余 7 轮 REVISE；所审 head 与候选源 080ec90 的树完全一致；视觉契约另有两次 Host full_test PASS。"
+        "独立审查：PR #93 上行审查共 10 轮，PASS 出现在第 6/9/10 轮（最终第 10 轮 child=subagent_7cde5c9a6e83），其余 7 轮 REVISE；所审 head 与候选源 080ec90 的树完全一致；视觉契约另有两次 Host full_test PASS。",
+        "收敛验收（2026-11-22 补记）：受管重启 action svc-aeede211c4b94219b58420f8c4fb72f7（target=all，generation 20）终态 status=succeeded 且 verify_verdict=confirmed_ok；desired deployment generation=20 / version=0.6.57 / wheel 105f9815…；web、feishu、learning 三者 live release_version=0.6.57、wheel_sha256=105f9815…、matches_desired_generation=true、restart_required=false、reasons 为空；web /health 返回 version=0.6.57 且 build.wheel_sha256=105f9815…。逐条实测值见 docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json；wecom 不在 --target all 物理执行面内（未切代，不计入已收敛集合），宿主侧 systemd 单元交叉核对在本会话沙盒内不可执行（systemctl --user 无 user bus），该两项均如实记为未覆盖。"
       ],
       "verification_level": "文中每条事实均可回源：git 提交与树比较、GitHub check-runs API、docs/governance/required-ci-checks.json、构建 provenance.json、本机 /api/v1/services/status 与 /health、部署指针文件；主机身份与本机绝对路径不写入版本库。",
       "model_evidence_veto_recovery_exit": "任一事实与回源结果不符时以回源为准并更正本文；候选 SHA、CI 结论或 live 状态不符即不得继续切换。",
@@ -38,6 +39,24 @@
       "rollback_route": "回退该更正即恢复原措辞（但会重新引入计数不自洽）。"
     },
     {
+      "component_id": "managed-cutover-convergence-receipt",
+      "paths": [
+        "docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "本机受管发行收敛验收的事实留痕面",
+      "disposition": "落盘 0.6.57 受管切换的收敛验收回执：受管重启 action svc-aeede211c4b94219b58420f8c4fb72f7 的终态（succeeded + verify_verdict=confirmed_ok）、desired deployment（generation=20 / version=0.6.57 / wheel 105f9815…）、web/feishu/learning 三服务的 live 身份、web /health 的版本与 wheel 指纹，以及三条完成判据的逐条实测值、未覆盖项（wecom 不在批量物理执行面内；宿主侧 systemd 单元交叉核对在沙盒内不可执行）与残余风险。只记录事实，不新增任何控制机制。",
+      "evidence": [
+        "service_control(action=status, action_id=svc-aeede211c4b94219b58420f8c4fb72f7) → status=succeeded、verify_verdict=confirmed_ok、succeeded_at=2026-11-22T23:48:39.360009+08:00、verify_evidence=verify=confirmed_ok web[ok pid=274778] feishu[ok pid=274946] learning[ok pid=274991]。",
+        "service_control(action=status, target=all) → deployment.generation=20、version=0.6.57、wheel_sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e；web/feishu/learning 三者 live.release_version=0.6.57、live.wheel_sha256=105f9815…、matches_desired_generation=true、restart_required=false、reasons=[]、guard_code_drift=current。",
+        "GET /health → version=0.6.57、build.wheel_sha256=105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e、build.release_dir 指向 0.6.57 release 目录。",
+        "durable action 回执与受管审计回执文件均已回读：前者 status/verify_verdict 一致；后者 acceptance 段仍是物理重启前落盘状态（pending_physical_restart），未在本轮改写。"
+      ],
+      "verification_level": "回执内每条数值均来自本轮只读实测（两次 service_control status、一次 curl /health、durable action json、受管审计回执 json）；主机身份与本机绝对路径不写入版本库，改用 $HOME 形态。",
+      "model_evidence_veto_recovery_exit": "任一实测值与回源结果不符时以回源为准并更正回执；三条判据任一不成立即不得称 0.6.57 已生效。",
+      "rollback_route": "回退该回执提交即移除本记录；不影响运行态与已安装 release。"
+    },
+    {
       "component_id": "a5-deepin-v0657-submission",
       "paths": [
         "docs/governance/submissions/20261122-deepin-v0657-release-identity.json"
@@ -46,9 +65,9 @@
       "owning_subsystem": "A.5 架构提交声明机制（清单自身）",
       "disposition": "声明本次发行证据面的精确 changed-path 集合，供 A.5 机械校验覆盖。",
       "evidence": [
-        "本清单的 components.paths 与 b3630a4（PR #93 上行回执提交）到本提交之间的 changed-path 集合精确一致（3 条：发行证据文档、push 回执更正、本清单自身）。"
+        "本清单的 components.paths 与 origin/main（70ae9f5c，merge-base=080ec908）到本提交之间的 changed-path 集合精确一致（4 条：发行证据文档、push 回执更正、本清单自身、0.6.57 收敛验收回执）。"
       ],
-      "verification_level": "scripts/check_architecture_submission.py 以 base=b3630a4、head=本提交运行并 PASS。",
+      "verification_level": "scripts/check_architecture_submission.py 以 base=origin/main（merge-base 080ec908）、head=本提交运行并 PASS。",
       "model_evidence_veto_recovery_exit": "覆盖不精确即 FAIL；不得放宽校验或改写路径集合凑数。",
       "rollback_route": "回退该提交即移除本清单。"
     }
