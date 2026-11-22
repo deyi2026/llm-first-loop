@@ -9,7 +9,8 @@
 
 | 项 | 值 |
 | --- | --- |
-| 上一发行基线 commit | `07fd45f0de4eb62d7f2094014af6d3e3bdb5b867`（0.6.56） |
+| 上一发行基线 commit | `07fd45f0de4eb62d7f2094014af6d3e3bdb5b867`（本次发行增量的**代码基线**；该提交的 pyproject 版本仍是 `0.6.55`） |
+| 上一发行版本身份提交 | `6e014654`（`chore(r9): prepare Deepin v0.6.56 from integrated main`——0.6.56 的版本身份由此提交确立，即 0.6.56 已安装发行对应 `6e014654`，而 `07fd45f0` 只是其代码基线） |
 | 本次候选源 commit | `080ec9083f9e292dd31045f6b5be3d285b1c5d9c`（origin/main，PR #93 合并提交） |
 | 版本身份一致性 | pyproject / README / README.en / uv.lock / `SERVICE_VERSION` 同为 `0.6.57`（提交 `24036f6`） |
 | wheel | `llm_first_loop-0.6.57-py3-none-any.whl`，sha256 `105f981515fe720b15f5146d9605cbae45a5ee1dc0971a4f9452a231e6ae1b3e` |
@@ -39,8 +40,8 @@
 | A.5 架构提交审查（机械 presence/coverage） | pr_only | success（PR #93 上运行） |
 
 - PR #93 head `4678fe6` 的 check-runs 共 10 项＝**8 success ＋ 2 skipped ＋ 0 failed**：上表 5 项 required 全 success，
-  另有 `部署 env 泄漏门禁（D4）`、`Linux 用户级安装/卸载真实成品验收（x86_64）`、
-  `Linux 用户级安装/卸载真实成品验收（aarch64）` success，`nightly 真实 LLM 冒烟 + 评测集`、
+  另有 `部署 env 泄漏门禁（D4）`、`Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）`、
+  `Linux 用户级安装/卸载真实成品验收（aarch64 / glibc）` success，`nightly 真实 LLM 冒烟 + 评测集`、
   `nightly 信号类测试 50 次稳定性` skipped。
 - 合并提交 `080ec90` 的 check-runs 共 9 项＝**7 success ＋ 2 skipped ＋ 0 failed**：A.5 检查为 `pr_only`、不在 push 事件上运行，
   故该提交上是 4 项 push_and_pr required + env 泄漏门禁 + 2 项 Linux 安装验收 success，2 项 nightly skipped。
@@ -176,3 +177,26 @@
     该脚本因目标 audit 回执已存在未写入、未覆盖任何文件。此项须在宿主 shell 侧补做。
 - 收敛回执落盘：`docs/governance/receipts/release-0.6.57-managed-cutover-20261122.json`
   （含三条判据的实测值、未覆盖项与残余风险）。
+
+## 9. 上行与并入 main（2026-11-22）
+
+- 本节记录的证据面（发行文档、收敛验收回执、push 回执更正、A.5 清单）经受保护分支 PR 路径并入 `main`：
+  - push 审查（RULE-AI-28，Host `review_admission(kind=git_push)`）三轮：
+    `subagent_35961e04adea` REVISE（P0=0/P1=1/P2=2）→ `subagent_fea4bbca27b9` REVISE（P0=0/P1=0/P2=2）→
+    `subagent_b818fe229d3e` PASS（`candidate_sha256=2864d8f5…`）；每轮修订后重跑 A.5 机械覆盖与隐私扫描。
+  - 分支 `docs/release-0.6.57-managed-cutover-convergence`（head `634b8e70`）→ PR #95；
+    远端 CI 共 10 项＝**8 success ＋ 2 nightly skipped ＋ 0 failed**。
+  - 独立只读合并审查（RULE-AI-34）：`subagent_b29fe7accf44` **PASS**（P0=0/P1=0/P2=3）；其中两条非阻断措辞项
+    已在本文件修正（0.6.56 版本身份提交标注、附加 check 名称补齐 ` / glibc`），第三条（本 PR 自身的 push 回执）
+    按仓库惯例在合并后的补记 PR 落盘。
+  - 合并：受保护 GitHub 合并端点 merge-commit，`merge_commit=50c0f0d3`（parents `70ae9f5c`/`634b8e70`），
+    `merged_by=deyi2026`，`merged_at=2026-11-22T16:13:17Z`；`git diff 50c0f0d3 634b8e70` 为空（树一致），
+    本地 `main` 已 fast-forward 到该合并提交；分支按仓库惯例保留（`delete_branch_on_merge=false`）。
+- 回执落点：`docs/governance/receipts/merge-release-0.6.57-managed-cutover-20261122.json`（gate=merge）与
+  `docs/governance/receipts/push-release-0.6.57-managed-cutover-20261122.json`（gate=push）。
+- 补记 PR（本次落盘两份回执 + 本节的那一次）：独立只读合并审查 `subagent_91a5f3246c9d` **PASS**
+  （P0=0/P1=0/P2=2）——其两条 P2 已在本次补记中修正并复核：门禁命令一律以**钉住的 base/head SHA** 记录
+  （以移动引用 `origin/main` 字面复跑会得到不同结果：A.5 会因 diff 为空而 exit=2、隐私扫描会因空文件清单
+  而 exit=0 且无输出）；两份新回执的文件名日期为**事件 UTC 日**，而 `recorded_at` 因跨本地午夜落在次日，
+  已在回执内显式声明该口径。本 PR 自身的 push 回执与合并回执按仓库惯例随下一次 PR 落盘
+  （回执不可能包含于描述它自身的那次 PR）。

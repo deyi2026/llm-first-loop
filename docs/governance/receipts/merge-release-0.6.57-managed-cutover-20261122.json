@@ -1,0 +1,73 @@
+{
+  "schema": "lfl.merge-gate-receipt/v1",
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "recorded_at": "2026-11-23T00:16:00+08:00",
+  "filename_date_semantics": "文件名中的 20261122 = 合并事件的 UTC 日期（merged_at=2026-11-22T16:13:17Z）；recorded_at 为本地记录时刻，因跨本地午夜而落在 2026-11-23。本仓同族回执多为「文件名日期＝本地记录日」，此处按事件 UTC 日命名并在此显式声明，避免回溯时被读作同一天。",
+  "reviewer": "subagent_b29fe7accf44（独立只读合并审查子代理，未参与本分支任何产出；模型 minmax/MiniMax-M3.1-Flash；工具面只读，全程未执行 commit/push/merge/checkout、未写文件、未建 PR、未联网）",
+  "verdict": "PASS",
+  "goal_id": "not_applicable:本任务无 durable Goal（get_goal 实测为「无活动目标」），按 RULE-AI-34 以分支任务收口执行合并闸",
+  "branch": "docs/release-0.6.57-managed-cutover-convergence",
+  "based_on_main": true,
+  "base_sha": "70ae9f5ca2a4bf19c730fe3be033530149ac2252",
+  "head_sha": "634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e",
+  "commits": [
+    "b3630a4e docs(receipt): 落盘 PR #93 上行回执（推送与合并证据）",
+    "2e3539c8 docs(release): 声明 0.6.57 受管发行身份面与发行证据（A.5 清单 + 受管发行计划）",
+    "85b98a13 docs(release): 补记 0.6.57 受管发行执行状态",
+    "23fd7cfb docs(release): 记录 0.6.57 受管切换收敛验收（confirmed_ok + 三条判据实测）",
+    "94381e47 Merge remote-tracking branch 'origin/main' into docs/release-0.6.57-managed-cutover-convergence",
+    "8a060f79 docs(release): 合并 origin/main 并消解 push 审查 REVISE（差集口径 + CI 状态逐项化）",
+    "634b8e70 docs(release): 按第 2 轮审查意见消歧 CI 状态措辞与本地门禁结论"
+  ],
+  "merge_mode": "merge-commit",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "scripts/check_architecture_submission.py --base 70ae9f5ca2a4bf19c730fe3be033530149ac2252 --head 634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e → PASS（changed_paths=4、components=4）",
+    "scripts/git_security_scan.sh --range 70ae9f5ca2a4bf19c730fe3be033530149ac2252 634b8e701ccb8f1c6899d14ee2a1ff8d8adbdc4e → 通过（20 个文件无敏感/错误内容）",
+    "scripts/knowledge_flush.py --check → pending 0",
+    "远端 CI（PR #95）：A.5 架构提交审查、安全扫描、privacy-gate、门禁（pytest+ruff+pyright）、managed-premerge-evidence、部署 env 泄漏门禁（D4）、Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）、（aarch64 / glibc）全 success；nightly 2 项 skipped；无 failed"
+  ],
+  "focused_gates_command_note": "门禁命令一律用钉住的 base/head SHA 记录（而非移动引用 origin/main）：以移动引用在 head=634b8e70 处字面复跑，A.5 会因 diff 为空而 exit=2（no architecture submission to review），git_security_scan.sh 会因空文件清单而 exit=0 且无输出——两者都不是本回执记录值的来源；本回执的记录值由上列钉住 SHA 的命令形式产出。",
+  "main_sha_after": "50c0f0d38faa1c14ecd476d43d9294a1a633d56d",
+  "branch_disposition": "kept:与仓库惯例一致（delete_branch_on_merge=false，PR #93 分支同样保留）；保留可回溯本次受管发行的证据面与三轮 push 审查链，且本仓惯例是回执在合并之后落盘，合并后补记需要该分支可寻址",
+  "pr": 95,
+  "pr_url": "https://github.com/deyi2026/llm-first-loop/pull/95",
+  "merged_at": "2026-11-22T16:13:17Z",
+  "merged_by": "deyi2026",
+  "merge_endpoint": "受保护 GitHub 合并端点（merge commit）",
+  "repo_tool_verdict": "scripts/managed_pr_integrate.py 只读裁决 HOLD / high_risk_requires_independent_review——docs/governance/ 属该仓声明的高风险前缀，按其声明高风险改动走独立 Host 审查路径；本分支已具备 Host push 审查 PASS（subagent_b818fe229d3e）、独立合并审查 PASS（subagent_b29fe7accf44）与远端 5 项 required checks 全绿，故由受保护合并端点执行 merge-commit",
+  "postconditions": [
+    "git ls-remote origin refs/heads/main → 50c0f0d38faa1c14ecd476d43d9294a1a633d56d（合并端点产生的 merge commit）",
+    "git log -1 --format='%H %P' 50c0f0d3 → parents = 70ae9f5c…（base）、634b8e70…（PR head）",
+    "git diff 50c0f0d3 634b8e70 → 空（合并提交与分支 head 树一致）",
+    "本地 main 已 fast-forward 到 50c0f0d38faa1c14ecd476d43d9294a1a633d56d"
+  ],
+  "findings": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 3,
+    "items": [
+      {
+        "id": "P2-1",
+        "finding": "发行文档把 07fd45f0 标注为「上一发行基线 commit（0.6.56）」，易被读成该提交即 0.6.56",
+        "reviewer_fact": "git show 07fd45f0:pyproject.toml → version = 0.6.55；0.6.56 的版本身份提交是其后继 6e014654（chore(r9): prepare Deepin v0.6.56 from integrated main）",
+        "disposition": "已复核实并修正文档措辞：07fd45f0 标注为代码基线，另行标注 0.6.56 版本身份提交 6e014654"
+      },
+      {
+        "id": "P2-2",
+        "finding": "两项附加 check 名称省略 workflow 中的「 / glibc」后缀",
+        "reviewer_fact": ".github/workflows/ci.yml 的 job 名为「Linux 用户级安装/卸载真实成品验收（<arch> / glibc）」",
+        "disposition": "已复核实并修正文档措辞，与 workflow job 名及 push 回执的完整名称一致"
+      },
+      {
+        "id": "P2-3",
+        "finding": "本分支上行审查的最终 PASS 轮（subagent_b818fe229d3e）未进入仓内跟踪证据面",
+        "reviewer_fact": "该轮 PASS 仅出现在 PR #95 正文（未入库），仓内 grep 仅命中未跟踪文件",
+        "disposition": "按本仓惯例（回执不可能包含于描述它自身的那次 PR）在合并后的补记 PR 中落盘，见 docs/governance/receipts/push-release-0.6.57-managed-cutover-20261122.json"
+      }
+    ]
+  },
+  "reviewer_scope_note": "审查者不直接动 main；合并由父会话在取得 PASS 回执后按受保护合并端点执行，并已核对合并后置条件",
+  "verify_receipt_id": "not_applicable:本仓 PR 路径不登记 Host lane，故未使用 merge_review_start/verify_receipt_request 入口；本次合并的资格来自 Host push 审查 PASS + 独立合并审查 PASS + 远端 required checks 全绿，如实记录而非留空"
+}
