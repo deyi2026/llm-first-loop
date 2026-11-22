@@ -1,0 +1,67 @@
+{
+  "gate": "push",
+  "rule": "RULE-AI-28",
+  "path": "受保护分支 PR 路径（origin/main 受保护：enforce_admins + 必须走 PR + 5 项 required status checks；直接推送 main 被远端以 GH006 拒绝）",
+  "pr": 93,
+  "pr_url": "https://github.com/deyi2026/llm-first-loop/pull/93",
+  "branch": "feat/evo-20261121-efa320ab-linux-chrome-vision-contract",
+  "base": "main",
+  "reviewer": "Host ReviewAdmission kind=git_push 独立审查子代理（reviewer=minimax-review/MiniMax-M3.1-Flash，只读独立子代理，发起方未参与）",
+  "verdict": "PASS",
+  "qualification": "PASS",
+  "candidate_sha256": "ef0fb04ec5b3b6abc2ae17004dc822b2948b085a746dceececc4a604b2bffdab",
+  "review_child_id": "subagent_7cde5c9a6e83",
+  "review_history": "10 轮：REVISE×9（前 9 轮：ports 契约与实现不一致、10 秒超时非整体上界、总时限未贯穿端点内两次请求、失败路径送检尺寸错误、超时下限会越过绝对时限、截断静默无法回报、httpx 无活动超时非墙钟上限、README 版本与发布状态段矛盾、候选发现阶段不在时限内；另有 1 条 P1 为误判——文件确有 from __future__ import annotations，已用可见于增量 diff 的 future import 注释消除歧义）→ PASS×3（第 6/9/10 轮）。逐条处置见 docs/TOOL-CONTRACT-ENV-20261121.md 第 7–13 节",
+  "commit_count": 23,
+  "remote": "origin",
+  "remote_url": "https://github.com/deyi2026/llm-first-loop.git",
+  "target_ref": "refs/heads/main",
+  "carried_content": [
+    "vision 坐标契约：read_image 回执固定给出原图/裁剪/送检/缩放/换算式，模型自报 bbox 标注未经验证",
+    "大图降采样：WEB_VISION_MAX_SIDE 本地降采样 + 识别失败兜底再降采样一半",
+    "CDP 只读端点探针 cdp_probe：只读可达性/版本/协议/目标计数，不回传页面内容，不放宽 browser_* opt-in；整体 10 秒墙钟上限（候选发现与端点内两次请求共享预算）、额外输入与候选数上界、截断如实回报",
+    "compact 预算回归修复（lazy<full 不变量）",
+    "治理：A.5 声明 docs/governance/submissions/20261122-evo-20261121-efa320ab-vision-contract-upstream.json（changed-path 精确覆盖 22 条）；RULE-AI-34 合并回执 docs/governance/receipts/merge_GOAL-20261121-61234b03_evo-20261121-efa320ab.json",
+    "两份 README 的版本与发布状态段统一为 0.6.57（保留本地候选≠已发布 Release 的区分）"
+  ],
+  "sensitive_checks": "clean（pre-push hook：git_security_scan 通过（166 文件无敏感/错误内容）、知识闸无待入库资产、回执正文无占位标记；远端 CI：安全扫描（敏感/私密/错误文件拦截）与 privacy-gate 均 pass）",
+  "remote_ci": {
+    "rounds": 3,
+    "round_1_failed": "门禁（pytest + ruff + pyright）红：pyright 对 read_image.py 报 4 条新诊断（送检几何声明为 object 却访问 input_width/input_height/scale_x/scale_y）",
+    "round_2_failed": "门禁红：环境访问单向棘轮判「新增/扩大」——候选发现实现拆出 _discover_candidates_impl 使登记键迁移（同文件/同配置键/同只读方式/仍 1 处）；已按 scripts/audit_runtime_env.py --update-baseline 显式登记（reason + parent_commit=e870806…），并按 RULE-AI-35 复测：注入后棘轮 AssertionError 拦下，移除后 11 项转绿",
+    "round_3_result": "全绿",
+    "required_checks": [
+      "门禁（pytest + ruff + pyright）",
+      "安全扫描（敏感/私密/错误文件拦截）",
+      "privacy-gate",
+      "A.5 架构提交审查（机械 presence/coverage）",
+      "managed-premerge-evidence"
+    ],
+    "other_checks_passed": [
+      "Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）",
+      "Linux 用户级安装/卸载真实成品验收（aarch64 / glibc）",
+      "部署 env 泄漏门禁（D4）"
+    ]
+  },
+  "merge": {
+    "method": "受保护 GitHub 合并端点（merge commit）",
+    "repo_tool_verdict": "scripts/managed_pr_integrate.py 只读裁决 HOLD / high_risk_requires_independent_review（本次路径含 src/llm_loop/tools/、src/llm_loop/web/ 属高风险）——按该仓声明，高风险改动走独立 Host 审查路径（本 tree 已有 Host PASS + 远端 required checks 全绿）",
+    "merged_by": "deyi2026",
+    "merged_at": "2026-11-22T12:57:04Z",
+    "merge_commit": "080ec9083f9e292dd31045f6b5be3d285b1c5d9c"
+  },
+  "push_sha_local": "4678fe60c2f193203569f7a129834a197db83f2e",
+  "push_sha_remote": "4678fe60c2f193203569f7a129834a197db83f2e",
+  "push_sha_remote_prev": "5708f281b7ca1734f92b2ce2fbace5790880b712",
+  "remote_verified_by": "git ls-remote origin refs/heads/main → 080ec9083f9e292dd31045f6b5be3d285b1c5d9c（merge commit；git merge-base --is-ancestor 4678fe6 origin/main → 成立）",
+  "local_tracking_ref_update": "本地 main 已 fast-forward 到 080ec9083f9e292dd31045f6b5be3d285b1c5d9c（git merge --ff-only origin/main）",
+  "local_verification": "定向 44 项单元测试通过；与 base 的定向 A/B 失败集合一致（27=27，无新增回归）；ruff 全过；pyright 对 13 个改动文件 errorCount=0；运行期 import 实测 OK；环境访问棘轮 11 项绿；A.5 校验 PASS（22 路径）",
+  "residual_risks": [
+    "本回执在 PR #93 合并之后落盘，随下一次 PR 上行（回执不可能包含于描述它自身的那次 PR）",
+    "远端分支 feat/evo-20261121-efa320ab-linux-chrome-vision-contract 按仓库惯例保留（delete_branch_on_merge=false）",
+    "本地全量套件的 462 项失败为 base/head 一致的存量环境红（远端 CI 在 GitHub runner 上全绿）",
+    "Goal owner 是来源会话 f2c76f4d，本会话无法跨会话写 Goal/Task（cross_session_write_denied），已用 help_request 通知"
+  ],
+  "recorded_at": "2026-11-22T20:57:40+08:00"
+}
+
