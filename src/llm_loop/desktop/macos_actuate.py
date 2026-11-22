@@ -37,7 +37,9 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import os
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from llm_loop.desktop.macos_ax import (
     MacAxElement,
@@ -252,6 +254,51 @@ def resolve_element_by_axref(window: WindowInfo, ax_ref: str) -> tuple[MacAxElem
         with contextlib.suppress(Exception):
             el.release()
         return None, "ax_ref_not_found"
+
+
+def ax_editor_document_path(window: WindowInfo, ax_ref: str) -> str | None:
+    """Read an exact editable AX target's file:// document from the live Host.
+
+    No model-provided path, window title or inferred IDE tab name is accepted.
+    A missing/remote/non-file document, symlink, or non-editable target stays
+    HOLD. The caller must still verify the signed project file scope and
+    re-read this Host evidence immediately before AXSetValue delivery.
+    """
+    el, _failure = resolve_element_by_axref(window, ax_ref)
+    if el is None:
+        return None
+    try:
+        if (
+            el.attr("AXRole") not in ("AXTextArea", "AXTextField", "AXTextView")
+            or el.attr("AXEditable") is not True
+            or el.attr("AXEnabled") is False
+        ):
+            return None
+        raw = el.attr("AXDocument") or el.attr("AXURL")
+        if not isinstance(raw, str) or not raw or len(raw) > 8192:
+            return None
+        parsed = urlsplit(raw)
+        if (
+            parsed.scheme != "file"
+            or parsed.netloc not in ("", "localhost")
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        try:
+            path = unquote(parsed.path, encoding="utf-8", errors="strict")
+            if (
+                not path.startswith("/")
+                or "\0" in path
+                or os.path.realpath(path) != path
+                or not os.path.isfile(path)
+            ):
+                return None
+        except (OSError, UnicodeError, ValueError):
+            return None
+        return path
+    finally:
+        el.release()
 
 
 def ax_press(el: MacAxElement) -> int:

@@ -64,7 +64,9 @@ Non-darwin → unsupported_platform (same as desktop_perceive).
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import platform as _platform
 import secrets as _secrets
 import time
@@ -205,6 +207,8 @@ class _ActFlow:
     token_record: Any = None
     fresh_window: Any = None
     fresh_world: str = ""
+    fresh_nodes: Any = ()
+    task_editor_binding: dict[str, Any] | None = None
     # P2-1（R6）：会话免令牌的目标身份键（session_target_key 产物）——
     # 免令牌放行从 (app, do) 收紧到 (app, do, 目标)，换目标即须新令牌。
     target_key: str = ""
@@ -763,6 +767,61 @@ class DesktopOperateTool:
             )
         return None
 
+    @staticmethod
+    def _task_ide_document_binding(
+        flow: _ActFlow, window: WindowInfo, nodes: Any,
+    ) -> dict[str, Any] | None:
+        """Bind Host AXDocument to exact PID/window/ax_ref + ancestor chain.
+
+        The target's document path comes only from the native backend's fresh
+        AXDocument/AXURL read. AX snapshot ancestors are also Host observations,
+        never model-authored names. Terminal/console ancestry is a hard deny.
+        """
+        ax_ref = str(flow.target_identity.get("ax_ref") or "")
+        parts = ax_ref.split(".")
+        if len(parts) < 2 or any(not part.isdigit() for part in parts):
+            return None
+        probe = getattr(flow.backend, "editor_document_path", None)
+        if not callable(probe):
+            return None
+        try:
+            path = probe(window, ax_ref)
+            if (
+                not isinstance(path, str)
+                or not os.path.isabs(path)
+                or os.path.realpath(path) != path
+                or not os.path.isfile(path)
+            ):
+                return None
+            by_ref = {node.ax_ref: node for node in nodes}
+            ancestry: list[tuple[str, str, str, str]] = []
+            for depth in range(1, len(parts) + 1):
+                ref = ".".join(parts[:depth])
+                node = by_ref.get(ref)
+                if node is None:
+                    return None
+                role = str(node.role or "")
+                subrole = str(node.subrole or "")
+                title = str(node.title or "")
+                if any(
+                    marker in value.lower()
+                    for value in (role, subrole, title)
+                    for marker in ("terminal", "xterm", "shell", "console", "pty")
+                ):
+                    return None
+                ancestry.append((ref, role, subrole, title))
+            if ancestry[-1][1].lower() not in ("axtextarea", "axtextfield", "axtextview"):
+                return None
+            digest = hashlib.sha256(json.dumps(
+                ancestry, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+            return {
+                "document_path": path, "window_id": window.window_id,
+                "pid": window.pid, "ax_ref": ax_ref, "ancestry_sha256": digest,
+            }
+        except Exception:  # noqa: BLE001 - missing Host document evidence is HOLD
+            return None
+
     def _gate_task_app(self, flow: _ActFlow) -> ToolResult | None:
         task = current_task_execution.get()
         if task is None:
@@ -798,9 +857,19 @@ class DesktopOperateTool:
                 "请核对 Owner 签名范围、Lane/CAS 与系统辅助功能 TCC。",
             )
         if bundle.lower() in _TASK_IDE_AX_BUNDLES:
-            return self._refuse(
-                flow, DesktopErrorCode.APP_NOT_ALLOWED, _TASK_IDE_DOCUMENT_HOLD
-            )
+            binding = self._task_ide_document_binding(flow, flow.window, flow.nodes)
+            if binding is None:
+                return self._refuse(
+                    flow, DesktopErrorCode.APP_NOT_ALLOWED, _TASK_IDE_DOCUMENT_HOLD
+                )
+            try:
+                cast(TrustedTaskExecution, task).authorize_file(binding["document_path"], "write")
+            except TaskExecutionError as exc:
+                return self._refuse(
+                    flow, DesktopErrorCode.APP_NOT_ALLOWED,
+                    f"Task IDE 文档文件范围拒绝: {exc.reason_code}；未投递。",
+                )
+            flow.task_editor_binding = binding
         return None
 
     def _scan_window_world(self, flow: _ActFlow) -> None:
@@ -1374,6 +1443,7 @@ class DesktopOperateTool:
                          "window": jsonable(fresh_window)},
             )
         flow.fresh_window = fresh_window
+        flow.fresh_nodes = fresh_nodes
         flow.fresh_world = fresh_world
         return None
     def _world_drift_report(
@@ -1440,10 +1510,6 @@ class DesktopOperateTool:
         task = current_task_execution.get()
         if task is None:
             return None
-        if str(flow.window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES:
-            return self._refuse(
-                flow, DesktopErrorCode.APP_NOT_ALLOWED, _TASK_IDE_DOCUMENT_HOLD
-            )
         fresh_window, window = flow.fresh_window, flow.window
         if (
             fresh_window is None
@@ -1468,6 +1534,20 @@ class DesktopOperateTool:
                 DesktopErrorCode.APP_NOT_ALLOWED,
                 f"Task 投递前授权失效: {exc.reason_code}；未投递。",
             )
+        if str(window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES:
+            binding = self._task_ide_document_binding(flow, fresh_window, flow.fresh_nodes)
+            if binding is None or binding != flow.task_editor_binding:
+                return self._refuse(
+                    flow, DesktopErrorCode.APP_NOT_ALLOWED,
+                    _TASK_IDE_DOCUMENT_HOLD + " Host 文档/祖先链已变化；禁止投递。",
+                )
+            try:
+                cast(TrustedTaskExecution, task).authorize_file(binding["document_path"], "write")
+            except TaskExecutionError as exc:
+                return self._refuse(
+                    flow, DesktopErrorCode.APP_NOT_ALLOWED,
+                    f"Task IDE 投递前文档授权失效: {exc.reason_code}；未投递。",
+                )
         return None
 
     def _deliver_and_receipt(self, flow: _ActFlow) -> ToolResult:
