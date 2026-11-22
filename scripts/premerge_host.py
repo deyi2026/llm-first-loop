@@ -52,6 +52,9 @@ _GATE_PATHS = (
 _POLICY_PATH = "docs/governance/required-ci-checks.json"
 _MAX_ARTIFACT = 1024 * 1024
 _HOST_CHECK_CONTEXT = "lfl-host-premerge"
+# Snapshot is SHA/CAS-bound; live identities and branch protection are rechecked.
+_HOST_SNAPSHOT_MAX_AGE_SECONDS = 15 * 60
+_GITHUB_JSON_READ_ATTEMPTS = 2
 
 
 class HostHoldError(Exception):
@@ -125,12 +128,21 @@ class GitHubReadOnly:
         return raw
 
     def get(self, path: str) -> Any:
-        try:
-            value = json.loads(self._open(path))
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise HostHoldError("github_response_invalid") from exc
-        _require(isinstance(value, (dict, list)), "github_response_invalid")
-        return value
+        # Retry malformed read-only API responses once; never retry a security
+        # denial, mutate GitHub state, or treat an invalid response as success.
+        for attempt in range(_GITHUB_JSON_READ_ATTEMPTS):
+            try:
+                value = json.loads(self._open(path))
+            except (ValueError, UnicodeDecodeError) as exc:
+                if attempt + 1 == _GITHUB_JSON_READ_ATTEMPTS:
+                    raise HostHoldError("github_response_invalid") from exc
+            else:
+                if isinstance(value, (dict, list)):
+                    return value
+                if attempt + 1 == _GITHUB_JSON_READ_ATTEMPTS:
+                    raise HostHoldError("github_response_invalid")
+            time.sleep(0.2)
+        raise HostHoldError("github_response_invalid")
 
     def blob(self, path: str, ref: str) -> tuple[str, bytes]:
         _require(_sha(ref), "blob_ref_invalid")
@@ -239,7 +251,7 @@ def _verified_snapshot(envelope: dict, public_key_pem: str, now: float) -> dict:
     stamp = payload.get("checked_at")
     if not isinstance(stamp, (int, float)):
         raise HostHoldError("host_snapshot_stale")
-    _require(0 <= now - stamp <= 90, "host_snapshot_stale")
+    _require(0 <= now - stamp <= _HOST_SNAPSHOT_MAX_AGE_SECONDS, "host_snapshot_stale")
     return payload
 
 def _check_local(snapshot: dict, main: str, candidate: str, *,
@@ -700,7 +712,7 @@ def evaluate_host(client: Any, *, repo: str, pr_number: int, main: str,
     )
     _require(
         0 <= (time.time() if final_now is None else final_now)
-        - snapshot["checked_at"] <= 90,
+        - snapshot["checked_at"] <= _HOST_SNAPSHOT_MAX_AGE_SECONDS,
         "host_snapshot_stale",
     )
     # This is a read-side recheck, NOT an atomic main ref CAS.
