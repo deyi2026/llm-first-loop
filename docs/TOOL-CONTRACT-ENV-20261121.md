@@ -1,6 +1,6 @@
 # 工具契约与环境事实（EVO-20261121-efa320ab）
 
-> 适用范围：`execute_command` / `read_file` / `read_image` / `browser_probe` / 视觉链路。
+> 适用范围：`execute_command` / `read_file` / `read_image` / `cdp_probe` / 视觉链路。
 > 定位：把**运行时可核事实**写进工具契约与本文档，避免模型把"环境假设"当"事实"使用。
 > 证据：本机（Deepin / Linux）实测，2026-11-21 头条发布任务；回归用例见文末。
 
