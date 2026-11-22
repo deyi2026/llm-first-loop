@@ -20,7 +20,7 @@ from llm_loop.terminal.records import (
     workspace_lookup,
 )
 
-READ_COMMANDS = {"session", "sessions", "model", "models", "identity", "status", "config", "keys", "help"}
+READ_COMMANDS = {"session", "sessions", "model", "models", "identity", "status", "config", "keys", "help", "owner-finality"}
 HELP = """lfl [--config FILE] [--data-dir DIR] [--workspace DIR] COMMAND
 Workspace resolves as: --workspace > cwd-upward pyproject.toml > LFL_WORKSPACE_ROOT (deployment binding, warned) > cwd; ambiguous deployment binding exits 3
 chat [MESSAGE | --stdin | --message-file FILE] [--session ID] [--model REF]
@@ -29,7 +29,7 @@ sessions list [--archived] [--json]
 sessions show ID [--raw] [--json]
 sessions search QUERY [--json]
 sessions export ID --to FILE [--format json|markdown]
-models [--json] | identity [--session ID] [--json] | config show [--json] | keys
+models [--json] | identity [--session ID] [--json] | config show [--json] | keys\nowner-finality --goal-id ID --session ID [--json] (requires explicit --data-dir and --workspace)
 Installed workflows: start [--plan] [--json], extensions, init, doctor, paths,
 check-install, upgrade --plan, backup, rollback, web
 Legacy management: list, search, delete, archive, unarchive, extract, fork, rename,
@@ -378,6 +378,9 @@ def dispatch_query(argv: list[str], options: Any = None) -> int | None:
         parser.add_argument("--raw", action="store_true")
         parser.add_argument("--to")
         parser.add_argument("--format", choices=("json", "markdown"), default=None)
+    elif cmd == "owner-finality":
+        parser.add_argument("--goal-id", required=True)
+        parser.add_argument("--session", required=True)
     elif cmd == "identity":
         parser.add_argument("--session", help="Read the last actual model from this session's persisted LoopResult")
     elif cmd == "config":
@@ -424,6 +427,41 @@ def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict,
                    options: Any = None, workspace_explicit: bool = False) -> int:
     if cmd == "sessions":
         return _sessions(ns, data, workspace, values, workspace_explicit=workspace_explicit)
+    if cmd == "owner-finality":
+        from llm_loop.introspection.owner_finality_host import check_completed_goal
+
+        # An explicit local Host binding is required: never guess a deployment
+        # workspace or accidentally inspect a different project's Evidence.
+        bound = bool(
+            getattr(options, "data_dir", None)
+            and getattr(options, "workspace", None)
+        )
+        if bound:
+            from llm_loop.runtime.installation import bundle_root
+
+            # Installed builds own their immutable Rule/Skill assets under
+            # _bundled; default_home() is mutable user data, not an asset SoT.
+            root = bundle_root() or Path(
+                getattr(options, "_query_home", None) or _default_query_home()
+            ).resolve()
+            report = check_completed_goal(
+                data_dir=data,
+                workspace=workspace,
+                asset_root=root,
+                goal_id=ns.goal_id,
+                session_id=ns.session,
+            )
+        else:
+            report = {
+                "schema": "lfl.owner-finality-host/v1",
+                "decision": "HOLD",
+                "reason": "explicit_host_roots_required",
+                "no_write": True,
+                "model_calls": 0,
+                "host_permission_granted": False,
+            }
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        return 0 if report["decision"] == "NO_WRITE_VERIFIED" else 3
     if cmd in {"identity", "config"}:
         # Whitelist fields, never serialize Settings/env dictionaries or URL credentials.
         selected_session = getattr(ns, "session", None) if cmd == "identity" else None
