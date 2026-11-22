@@ -398,9 +398,25 @@ def test_t07_queue_cas_drift_holds(fixture):
     holds(fixture, "host_snapshot_signature_invalid")
 
 
+def test_t07_host_snapshot_valid_within_fifteen_minutes(fixture):
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 899}))
+    assert evaluate(fixture)["decision"] == "ELIGIBLE_FOR_MANAGED_MERGE"
+
+
 def test_t07_host_snapshot_stale_holds(fixture):
-    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 100}))
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 901}))
     holds(fixture, "host_snapshot_stale")
+
+
+def test_t07_host_snapshot_rejects_future_timestamp(fixture):
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW + 1}))
+    holds(fixture, "host_snapshot_stale")
+
+
+def test_t07_host_snapshot_expires_during_final_recheck(fixture):
+    fixture[1].update(sign({**fixture[1]["payload"], "checked_at": NOW - 899}))
+    with pytest.raises(HostHoldError, match="host_snapshot_stale"):
+        evaluate(fixture, final_now=NOW + 2)
 
 
 def test_t25_main_check_run_pagination_holds(fixture):
@@ -544,6 +560,30 @@ def test_p2_http_error_classification(monkeypatch, path, code, reason):
         client.get(path)
 
 
+def test_p2_malformed_github_json_is_retried_once_without_writes(monkeypatch):
+    from premerge_host import GitHubReadOnly
+
+    client = GitHubReadOnly("o/r", "x" * 30)
+    reads = iter((b"<html>temporary gateway</html>", b'{"ok":true}'))
+    observed = []
+    monkeypatch.setattr(client, "_open", lambda path: (observed.append(path), next(reads))[1])
+    monkeypatch.setattr("premerge_host.time.sleep", lambda delay: None)
+    assert client.get("branches/main") == {"ok": True}
+    assert observed == ["branches/main", "branches/main"]
+
+
+def test_p2_persistently_invalid_github_json_fails_closed(monkeypatch):
+    from premerge_host import GitHubReadOnly
+
+    client = GitHubReadOnly("o/r", "x" * 30)
+    observed = []
+    monkeypatch.setattr(client, "_open", lambda path: (observed.append(path), b"not-json")[1])
+    monkeypatch.setattr("premerge_host.time.sleep", lambda delay: None)
+    with pytest.raises(HostHoldError, match="github_response_invalid"):
+        client.get("branches/main")
+    assert len(observed) == 2
+
+
 def test_api_redirect_cannot_forward_host_authorization():
     import urllib.request
 
@@ -626,7 +666,7 @@ def test_draft_pr_cannot_be_eligible(fixture):
 
 def test_snapshot_expires_during_host_recheck(fixture):
     with pytest.raises(HostHoldError, match="host_snapshot_stale"):
-        evaluate(fixture, final_now=NOW + 91)
+        evaluate(fixture, final_now=NOW + 901)
 
 
 @pytest.mark.parametrize("path", [
