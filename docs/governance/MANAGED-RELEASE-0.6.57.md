@@ -99,6 +99,21 @@
   处置：按回源结果统一为「10 轮、PASS 在第 6/9/10 轮、其余 7 轮 REVISE」，
   并按权威文件重列 required checks（5 项）与其在 PR head / 合并提交上的 check-run 构成；
   push 回执 `review_history` 字段同步更正计数（原写法 9+3 与 10 轮不能同时成立），结论与 child/candidate 未变。
+- 2026-11-22（本次上行审查的 REVISE 轮次处置）：Host `review_admission(kind=git_push)` 首轮
+  `child=subagent_35961e04adea` 判 REVISE（P0=0/P1=1/P2=2），三条 finding 与处置如下：
+  - P1「该补丁回退了 restrictive-umask 修复并删除其回归覆盖」：经回源为**审查侧口径误差**——该轮被冻结的
+    是 `origin/main..HEAD` 的两点差集，而本分支当时尚未包含 origin/main 最新 2 个提交，差集中因此出现
+    `scripts/host_task_lease_issuer.py` 的删除形态与 `docs/governance/submissions/20261122-task-host-public-receipt-umask.json`
+    的删除形态，被读成「回退 umask 修复」。处置：把 `origin/main` 合并进本分支（合并无冲突），实测两点差集与
+    三点差集均为同 4 条文档路径，umask 修复、其两条回归测试与其 A.5 清单均在本分支内完整保留。
+  - P2「A.5 清单声称的 changed-path 集合与实际提交增量不符」：与上条同源。处置同上；合并后两点/三点差集
+    都是 4 条，且 `scripts/check_architecture_submission.py --base origin/main --head HEAD` 实测
+    PASS（changed_paths=4、components=4）。
+  - P2「push 回执内部误述 CI 状态」：回源 `docs/governance/receipts/push-080ec908-origin-main-20261122.json`
+    与本文第 2 节，原回执未逐项区分 success/skipped，且审查者引用的「10 项全为 success」措辞在回执中不存在。
+    处置：在回执 `remote_ci` 下新增 `pr_head_check_runs` 与 `merge_commit_check_runs` 两段，逐项给出
+    total/succeeded/skipped/failed 与检查名（PR head 10 项＝8 success＋2 项 nightly skipped；合并提交 9 项
+    ＝7 success＋2 项 nightly skipped；无 failed），与本文第 2 节口径一致。
 
 ## 8. 本机切换执行记录（2026-11-22）
 

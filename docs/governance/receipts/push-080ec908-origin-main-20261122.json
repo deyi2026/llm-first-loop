@@ -41,7 +41,50 @@
       "Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）",
       "Linux 用户级安装/卸载真实成品验收（aarch64 / glibc）",
       "部署 env 泄漏门禁（D4）"
-    ]
+    ],
+    "pr_head_check_runs": {
+      "ref": "PR #93 head 4678fe6",
+      "total": 10,
+      "succeeded": 8,
+      "skipped": 2,
+      "failed": 0,
+      "succeeded_names": [
+        "门禁（pytest + ruff + pyright）",
+        "安全扫描（敏感/私密/错误文件拦截）",
+        "privacy-gate",
+        "A.5 架构提交审查（机械 presence/coverage）",
+        "managed-premerge-evidence",
+        "部署 env 泄漏门禁（D4）",
+        "Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）",
+        "Linux 用户级安装/卸载真实成品验收（aarch64 / glibc）"
+      ],
+      "skipped_names": [
+        "nightly 真实 LLM 冒烟 + 评测集",
+        "nightly 信号类测试 50 次稳定性"
+      ],
+      "note": "「10 项」不等于「10 项全 success」：其中 2 项 nightly 为 skipped，无 failed 项；A.5 为 pr_only，在 PR 事件上运行。"
+    },
+    "merge_commit_check_runs": {
+      "ref": "合并提交 080ec908",
+      "total": 9,
+      "succeeded": 7,
+      "skipped": 2,
+      "failed": 0,
+      "succeeded_names": [
+        "门禁（pytest + ruff + pyright）",
+        "安全扫描（敏感/私密/错误文件拦截）",
+        "privacy-gate",
+        "managed-premerge-evidence",
+        "部署 env 泄漏门禁（D4）",
+        "Linux 用户级安装/卸载真实成品验收（x86_64 / glibc）",
+        "Linux 用户级安装/卸载真实成品验收（aarch64 / glibc）"
+      ],
+      "skipped_names": [
+        "nightly 真实 LLM 冒烟 + 评测集",
+        "nightly 信号类测试 50 次稳定性"
+      ],
+      "note": "合并提交上 A.5 不在 check-runs 之列（A.5 为 pr_only，push 事件不运行），故该提交为 4 项 push_and_pr required + env 泄漏门禁 + 2 项 Linux 安装验收 success，2 项 nightly skipped。"
+    }
   },
   "merge": {
     "method": "受保护 GitHub 合并端点（merge commit）",

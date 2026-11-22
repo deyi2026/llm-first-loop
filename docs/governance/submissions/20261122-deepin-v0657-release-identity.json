@@ -65,9 +65,9 @@
       "owning_subsystem": "A.5 架构提交声明机制（清单自身）",
       "disposition": "声明本次发行证据面的精确 changed-path 集合，供 A.5 机械校验覆盖。",
       "evidence": [
-        "本清单的 components.paths 与 origin/main（70ae9f5c，merge-base=080ec908）到本提交之间的 changed-path 集合精确一致（4 条：发行证据文档、push 回执更正、本清单自身、0.6.57 收敛验收回执）。"
+        "本清单的 components.paths 与 origin/main（70ae9f5c）之间的 changed-path 集合精确一致（4 条：发行证据文档、push 回执更正、本清单自身、0.6.57 收敛验收回执）。本分支已合并 origin/main，故两点差集与三点差集给出同一 4 条集合。"
       ],
-      "verification_level": "scripts/check_architecture_submission.py 以 base=origin/main（merge-base 080ec908）、head=本提交运行并 PASS。",
+      "verification_level": "scripts/check_architecture_submission.py 以 base=origin/main（70ae9f5c）、head=本提交运行并 PASS（changed_paths=4、components=4）。",
       "model_evidence_veto_recovery_exit": "覆盖不精确即 FAIL；不得放宽校验或改写路径集合凑数。",
       "rollback_route": "回退该提交即移除本清单。"
     }
