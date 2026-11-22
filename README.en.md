@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.56 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.57 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
 
 > **Source vs. published release (verified 2026-11-20):** `0.6.56` is a Deepin source/installation candidate based on merged `main`, **not a published stable release**. The latest published GitHub Release is [v0.6.54](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.54); `v0.6.56` has not been published as a GitHub Release. For public installs, consult the live [latest published Release](https://github.com/deyi2026/llm-first-loop/releases/latest), not a Draft.
 

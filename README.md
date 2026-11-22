@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.56 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.57 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 > **版本与发行状态（2026-11-20 核验）**：`0.6.56` 是基于已合入 `main` 的 Deepin 源码/安装候选版本，**不代表已正式发布**。GitHub 最新正式 Release 为 [v0.6.54](https://github.com/deyi2026/llm-first-loop/releases/tag/v0.6.54)；`v0.6.56` 尚未发布为 GitHub Release。用户安装应以实时的 [GitHub 最新正式 Release](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准，不从 Draft 安装。
 
