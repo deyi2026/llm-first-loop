@@ -69,6 +69,34 @@ def _is_err1210(exc: Exception) -> bool:
     )
 
 
+def _provider_capacity_feedback(error: Exception) -> str | None:
+    """Narrow provider-capacity facts; never treat them as credential failures."""
+    if not isinstance(error, LLMHTTPError):
+        return None
+    code = error.provider_code or parse_provider_error_code(error.body or "")
+    if (
+        error.status_code == 429
+        and (error.provider or "").lower() in {"glm", "glm-api", "zhipu"}
+        and code == "1305"
+    ):
+        return (
+            "[LLM 调用异常] 事实: 所选模型繁忙（HTTP 429 / GLM 1305），本轮未能获得回答。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            "边界: 服务商报告当前访问量过大；此错误本身不是 API Key、模型名或权限配置错误的证据。\n"
+            "建议: 稍后重试或切换到已配置的可用模型；先核对本轮已有工具执行结果，避免重复操作。"
+        )
+    if error.status_code == 529 and "overloaded" in (
+        f"{code or ''} {error.body or ''} {error}"
+    ).lower():
+        return (
+            "[LLM 调用异常] 事实: 服务商繁忙（HTTP 529），本轮未能获得回答。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            "边界: 服务商报告过载；不能据此判定 API Key 或模型配置有误。\n"
+            "建议: 稍后重试或切换到已配置的可用模型；先核对本轮已有工具执行结果，避免重复操作。"
+        )
+    return None
+
+
 def llm_error_text(error: Exception) -> str:
     """LLM 调用异常如实反馈文本（DFX-REL-02，不伪造回答，三件套）.
 
@@ -87,31 +115,10 @@ def llm_error_text(error: Exception) -> str:
             f"建议: API 配额周期已用尽（billing quota exhausted），本周期内无法继续；"
             f"非网络/Key/模型配置问题。请等待配额刷新或升级套餐后重试；本次未能获得回答。"
         )
-    # A provider-capacity rejection is not evidence that the user's saved Key
-    # or model selection is wrong. Keep this scoped to observed wire facts;
-    # neither case authorizes replaying a possibly side-effectful tool run.
-    if isinstance(error, LLMHTTPError):
-        code = error.provider_code or parse_provider_error_code(error.body or "")
-        if (
-            error.status_code == 429
-            and (error.provider or "").lower() in {"glm", "glm-api", "zhipu"}
-            and code == "1305"
-        ):
-            return (
-                "[LLM 调用异常] 事实: 所选模型繁忙（HTTP 429 / GLM 1305），本轮未能获得回答。\n"
-                f"原因: {type(error).__name__}: {error}\n"
-                "边界: 服务商报告当前访问量过大；此错误本身不是 API Key、模型名或权限配置错误的证据。\n"
-                "建议: 稍后重试或切换到已配置的可用模型；先核对本轮已有工具执行结果，避免重复操作。"
-            )
-        if error.status_code == 529 and "overloaded" in (
-            f"{code or ''} {error.body or ''} {error}"
-        ).lower():
-            return (
-                "[LLM 调用异常] 事实: 服务商繁忙（HTTP 529），本轮未能获得回答。\n"
-                f"原因: {type(error).__name__}: {error}\n"
-                "边界: 服务商报告过载；不能据此判定 API Key 或模型配置有误。\n"
-                "建议: 稍后重试或切换到已配置的可用模型；先核对本轮已有工具执行结果，避免重复操作。"
-            )
+    # A capacity rejection never authorizes replaying side-effectful tool work.
+    capacity_feedback = _provider_capacity_feedback(error)
+    if capacity_feedback is not None:
+        return capacity_feedback
     # 1210 is a provider request-structure rejection. Recovery may have had no
     # applicable tail-user transform, so the final receipt must not claim a retry
     # happened and must not prescribe a next action.
