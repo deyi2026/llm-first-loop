@@ -127,8 +127,8 @@ while IFS= read -r f; do
 done <<< "$untracked_new_receipts"
 
 # refspec 已在上方一次性读入 PUSH_REFS（知识闸豁免判定与隐私扫描共用这份输入）。
-# 用进程替换而非 here-string：空输入时 read 直接 EOF、零迭代（here-string 会喂
-# 进一条空行，带空 SHA 跑一次 → git diff '' → bad revision → 误判 fail-closed）。
+# 用进程替换而非 here-string：here-string 在空输入时会喂进一条空行、带空 SHA 跑
+# 一次（git diff '' → bad revision → 误判 fail-closed）；空 SHA 行在此显式跳过。
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ -n "${local_sha:-}" ]] || continue
   [[ "$local_sha" =~ ^0+$ ]] && continue

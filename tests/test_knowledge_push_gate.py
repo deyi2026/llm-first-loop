@@ -18,7 +18,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -253,42 +252,21 @@ def test_flush_reclaims_lane_with_missing_worktree(repo: Path) -> None:
     assert out.returncode == 0, out.stdout + out.stderr
 
 
-def _dir_outside_any_repo() -> Path:
-    """造一个不在任何 git 仓库内的一次性目录。
-
-    「不是 git 工作树」这一支必须在仓库之外测：仓库子目录里 ``git rev-parse``
-    会一路向上找到外层工作树。候选目录不写死（``/tmp`` 可能不可写，也可能本身
-    就在某个仓库里），逐个探测，全不行则 skip。
-    """
-    for base in (tempfile.gettempdir(), "/tmp"):
-        try:
-            made = Path(tempfile.mkdtemp(prefix="lfl-gate-", dir=base))
-        except OSError:
-            continue
-        probe = subprocess.run(
-            ["git", "-C", str(made), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-        )
-        if probe.returncode != 0:
-            return made
-        shutil.rmtree(made, ignore_errors=True)
-    pytest.skip("找不到任何仓库之外的可写临时目录")
-
-
-def test_flush_reclaims_lane_whose_worktree_is_not_a_git_tree(repo: Path, tmp_path: Path) -> None:
+def test_flush_reclaims_lane_whose_worktree_is_not_a_git_tree(
+    repo: Path, dir_outside_any_repo: Path
+) -> None:
     """路径还在但已不是 git 工作树（被复用/清空）→ 同样无可写者，按失效回收。"""
-    hollow = _dir_outside_any_repo()
-    try:
-        _make_card(repo, "data/methods/card-i/METHOD.md")
-        _ledger(
-            repo,
-            [_lane_row("active", "sess-hollow", minutes_ago=300, worktree=str(hollow))],
-        )
-        out = _run_flush(repo)
-        assert out.returncode == 0, out.stdout + out.stderr
-    finally:
-        shutil.rmtree(hollow, ignore_errors=True)
+    _make_card(repo, "data/methods/card-i/METHOD.md")
+    _ledger(
+        repo,
+        [
+            _lane_row(
+                "active", "sess-hollow", minutes_ago=300, worktree=str(dir_outside_any_repo)
+            )
+        ],
+    )
+    out = _run_flush(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
 
 
 def test_flush_still_blocked_by_stale_dirty_lane(repo: Path, tmp_path: Path) -> None:

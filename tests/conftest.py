@@ -12,9 +12,11 @@ import importlib.util
 import os
 import platform
 import re
+import shutil
 import sys
 import tempfile
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,34 @@ from llm_loop.llm.client import LLMResponse
 # 本地有数据则照常收集执行（并入 origin/main b4eb4f8/45f7631 方案的推广版）。
 _CALIB_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "calib"
 collect_ignore: list[str] = []
+
+
+
+def _inside_any_repo(path: Path) -> bool:
+    """``path`` 或任一祖先目录里有 ``.git``（dir 或 worktree 的 file）→ 在仓库内。"""
+    resolved = path.resolve()
+    return any((parent / ".git").exists() for parent in (resolved, *resolved.parents))
+
+
+@pytest.fixture
+def dir_outside_any_repo() -> Iterator[Path]:
+    """一个不在任何 git 仓库内的一次性目录（用完即删）。
+
+    「不是 git 工作树」这一支必须在仓库之外测：仓库子目录里 ``git rev-parse``
+    会一路向上找到外层工作树。候选目录不写死（``/tmp`` 可能不可写，也可能本身
+    就在某个仓库里），逐个探测，全不可用则 skip。
+    """
+    for base in (tempfile.gettempdir(), "/tmp"):
+        try:
+            made = Path(tempfile.mkdtemp(prefix="lfl-gate-", dir=base))
+        except OSError:
+            continue
+        if not _inside_any_repo(made):
+            yield made
+            shutil.rmtree(made, ignore_errors=True)
+            return
+        shutil.rmtree(made, ignore_errors=True)
+    pytest.skip("找不到任何仓库之外的可写临时目录")
 if not _CALIB_DATA_DIR.exists():
     _unit_dir = Path(__file__).resolve().parent / "unit"
     collect_ignore = [
