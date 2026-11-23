@@ -115,6 +115,7 @@ describe("provider manager", () => {
     await waitFor(() => expect(within(card).queryByRole("form", { name: "glm API Key 配置" })).toBeNull());
     expect(screen.getByText(/API Key 已保存并生效/)).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(secret);
+    expect(screen.queryByDisplayValue(secret)).toBeNull();
   });
 
   it("密钥保存失败时保持原位编辑并显示错误，重试成功才关闭", async () => {
@@ -140,9 +141,41 @@ describe("provider manager", () => {
     fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
     await waitFor(() => expect(within(form).getByText("保存失败，请刷新后重试")).toBeInTheDocument());
     expect(within(form).getByLabelText("glm API Key")).toHaveValue("retry-fixture-secret");
+    expect(within(screen.getAllByRole("alert")[0]!).getByRole("button", { name: "刷新" })).toBeInTheDocument();
     fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
     await waitFor(() => expect(attempts).toBe(2));
     await waitFor(() => expect(within(card).queryByRole("form", { name: "glm API Key 配置" })).toBeNull());
+  });
+
+  it("写入成功但配置回读失败时不误报成功、不关闭密钥输入框", async () => {
+    let reads = 0;
+    let writes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/providers/glm/credential" && init?.method === "PUT") {
+        writes += 1;
+        return new Response(JSON.stringify({ detail: "accepted" }), { status: 200 });
+      }
+      if (url === "/api/v1/providers") {
+        reads += 1;
+        if (reads === 1) return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+        return new Response(JSON.stringify({ detail: "upstream timeout" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-glm");
+    fireEvent.click(within(card).getByRole("button", { name: "更换 API Key" }));
+    const form = within(card).getByRole("form", { name: "glm API Key 配置" });
+    fireEvent.change(within(form).getByLabelText("glm API Key"), { target: { value: "unconfirmed-fixture" } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
+    await waitFor(() => expect(screen.getAllByText(/服务器已接受操作，但无法确认最新配置/)).toHaveLength(2));
+    expect(writes).toBe(1);
+    expect(reads).toBe(2);
+    expect(within(card).getByRole("form", { name: "glm API Key 配置" })).toBeInTheDocument();
+    expect(within(form).getByLabelText("glm API Key")).toHaveValue("unconfirmed-fixture");
+    expect(screen.queryByText(/API Key 已保存并生效/)).toBeNull();
   });
 
   it("编辑 Provider 就地展开，密钥独立配置，不隐藏在远处的整包编辑器", async () => {

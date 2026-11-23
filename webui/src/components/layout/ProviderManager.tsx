@@ -249,13 +249,15 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       if (next) {
         setSnapshot(next);
         if (clearError) setError(null);
+        return true;
       }
-      else setError({ message: T.errors.load });
+      setError({ message: T.errors.load });
     } catch {
       setError({ message: T.errors.load });
     } finally {
       setLoading(false);
     }
+    return false;
   }, []);
 
   useEffect(() => {
@@ -292,7 +294,15 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       try {
         const result = await action();
         if (result.snapshot) setSnapshot(result.snapshot);
-        else await load();
+        else {
+          const refreshed = await load();
+          if (result.ok && !refreshed) {
+            setError({
+              message: "服务器已接受操作，但无法确认最新配置。请先刷新核验，不要重复提交。",
+            });
+            return false;
+          }
+        }
         if (!result.ok) {
           setError({
             message: errorLabel(result.error, result.detail),
@@ -414,7 +424,6 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     );
     if (ok) {
       setCredentialEditor(null);
-      setFlash("API Key 已保存并生效，可立即测试连接。");
     }
   };
 
