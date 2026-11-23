@@ -507,6 +507,20 @@ class _StreamAcc:
     observed_model: str = ""
 
 
+def _reasoning_only_disconnect(
+    attempt: int, acc: _StreamAcc, *, non_plain_seen: bool, tool_seen: bool
+) -> bool:
+    """Only a first-attempt plain reasoning fragment can be retried as display-only."""
+    return bool(
+        attempt == 1
+        and acc.reasoning_parts
+        and not non_plain_seen
+        and not acc.content_parts
+        and not tool_seen
+        and not acc.finish_reason
+    )
+
+
 def _reasoning_details_text(value: Any) -> str:
     """Extract display text from provider reasoning_details without changing raw state."""
     if isinstance(value, str):
@@ -1056,14 +1070,17 @@ class LLMClient:
 
     @contextmanager
     def _retry_transport_client(
-        self, retry_index: int, *, refresh: bool = False
+        self, retry_index: int, prior_error: BaseException | None = None
     ) -> Iterator[httpx.Client]:
         """Refresh only connection/TLS failures, preserving other retry transports.
 
         The pool retires the original client for the next call. Only the retry
         transport is attempt-local and closed after the retry completes.
         """
-        if retry_index == 0 or not refresh:
+        if retry_index == 0 or not (
+            isinstance(prior_error, (httpx.ConnectError, httpx.ConnectTimeout))
+            or "UNEXPECTED_EOF_WHILE_READING" in str(prior_error)
+        ):
             yield self._client
             return
         retry_client = self._new_http_client()
@@ -2174,7 +2191,6 @@ class LLMClient:
         _response_started = False
         _attempt_started = time.monotonic()
         _deadline: float | None = None
-        _refresh_transport_for_retry = False
 
         def _retry_cancelled() -> bool:
             # Reuse lifecycle's exact run/generation cancellation authority and
@@ -2197,7 +2213,7 @@ class LLMClient:
                 or acc.reasoning_details_text or _tc_seen
             )
 
-        def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
+        def _openai_stream_once(transport_retry_index: int, prior_error: BaseException | None) -> Iterator[StreamDelta]:
             """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）.
 
             ASSESS-20261008 BUG-12: 每次 transport attempt 重新初始化 response
@@ -2217,9 +2233,7 @@ class LLMClient:
             acc = _StreamAcc()
             agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
-            with self._retry_transport_client(
-                transport_retry_index, refresh=_refresh_transport_for_retry
-            ) as transport_client, self._transport_attempt_scope(
+            with self._retry_transport_client(transport_retry_index, prior_error) as transport_client, self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
                 target_url=url,
@@ -2395,10 +2409,11 @@ class LLMClient:
                     provider_observed_model=_observed_model,
                 )
         _attempt = 0
+        _last_retry_exc: BaseException | None = None
         while True:
             _attempt += 1
             try:
-                yield from _openai_stream_once(_attempt - 1)
+                yield from _openai_stream_once(_attempt - 1, _last_retry_exc)
                 break  # 流完整结束（含 [DONE]）
             except httpx.TimeoutException as exc:
                 if _deadline is not None:
@@ -2425,7 +2440,7 @@ class LLMClient:
                         raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
                     if _deadline is not None:
                         _check_stream_deadline(_deadline, effective_timeout)
-                    _refresh_transport_for_retry = isinstance(exc, httpx.ConnectTimeout)
+                    _last_retry_exc = exc
                     continue
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
             except (httpx.NetworkError, httpx.ProtocolError) as exc:
@@ -2439,13 +2454,8 @@ class LLMClient:
                 # A single same-payload retry may recover it without re-executing
                 # tools. Keep this inside the existing shared transport budget;
                 # timeouts, opaque replay and any content/tool draft remain excluded.
-                _reasoning_only_retry = bool(
-                    _attempt == 1
-                    and acc.reasoning_parts
-                    and not _non_plain_reasoning_seen
-                    and not acc.content_parts
-                    and not _tc_seen
-                    and not acc.finish_reason
+                _reasoning_only_retry = _reasoning_only_disconnect(
+                    _attempt, acc, non_plain_seen=_non_plain_reasoning_seen, tool_seen=_tc_seen
                 )
                 if (
                     _attempt <= _retry_disconnect
@@ -2477,10 +2487,7 @@ class LLMClient:
                     # Stop may arrive while the backoff sleeps. Check the same
                     # owner again immediately before issuing another request.
                     if not _retry_cancelled():
-                        _refresh_transport_for_retry = (
-                            isinstance(exc, httpx.ConnectError)
-                            or "UNEXPECTED_EOF_WHILE_READING" in str(exc)
-                        )
+                        _last_retry_exc = exc
                         continue
                 if _response_started:
                     raise LLMStreamInterruptedError(
