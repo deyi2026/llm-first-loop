@@ -16,6 +16,9 @@ from types import SimpleNamespace
 import llm_loop.tools.review_host_admission as rha
 import llm_loop.tools.review_report as rr
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 class _Runner:
     """Minimal Host-runner stand-in: one child, host-attested result."""
@@ -183,7 +186,7 @@ def test_poll_dead_reviewer_persists_why(tmp_path: Path, monkeypatch) -> None:
     _data_dir(tmp_path, monkeypatch)
     repo = _repo(tmp_path)
     runner = _Runner()
-    host = rha.HostReviewAdmission()
+    host = rha.HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
@@ -207,7 +210,7 @@ def test_poll_revise_persists_unactionable_verdict(tmp_path: Path, monkeypatch) 
     runner = _Runner()
     runner.state = "completed"
     runner.answer = "结论：我认为还行（没有遵循三行契约）。\n" + LONG_ANSWER
-    host = rha.HostReviewAdmission()
+    host = rha.HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued

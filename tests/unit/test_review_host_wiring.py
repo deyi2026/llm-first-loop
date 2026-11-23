@@ -18,6 +18,9 @@ from llm_loop.tools.registry import ToolRegistry
 from llm_loop.tools.review_host_admission import HostReviewAdmission, ReviewAdmissionTool
 from tests.unit.test_review_host_admission import FakeChildRunner, _repo
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 ROOT=Path(__file__).resolve().parents[2]
 FIXTURE=json.loads((ROOT/"tests/fixtures/smc_browser_perception_v01.json").read_text())["base"]
 
@@ -67,7 +70,7 @@ def test_registry_preblocks_full_test_before_fake_execute(tmp_path: Path) -> Non
     registry=ToolRegistry()
     shell=_FakeShell()
     registry.register(shell)
-    host=HostReviewAdmission()
+    host=HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner=FakeChildRunner()
     host.attach_runner(runner)
     registry.set_review_admission(host)
@@ -107,7 +110,7 @@ def test_browser_physical_adapter_publication_refuses_before_actuator(tmp_path: 
     backend=_Backend(raw)
     actuator=_Actuator()
     perception=BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path/"perception"))
-    adapter_host=HostReviewAdmission()
+    adapter_host=HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner=FakeChildRunner()
     adapter_host.attach_runner(runner)
     adapter_host.attach_browser_capture(backend.capture)
@@ -136,7 +139,7 @@ def test_browser_normal_edit_mutation_remains_available(tmp_path: Path) -> None:
     backend=_Backend(raw)
     act=_Actuator()
     p=BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path/"p"))
-    host=HostReviewAdmission()
+    host=HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     adapter=BrowserActionAdapter(
         perception=p,receipt_store=BrowserActionReceiptStore(tmp_path/"a"),
         capture_backend=backend,actuator=act,review_authorizer=host.check_browser,
@@ -148,7 +151,7 @@ def test_browser_normal_edit_mutation_remains_available(tmp_path: Path) -> None:
 
 def test_review_tool_model_never_sets_verdict_itself(tmp_path: Path) -> None:
     repo=_repo(tmp_path)
-    host=HostReviewAdmission()
+    host=HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(FakeChildRunner())
     tool=ReviewAdmissionTool(host)
     token=current_session_id.set("author-1")
@@ -200,7 +203,7 @@ def test_semantic_and_operate_real_aliases_share_publication_physical_fence(tmp_
     backend = _Backend(raw)
     actuator = _Actuator()
     perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
-    authority = HostReviewAdmission()
+    authority = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     runner = FakeChildRunner()
     authority.attach_runner(runner)
     authority.attach_browser_capture(backend.capture)
@@ -252,7 +255,7 @@ def test_registry_blocks_high_signal_indirect_command_before_fake_shell(tmp_path
     registry = ToolRegistry()
     shell = _FakeShell()
     registry.register(shell)
-    authority = HostReviewAdmission()
+    authority = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     authority.attach_runner(FakeChildRunner())
     registry.set_review_admission(authority)
     token = current_session_id.set("owner-p0c")

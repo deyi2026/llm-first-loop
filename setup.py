@@ -25,7 +25,12 @@ def resource_files():
             raise RuntimeError(f"Missing application resources: {name}; build Web UI first")
         for source in sorted(base.rglob("*")):
             relative = source.relative_to(ROOT)
-            if any((p.startswith(".") and p != ".lfl-webui-source.json") or p in EXCLUDED for p in relative.parts):
+            # The approved Skill manifest is required by integrity=ok at
+            # runtime. Keep all other hidden files excluded from wheel assets.
+            if relative.as_posix() != "skills/.manifest.json" and any(
+                (p.startswith(".") and p != ".lfl-webui-source.json") or p in EXCLUDED
+                for p in relative.parts
+            ):
                 continue
             if source.is_file() and not any(p.is_symlink() for p in (source, *source.parents)):
                 yield source, relative

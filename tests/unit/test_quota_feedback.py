@@ -10,7 +10,13 @@
 from __future__ import annotations
 
 from llm_loop.feedback.honesty import llm_error_text
-from llm_loop.llm.errors import LLMError, LLMHTTPError, LLMTimeoutError, is_quota_error
+from llm_loop.llm.errors import (
+    LLMError,
+    LLMHTTPError,
+    LLMNetworkError,
+    LLMTimeoutError,
+    is_quota_error,
+)
 
 
 def test_is_quota_error_403_access_terminated():
@@ -68,6 +74,16 @@ def test_llm_error_text_non_quota_regression():
     exc = LLMHTTPError("bad gateway", status_code=502)
     text = llm_error_text(exc)
     assert "检查网络/Key/模型名配置后重试" in text
+
+
+def test_ssl_eof_feedback_does_not_misdiagnose_key_or_model():
+    text = llm_error_text(LLMNetworkError(
+        "LLM 网络不可达: [SSL: UNEXPECTED_EOF_WHILE_READING] unexpected EOF"
+    ))
+    assert "TLS 连接" in text
+    assert "系统代理/TUN" in text
+    assert "不是 Key 或模型名错误的证据" in text
+    assert "检查网络/Key/模型名配置后重试" not in text
 
 
 def test_llm_error_text_1210_structural_specialized():

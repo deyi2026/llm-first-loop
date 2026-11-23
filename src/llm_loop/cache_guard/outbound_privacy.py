@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Any
+from typing import Any, NoReturn
 
 from llm_loop.cache_guard.guard import CacheGuardBlockedError, _check_privacy
 from llm_loop.security_guard import redact_secrets_for_transport
@@ -22,6 +22,12 @@ _PROTECTED_FIELDS = frozenset(
 )
 _DENIAL = "cache_guard 拦截: 出站隐私投影无法安全脱敏（未发送 Provider）"
 logger = logging.getLogger(__name__)
+
+
+def _deny(reason: str) -> NoReturn:
+    """Emit a stable reason category, never the original sensitive value."""
+    logger.warning("event=outbound_privacy_denial reason=%s", reason)
+    raise CacheGuardBlockedError(f"{_DENIAL} [reason={reason}]")
 
 
 def redact_provider_request(
@@ -39,14 +45,14 @@ def redact_provider_request(
         if isinstance(value, str):
             safe, count = redact_secrets_for_transport(value)
             if count and protected:
-                raise CacheGuardBlockedError(_DENIAL)
+                _deny("protected_field")
             redactions += count
             return safe
         if isinstance(value, dict):
             changes: dict[Any, Any] = {}
             for key, child in value.items():
                 if isinstance(key, str) and redact_secrets_for_transport(key)[1]:
-                    raise CacheGuardBlockedError(_DENIAL)
+                    _deny("secret_key")
                 replacement = project(
                     child, protected=protected or key in _PROTECTED_FIELDS
                 )
@@ -80,13 +86,14 @@ def redact_provider_request(
         # nested tool arguments, schemas and native provider fields.
         visible = "\n".join(strings((safe_messages, safe_tools)))
         if _check_privacy([{"role": "user", "content": visible}], safe_system):
-            raise CacheGuardBlockedError(_DENIAL)
+            _deny("residual_privacy")
         return safe_messages, safe_tools, safe_system, redactions
     except CacheGuardBlockedError:
         raise
     except Exception:
-        # Never expose original values or fail open on redaction errors.
-        raise CacheGuardBlockedError(_DENIAL) from None
+        # Never expose original values, exception messages, or fail open.
+        logger.warning("event=outbound_privacy_denial reason=redactor_error")
+        raise CacheGuardBlockedError(f"{_DENIAL} [reason=redactor_error]") from None
 
 
 def project_guard_request(

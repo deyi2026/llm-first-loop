@@ -1,0 +1,127 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "evo-main-write-guard-20261119",
+  "summary": "EVO-20261119-0fa86cab：lane_main_write_guard shell 层 cd 链跟踪落地后的守卫本体加固——括号子壳栈精确建模、bash |& 管道算子收编、动词后 seg_start 复位、refspec 边界切片、cd 目标存在性校验、词中 # 保守化、未知 cd 链下相对 -C 不回落 workdir、剥离空文本/词法失败保守哨兵、条件体（then/do/case 分支/函数体）内 cd 降级未知哨兵。控制边界=main 直写守卫的 fail-closed 判定（他人 live lane + 主仓 workdir 即拒）。证据来自 17 轮真实独立审查回执（前 16 轮 REVISE 发现均已修复闭环；第 16 轮 8d393977e0ec 的 P0-1/P1-1 及复检新发现的 `');'` 合并 fail-open 由本轮提交修复，P1-2 经实测证伪已拦截并加 pin）与定向测试及落盘门禁回执（docs/governance/receipts/ 三份自包含实测日志：ci_gate [1-3/5] ruff/pyright ratchet PASS new=0、tier0 排除 embodied_m1 口径 341 passed exit0、[5/5] 复刻三段 serial 7+5 passed + xdist 全量 15883 passed 唯一红经 main 基线同测对照归因为存量环境红）；successor SHA 的 Reviewer/R9/远端 CI 待跑，不复用旧 SHA 证据。收口撤回记录：knowledge-flush-backlog 组件（commit 88d6d8d4f，129 知识卡文件）已于收口时 git revert（22e09a651）整批撤出——超出本 lane 原始授权范围（GOAL-20261119-8ef71728 仅 guard 两文件）且使 PR#80 超受管合并规模上限（136>100 文件）；卡片保留在分支历史可考，后续经专门授权入库。",
+  "components": [
+    {
+      "component_id": "lane-main-write-guard-hardening",
+      "paths": [
+        "src/llm_loop/core/lane_main_write_guard.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-guard-lexer-fail-closed",
+      "evidence": [
+        "审查链逐轮枚举（全部真实回执，data/review_admission/ 可查）：轮1 git_push a645e424028c REVISE P0=2（括号子壳 fail-open+陈旧基线伪影）；轮2 full_test ecc9877d2e93 REVISE P1=1 P2=3（cd 存在性未建模等）；轮3 git_push fe01ff8da0cd REVISE P1=1（|& 穿透）；轮4 full_test 4289cf3401e0 REVISE P1=1（cd 多操作数）；轮5 git_push 61bbdabfee9d REVISE P1=1（cd 后重定向误判为操作数）；轮6 git_push 18c9ecb809a5 REVISE（清单引用不可调和等 P2）；轮7-12 full_test cde453f77b91 / 3eab63eb5e61 / f8b3178c6f57 / 6c60321fd479 / 02c9e0493bb0 / 36174c1824ec 均 REVISE（token 化、逻辑行拆分、seg_start 复位、refspec 切片、透明前缀旗标、cd 选项白名单、here-string 消费等）；轮13 full_test cd3f526623bf REVISE P0=0 P1=2 P2=6（条件体 cd fail-open、清单缺报基线路径等）；轮14 full_test c50061b2c402 REVISE P0=1 P2=3（进程替换 `<(`/`>(` 穿透哨兵 fail-open；前两轮 reviewer 超时 UNAVAILABLE 未产结论，第三轮完整收敛）；轮15 full_test a37f665fb944 REVISE P0=0 P1=2 P2=1（case 模式 `)` 错弹子壳栈恢复过期父 cwd、fd 数字/重定向合并无视邻接致多操作数 cd fail-open 回归）；轮16 git_push 8d393977e0ec REVISE P0=1 P1=2 P2=3（case 模式可选 `(` 栈失衡、env -C 未建模、GIT_DIR 赋值透明——后者经实测证伪为已拦截并加 pin；复检复现时另发现 `');'` 括号-标点合并致子壳栈不弹 fail-open，属词法合并族同源缺陷）；轮17 git_push 89ba9fb91a5f REVISE P0=0 P1=1 P2=3（wrapper 前缀 env 打断哨兵；词中 # 截断经实测升级为哨兵修复；数据词括号门控精确化 f(){} 归属）——每轮发现均以代码修复闭环，无跳过、无降级。",
+        "真实旁路闭环清单：括号子壳 (cd wt && git commit) 内层 cd 逃逸、|& 双流管道穿透、cd 目标不存在时字面落点误判、cd 多操作数误判成功、cd 后重定向误判操作数、refspec/参数无界切片跨段吞噬、动词后 pathspec cd 误启跟踪、剥离空文本盲放行、未知 cd 链相对 -C 回落 workdir、条件体（then/do/case 分支/函数体）内 cd fail-open、进程替换 `<(`/`>(` 内嵌 cd 逃逸（含 `2>(` fd 形）、case 模式 `)` 错弹子壳栈、fd 数字/重定向跨空格误合并、wrapper 前缀 env 打断哨兵、词中未加引号 # 截断整行致动词不可见。",
+        "fail-closed 方向保持：未知 cd 链/不配对括号/词法失败/剥离空文本/含 # 目标（引号外词中 # 一并哨兵）/条件体内 cd/进程替换 token/非邻接 fd 合并候选一律保守（未知目标当 main 或哨兵动词），不引入任何放行捷径。",
+        "审查链现状（如实）：r16 审查子代理（86c45f3f8c7c）随 2026-11-20 凌晨会话中断丢失、无落盘回执，按 fail-closed 不计入证据；cd3f526623bf（09:17）REVISE P0=0 P1=2 P2=6——P1-1（条件体 cd fail-open）与 P1-2（缺报基线路径）已由提交 efd6a63eb 修复；c50061b2c402（10:52）REVISE P0=1 P2=3——P0-1（进程替换 `<(`/`>(` 穿透哨兵 fail-open）由提交 a96b0cd83 修复（哨兵并入 `<(`/`>(`/`>(` 检测 + RULE-AI-35 block 测试），P2-1（词中 # 截断残余）、P2-2（\"()\" 粘写分支死代码且未门控 seg_start）、P2-3（here-string 剥离与逻辑行拆分引号转义口径差异）均保守方向不阻塞，携带随 successor 重审复核；最近一轮 git_push 8d393977e0ec（2026-11-20 12:41）REVISE P0=1 P1=2 P2=3——P0-1（case 模式可选 `(` 栈失衡）与复检复现时新发现的 `');'` 括号-标点合并 fail-open（`( cd feat; : ); commit` 实证归属 feat）由本轮提交修复（`(` push 加 case_depth 门控 + 首括号纯标点 token 拆分 pass + 3 新测试），P1-1（`env -C` 未建模）由本轮提交修复（env 入 _CMD_POS_CWD_UNKNOWABLE 置未知 + 单元/block 测试），P1-2（GIT_DIR 赋值透明）经实测证伪——赋值链回扫已拦截（target=未知哨兵），加 pin 测试防回归并在本清单如实记录证伪，P2-1（基线 _meta 措辞）由本轮说明字段口径更正修复，P2-2（空洞测试：wt 未创建致断言恒真）由本轮 mkdir+对照组修复，P2-3（here-string 双引号转义，连续两轮点名）由本轮 `\\\"` 两字符消费修复对齐 _split_logical_lines 语义；最近一轮 git_push 89ba9fb91a5f（2026-11-20 12:55）REVISE P0=0 P1=1 P2=3——P1-1（wrapper 前缀 env 打断 seg_start 致 env 哨兵失配）由本轮提交修复（exec/nohup/nice/timeout/setsid/sudo/stdbuf/strace 入 _CMD_POS_CWD_UNKNOWABLE + 单元/block 测试）；P2-1（词中 # 截断残余）pin 实测升级发现 shlex 词中 # 把整行余部截成注释、git 动词对判定不可见（fail-open）→ 引号感知 _has_unquoted_midword_hash 哨兵修复（行首/引号内/转义 # 不触发）；P2-2（数据词 () 未门控）由 seg_start 门控修复（f(){} 归属精确化为 bash 真相 workdir，过拦移除）；P2-3（until/while 条件极性依赖 is_dir）以 pin 测试+docstring 契约文档化。修复过程拆分条件三次迭代（len>2 误伤括号分号合并、!=空对 误拆单字符括号产生空 token 前缀吃掉段首 seg_start——settrace 定位），终态 len>1 且非空对，168 passed 全绿；successor SHA（本轮代码+清单修复后）的双通道 Reviewer/R9/push/PR CI 待跑，不复用旧 SHA 证据。"
+      ],
+      "verification_level": "targeted_103_passed_exit0_on_predecessor_2ed181821__then_150_passed_after_cd3f526623bf_P1_fix__then_152_passed_after_c50061b2c402_P0_fix__then_157_passed_after_a37f665fb944_P1_fix__then_163_passed_after_8d393977e0ec_fix__then_168_passed_after_89ba9fb91a5f_fix__ruff_clean__gate_receipts_on_disk_docs_governance_receipts_tier0_341_passed_fullgate_15883_passed_1_env_red_main_baseline_identical__successor_reviewer_R9_push_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——守卫判定全部机器可验（live lane 台账 + 分支/workdir 解析），无模型自证输入。recovery：任一审查发现否决即回退对应修复提交并重走闸；exit：revert 修复提交即回到 EVO 前守卫行为。",
+      "rollback_route": "git revert 本组件提交；守卫回退后 main 直写判定回到历史行为（该行为本身已有 lane 台账保护，非无保护状态）。"
+    },
+    {
+      "component_id": "lane-main-write-guard-tests",
+      "paths": [
+        "tests/unit/test_lane_main_write_guard.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "evidence": [
+        "守卫单测扩充：103 passed / 0 failed（前驱 2ed181821 树，2026-11-20 00:09 宿主回执；Ruff 全过、Pyright 0 errors）。新增覆盖：括号子壳跟踪/继承/还原、不配对保守、|& 未知目标、动词后 pathspec cd 不误启、cd 存在性校验（不存在/文件/#目标）、未知链相对 -C、未闭合引号哨兵、相对落点存在性、cd 多操作数失败保持、重定向算子边界截断、cd 后重定向不破坏跟踪。",
+        "本轮 cd3f526623bf P1-1 修复回归：150 passed / 0 failed exit0（修复后工作树实测，2026-11-20 09:43）。新增 12 用例：if/while/do 分支体、case 分支、f(){} 与 function f{} 函数体 cd 降级未知哨兵；条件位置 cd（if cd wt; then…）仍归属；条件体闭合后顶层 cd 正常归属（无深度泄漏）；顶层花括号组 cd 不受影响（非函数体）；嵌套 if 正确闭合；哨兵粘性语义（后续 cd 从未知 base 仍保守）；RULE-AI-35 应拦输入（if false; then cd wt; fi && git commit → 按真实 workdir 拒）与应放行输入（条件位置 cd → wt commit 放行）；for 循环体 cd 语义由归属改为降级（旧 P1-1 动词识别保护保留）。",
+        "本轮 c50061b2c402 P0-1 修复回归：152 passed / 0 failed（修复后工作树实测，2026-11-20 11:05）。新增 2 用例：进程替换哨兵单元断言（`<(` `>(` `2>(` 三形态均保守当 main 判定）+ RULE-AI-35 应拦输入 block 测试（echo <(cd <main> && git commit) 在他人 lane live 时拒绝，reason=lane_main_write_conflict）。",
+        "本轮 a37f665fb944 P1 修复回归：157 passed / 0 failed（修复后工作树实测，2026-11-20 11:36）。新增 5 用例：case 模式 `)` 不弹子壳栈（单元断言 target 走哨兵 + RULE-AI-35 block：子壳内 case `)` 后落 main 提交拒绝）；fd 重定向邻接门控（`cd feat 2 > f` 多操作数 cd 失败 → commit 归属调用方 cwd 单元断言 + RULE-AI-35 block 拒绝；紧邻 `2>/dev/null` 正向不回退）；既有顶层 case 过拦断言随 P1-1 精确化更新（bash 真值 wt，仍安全）。",
+        "本轮 8d393977e0ec 修复回归：163 passed / 0 failed（修复后工作树实测，2026-11-20 12:51）。新增 6 用例 +1 修复：case 模式 `(` 不 push（精确归属 main 单元 + RULE-AI-35 block 拒）；`env -C` 哨兵（workdir=feat 场景 target=未知 + RULE-AI-35 block 拒）；GIT_DIR/GIT_WORK_TREE 赋值哨兵 pin（实测证伪 reviewer 误报——回扫已拦截，pin 防回归）；_strip_here_strings 双引号内 `\\\"` 不再提前闭合引号（`<<<` 数据词保留）；空洞测试 wt mkdir+对照组。复检实证 `( cd feat; : ); commit` 归属 main（`');'` 拆分 pass 生效）。",
+        "门禁级可核回执（本清单第 5 组件三份落盘日志，2026-11-20 14:2x-14:3x 实测）：tier0 排除 embodied_m1 口径 341 passed / 2 skipped / exit0；ci_gate [5/5] 复刻三段 serial_signal 7 passed exit0 + serial_perf 5 passed exit0 + xdist 并行全量 15883 passed / 1 failed——唯一红（embodied 内核隔离收据测试）经回执内附录双证据（main 基线同测同红 + serial 0.03s 快速失败）归因为存量环境红，守卫相关测试零失败；本组件各轮 passed 数字均可在对应轮次 worktree 复现，ci_gate [1/5][3/5] ruff/pyright ratchet PASS new=0 见 ci-gate-full.txt。"
+      ],
+      "verification_level": "targeted_103_passed_exit0_on_predecessor_2ed181821__then_150_passed_exit0_after_cd3f526623bf_P1_fix__then_152_passed_after_c50061b2c402_P0_fix__then_157_passed_after_a37f665fb944_P1_fix__then_163_passed_after_8d393977e0ec_fix__then_168_passed_after_89ba9fb91a5f_fix__gate_receipts_on_disk__successor_rerun_pending",
+      "model_evidence_veto_recovery_exit": "不适用（测试代码，非控制机器）。",
+      "rollback_route": "随守卫组件一并 revert。"
+    },
+    {
+      "component_id": "a5-manifest-self",
+      "paths": [
+        "docs/governance/submissions/20261119-evo-main-write-guard.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "A.5 CI 门禁（required_status_checks 内 A.5 架构提交审查）要求的唯一变更 manifest；覆盖 origin/main(71767de1b)...HEAD 全部 7 个变更路径（守卫本体/单测/基线棘轮数据/本 manifest/三份门禁测试回执；基线路径系 cd3f526623bf P1-2 补记，回执路径系合并闸可核证据补记）。"
+      ],
+      "verification_level": "staged_check_plus_post_commit_strict_pass_required",
+      "model_evidence_veto_recovery_exit": "不适用（治理文档）。",
+      "rollback_route": "revert 本 manifest 提交即回 A.5 FAIL 状态；不影响代码行为。"
+    },
+    {
+      "component_id": "guard-function-size-baseline",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-guard-lexer-fail-closed",
+      "evidence": [
+        "R9 架构护栏棘轮数据（原分支即有变更，cd3f526623bf P1-2 补记入清单）：P1-1 修复使 _git_verbs 增行，由 scripts/regen_function_size_baseline.py 重新 AST 实测登记；上轮登记 315 为 regen 锚定父提交时的旧口径（HEAD 实测 393，含 docstring），c50061b2c402 P0-1 哨兵扩展后 regen 实测 395（staged 现实口径）；a37f665fb944 P1-1/P1-2 修复后再 regen 实测 426；本轮 8d393977e0ec 修复（case 门控 + `');'` 拆分 + env 哨兵）后再 regen 实测 426→449（已批准红线放宽 EVO-20261025-e0bff8ee，随本次提交逐条可见，非静默放宽），其余 152 条登记不动、--check 幂等；_meta 说明字段口径已按 P2-1 更正（head_commit=regen 时刻 HEAD，数值=staged 工作树实测）；--check 由 ci_gate 全量强制（successor 待跑）。"
+      ],
+      "verification_level": "regen_ast_measure_now__ci_gate_function_size_check_on_successor_pending",
+      "model_evidence_veto_recovery_exit": "不适用（脚本生成的机器数据）。",
+      "rollback_route": "git revert 本组件提交即回旧基线；守卫回退后 --check 以旧值校验。"
+    },
+    {
+      "component_id": "ci-gate-and-pytest-receipts",
+      "paths": [
+        "docs/governance/receipts/20261120-evo-main-write-guard-ci-gate-full.txt",
+        "docs/governance/receipts/20261120-evo-main-write-guard-tier0-ex-embodied.txt",
+        "docs/governance/receipts/20261120-evo-main-write-guard-fullgate-ex-embodied.txt"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "本分支门禁与测试的可核回执（三份宿主实测落盘日志，头部自包含命令/宿主时间/HEAD/口径/退出码）：①ci-gate-full.txt=scripts/ci_gate.sh 原生全跑——[1/5] ruff ratchet PASS（historical=67 current=27 new=0，修改文件零红）、[2/5] 测试环境声明门禁 PASS（1257 文件 0 未声明）、[3/5] pyright ratchet PASS（historical=45 current=8 new=0），[4/5] tier0 收集被 embodied_m1 13 文件 ModuleNotFoundError mujoco 打断（全录在案）；②tier0-ex-embodied.log=[4/5] 同款 tier0 口径 --ignore=tests/embodied_m1：341 passed / 2 skipped / exit0；③fullgate-ex-embodied.log=[5/5] 提交门禁级三段复刻（--dist loadfile -n auto worker=4 与 serial 补集同款命令）：serial_signal 7 passed exit0 / serial_perf 5 passed exit0 / xdist 并行全量 15883 passed 1 failed 191 skipped 3 xfailed——唯一红 tests/embodied/test_m0_os_isolation.py::test_kernel_isolation_denies_oracle_network_and_device 经文内附录双证据归因（main 基线同测同样 FAILED + serial 0.03s 快速失败=嵌套 sandbox-exec 环境拒绝非 flaky）为存量环境红，known_reds_current.json 未登记该环境变化（main 侧存量事务）；embodied_m1 排除理由=.venv 无 mujoco 且 main 基线 HEAD 同样 13 collection errors（环境缺失非本分支引入）。本分支相对基线零新增红。"
+      ],
+      "verification_level": "host_measured_logs_on_disk_self_contained_command_timestamp_exitcode",
+      "model_evidence_veto_recovery_exit": "不适用（测试输出回执，非控制机器）。",
+      "rollback_route": "随守卫提交一并 revert；回执文件删除不影响任何运行行为。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-guard-lexer-fail-closed",
+      "g1": {
+        "necessity": "lane_main_write_guard 是 main 直写守卫：并行会话期间他人的 live lane + 主仓 workdir 必须被拒（2026-11-05/06 两次事故的守门）。shell 层 cd 链落地后暴露一系列解析旁路（括号子壳、|&、不存在目标、跨段切片、剥离空文本）——任一旁路都会让真实 main 写逃过守卫与他人合并闸竞争。守卫本体必须 fail-closed 且解析精确。"
+      },
+      "g2": {
+        "authority_owner": "Host 宿主侧 execute_command 准入层（lane 台账 data/audit/lanes.jsonl 为唯一 live-lane 事实源，CAS 版本控制）；守卫代码无模型/会话自证输入。",
+        "relationship": "reuse",
+        "non_duplication": "不新增第二套写闸：复用既有 lane_main_write_guard 单一入口与 lanes.jsonl 台账，仅加固其 shell 解析层；与 GitHub 分支保护、lane_queue、knowledge gate 互不重叠（各守各的门）。"
+      },
+      "g3": {
+        "model_evidence": [
+          "真实独立 Rule-28 审查链（GLM-5.3-flash，全部回执 data/review_admission/ 可查）：a645e424028c、ecc9877d2e93、fe01ff8da0cd、4289cf3401e0、61bbdabfee9d、18c9ecb809a5、cde453f77b91、3eab63eb5e61、f8b3178c6f57、6c60321fd479、02c9e0493bb0、36174c1824ec 均 REVISE 且发现已转化为代码修复；cd3f526623bf（2026-11-20 09:17）REVISE P0=0 P1=2 P2=6，其 P1-1（条件体 cd fail-open）与 P1-2（清单缺报基线路径）由本轮提交修复；早期稿中的 PASS 引用（candidate=85e4bdc2/d2b73173）经全库核对无对应回执，已删除。",
+          "定向回归：tests/unit/test_lane_main_write_guard.py 100 passed exit0（前驱 6ef0e7a8 树）→ 103 passed（前驱 2ed181821 树）→ 本轮修复后 150 passed exit0（修复后工作树实测，2026-11-20 09:43，含条件体/case/函数体降级 12 用例）；Ruff 全过；Pyright 0 errors（前驱树，successor 重跑）；门禁级回执见清单第 5 组件三份落盘日志（tier0 341 passed、[5/5] 复刻全量 15883 passed 唯一红 main 基线同红）。",
+          "每轮 REVISE→修复→新 SHA 重审的完整链条即审查纪律执行证据；旧 SHA 的 PASS/REVISE 均不迁移到 successor。",
+          "successor SHA：独立 Reviewer PASS P0/P1=0、原版完整 R9 exit0、受管 push、PR 远端 CI 全绿——待跑。"
+        ],
+        "recovery_or_reason": "守卫判定缺陷被否决时：revert 对应修复提交（守卫回到前版行为），事件流与回执可完整审计每一轮变化；修复经 6 执行轮迭代收敛（3 fail→100 pass），置信度来自审查-修复-重审闭环而非单轮通过。"
+      },
+      "g4": {
+        "rollback": "revert 守卫加固提交（线性、单组件）；宿主重启前后行为均可回退。保护规则/知识闸不受本组件影响。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base origin/main --head HEAD 严格 PASS（提交后必跑）",
+          "定向回归 100 tests exit0（前驱已验；successor 重跑）",
+          "独立 Rule-28 Reviewer PASS P0/P1=0（successor SHA，待跑）",
+          "原版完整 R9 bash scripts/ci_gate.sh（部分达成并如实记录：[1/5] ruff、[2/5] 环境声明、[3/5] pyright 三段 PASS new=0 见 ci-gate-full.txt；[4/5][5/5] pytest 因 embodied_m1 缺 mujoco 环境收集失败——main 基线 HEAD 同样失败，排除口径复刻回执见第 5 组件三份日志；mujoco 安装属宿主环境事务，非本分支代码事务）",
+          "受管 git push 与 PR 远端 CI 全绿（待跑）",
+          "宿主重启后 RULE-AI-35 七例应拦输入活体复验（cd 链/括号子壳/|&/pathspec cd/不存在目标/-C 相对/未闭合引号），通过前守卫加固不视为生效"
+        ]
+      }
+    }
+  ]
+}

@@ -52,9 +52,31 @@ function listMock(pending: EscalationRequest[], history: EscalationRequest[] = [
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("EscalationPanel 审批（P0-5 + ESC-05 完整命令门控）", () => {
+  it.each(["human_auth_required", "human_channel_required"])(
+    "403 %s → 显示未登录原因和真实登录入口，保持待审",
+    async (error) => {
+      const req = makeReq({ command: "echo safe", command_truncated: false });
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/escalation/review")) {
+          return ok({ error, detail: "必须由浏览器会话审批" }, 403);
+        }
+        return listMock([req])(input);
+      }));
+      render(<EscalationPanel />);
+      await waitFor(() => expect(screen.getByTestId("esc-approve-esc-1")).toBeEnabled());
+      fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
+      await waitFor(() => expect(screen.getByTestId("esc-login-required")).toBeInTheDocument());
+      expect(screen.getByTestId("esc-panel-msg")).toHaveTextContent("审批未生效");
+      expect(screen.getByTestId("esc-login-link")).toHaveAttribute("href", expect.stringContaining("/login?next="));
+      expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+    }
+  );
+
   it("详情区展示 sha256 前 16 位 + command_len + 截断提示；未查看完整命令前批准禁用", async () => {
     const req = makeReq();
     const posts: Array<Record<string, unknown>> = [];
@@ -191,6 +213,49 @@ describe("EscalationPanel/Watcher 待审独立查询（ESC-07）", () => {
     render(<EscalationWatcher />);
     await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
     expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+  });
+});
+
+describe("EscalationWatcher 可见审批反馈", () => {
+  it("403 human_channel_required → 弹窗固定区域显示登录入口，申请仍待审", async () => {
+    const req = makeReq({ command: "verify receipt", command_truncated: false, request_kind: "verify_receipt" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/escalation/review")) {
+        return ok({ error: "human_channel_required" }, 403);
+      }
+      return listMock([req])(input);
+    }));
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
+    await waitFor(() => expect(screen.getByTestId("esc-login-required")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-modal-feedback")).toHaveTextContent("审批未生效");
+    expect(screen.getByTestId("esc-login-link")).toHaveAttribute("href", expect.stringContaining("/login?next="));
+    // 反馈在可滚动命令区之外：即使命令很长，也不会被卷到看不见。
+    expect(screen.getByTestId("esc-login-required").parentElement).toHaveClass("v2-esc-modal");
+    expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+  });
+
+  it("提交期间按钮禁用且显示处理中，拒绝响应不误报成功", async () => {
+    const req = makeReq({ command: "verify receipt", command_truncated: false });
+    let settle!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/escalation/review")) {
+        return new Promise<Response>((resolve) => { settle = resolve; });
+      }
+      return listMock([req])(input);
+    }));
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
+    const approve = screen.getByTestId("esc-approve-esc-1");
+    fireEvent.click(approve);
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveTextContent("处理中");
+    expect(screen.getByTestId("esc-modal-feedback")).toHaveTextContent("正在提交审批");
+    await act(async () => { settle(ok({ error: "human_channel_required" }, 403)); });
+    expect(approve).toBeEnabled();
+    expect(approve).toHaveTextContent("批准");
+    expect(screen.getByTestId("esc-modal-feedback")).toHaveTextContent("审批未生效");
   });
 });
 
@@ -358,5 +423,27 @@ describe("M1.1 R5 查看资格绑定命令指纹", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("审批轮询去重", () => {
+  it("隐藏标签页暂停审批读取，重新可见时立即恢复", async () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const fetchMock = vi.fn(listMock([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EscalationWatcher />);
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("同一页面 Watcher 与 Panel 的同时读取共享在途请求", async () => {
+    const fetchMock = vi.fn(listMock([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<><EscalationWatcher /><EscalationPanel /></>);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

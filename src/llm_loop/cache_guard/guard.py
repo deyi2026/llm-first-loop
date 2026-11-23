@@ -21,7 +21,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,20 +142,9 @@ def _cache_ttl_for(provider: str) -> int:
         if key in p:
             return ttl
     return _DEFAULT_CACHE_TTL_S
-_SENSITIVE_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
-    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),  # GitHub token
-    # 拼接书写避免本文件自身字面量被 CacheGuard 拦截（审查材料会包含本源码）。
-    re.compile("BEGIN " + r"(RSA |EC |OPENSSH )?" + "PRIVATE KEY"),  # 私钥
-    # EVO-20261109-d3e0487c：并入出站脱敏的同一份模式——真实签发方的 key 常带
-    # 分隔符（sk-cp-…），旧的 ``sk-[A-Za-z0-9]{16,}`` 匹配不到，规则 E 只能靠
-    # env 值比对兜住（key 不在环境变量里时完全漏检）；规则 E 与脱敏口径必须一致，
-    # 否则出现"守卫会拦、脱敏却漏"的窗口。
-    *[pattern for _kind, pattern in _OUTBOUND_SECRET_PATTERNS],
-]
-# _SENSITIVE_ENV_NAMES 来自 security_guard（单一事实源，模块顶部 import）——
-# EVO-20261109-d3e0487c：规则 E 的 env 值比对与出站脱敏共用同一份名单。
+# Keep the final guard's signature surface identical to transport redaction.
+# A documentation-only private-key marker is not a PEM container.
+_SENSITIVE_PATTERNS = tuple(pattern for _, pattern in _OUTBOUND_SECRET_PATTERNS)
 
 
 @dataclass

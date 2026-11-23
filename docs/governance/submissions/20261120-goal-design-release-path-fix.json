@@ -1,0 +1,69 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261120-goal-design-release-path-fix",
+  "summary": "PR #84: bind approved requirement-design files to the exact managed release source root rather than a stale shared checkout; preserve fail-closed Goal completion and evidence semantics.",
+  "components": [
+    {
+      "component_id": "managed-design-path-binding",
+      "paths": [
+        "src/llm_loop/introspection/goal_coverage.py",
+        "tests/unit/test_goal_requirement_scope_gate.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "LFL Goal requirement coverage and TaskStore completion gate",
+      "disposition": "Reuse existing read-only design-path resolver and managed_service_deployment.json identity. Only a validated pinned release code_root may supply approved design bytes; malformed/missing identity, SHA mismatch, symlink or path traversal must fail closed. No new writable authority or Goal state is introduced.",
+      "evidence": [
+        "src/llm_loop/introspection/goal_coverage.py",
+        "tests/unit/test_goal_requirement_scope_gate.py"
+      ],
+      "verification_level": "Six focused managed-release path tests and predecessor independent Reviewer PASS plus original complete R9 exit 0 at 04802f64; the manifest-only successor must receive fresh exact-tree Reviewer, complete R9, A.5, privacy scan and required remote CI.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer and Host admission must veto any SHA/content drift or incomplete evidence; the approved requirements scope remains mandatory and cannot be silently cancelled or auto-accepted.",
+      "rollback_route": "Revert PR #84 through protected GitHub after independent review; keep existing TaskStore, Goal evidence, and deployed service unchanged until separately authorized and verified.",
+      "declaration_id": "managed-design-path-binding"
+    },
+    {
+      "component_id": "architecture-submission",
+      "paths": [
+        "docs/governance/submissions/20261120-goal-design-release-path-fix.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture submission and changed-path coverage",
+      "disposition": "One new PR-scoped manifest declares the exact three changed paths and G1-G4 architecture/safety contracts; the historical PR #82 submission is preserved unchanged.",
+      "evidence": [
+        "docs/governance/submissions/20261120-goal-design-release-path-fix.json",
+        "scripts/check_architecture_submission.py"
+      ],
+      "verification_level": "A.5 checker must PASS for base d566bbb24 through the exact successor SHA; no waiver of independent review, original R9 or GitHub protected checks.",
+      "model_evidence_veto_recovery_exit": "Independent Reviewer and Host admission must veto any SHA/content drift or incomplete evidence; the approved requirements scope remains mandatory and cannot be silently cancelled or auto-accepted.",
+      "rollback_route": "Revert PR #84 through protected GitHub after independent review; keep existing TaskStore, Goal evidence, and deployed service unchanged until separately authorized and verified."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "managed-design-path-binding",
+      "g1": {
+        "necessity": "A shared main checkout may lag the managed service release, causing an approved requirements_scope design file to appear missing and blocking valid Goal evidence binding."
+      },
+      "g2": {
+        "authority_owner": "Existing Goal/TaskStore and approved design scope remain the source of truth; service-control managed deployment identity selects only the read-only release code_root.",
+        "relationship": "reuse",
+        "non_duplication": "No parallel Goal/Task/evidence database, new signer, or fallback to an untrusted workspace path; only existing release identity and coverage validation are reused."
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_goal_requirement_scope_gate.py covers pinned release resolution, root decoy rejection, stale/cross-workspace pointers, symlink escape, missing/corrupt identity, and symlinked manifest.",
+          "The previous exact code tree 989c255e passed independent review and original full R9; a new manifest changes the tree and must be revalidated before merge."
+        ],
+        "recovery_or_reason": "On invalid managed identity, path escape, or missing approved design, reject coverage binding without completing the Goal; repair the managed release/scope evidence and rerun verification."
+      },
+      "g4": {
+        "rollback": "Protected revert of PR #84 restores the previous resolver; keep all TaskStore/Goal records and existing deployment untouched until the successor is verified.",
+        "verification": [
+          "Run A.5 exact changed-path coverage for the new PR-scoped manifest.",
+          "Run focused managed-release scope tests, independent Reviewer PASS with P0/P1=0, original full R9 exit 0, privacy scan and required GitHub CI.",
+          "Verify merged main and deployed live SHA before binding requirements_scope and accepting every required REQ."
+        ]
+      }
+    }
+  ]
+}

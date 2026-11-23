@@ -1,0 +1,68 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261117-premerge-host-queue-state",
+  "summary": "Correct the impossible Host premerge queue-state and exclusive-slot predicate without changing the MergeQueue authority.",
+  "components": [
+    {
+      "component_id": "host-queue-state",
+      "paths": [
+        "scripts/premerge_host.py",
+        "tests/unit/test_premerge_gate_host.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host premerge admission over the existing LFL MergeQueue state machine",
+      "disposition": "Require queue.status=merging and slot_held=true, matching the atomic request_merge slot acquisition. Reject the impossible ready_for_confirm plus held-slot snapshot.",
+      "evidence": [
+        "MergeQueue.SLOT_STATUSES contains preflight and merging, not ready_for_confirm; request_merge atomically transitions ready_for_confirm to merging and acquires the exclusive slot.",
+        "RED: the new ready_for_confirm plus slot_held=true negative test failed because old Host returned eligibility instead of HOLD.",
+        "GREEN: focused Host/CI/integration-writer/architecture suite 140 passed; touched Ruff and git diff --check passed."
+      ],
+      "verification_level": "RED-to-GREEN and focused 140 tests passed; independent GLM-5.3-Flash Reviewer, original complete R9 and remote PR CI remain pending.",
+      "model_evidence_veto_recovery_exit": "Any queue status other than merging or absent exclusive slot must HOLD before remote checks; do not accept a model-authored slot claim in ready_for_confirm.",
+      "rollback_route": "Revert this isolated two-file predicate and negative-test change; do not alter the MergeQueue ledger or deployed Host issuer.",
+      "declaration_id": "host-queue-state"
+    },
+    {
+      "component_id": "a5-submission",
+      "paths": [
+        "docs/governance/submissions/20261117-premerge-host-queue-state.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 exact changed-path coverage declaration",
+      "disposition": "Declare the three changed paths and the actual verification stage only.",
+      "evidence": [
+        "This submission covers the two implementation/test paths and itself without claiming a Reviewer or R9 result prematurely."
+      ],
+      "verification_level": "A.5 checker must pass on the exact frozen commit before independent review.",
+      "model_evidence_veto_recovery_exit": "If changed-path coverage or review evidence is stale, HOLD and correct the isolated submission before freezing a new SHA.",
+      "rollback_route": "Revert this submission with the isolated code fix."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "host-queue-state",
+      "g1": {
+        "necessity": "A Host predicate that requires ready_for_confirm and a held merge slot is unsatisfiable against the real MergeQueue authority, permanently blocking trusted merge eligibility."
+      },
+      "g2": {
+        "authority_owner": "Existing MergeQueueStore owns queue status, CAS version and the exclusive merge slot; the Host consumes a separately signed snapshot only.",
+        "relationship": "reuse",
+        "non_duplication": "No new queue, lock, issuer, reviewer, bypass, or state transition is introduced."
+      },
+      "g3": {
+        "model_evidence": [
+          "RED negative test reproduced old Host incorrectly accepting ready_for_confirm plus slot_held=true.",
+          "GREEN focused suite 140 passed after changing the predicate to merging and updating the positive fixture."
+        ],
+        "recovery_or_reason": "If queue CAS changes, the signed Host snapshot becomes stale and must be reissued from authoritative state; do not infer a held slot from a ready_for_confirm record."
+      },
+      "g4": {
+        "rollback": "Revert the isolated Host predicate and tests; the MergeQueue ledger and GitHub policy remain untouched.",
+        "verification": [
+          "Run the independent GLM-5.3-Flash Reviewer on the exact frozen SHA and require PASS P0/P1=0.",
+          "Run original full R9 exit 0, PR CI/A.5 and push CI before any managed deployment."
+        ]
+      }
+    }
+  ]
+}

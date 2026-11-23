@@ -1,0 +1,85 @@
+{
+  "schema": "lfl.embodied.prereg/v1",
+  "experiment_id": "M1-SIM-003",
+  "preregistered_at_utc": "2026-11-19T16:56:33Z",
+  "status": "frozen_before_first_m1_sim_003_trial",
+  "supersedes_protocol_only": "M1-SIM-002",
+  "reason": "User-approved model switch to DeepSeek-V4-Flash after M1-SIM-002 freeze; preserve original GLM experiment and evidence",
+  "model_required": "deepseek/deepseek-v4-flash",
+  "scenario": "one simulated robot arm, one red cube, one tray-A target; no real hardware",
+  "task_levels": [
+    "L0",
+    "L1",
+    "L3-grasp-failure-recovery"
+  ],
+  "comparison": {
+    "B1": "same LLM and skill catalog without LFL goal/recovery management",
+    "B2": "same LLM, skill catalog, seeds and limits with one budgeted LFL grasp-recovery release",
+    "learning": "off",
+    "engineering_smoke_seeds": "0..9; never included in paired 30",
+    "paired_seed_start": 20261117,
+    "paired_trials_per_arm": 30,
+    "max_provider_attempts_per_episode": 6,
+    "max_tool_actions_per_episode": 8,
+    "max_precheck_resubmits_per_intent": 2,
+    "max_reconcile_polls": 3,
+    "episode_deadline_seconds": 180
+  },
+  "host_control": {
+    "trial_schema": "lfl.m1-oracle-host-trial/v1",
+    "root_owned_config": "/usr/local/etc/lfl-m1-oracle-trial.json",
+    "client_can_select_seed": false,
+    "signed_trial_fields": [
+      "phase",
+      "arm",
+      "trial_index",
+      "seed"
+    ],
+    "one_fresh_host_run_per_episode": true,
+    "host_key_and_replay_ledger_preserved": true
+  },
+  "primary_endpoint": "independent Host Oracle end-to-end placement success; executor claims do not count",
+  "secondary_endpoints": [
+    "safe action count",
+    "UNKNOWN duplicate dispatches",
+    "replans backed by new observations",
+    "provider tokens and USD per verified task",
+    "operator interventions",
+    "latency p50/p95",
+    "contract drift against M0"
+  ],
+  "analysis": {
+    "paired_ci_method": "95% paired bootstrap interval, 1000 resamples, seed 20261117",
+    "success_and_cost_reported_together": true,
+    "max_cost_ratio_B2_over_B1": 1.5,
+    "minimum_sample_for_directional_comparison": 30,
+    "no_statistical_significance_claim_from_single_demo": true
+  },
+  "safety": {
+    "stop_margin_ms": 100,
+    "max_attempts_per_intent": 2,
+    "real_hardware_authorized": false,
+    "stop_rules": [
+      "any real device or production robot contact",
+      "any Oracle canary or privileged truth in model-visible data",
+      "any unauthorized action or unknown-action duplicate dispatch",
+      "any physical simulator motion after unconfirmed stop",
+      "any change of frozen model/skills/budget/seeds without new experiment ID",
+      "any DeepSeek API response model other than deepseek-flash; any unauthorized model alias remapping"
+    ]
+  },
+  "change_policy": "Any post-freeze protocol change creates a new experiment_id; never rewrite prior trial results",
+  "model_served_as": "deepseek-flash (DeepSeek-V4.1-Flash-1017 per official 2026-10-17 release; legacy alias may be remapped later)",
+  "billing_policy": {
+    "api_host": "api.deepseek.com",
+    "currency": "USD",
+    "input_per_million_usd_peak": "0.30",
+    "output_per_million_usd_peak": "1.20",
+    "max_total_usd": "20.00",
+    "reserve_per_call_usd": "0.05",
+    "pricing_source": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "pricing_basis": "peak-rate worst-case; cache discounts ignored; account invoice may differ",
+    "max_provider_attempts_batch": 360,
+    "max_tool_actions_batch": 480
+  }
+}

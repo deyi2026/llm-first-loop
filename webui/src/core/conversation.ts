@@ -76,6 +76,8 @@ let abortSessionId: string | null = null;
 let resumeAbort: AbortController | null = null;
 let resumeSessionId: string | null = null;
 let historyRequest: AbortController | null = null;
+let historyRequestSession: string | null = null;
+let historyRequestPromise: Promise<void> | null = null;
 let bgPollTimer: number | undefined;
 
 // ── 空闲增量轮询（飞书桥等外部通道写入后 Web 及时刷新，无需手动切会话）──
@@ -155,6 +157,8 @@ sessionStore.subscribe(() => {
   observedSessionId = nextSessionId;
   historyRequest?.abort();
   historyRequest = null;
+  historyRequestSession = null;
+  historyRequestPromise = null;
   detachSubscriptionsForSession(nextSessionId);
   if (bgPollTimer !== undefined) {
     window.clearInterval(bgPollTimer);
@@ -230,7 +234,8 @@ function fingerprintLatest(m: ChatMessage | undefined): string | null {
 /** 空闲轮询一跳：非空闲/无会话直接退出；指纹变化 → 重载整窗 */
 async function idlePollTick(sessionId: string): Promise<void> {
   const st = conversationStore.getState();
-  if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
+  if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0
+    || historyRequest !== null || document.hidden) return;
   const resp = await fetchHistory(sessionId, 1, 0);
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resp.ok === false) return; // background probe is observational; never fabricate empty history
@@ -240,7 +245,7 @@ async function idlePollTick(sessionId: string): Promise<void> {
     idleProbeFp = fp; // 基线跳
     return;
   }
-  if (fp !== idleProbeFp) void loadHistory(sessionId); // 有新写入 → 全量重载（终态可靠）
+  if (fp !== idleProbeFp) void loadHistory(sessionId, true); // 有新写入 → 全量重载（终态可靠）
 }
 
 function stopIdlePoll(): void {
@@ -272,24 +277,52 @@ export async function refreshCurrentSessionMessages(): Promise<void> {
   if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
   syncRefreshBusy = true;
   try {
-    await loadHistory(sessionId);
+    await loadHistory(sessionId, true);
   } finally {
     syncRefreshBusy = false;
   }
 }
 
-export async function loadHistory(sessionId: string): Promise<void> {
-  // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
-  detachSubscriptionsForSession(sessionId);
+export function loadHistory(sessionId: string, refreshAfterInFlight = false): Promise<void> {
+  // Multiple SSE/visibility/idle/manual readers of the same session share one
+  // read. A terminal/sync update may require ONE trailing read after an older
+  // in-flight snapshot, so final messages are never lost by coalescing.
+  if (historyRequest && historyRequestSession === sessionId
+    && historyRequestPromise && !historyRequest.signal.aborted) {
+    if (refreshAfterInFlight) {
+      return historyRequestPromise.then(() =>
+        sessionStore.getState().currentSessionId === sessionId ? loadHistory(sessionId) : undefined);
+    }
+    return historyRequestPromise;
+  }
   historyRequest?.abort();
   const request = new AbortController();
   historyRequest = request;
+  historyRequestSession = sessionId;
+  const pending = loadHistoryRequest(sessionId, request).finally(() => {
+    if (historyRequest === request) {
+      historyRequest = null;
+      historyRequestSession = null;
+      historyRequestPromise = null;
+    }
+  });
+  historyRequestPromise = pending;
+  return pending;
+}
+
+async function loadHistoryRequest(sessionId: string, request: AbortController): Promise<void> {
+  // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
+  detachSubscriptionsForSession(sessionId);
   const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0, request.signal);
-  if (historyRequest === request) historyRequest = null;
   if (request.signal.aborted) return;
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resp.ok === false) {
     conversationStore.setState({ lastError: resp.error ?? "会话历史读取失败，请重试。" });
+    // History and Run are independent facts. A slow/corrupt history page must
+    // not hide a live background Run or invite a duplicate "继续" submission.
+    void checkBackgroundRun(sessionId).catch(() => {
+      // Status probe failure must not erase the history error or trigger a Run.
+    });
     return;
   }
   const messages = resp.messages.map(toChatMessage);
@@ -350,11 +383,14 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
     }
     const s = await fetchStreamStatus(sessionId);
     if (sessionStore.getState().currentSessionId !== sessionId) return;
-    if (!s || !s.running) {
+    // An unreachable/401 status is UNKNOWN, never evidence that a Run ended.
+    // Keep the known running fact and never offer a duplicate continuation.
+    if (!s) return;
+    if (!s.running) {
       if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
       bgPollTimer = undefined;
       conversationStore.setState({ backgroundRunning: false });
-      void loadHistory(sessionId); // 后台完成 → 重载显示完整结果
+      void loadHistory(sessionId, true); // 后台完成 → 重载显示完整结果
     }
   }, 2000);
 }
@@ -495,7 +531,7 @@ async function resumeBackgroundStream(
         activeRunGeneration: null,
       });
       if (!controller.signal.aborted) onSuccess?.(outcome.data.final_answer ?? acc.answer);
-      void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
+      void loadHistory(sessionId, true); // 终态 → 重载完整结果（含工具调用）
       return true;
     }
     // 失败（run 已结束/网络）：刷新路径移除自己的占位；同消息续联则把控制权

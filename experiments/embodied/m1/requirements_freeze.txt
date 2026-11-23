@@ -1,0 +1,7 @@
+httpx==0.28.1
+mujoco==4.0.1
+mujoco-core==4.0.1
+mujoco-studio==4.0.1
+mujoco-studio-wasm==4.0.1
+numpy==2.4.6
+pytest==9.2.0

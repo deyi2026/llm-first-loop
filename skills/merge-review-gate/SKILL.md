@@ -9,7 +9,13 @@ description: 合并 main 审查闸（RULE-AI-34）——分支 Goal/任务收口
 ## 前置义务与资格
 审查是强制前置义务。父 agent 主动 spawn 本审查子代理，取得覆盖当前分支产物的有效 PASS 回执后方可并入 main 并收口任务；缺失、未完成、未通过或失效时暂缓合并，任务转 blocked 而非 done。核实真实子会话终态、审查类型（merge）、分支产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的"继续 / 按建议执行"不构成免审；用户明确豁免（显式指示暂缓合并，含"攒批一起 push"）须在 Goal/checkpoint 留痕并注明触发条件。
 
-**实现入口（本闸无 Host 冻结入口，勿照抄 RULE-AI-28 路径）**：RULE-AI-34 的程序角色为"无新增"，`review_admission` 的 kind 仅 `full_test|git_push|article_publish`，`classify_review_gate_command` 不识别 `git merge`。故本闸审查者由父 agent 直接 `spawn_subagent`（未参与该分支任何产出的只读子代理，任务书=本 skill），资格 = 清单逐条核验 + `docs/governance/receipts/` 落盘 merge 回执，没有进程内一次性资格可依赖。`spawn_subagent` 无 `review_isolated` 参数，不得据此声称取得 RULE-AI-28 那类 Host 资格；反之 RULE-AI-28 的资格也不替代本闸回执。
+**实现入口**：新版 `merge_review_start` 由 Host 冻结 lane/base/head 并调用
+`SubAgentRunner.start(review_isolated=True)`，工具面严格只读、父会话不可 steer；
+它是合并验证凭证的专用审查入口，不等于 `review_admission` 的
+`full_test|git_push|article_publish` 资格，不能授权跳过完整 R9 或 push 门禁。
+审查仍需核对本技能清单、保存可审计结论；Host 签发的 `verify_ref` 是
+机检凭证，不替代其他独立门禁。旧部署没有此入口时仍可按既有
+`spawn_subagent` 只读审查，但**不得**将其文本 PASS 直接当作 Host 签发资格。
 
 ## 前置事实收集（只读命令，逐条留痕）
 1. Goal/task 状态与 done_when、evidence_refs——完成证据逐条可判真（指向真实测试回执/落盘回执，不接受口头声明）。
@@ -30,10 +36,16 @@ description: 合并 main 审查闸（RULE-AI-34）——分支 Goal/任务收口
 - fast-forward：`git checkout main && git merge --ff-only <branch>`，核对合并后 `git rev-parse main` == 合并前分支 HEAD。
 - 需 merge commit/冲突解决：解决点留痕，合并后跑受影响 focused gate。
 - 合并后 `git log --oneline -3` 与回执 SHA 一致才算收口；Goal complete 的 evidence_refs 引用本闸回执。
-- **PASS 后签发 verify 凭证（EVO-20261106-7782d438，lane_queue_submit 机检 d 前置）**：
-  `python3 scripts/issue_verify_receipt.py --apply --lane-id <lane_id> --base-sha <base_main_sha> --scope "<审查覆盖摘要>" --evidence "<PASS 回执路径>"`
-  verify_ref 由 receipt_id 决定（`{lane_id}:{base_sha 前8}`），lane 登记/入队时原样引用；
-  base 前进后旧凭证判 verify_stale，须重审重签。凭证只对应真实 PASS——禁止预签/补签。
+- **PASS 后签发 verify 凭证（lane_queue_submit 机检 d 前置）**：优先使用受管
+  `merge_review_start(lane_id)` 启动 Host 冻结输入的独立只读 Reviewer，
+  待真实终态 PASS/P0=P1=0 后调用 `verify_receipt_request(lane_id,child_id)`。
+  人工必须在**已登录 Web 浏览器会话**审批该精确请求；Host 在审批临界区内
+  重核 lane/main/head 和独立审查进程内证明后专用签发。
+  `escalation_wait(request_id)` 返回 `verify_ref={lane_id}:{base_sha 前8}`，
+  lane 登记/入队时原样引用。base/head 前进后旧凭证失效，须重新审查。
+  **禁止**由 Agent 使用 `host-grant`、普通 `execute_command` 或手工 JSONL
+  写入 `data/audit/verify_receipts.jsonl`；旧 `scripts/issue_verify_receipt.py --apply`
+  仅保留给明确隔离的宿主管理进程，不是 Agent 签发通道。Host 入口缺失时 HOLD。
 
 ## 回执（落盘 docs/governance/receipts/）
 {"gate": "merge", "reviewer": "<subagent_id>", "verdict": "PASS|REVISE|BLOCK",

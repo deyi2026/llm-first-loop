@@ -14,6 +14,7 @@ from unittest import mock
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.tools.builtin.read_image import ReadImageTool, _probe_meta
+from llm_loop.web.vision import VisionGeometry, VisionResult
 
 
 def _png_bytes(width: int = 64, height: int = 48) -> bytes:
@@ -51,7 +52,23 @@ def test_read_image_success_with_vision(tmp_path, monkeypatch):
     """后端识别成功 → SUCCESS 含元信息 + 识别文本."""
     p = tmp_path / "shot.png"
     p.write_bytes(_png_bytes(64, 48))
-    with mock.patch("llm_loop.web.vision.describe_image", return_value="界面截图：顶部导航栏 + 内容区"):
+    # seam 迁移（EVO-20261121-efa320ab）：read_image 改调 describe_image_detailed 以取几何事实；
+    # 断言意图不变（识别成功 → SUCCESS + 元信息 + 识别文本）。
+    with mock.patch(
+        "llm_loop.web.vision.describe_image_detailed",
+        return_value=VisionResult(
+            text="界面截图：顶部导航栏 + 内容区",
+            geometry=VisionGeometry(
+                source_width=64,
+                source_height=48,
+                input_width=64,
+                input_height=48,
+                max_side=1568,
+                downsampled=False,
+            ),
+            backend="fake",
+        ),
+    ):
         r = ReadImageTool().execute(path=str(p))
     assert r.status == ToolResultStatus.SUCCESS
     assert "格式=PNG" in r.content
@@ -64,7 +81,7 @@ def test_read_image_vision_fails_degrades(tmp_path, monkeypatch):
     p = tmp_path / "shot.png"
     p.write_bytes(_png_bytes(10, 10))
     with mock.patch(
-        "llm_loop.web.vision.describe_image",
+        "llm_loop.web.vision.describe_image_detailed",
         side_effect=RuntimeError("not logged in: 请先登录"),
     ):
         r = ReadImageTool().execute(path=str(p))

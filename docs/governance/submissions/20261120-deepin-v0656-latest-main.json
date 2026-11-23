@@ -1,0 +1,44 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261120-deepin-v0656-latest-main",
+  "summary": "Deepin 0.6.56 version-only candidate from integrated and CI-green main 07fd45f0d; exact seven-path release identity change, no runtime safety-control implementation change. Independent exact-tree review, original R9, remote CI, immutable wheel build and managed Deepin cutover remain required.",
+  "components": [
+    {
+      "component_id": "deepin-v0656-release-identity",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py",
+        "uv.lock"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing public version, Python package, Web API and release documentation",
+      "disposition": "Bump version identity from 0.6.55 to 0.6.56 without altering runtime safety controls; document merged-main snapshot and the distinction between local wheel deployment and formal public GitHub Release.",
+      "evidence": [
+        "Baseline origin/main 07fd45f0de4eb62d7f2094014af6d3e3bdb5b867; GitHub main push CI 44613219856 and privacy-scan 44613220009 completed success.",
+        "Deepin 0.6.55 generation 18 live/stable three-service convergence PASS; previous wheel 0.6.54 retained."
+      ],
+      "verification_level": "Exact candidate independent Reviewer PASS P0/P1=0, original complete R9 exit0, GitHub PR CI, merge-main push CI, immutable wheel metadata/source/WebUI SHA and Deepin managed restart convergence are mandatory.",
+      "model_evidence_veto_recovery_exit": "Any mismatched candidate SHA, stale CI, failed Reviewer/R9, unverified wheel source, active workload or missing rollback proof vetoes cutover. No force restart or bypass of Host grant and release controls.",
+      "rollback_route": "Drop candidate branch before merge or revert release metadata if abandoned; after Deepin deployment retain and use prior immutable 0.6.55 wheel via managed rollback only after operator safety checks."
+    },
+    {
+      "component_id": "a5-deepin-v0656-submission",
+      "paths": [
+        "docs/governance/submissions/20261120-deepin-v0656-latest-main.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 existing architecture change submission mechanism",
+      "disposition": "Declare exact seven changed paths; no new policy gate or parallel state authority.",
+      "evidence": [
+        "Existing version-only 0.6.54 submission uses this same A.5 schema and seven-path partition."
+      ],
+      "verification_level": "Architecture submission staged and exact base/head checks plus independent Reviewer and full R9.",
+      "model_evidence_veto_recovery_exit": "Reject any uncovered path, changed runtime control, stale base or unverified release identity.",
+      "rollback_route": "Remove the submission with the corresponding version-only release candidate."
+    }
+  ],
+  "declarations": []
+}

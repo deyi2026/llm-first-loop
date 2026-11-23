@@ -7,17 +7,59 @@ import { refreshCurrentSessionMessages } from "./conversation";
 import { sessionStore } from "./stores";
 import { notifyModelCatalogChanged } from "./chat";
 import { readSessionIdFromLocation } from "./sessionUrl";
+import { isAuthRequired, subscribeAuthRequired } from "./authSession";
 
 let lastSyncEvent = Date.now();
 let es: EventSource | null = null;
+let watchdogTimer: number | null = null;
+let onVisibilityChange: (() => void) | null = null;
+let hiddenSyncPending = false;
+let unsubscribeAuth: (() => void) | null = null;
 const watchdogMs = 20000;
 const staleThresholdMs = 25000;
 
+// 多个标签页与密集 sessions_updated 事件不应让每个无关会话写入都触发
+// 当前会话的 100 条历史重载。会话列表的持久元数据可判定当前会话是否变化。
+let syncRunning = false;
+let syncAgain = false;
+
 function refreshFromSync(): void {
-  void refreshSessionsAndCurrent();
-  // 2026-08-27 缺口修复：此前只刷会话列表不刷消息区——飞书桥写入后当前会话
-  // 的回答在 Web 空闲停留时不可见（须手动切会话）。现推送信号直达消息区重载。
-  void refreshCurrentSessionMessages();
+  if (isAuthRequired()) return;
+  if (document.hidden) {
+    hiddenSyncPending = true; // 后台标签页不刷新；恢复可见时补一次
+    return;
+  }
+  if (syncRunning) {
+    syncAgain = true; // 在途事件最多合并为下一轮；不丢掉并发期间的更新
+    return;
+  }
+  syncRunning = true;
+  void (async () => {
+    try {
+      do {
+        syncAgain = false;
+        const before = sessionStore.getState();
+        const sessionId = before.currentSessionId;
+        const previous = before.sessions.find((s) => s.session_id === sessionId);
+        const ok = await refreshSessionsAndCurrent();
+        if (!ok || !sessionId) continue; // 失败不能伪装成空列表或清空消息
+        const after = sessionStore.getState();
+        if (after.currentSessionId !== sessionId) continue; // 切会话由新视图自行加载
+        const current = after.sessions.find((s) => s.session_id === sessionId);
+        if (
+          !previous || !current ||
+          previous.updated_at !== current.updated_at ||
+          previous.message_count !== current.message_count ||
+          previous.last_message_preview !== current.last_message_preview
+        ) {
+          // 仍保留飞书等外部写入的推送级可见性；仅对实际变化的当前会话重载。
+          await refreshCurrentSessionMessages();
+        }
+      } while (syncAgain);
+    } finally {
+      syncRunning = false;
+    }
+  })();
 }
 
 /** Boolean result distinguishes a successful empty list from a failed read. */
@@ -58,9 +100,12 @@ export async function refreshSessionsAndCurrent(): Promise<boolean> {
 }
 
 export function initEventStream(): void {
-  if (typeof EventSource === "undefined") return; // 老旧浏览器降级为手动刷新
+  if (typeof EventSource === "undefined" || isAuthRequired()) return;
   if (es) return;
   es = new EventSource("/api/v1/events");
+  unsubscribeAuth = subscribeAuthRequired(() => {
+    if (isAuthRequired()) stopEventStream(); // stop EventSource automatic 401 reconnects
+  });
   es.addEventListener("connected", () => {
     lastSyncEvent = Date.now();
     void refreshSessionsAndCurrent();
@@ -93,24 +138,37 @@ export function initEventStream(): void {
     notifyProvidersUpdated(fact);
   });
   // 看门狗：事件流静默失联（>25s 无事件且页面可见）→ 自愈刷新（SSE 健康时不触发）
-  window.setInterval(() => {
+  watchdogTimer = window.setInterval(() => {
     if (document.visibilityState === "visible" && Date.now() - lastSyncEvent > staleThresholdMs) {
       lastSyncEvent = Date.now();
       refreshFromSync();
     }
   }, watchdogMs);
-  // 标签页重新聚焦 → 立即同步（后台标签页的 SSE/定时器会被浏览器节流）
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && Date.now() - lastSyncEvent > 5000) {
+  // 后台 SSE 只记更新事实；重新可见时立即补读，不依赖 5s 静默阈值。
+  onVisibilityChange = () => {
+    if (!document.hidden && (hiddenSyncPending || Date.now() - lastSyncEvent > 5000)) {
+      hiddenSyncPending = false;
       lastSyncEvent = Date.now();
       refreshFromSync();
     }
-  });
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
 }
 
 export function stopEventStream(): void {
+  unsubscribeAuth?.();
+  unsubscribeAuth = null;
   if (es) {
     es.close();
     es = null;
   }
+  if (watchdogTimer !== null) {
+    window.clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+  if (onVisibilityChange) {
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    onVisibilityChange = null;
+  }
+  hiddenSyncPending = false;
 }

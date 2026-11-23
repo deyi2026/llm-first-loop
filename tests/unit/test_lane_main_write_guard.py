@@ -1127,3 +1127,1167 @@ def test_resolve_commit_paths_helper(tmp_path):
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     assert guard_module._resolve_commit_paths(["x.py"], str(outside), str(repo)) is None
+
+
+# --- EVO-20261119-0fa86cab：shell 层 cd 链跟随 + token 化收紧（RULE-AI-35 双向实测） ---
+
+
+def test_git_verbs_cd_chain_target_resolved(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt} && git commit -m x", None)
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_glued_operator_verb_not_lost(tmp_path):
+    """粘写 `cd wt&&git commit` 曾使 git 动词整体逃过判定（既有旁路）→ 现应识别。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt}&&git commit -m x", None)
+    assert verbs and verbs[0][0] == "commit" and verbs[0][2] == str(wt)
+
+
+def test_git_verbs_semicolon_glued_verb_not_lost(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt};git commit -m y", None)
+    assert verbs and verbs[0][0] == "commit" and verbs[0][2] == str(wt)
+
+
+def test_git_verbs_cd_unknown_var_target_unknown():
+    assert guard_module._git_verbs("cd $WT && git commit -m x", "/tmp") == [
+        ("commit", ["-m", "x"], "")
+    ]
+
+
+def test_git_verbs_pipe_subshell_target_unknown(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    assert guard_module._git_verbs(f"cd {wt} | git commit -m x", str(wt)) == [
+        ("commit", ["-m", "x"], "")
+    ]
+
+
+def test_git_verbs_no_cd_keeps_workdir_fallback():
+    assert guard_module._git_verbs("git commit -m x", "/tmp/repo") == [
+        ("commit", ["-m", "x"], "/tmp/repo")
+    ]
+    assert guard_module._git_verbs("git commit -m x", None) == [
+        ("commit", ["-m", "x"], None)
+    ]
+
+
+def test_git_verbs_cd_then_relative_dash_c_chains_from_cd(tmp_path):
+    """cd 落点作为后续 `git -C` 相对段的基准（而非 workdir 参数）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    wt = _git_repo(tmp_path / "repo" / "nest" / "wt", "feat/x")
+    verbs = guard_module._git_verbs(f"cd {wt} && git -C ../.. commit -m x", None)
+    assert verbs and verbs[0][0] == "commit"
+    target = verbs[0][2]
+    assert target is not None
+    assert Path(target).resolve() == repo  # -C ../.. 落回 main 仓
+
+
+def test_resolve_shell_cd_rules(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    sub = base / "sub"
+    sub.mkdir()  # cd 存在性校验（ecc9877d2e93 P1-1）：相对落点也必须真实存在
+    f = guard_module._resolve_shell_cd
+    assert f(None, str(base), None) == str(base)
+    assert f(None, "sub", str(base)) == str(sub)
+    assert f(str(base), "sub", None) == str(sub)
+    assert f(None, "$VAR", str(base)) == ""
+    assert f(None, "-", str(base)) == ""
+    assert f(None, "sub", None) == ""
+    assert f("", "sub", str(base)) == ""
+    assert f(None, "~nosuchuser12345", str(base)) == ""  # expanduser 未解析 → 未知
+    assert f(None, "~", str(base)) == str(Path("~").expanduser())
+    # 新增规则断言（P1-1）：目标不存在/非目录 → ""（cd 失败停留原处 → 未知）
+    assert f(None, str(tmp_path / "nope"), str(base)) == ""
+    assert f(None, "sub", "/tmp/lfl-nonexistent-base-zz") == ""
+
+
+def test_git_verbs_cd_extra_operand_keeps_cwd(tmp_path):
+    """bash 对 cd 多操作数报错且 cwd 不变（4289cf3401e0 P1-1）→ 不跟随字面目标。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} {other} && git commit -m x", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
+
+
+def test_git_verbs_args_stop_at_redirection(tmp_path):
+    """动词参数切片在重定向算子处截断（4289cf3401e0 P2-2）。"""
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(f"git commit -m x > {log}", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
+
+
+def test_git_verbs_redirect_after_cd_does_not_break_cd(tmp_path):
+    """cd 目标后的重定向不是第二操作数：cd 成功跟踪（61bbdabfee9d P1-1）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(f"cd {wt} > {log} && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_allow_commit_after_cd_into_branch_repo(tmp_path):
+    """修复目标：无 workdir 参数 + `cd <feat 分支仓> && git commit` → 放行。"""
+    wt = _git_repo(tmp_path / "wt", "feat/issue73")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {wt} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is None
+
+
+def test_block_commit_after_cd_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：cd 链落点在 main 仓 → 仍拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(elsewhere),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_glued_cd_into_main_repo(tmp_path):
+    """粘写旁路闭合：`cd <main>&&git commit` 不得再逃过判定。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {repo}&&git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_cd_unknown_var_fail_closed(tmp_path):
+    """`cd $VAR` 不可解析 → 保守按 main（应拦输入，即使 workdir 指向 feat 仓）。"""
+    wt = _git_repo(tmp_path / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        "cd $WT && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(wt),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_pipe_subshell_after_cd(tmp_path):
+    """管道右臂在原 cwd 子壳执行，cd 语义不可靠 → 未知按 main（应拦输入）。"""
+    wt = _git_repo(tmp_path / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {wt} | git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(wt),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_relative_cd_chain_back_to_main(tmp_path):
+    """相对 cd 链 `cd sub && cd ..` 回到 main 仓 → 仍拒绝（链式不丢基准）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    (repo / "sub").mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        "cd sub && cd .. && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_cd_then_dash_c_back_to_main(tmp_path):
+    """cd 进嵌套 feat 仓后 `git -C ../..` 相对基准应落在 main 仓 → 拒绝。"""
+    _git_repo(tmp_path / "repo", "main")
+    wt = _git_repo(tmp_path / "repo" / "nest" / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {wt} && git -C ../.. commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_paren_subshell_cd_tracked(tmp_path):
+    """(cd wt && git commit)：括号子壳内 cd 必须被跟踪（a645e424028c P0-2 修复）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir(parents=True)
+    verbs = guard_module._git_verbs(f"(cd {wt} && git commit -m x)", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_paren_inherits_parent_cd(tmp_path):
+    """cd 进 wt 后再进括号子壳：git 落点仍是 wt（父壳视图继承）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir(parents=True)
+    verbs = guard_module._git_verbs(f"cd {wt} && (git commit -m x)", None)
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_paren_restore_after_close(tmp_path):
+    """括号关闭后弹栈还原父壳视图：) 之后的 git 按原 workdir 判定。"""
+    wt = tmp_path / "wt"
+    wt.mkdir(parents=True)
+    verbs = guard_module._git_verbs(f"(cd {wt}) && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "/tmp/main")]
+
+
+def test_git_verbs_unbalanced_close_conservative():
+    """不配对 ) 弹空栈 → 视图未知（""，调用方保守当 main）。"""
+    verbs = guard_module._git_verbs(
+        "git commit -m a ) && git commit -m b", "/tmp/main"
+    )
+    assert verbs[0] == ("commit", ["-m", "a"], "/tmp/main")
+    assert verbs[1] == ("commit", ["-m", "b"], "")
+
+
+def test_git_verbs_unquoted_comment_stops_line_like_bash(tmp_path):
+    """未加引号 # 起注释（与 bash 一致）：注释内的 git 不参与判定。
+
+    P2-2（review subagent_8d393977e0ec）：wt 必须真实存在——cd 落点可跟踪时
+    注释截断才被真正验证（旧版 wt 未创建，cd 恒为未知，verbs==[] 恒真，
+    未覆盖具名行为）；对照组证明同一落点下无注释时 commit 可见归属。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt} # note && git commit -m x", "/tmp/main")
+    assert verbs == []
+    control = guard_module._git_verbs(f"cd {wt} && git commit -m x", "/tmp/main")
+    assert control == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_block_paren_subshell_cd_into_main_repo(tmp_path):
+    """端到端：(cd <main 仓> && git commit) 在他人 live lane 下必须被拒（P0-2 旁路闭合）。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"(cd {repo} && git commit -m x)",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(tmp_path),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_cd_nonexistent_conservative():
+    """cd 目标不存在 → bash cd 失败停留原处 → 未知（ecc9877d2e93 P1-1）。"""
+    verbs = guard_module._git_verbs(
+        "cd /tmp/lfl-nonexistent-zz && git commit -m x", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_cd_to_file_conservative(tmp_path):
+    """cd 目标是文件非目录 → bash cd 失败 → 未知。"""
+    f = tmp_path / "f"
+    f.write_text("x")
+    verbs = guard_module._git_verbs(f"cd {f} && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_cd_hash_target_conservative(tmp_path):
+    """带 # 的 cd 目标（引号形式）：shlex 词中截断 vs bash 字面名分歧 → 保守。
+
+    未加引号的词中 # 在 lexer 层即被截断（token 不含 #），属已文档化的
+    shlex 边界；引号形式 # 保留在 token 内，此处必须保守 ""。
+    """
+    (tmp_path / "wt").mkdir()
+    (tmp_path / "wt#note").mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd '{tmp_path}/wt#note' && git commit -m x", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_relative_dash_c_after_unknown_cd():
+    """未知 cd 链后的相对 -C 不回落 workdir 解析（ecc9877d2e93 P2-2）。"""
+    verbs = guard_module._git_verbs(
+        "cd /tmp/lfl-nonexistent-zz && git -C sub push origin x", "/tmp/main"
+    )
+    assert verbs == [("push", ["origin", "x"], "")]
+
+
+def test_lexer_error_conservative_sentinel():
+    """未闭合引号（strip 后为空/词法失败）→ 保守哨兵，不盲放行（ecc9877d2e93 P2-3）。"""
+    verbs = guard_module._git_verbs("git push origin 'main", "/tmp/main")
+    assert verbs == [("commit", [], "")]
+
+
+def test_git_verbs_double_amp_pipe_unknown_target():
+    """|&（bash 双流管道，punctuation_chars 单 token）→ 次段子壳语义 → 目标未知。"""
+    verbs = guard_module._git_verbs("cd /tmp/wt |& git commit -m x", "/tmp/main")
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_pathspec_cd_after_verb_not_segment_start():
+    """动词后的 `cd` 是 pathspec 不是命令位：不得误启 cd 链跟踪（fe01ff8da0cd P2-1）。"""
+    verbs = guard_module._git_verbs(
+        "git commit cd wt && git push origin x", "/tmp/main"
+    )
+    assert verbs == [
+        ("commit", ["cd", "wt"], "/tmp/main"),
+        ("push", ["origin", "x"], "/tmp/main"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# review subagent_cde453f77b91 修复回归（P1-1/P1-2/P1-3 + P2-2，2026-11-20）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_newline_second_cd_tracked(tmp_path):
+    """P1-1：逻辑行拆分——`cd wt\\ncd main && git commit` 的第二个 cd 必须被跟踪。"""
+    wt = tmp_path / "wt"
+    main_dir = tmp_path / "main"
+    wt.mkdir()
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt}\ncd {main_dir} && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_git_verbs_quoted_newline_is_data(tmp_path):
+    """引号内换行是数据不是分隔符：多行 commit message 不被拆段。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f'cd {wt} && git commit -m "a\nb"', str(wt)
+    )
+    assert verbs == [("commit", ["-m", "a\nb"], str(wt))]
+
+
+def test_git_verbs_backslash_continuation_joins_lines(tmp_path):
+    """bash `\\<newline>` 续行：拼接后 cd 链照常跟踪。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} \\\n&& git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_comment_ends_at_newline_like_bash(tmp_path):
+    """`#` 注释止于行尾（bash 语义）：注释行之后的 git 命令仍参与判定。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} # note\ngit commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_assign_prefix_cd_tracked(tmp_path):
+    """P1-2：命令位赋值前缀 `X=1 cd main` — bash/dash 都会执行 cd，必须跟踪。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"X=1 cd {main_dir} && git commit -m x", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_git_verbs_brace_group_cd_tracked(tmp_path):
+    """P1-2：花括号组 `{ cd main && git commit; }` 在当前 shell 执行，cwd 持续生效。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        "{ cd " + str(main_dir) + " && git commit -m x; }", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_git_verbs_transparent_prefixes_cd_tracked(tmp_path):
+    """P1-2：builtin/command/time/! 前缀后的 cd 照常执行，必须跟踪。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for prefix in ("builtin", "command", "time", "!"):
+        verbs = guard_module._git_verbs(
+            f"{prefix} cd {main_dir} && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", ["-m", "x"], str(main_dir))], prefix
+
+
+def test_git_verbs_cwd_unknowable_prefixes_fail_closed(tmp_path):
+    """P2-1 收敛：eval/pushd/popd/source/. 可能改 cwd 且不可静态解析 → 落点未知。"""
+    for head in ("eval cd x", "pushd x", "popd", "source env.sh", ". ./env.sh"):
+        cmd = f"{head} && git commit -m y"
+        verbs = guard_module._git_verbs(cmd, "/tmp")
+        assert verbs == [("commit", ["-m", "y"], "")], cmd
+
+
+def test_git_verbs_amp_redirect_after_cd_tracked(tmp_path):
+    """P1-3：`cd wt &>log` 的 &> 是重定向不是 cd 第二操作数 → 仍跟踪 wt。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} &>{log} && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_amp_append_redirect_after_cd_tracked(tmp_path):
+    """P1-3：`&>>` 同属双流重定向算子。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} &>>{log} && git push origin main", str(wt)
+    )
+    assert verbs == [("push", ["origin", "main"], str(wt))]
+
+
+def test_git_verbs_amp_redirect_no_arg_cd_conservative(tmp_path):
+    """`cd &>log`：无参 cd 落 HOME（cwd 未知）→ 保守 ""。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd &>{tmp_path / 'log'} && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_fd_dup_token_not_eat_next_word(tmp_path):
+    """P2-2：`2>&1` 并回单 token；其后重定向目标不被误吞、pathspec 保留。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    p = tmp_path / "docs" / "r.md"
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} 2>&1 && git commit -m x -- {p} >{log}", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x", "--", str(p)], str(wt))]
+
+
+def test_git_verbs_redirect_before_pathspec_keeps_args(tmp_path):
+    """P2-2：`git commit 2>log -- docs/x` 的 pathspec 不再被重定向截断。"""
+    p = tmp_path / "receipts" / "r.md"
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"git commit 2>{log} -- {p}", "/tmp"
+    )
+    assert verbs == [("commit", ["--", str(p)], "/tmp")]
+
+
+def test_block_newline_cd_chain_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`cd wt\\ncd main && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {elsewhere}\ncd {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(elsewhere),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_assign_prefix_cd_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`X=1 cd main && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"X=1 cd {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_block_amp_redirect_cd_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`cd main &>log && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {repo} &>{tmp_path / 'log'} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# ---------------------------------------------------------------------------
+# review subagent_3eab63eb5e61 修复回归（P1-1 复合关键字 + P2-2/P2-3，r11）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_if_compound_cd_tracked(tmp_path):
+    """P1-1：`if cd main; then git commit; fi` 的 cd 不再因 `if` 失踪。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if cd {main_dir}; then git commit -m x; fi", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_git_verbs_while_do_compound_cd_tracked(tmp_path):
+    """P1-1：`while cd wt; do git commit; done` 循环体落 wt。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"while cd {wt}; do git commit -m x; done", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_for_loop_body_cd_conservative(tmp_path):
+    """`for` 头部词不终结命令位（旧 P1-1 保护仍在：commit 动词照常识别）；
+    `do` 体 cd 因列表展开可能为空/体可能不执行 → 降级未知哨兵
+    （review subagent_cd3f526623bf P1-1，过拦方向；纯字面列表的精确归属
+    留待后续轮次做显式字面检查）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"for f in a b; do cd {wt} && git commit -m x; done", "/tmp"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+# ---------------------------------------------------------------------------
+# review subagent_cd3f526623bf P1-1 修复回归（条件体/case 分支/函数体内 cd 降级）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_if_body_cd_not_attributed(tmp_path):
+    """`if` 分支体的 cd 可能不执行（分支未选中）→ 不得归属其落点。
+
+    bash 事实：`if false; then cd wt; fi && git commit` 实际在调用目录
+    （常为 main）提交——旧词法归属会把 main 提交放行成 wt 提交（fail-open）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if false; then cd {wt}; fi && git commit -m x", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_if_condition_cd_still_tracked(tmp_path):
+    """条件位置的 cd bash 会先执行（`if cd wt; then …`）→ 仍按落点归属。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if cd {wt}; then git commit -m x; fi", None
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_case_branch_cd_not_attributed(tmp_path):
+    """case 各分支只执行一支：分支体 cd 不得归属（否则"最后一支 wins"旁路）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"case $x in b) cd {main_dir};; a) cd {wt};; esac && git commit -m x",
+        None,
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_case_statement_attribution_conservative(tmp_path):
+    """case 语句内动词归属（a37f665fb944 P1-1 修复后）：
+
+    ① case 模式 ``a)`` 的 ``)`` 不再弹空括号栈（旧机制在开放子壳内会恢复
+       过期父 cwd，属 fail-open）→ case 前真实发生的顶层 cd 归属保留
+       （bash 真值即 wt；旧断言的 ``unknown`` 抹除是过拦，已随 P1-1 移除）；
+    ② 分支体内 cd 由条件体状态机降级（cd3f526623bf P1-1，见
+       test_git_verbs_case_branch_cd 族）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} ; case $x in a) git commit -m x;; esac", None
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_function_def_cd_not_attributed(tmp_path):
+    """`f() { … }` 定义体的 cd 不执行（仅定义）→ commit 落调用方 cwd。
+
+    P2-2 门控（review subagent_89ba9fb91a5f）后：`f` 词打断 seg_start →
+    `()` 不再 arm 函数体模式（数据词 `echo '()'` 同不再误 arm）→ cd 不
+    跟踪、commit 按真实语义归属调用方 workdir（bash 真相一致，精确且
+    安全）；旧哨兵过拦已随门控移除。`function f { … }` 关键字形态仍走
+    函数体哨兵（见下一测试）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"f() {{ cd {wt}; }}; git commit -m x", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "/repo/main")]
+
+
+def test_git_verbs_function_keyword_body_cd_not_attributed(tmp_path):
+    """`function f { … }` 关键字形态同上。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"function f {{ cd {wt}; }}; git commit -m x", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_while_do_body_cd_conservative(tmp_path):
+    """循环体 cd 执行次数/是否执行静态不可知 → 未知哨兵（过拦方向）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"while true; do cd {wt}; git commit -m x; done", "/repo/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_nested_if_body_cd_conservative(tmp_path):
+    """嵌套 if 的内层分支体 cd 同样降级；外层 fi 正确闭合（无深度泄漏）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if a; then if b; then cd {wt}; fi; fi && git commit -m x",
+        "/repo/main",
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_top_level_cd_after_if_body_still_tracked(tmp_path):
+    """条件体闭合后的顶层 cd 正常归属（状态机不泄漏 → 不过拦合法链）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if true; then echo hi; fi; cd {wt} && git commit -m x", None
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_body_cd_sentinel_sticky_over_later_cd(tmp_path):
+    """体内 cd 降级后的哨兵是粘性的：同段后续顶层 cd 从未知 base 解析仍得
+    未知（既有 _resolve_shell_cd 保守语义，含绝对路径）→ 恒保守当 main。
+
+    bash 真值是绝对 cd 可恢复落点（wt2）；守卫选择过拦（安全方向）。
+    精确恢复留待后续轮次改 _resolve_shell_cd 的 base-'' 分支。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    wt2 = tmp_path / "wt2"
+    wt2.mkdir()
+    verbs = guard_module._git_verbs(
+        f"if true; then cd {wt}; fi ; cd {wt2} && git commit -m x", None
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_git_verbs_top_level_brace_group_cd_still_tracked(tmp_path):
+    """顶层花括号组无条件执行（非函数体）：cd 仍跟踪（不误伤既有语义）。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"{{ cd {wt}; git commit -m x; }}", None
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_block_if_body_cd_then_commit_in_main(tmp_path):
+    """RULE-AI-35 应拦输入：if 分支体 cd 不归属 → 按真实 workdir(main) 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"if false; then cd {wt}; fi && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_allow_if_condition_cd_then_commit_in_wt(tmp_path):
+    """应放行输入：条件位置 cd（bash 先执行）→ 落 wt 的 commit 仍放行。"""
+    wt = _git_repo(tmp_path / "wt", "feat/x")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"if cd {wt}; then git commit -m x; fi",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is None
+
+
+def test_git_verbs_quoted_eval_payload_sentinel(tmp_path):
+    """P2-2：整串带引号 eval 载荷（含空白/段界标点的命令位 token）→ 保守哨兵。"""
+    verbs = guard_module._git_verbs(
+        'eval "cd /tmp && git commit -m x"', "/tmp"
+    )
+    assert verbs == [("commit", [], "")]
+
+
+def test_git_verbs_dquote_escape_preserves_quote_state(tmp_path):
+    """P2-3：双引号内 `\\"` 不再误判引号闭合；消息含引号仍正常判定。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f'cd {wt} 2>&1 && git commit -m "say \\"hi\\""', str(wt)
+    )
+    assert verbs == [("commit", ["-m", 'say "hi"'], str(wt))]
+
+
+def test_block_if_cd_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`if cd main; then git commit; fi` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"if cd {repo}; then git commit -m x; fi",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# ---------------------------------------------------------------------------
+# review subagent_02c9e0493bb0 修复回归（P1-1 cd 任意选项形 + P1-2 <<<，r14）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_cd_env_ambiguous_options_sentinel(tmp_path):
+    """P1 回归（36174c1824ec）：`-e/-@/-Pe` 有效性随 bash 版本变化（3.2 无、
+    5.x 有）——静态无法裁决，任何单一落点都单向 fail-open → 哨兵当 main。"""
+    for opt in ("-e", "-@", "-Pe", "-q"):
+        verbs = guard_module._git_verbs(
+            f"cd {opt} /tmp && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", [], "")], opt
+
+
+def test_git_verbs_here_string_quoted_word_consumed(tmp_path):
+    """P2-1（36174c1824ec）：引号包裹的数据词连同闭引号整体消费，
+    残留闭引号不再被当开引号 → 引号奇偶错位误触哨兵。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f'cd {wt} <<< "a b" && git commit -m x', str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_here_string_boundary(tmp_path):
+    """P1-2：`cd wt <<< data && git commit` 的 here-string 不算第二操作数。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} <<< data && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_here_string_with_substitution_conservative(tmp_path):
+    """P1-2 保守面：here-string 数据词含 ``$(`` 会展开执行 → 保留原串走哨兵。"""
+    verbs = guard_module._git_verbs(
+        'cd /tmp/wt <<< "$(cd /main && git commit)" && git push', "/tmp/wt"
+    )
+    assert verbs == [("commit", [], "")]
+
+
+def test_git_verbs_process_substitution_conservative(tmp_path):
+    """P0-1（review subagent_c50061b2c402）：`<(`/`>(` 进程替换哨兵。
+
+    bash 真值：`echo <(cd <main> && git commit -m x)` 的子 shell 会真实执行
+    并落 main 提交；旧逻辑 `<(` 既非括号也非段界 → 内层 cd 逃过判定
+    （fail-open）→ 现并入 `$( `同款保守哨兵。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    for form in (
+        "echo <(cd /tmp/main && git commit -m x)",
+        "echo >(cd /tmp/main && git commit -m x)",
+        f"git -C {wt} commit -m x 2>(cd /tmp/main && git commit -m y)",
+    ):
+        verbs = guard_module._git_verbs(form, str(wt))
+        assert verbs == [("commit", [], "")], form
+
+
+def test_block_process_substitution_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：进程替换内 ``cd main && git commit`` → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"echo <(cd {repo} && git commit -m x)",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_case_pattern_paren_no_pop(tmp_path):
+    """P1-1（review subagent_a37f665fb944）：case 模式 `)` 不弹子壳栈。
+
+    bash 真值：``( cd /main; case $x in a) git commit -m x;; esac )`` 的
+    子壳真实落 /main 提交；旧逻辑 `)` 无条件弹栈 → shell_cwd 被恢复成
+    调用方 workdir → commit 误归属 feat 放行（fail-open）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        "( cd /main; case $x in a) git commit -m x;; esac )", str(wt)
+    )
+    # case 深度>0 时 git verb 走条件体哨兵：target 空串（当 main 判定，保守）。
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_block_case_pattern_paren_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：子壳内 case 模式 `)` 后落 main 提交 → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"( cd {repo}; case $x in a) git commit -m x;; esac )",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(tmp_path / "feat"),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_fd_redirect_requires_adjacency(tmp_path):
+    """P1-2（review subagent_a37f665fb944）：``cd feat 2 > f`` 里 2 是参数。
+
+    bash 真相：``cd <feat> 2 > /tmp/f`` 的 cd 收到多余操作数而报错失败，
+    git 仍落调用方 cwd；旧逻辑无视邻接把 ``2 >`` 并成 ``2>`` → cd 误判
+    成功 → 后续 commit 误归属 feat 放行（fail-open，已修 P1 的回归）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {tmp_path / 'feat'} 2 > /tmp/f; git commit -m x", str(wt)
+    )
+    # cd 多余操作数失败 → cwd 保持调用方 workdir → commit 归属 wt。
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_fd_redirect_adjacent_still_merges(tmp_path):
+    """P1-2 正向：紧邻 ``2>/dev/null`` 的 fd 重定向识别不回退。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"cd {wt} 2>/dev/null; git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_block_spaced_fd_redirect_multi_operand_cd(tmp_path):
+    """RULE-AI-35 应拦输入：``cd feat 2 > f; commit`` 真落调用方 cwd → 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd {tmp_path / 'feat'} 2 > /tmp/f; git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_case_pattern_paren_no_stack_imbalance(tmp_path):
+    """P0-1（review subagent_8d393977e0ec）：case 模式可选 `(` 不 push 子壳栈。
+
+    bash 真相：``( cd <feat>; case $x in (a) : ;; esac ); git commit`` 的
+    子壳 cd 不影响父壳，commit 真实落调用方 cwd（main）；旧逻辑 pattern
+    `(` push + pattern `)` 不弹 → 子壳闭合 `)` 弹到过期条目恢复 feat →
+    commit 误归属 feat 放行（fail-open）。修复后精确归属 main（拦截）。
+    """
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"( cd {feat}; case $x in (a) : ;; esac ); git commit -m x",
+        str(main_dir),
+    )
+    assert verbs == [("commit", ["-m", "x"], str(main_dir))]
+
+
+def test_block_case_pattern_paren_stale_restore(tmp_path):
+    """RULE-AI-35 应拦输入：子壳内 case 模式 `)` 栈失衡后落 main 提交 → 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"( cd {feat}; case $x in (a) : ;; esac ); git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(repo),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_env_chdir_sentinel(tmp_path):
+    """P1-1（review subagent_8d393977e0ec）：`env -C`（--chdir）置未知哨兵。
+
+    bash 真相：``env -C <main> git commit`` 真实落 main 提交；workdir=feat
+    场景旧解析归属 feat 放行（fail-open）→ env 命令位整体置未知（保守）。
+    """
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    verbs = guard_module._git_verbs(
+        f"env -C {main_dir} git commit -m x", str(feat)
+    )
+    assert verbs == [("commit", ["-m", "x"], "")]
+
+
+def test_block_env_chdir_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：`env -C <main> git commit` 在他人 lane live 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"env -C {repo} git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_git_dir_assign_sentinel_pin(tmp_path):
+    """P1-2 pin（review subagent_8d393977e0ec 报告经实测为已拦截）：赋值链
+    回扫（_git_verbs 内 k 逆扫）对裸 `GIT_DIR=`/`GIT_WORK_TREE=` 赋值生效
+    → target 未知哨兵（当 main 判定）。pin 防后续改动回归。
+    """
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for assign in (f"GIT_DIR={main_dir}/.git", f"GIT_WORK_TREE={main_dir}"):
+        verbs = guard_module._git_verbs(f"{assign} git commit -m x", "/tmp/feat")
+        assert verbs == [("commit", ["-m", "x"], "")], assign
+
+
+def test_strip_here_strings_double_quote_escape():
+    """P2-3（review subagent_8d393977e0ec）：双引号内 `\\"` 不结束字符串。
+
+    `echo "a\\" <<< b"` 的 here-string 算子在引号数据内，不得被剥离；
+    旧逻辑 `\\"` 提前翻转引号状态 → `<<< b` 被误剥（保守方向但语义错）。
+    """
+    out = guard_module._strip_here_strings('echo "a\\" <<< b"')
+    assert "<<<" in out
+
+
+def test_git_verbs_wrapper_prefixed_env_sentinel(tmp_path):
+    """P1-1（review subagent_89ba9fb91a5f）：wrapper 前缀 env 置未知哨兵。
+
+    bash 真相：``nohup env -C <main> git commit`` 真实落 main 提交；
+    workdir=feat 场景旧解析中 wrapper 词打断 seg_start 使 env 哨兵失配
+    → 归属 feat 放行（fail-open）→ wrapper 类词整体置未知（保守）。
+    """
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for wrapper in ("nohup", "exec", "nice", "timeout 5", "sudo"):
+        verbs = guard_module._git_verbs(
+            f"{wrapper} env -C {main_dir} git commit -m x", str(feat)
+        )
+        assert verbs == [("commit", ["-m", "x"], "")], wrapper
+
+
+def test_block_wrapper_prefixed_env_into_main(tmp_path):
+    """RULE-AI-35 应拦输入：``nohup env -C <main> commit`` 他人 lane live 拒。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    feat = tmp_path / "feat"
+    feat.mkdir()
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"nohup env -C {repo} git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=str(feat),
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+def test_git_verbs_data_paren_token_not_arm_function_body(tmp_path):
+    """P2-2（review subagent_89ba9fb91a5f）：数据词 `'()'` 不 arm 函数体。
+
+    bash 真相：``echo '()' ; { cd wt && git commit; }`` 的花括号组在当前
+    shell 执行 → cd 真实落 wt；旧逻辑数据词 `()` 无门控 arm 函数体模式 →
+    顶层花括号组被误读为永不执行的函数体，cd 被降级哨兵（过拦）。
+    seg_start 门控后精确归属 wt（仍安全）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"echo '()' ; {{ cd {wt} && git commit -m x; }}", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_midword_hash_truncation_pin(tmp_path):
+    """词中未加引号 `#` → 保守哨兵（89ba9fb91a5f P2-1 实测升级为修复）。
+
+    bash 真相：``cd wt#note`` 的字面名不存在 → cd 失败，git commit 落调用方
+    cwd。旧 lexer（shlex commenters='#'）从词中 # 把整行余部截成注释 → git
+    动词对判定完全不可见（verbs=[]，实证 fail-open）→ 现命中即哨兵
+    （当 main 判定，workdir=main 场景拒绝、workdir=lane 场景过拦均保守）。
+    引号目标/行首注释/转义 # 不触发（另见 _has_unquoted_midword_hash）。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(f"cd {wt}#note && git commit -m x", "/tmp/main")
+    assert verbs == [("commit", [], "")]
+    # 行首/空白后真注释不触发（既有行为回归）：
+    assert guard_module._git_verbs(f"cd {wt} # note && git commit -m x", "/tmp/main") == []
+
+
+def test_git_verbs_until_condition_cd_sentinel_pin(tmp_path):
+    """until/while 条件极性 pin（review subagent_89ba9fb91a5f P2-3）。
+
+    ``until cd wt; do git commit; done``：cd 成功 ⟺ 目标存在
+    （_resolve_shell_cd 存在性校验）→ 条件真、体零次执行 → 归属 wt 放行
+    安全（放行的是不会执行的 commit）；cd 失败（目标不存在）→ do 体哨兵
+    降级 → commit 走 target 未知（当 main 判定，体真实执行场景兜底）。
+    该不变量（条件极性 ⟺ is_dir）是文档化的隐式契约；改动 CDPATH/选项
+    处理前必须复核本 pin。
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    verbs = guard_module._git_verbs(
+        f"until cd {wt}; do git commit -m x; done", "/tmp/main"
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+    nope = tmp_path / "nonexistent-target"
+    verbs2 = guard_module._git_verbs(
+        f"until cd {nope}; do git commit -m x; done", "/tmp/main"
+    )
+    assert verbs2 == [("commit", ["-m", "x"], "")]
+
+
+def test_block_cd_option_form_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`cd -Pe main && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd -Pe {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# ---------------------------------------------------------------------------
+# review subagent_f8b3178c6f57 修复回归（P1-1/2/3：旗标/cd 选项/clobber，r12）
+# ---------------------------------------------------------------------------
+
+
+def test_git_verbs_transparent_prefix_flags_cd_tracked(tmp_path):
+    """P1-1：`time -p cd` / `command -p cd` 的旗标词不终结命令位。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for head in ("time -p", "command -p"):
+        verbs = guard_module._git_verbs(
+            f"{head} cd {main_dir} && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", ["-m", "x"], str(main_dir))], head
+
+
+def test_git_verbs_cd_physical_option_tracked(tmp_path):
+    """P1-2：`cd -P main`/`cd -L main`/`cd -- main` 真实落点在选项之后。"""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for opt in ("-P", "-L", "--"):
+        verbs = guard_module._git_verbs(
+            f"cd {opt} {main_dir} && git commit -m x", "/tmp"
+        )
+        assert verbs == [("commit", ["-m", "x"], str(main_dir))], opt
+
+
+def test_git_verbs_invalid_prefix_flag_fail_closed(tmp_path):
+    """P1 回归（6c60321fd479）：无效旗标使前缀调用失败 → cd 链不可信 → 保守 ""。
+
+    bash 事实：`command -x cd wt` 前缀调用失败，cd 不执行，`;` 后的
+    git commit 落在未变的 cwd——旧旗标跳过会误跟踪 cd → 放行真实落点。
+    """
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for head in ("command -x", "! -z", "time -q", "{ -x"):
+        cmd = f"{head} cd {main_dir}; git commit -m y"
+        verbs = guard_module._git_verbs(cmd, "/tmp")
+        assert verbs == [("commit", ["-m", "y"], "")], cmd
+
+
+def test_git_verbs_clobber_target_not_in_refs(tmp_path):
+    """P2-1（6c60321fd479）：`git commit 2>|log -- docs/x` 的重定向目标不入 refs。"""
+    p = tmp_path / "receipts" / "r.md"
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"git commit 2>|{log} -- {p}", "/tmp"
+    )
+    assert verbs == [("commit", ["--", str(p)], "/tmp")]
+
+
+def test_git_verbs_clobber_redirect_after_cd_tracked(tmp_path):
+    """P1-3：`cd wt >|log` 的 clobber 重定向不算 cd 第二操作数。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} >|{log} && git commit -m x", str(wt)
+    )
+    assert verbs == [("commit", ["-m", "x"], str(wt))]
+
+
+def test_git_verbs_fd_clobber_redirect_after_cd_tracked(tmp_path):
+    """P1-3：`cd wt 2>|log` 数字前缀 clobber 形同样识别。"""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    log = tmp_path / "log"
+    verbs = guard_module._git_verbs(
+        f"cd {wt} 2>|{log} && git push origin main", str(wt)
+    )
+    assert verbs == [("push", ["origin", "main"], str(wt))]
+
+
+def test_block_cd_physical_option_into_main_repo(tmp_path):
+    """RULE-AI-35 应拦输入：`cd -P main && git commit` 落 main → 拒绝。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-a", "active", "sess-other")])
+    out = check_git_main_write(
+        f"cd -P {repo} && git commit -m x",
+        audit_dir=audit,
+        session_id="sess-me",
+        workdir=None,
+    )
+    assert out is not None and out["reason"] == "lane_main_write_conflict"

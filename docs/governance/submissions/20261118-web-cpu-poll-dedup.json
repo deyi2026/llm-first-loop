@@ -1,0 +1,170 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261118-web-cpu-poll-dedup",
+  "summary": "Reduce redundant Mac LFL Web SSE fingerprint scans, same-session message reloads and hidden-tab approval/coordination polling without changing Host approval authority or Run recovery.",
+  "components": [
+    {
+      "component_id": "sse-fingerprint-dedup",
+      "paths": [
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Web SSE events and existing session-directory fingerprint scan",
+      "disposition": "Reuse the existing SSE fingerprint contract; cache successful scans in-process for at most 1 second, cap entries at 32, isolate roots by absolute path and never cache errors.",
+      "evidence": [
+        "8-thread single-flight, cross-root isolation, expiry and failure tests in tests/web/test_sse_fingerprint_cache.py",
+        "Independent full_test reviewer subagent_171c0122bfc8 PASS P0=0 P1=0 P2=2 for original 9-file SHA 1463062a3; manifest addition requires new exact-SHA review."
+      ],
+      "verification_level": "Focused Python 53/53 and original full R9 exit 0; new SHA must pass A.5, independent review, full R9, PR CI before merge.",
+      "model_evidence_veto_recovery_exit": "Reject if an error result is cached, a workspace shares another root's fingerprint, a changed session becomes invisible, or the global lock causes unacceptable production latency.",
+      "rollback_route": "Revert the Web CPU change and its declaration; previous direct scan path remains available.",
+      "declaration_id": "sse-cache-control"
+    },
+    {
+      "component_id": "frontend-session-event-sync",
+      "paths": [
+        "webui/src/core/events.ts"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "WebUI SSE event handling and existing session/message stores",
+      "disposition": "Reuse existing sessions_updated, visibility and watchdog events; coalesce concurrent refreshes, reload current messages when observable metadata changes, and preserve messages on fetch failure.",
+      "evidence": [
+        "webui/src/events-sync.test.ts covers event coalescing, visibility catch-up and failure retention",
+        "Reviewer identified nonblocking P2: rare edits or metadata/event ordering could delay reload until another event; do not claim a server invariant not demonstrated."
+      ],
+      "verification_level": "WebUI 612/612 tests, TypeScript typecheck and production build passed for original candidate; new SHA CI still required.",
+      "model_evidence_veto_recovery_exit": "Veto on missed ordinary new messages, stale approval state, dropped messages after fetch error or permanently wedged sync; validate server metadata update order in production.",
+      "rollback_route": "Revert this event-sync change while retaining original SSE and watchdog behavior.",
+      "declaration_id": "webui-sync-control"
+    },
+    {
+      "component_id": "sidebar-poll-and-approval",
+      "paths": [
+        "webui/src/components/sidebar/CoordinationChannel.tsx",
+        "webui/src/components/sidebar/EscalationCenter.tsx",
+        "webui/src/components/sidebar/LaneBoard.tsx"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "WebUI read-only coordination panels and Escalation Center; Host remains sole approval authority",
+      "disposition": "Skip timer reads while the tab is hidden, immediately catch up on visibility restoration, remove timers/listeners on unmount, and share in-flight approval GET requests; never auto-approve.",
+      "evidence": [
+        "webui/src/components/sidebar/poll-visibility.test.tsx checks hidden pause and visible catch-up",
+        "webui/src/components/sidebar/EscalationCenter.test.tsx checks in-flight request sharing; existing Host approval path remains unchanged."
+      ],
+      "verification_level": "Full WebUI 612/612 tests and production build passed on original candidate; real browser and approval negative checks remain deployment gates.",
+      "model_evidence_veto_recovery_exit": "Reject if hiding a tab drops a real approval, if restoring visibility fails to refresh, if a GET request triggers approval, or if cleanup leaves orphan timers.",
+      "rollback_route": "Revert the three sidebar component edits; do not change Host approval grants or ledger.",
+      "declaration_id": "sidebar-read-control"
+    },
+    {
+      "component_id": "regression-tests",
+      "paths": [
+        "tests/web/test_sse_fingerprint_cache.py",
+        "webui/src/components/sidebar/EscalationCenter.test.tsx",
+        "webui/src/components/sidebar/poll-visibility.test.tsx",
+        "webui/src/events-sync.test.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Python pytest and WebUI Vitest",
+      "disposition": "Add deterministic regression and negative tests for dedup, concurrency, visibility, errors and cleanup.",
+      "evidence": [
+        "Python Web 53/53, WebUI 612/612 on original candidate; full original R9 15,726 passed, 162 skipped, 3 xfailed."
+      ],
+      "verification_level": "Automated tests executed on original candidate; new SHA requires fresh full R9 and remote CI.",
+      "model_evidence_veto_recovery_exit": "Fail if tests do not assert real network request counts, visibility behavior or failure retention.",
+      "rollback_route": "Revert tests with their corresponding implementation."
+    },
+    {
+      "component_id": "a5-declaration",
+      "paths": [
+        "docs/governance/submissions/20261118-web-cpu-poll-dedup.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture-submission gate",
+      "disposition": "Declare the exact 10 changed paths and control ownership without changing gate rules.",
+      "evidence": [
+        "PR #70 A.5 remote CI failed on 1463062a3: expected exactly one changed architecture-submission manifest, found 0."
+      ],
+      "verification_level": "Local structural and coverage validation before commit; remote A.5 required on new exact SHA.",
+      "model_evidence_veto_recovery_exit": "HOLD if declaration paths do not exactly match changed files, if A.5 fails, or if claimed review evidence belongs to a different SHA.",
+      "rollback_route": "Revert this declaration together with the patch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "sse-cache-control",
+      "g1": {
+        "necessity": "Repeated per-client SSE directory fingerprint scans caused avoidable filesystem work and CPU even when no session changed."
+      },
+      "g2": {
+        "authority_owner": "Existing Web SSE session-directory scanner and event emitter; this patch introduces no new security authority.",
+        "relationship": "reuse",
+        "non_duplication": "Keep one existing fingerprint source and event format; add bounded short-lived memoization, not a second scanner or scheduler."
+      },
+      "g3": {
+        "model_evidence": [
+          "Original independent reviewer PASS P0=0 P1=0 P2=2; new manifest SHA still needs review.",
+          "Backend regression tests include concurrency, expiry, cross-root isolation and error non-caching."
+        ],
+        "recovery_or_reason": "On cache miss or expiry rescan; on error do not cache. If latency regresses across workspaces, revert without data migration."
+      },
+      "g4": {
+        "rollback": "Revert cache patch and declaration; no persistence migration.",
+        "verification": [
+          "A.5 exact path coverage, Python regressions, full R9, remote CI and production CPU/request comparison.",
+          "Confirm no changes to SSE payload semantics or security policy."
+        ]
+      }
+    },
+    {
+      "declaration_id": "webui-sync-control",
+      "g1": {
+        "necessity": "Repeated sessions_updated events reloaded the same 100 messages even without observable changes, amplifying CPU and network load."
+      },
+      "g2": {
+        "authority_owner": "Existing WebUI SSE listener and sessionStore/messageStore; server remains source of session truth.",
+        "relationship": "reuse",
+        "non_duplication": "No new polling loop or second session cache; coalesce the existing sync path and compare existing metadata."
+      },
+      "g3": {
+        "model_evidence": [
+          "Original WebUI 612 tests passed; dedicated events-sync tests exercise coalescing and failure retention.",
+          "Reviewer P2: server metadata/event ordering invariant is not proven for rare in-place edits."
+        ],
+        "recovery_or_reason": "Visibility/watchdog paths still resync; preserve existing messages on transient failure; escalate missed-message reports and revert if required."
+      },
+      "g4": {
+        "rollback": "Revert events.ts and tests, restore unconditional refresh behavior.",
+        "verification": [
+          "Run full WebUI tests, typecheck, build, full R9 and PR CI on new SHA.",
+          "Production verify new messages, edits, background Run continuation and tab visibility catch-up."
+        ]
+      }
+    },
+    {
+      "declaration_id": "sidebar-read-control",
+      "g1": {
+        "necessity": "Hidden browser tabs repeatedly polled coordination and approval endpoints, and concurrent watchers duplicated approval GETs."
+      },
+      "g2": {
+        "authority_owner": "Existing React panel lifecycle and EscalationCenter read-only GETs; Host Verify/approval authority unchanged.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing timers, visibilitychange and in-flight fetch promises; no second approval queue, scheduler or signing path."
+      },
+      "g3": {
+        "model_evidence": [
+          "Hidden-tab tests verify zero hidden fetches and immediate visible catch-up.",
+          "Escalation tests verify same in-flight fetch shared; no approval POST or authority changes."
+        ],
+        "recovery_or_reason": "On visibility restore issue immediate GET; failed request releases in-flight promise for next attempt; do not grant approvals automatically."
+      },
+      "g4": {
+        "rollback": "Revert sidebar polling and single-flight changes, leaving Host approval unchanged.",
+        "verification": [
+          "Full WebUI and Python R9, PR A.5 and CI on new SHA.",
+          "Post-deploy verify pending approvals, Lane Board and coordination refresh when tab becomes visible."
+        ]
+      }
+    }
+  ]
+}

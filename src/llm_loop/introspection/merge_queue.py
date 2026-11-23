@@ -46,9 +46,11 @@ revert_blocker="predicted_from_no_ff_policy"。P2b 执行器落地后应改为�
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
+import stat
 import subprocess
 import threading
 import uuid
@@ -459,8 +461,8 @@ VERIFY_LAYER_DISABLED = "verify_layer_not_enabled"
 def verify_layer_status(receipts_path: str | Path) -> dict:
     """verify 凭证层的**自述**状态（EVO-20261105-501db776 立项；7782d438 补签发者）。
 
-    EVO-20261106-7782d438 起，签发者 = ``issue_verify_receipt``（merge-review-gate
-    审查 PASS 后调用 / ``scripts/issue_verify_receipt.py --apply``）。此前生产代码
+    EVO-20261106-7782d438 起，签发者 = ``issue_verify_receipt``（受管 Host
+    审查 PASS、浏览器人工批准后由 Host 调用；普通 Agent 沙箱禁止直接写账本）。此前生产代码
     只有 ``load_receipts`` 一个读者、零写入者，机检 d 对任何 lane 恒 fail。
 
     区分「层未启用」与「凭证缺失/过期/stale」仍必要：前者无论重试、重验还是
@@ -838,6 +840,31 @@ def _validate_carryover(
     return assessment
 
 
+def _append_verify_receipt_row(path: Path, row: dict) -> None:
+    """Append-only owner-controlled audit write; reject symlinks and hardlinks."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid()
+            or parent.st_mode & 0o022):
+        raise PermissionError("verify receipt audit directory is not owner-controlled")
+    fd = os.open(
+        path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+    )
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or info.st_mode & 0o022):
+            raise PermissionError("verify receipt file ownership/type invalid")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        with os.fdopen(fd, "a", encoding="utf-8", closefd=False) as fh:
+            fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    finally:
+        os.close(fd)
+
+
 def issue_verify_receipt(
     receipts_path: str | Path,
     *,
@@ -899,10 +926,7 @@ def issue_verify_receipt(
             "base_advance_paths": assessment.get("base_advance_paths"),
             "lane_paths": assessment.get("lane_paths"),
         }
-    path = Path(receipts_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    _append_verify_receipt_row(Path(receipts_path), row)
     return row
 
 

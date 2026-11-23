@@ -10,7 +10,6 @@ import dataclasses
 import hashlib
 import logging
 import os
-import re
 import shlex
 import shutil
 import signal
@@ -28,6 +27,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
     current_evidence_shadow_enabled,
     current_session_id,
+    current_task_execution,
     current_write_scope,
     workspace_base,
 )
@@ -206,22 +206,58 @@ def _is_bare_python_tool_command(command: str) -> bool:
     return parts[0] in {"python", "python3", "pip", "pip3", "pytest", "ruff", "pyright"}
 
 
+def _contains_python_execution(command: str, *, depth: int = 0) -> bool:
+    """Match shell command positions, not quoted git messages or echo arguments."""
+    if depth > 2:
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        parts = list(lexer)
+    except ValueError:
+        return False
+    expect_command = True
+    for index, token in enumerate(parts):
+        if token in {";", ";;", "&&", "||", "|", "&", "(", ")"}:
+            expect_command = True
+            continue
+        if not expect_command:
+            continue
+        if "=" in token and token.split("=", 1)[0].isidentifier():
+            continue
+        if token in {"env", "command", "exec", "time"}:
+            continue
+        if token in {"python", "python3", "pip", "pip3", "pytest", "ruff", "pyright"}:
+            return True
+        if (
+            token in {"sh", "bash", "zsh"}
+            and index + 2 < len(parts)
+            and parts[index + 1] in {"-c", "-lc", "-ic"}
+        ):
+            return _contains_python_execution(parts[index + 2], depth=depth + 1)
+        expect_command = False
+    return False
+
+
 def _workspace_python_env(
     env: dict[str, str], workdir: str | None, command: str
 ) -> dict[str, str]:
-    """Pin bare Python/tool resolution to the active LFL checkout when possible.
+    """Prefer the active LFL checkout's Python environment for Python commands.
 
     Linked git worktrees intentionally do not carry their own ``.venv``. In that
     case the nearest ancestor LFL checkout with ``.venv/bin/python`` supplies the
     interpreter, while ``PYTHONPATH`` stays pinned to the *current* worktree's
-    ``src`` so an editable install cannot silently execute code from the main tree.
+    ``src`` for direct Python/project-tool commands, so an editable install
+    cannot silently execute code from the main tree.
 
-    Binding is deliberately narrow: only a bare Python/project-tool executable at
-    the start of the shell command is pinned. Commands that explicitly name an
-    interpreter path or first ``cd``/delegate to another shell keep the host env,
-    preventing the LFL venv from leaking into a different project.
+    PATH is pinned for commands containing a bare Python executable, including
+    compound shell commands such as ``cd . && python3`` that previously fell
+    back to Xcode's Python 3.9. Unrelated commands (git/ssh/etc.) keep host PATH
+    to avoid shadowing their executables. PYTHONPATH remains narrower: commands
+    that change directory do not inherit a source-tree import override.
     """
-    if not workdir or not _is_bare_python_tool_command(command):
+    if not workdir or not _contains_python_execution(command):
         return env
     try:
         start = Path(workdir).expanduser().resolve()
@@ -252,6 +288,9 @@ def _workspace_python_env(
     path_parts = [p for p in pinned.get("PATH", "").split(os.pathsep) if p]
     pinned["PATH"] = os.pathsep.join([venv_bin_s, *(p for p in path_parts if p != venv_bin_s)])
 
+    if not _is_bare_python_tool_command(command):
+        return pinned
+
     src_s = str(project_root / "src")
     pythonpath_parts = [p for p in pinned.get("PYTHONPATH", "").split(os.pathsep) if p]
     pinned["PYTHONPATH"] = os.pathsep.join(
@@ -260,10 +299,6 @@ def _workspace_python_env(
     return pinned
 
 
-# B 最小闭环（工具故障可追溯）：词级匹配 python/python3（覆盖 `cd X && python3 …`
-# 等非裸形态——_workspace_python_env 只 pin 以 python 开头的裸命令）。
-_PY_WORD_RE = re.compile(r"(?:^|[\s;&|`(])python3?(?=[\s;&|)`]|$)")
-
 
 def _python_interpreter_fact(command: str, env: dict[str, str]) -> str:
     """命令词级含 python/python3 时附解释器指纹（环境漂移当轮可见）.
@@ -271,7 +306,7 @@ def _python_interpreter_fact(command: str, env: dict[str, str]) -> str:
     探测用与真实执行一致的 PATH（清洗后 env）；which 失败如实标 absent。
     仅观测事实，不改写/不重试命令。
     """
-    if not _PY_WORD_RE.search(command):
+    if not _contains_python_execution(command):
         return ""
     facts: list[str] = []
     for name in ("python3", "python"):
@@ -408,6 +443,9 @@ class ExecuteCommandTool:
         "默认 shell 退出码仅是最后执行命令的状态，不代表管道内全部步骤成功。"
         "命令输出默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，并由统一 durable recovery 负责恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
+        "运行环境事实（EVO-20261121-efa320ab，本机实测）：单次调用墙钟上限约 60s，超时回执不代表后台进程已被杀死（后台任务请用 run_in_background + job_id + job_output 查询）；"
+        "沙盒的 /tmp 与宿主 /tmp 不是同一目录——沙盒内写入的 /tmp 文件宿主工具（read_file/read_image）看不到，反之亦然，需跨边界时把产物落在工作区内；"
+        "沙盒内 releases/*/venv/bin/python 等解释器路径软链到沙盒外目录、不可执行，沙盒内请用系统 python3（无第三方库）或自行安装在沙盒可见路径的解释器。"
         + "RULE-AI-28：" + REVIEW_GATE_OBLIGATION
         + "RULE-AI-35：护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前，"
           "须构造应拦输入实测拦截；未实测的完成声明只可停在'代码已提交'。"
@@ -1156,22 +1194,44 @@ class ExecuteCommandTool:
         # note 文案与实际后端一一对应（S2-6，不夸大隔离范围）
         from llm_loop.tools.sandbox import sandbox_argv
 
+        task = current_task_execution.get()
         try:
-            sandbox_cmd, sandbox_note = sandbox_argv(
-                spec.launch_command,
-                str(workdir or "."),
-                mode=self._sandbox_mode,
-                image=self._sandbox_image,
-                extra_file_binds=extra_file_binds,
-                protected_roots=(
-                    [str(self._safety_audit_dir)] if self._safety_audit_dir is not None
-                    else []
-                ),
-            )
+            if task is not None:
+                from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+                if not isinstance(task, TrustedTaskExecution) or extra_file_binds:
+                    raise TaskExecutionError("task_context_or_host_grant_conflict")
+                plan = task.preflight(spec.launch_command, str(workdir or "."), self._sandbox_mode)
+                sandbox_cmd, sandbox_note = list(plan.argv), plan.note
+            else:
+                sandbox_cmd, sandbox_note = sandbox_argv(
+                    spec.launch_command,
+                    str(workdir or "."),
+                    mode=self._sandbox_mode,
+                    image=self._sandbox_image,
+                    extra_file_binds=extra_file_binds,
+                    protected_roots=(
+                        [str(self._safety_audit_dir)] if self._safety_audit_dir is not None else []
+                    ),
+                )
         except (RuntimeError, ValueError) as exc:
+            if task is not None:
+                from llm_loop.tools.task_execution import TaskExecutionError
+
+                if isinstance(exc, TaskExecutionError):
+                    return ToolResult(
+                        status=ToolResultStatus.UNAUTHORIZED,
+                        content=wt_note_in(
+                            f"[任务授权拒绝] {exc.reason_code}（未启动子进程）"
+                        ),
+                        error_type=exc.reason_code,
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=wt_note_in(f"[沙箱不可用] {exc}"),
+                error_type=getattr(exc, "reason_code", "sandbox_unavailable"),
                 tool_call_id="",
                 tool_name=self.name,
             )
@@ -1192,6 +1252,43 @@ class ExecuteCommandTool:
                     tool_name=self.name,
                 )
         return sandbox_cmd, sandbox_note
+
+    def _task_effect_check(
+        self, spec: _CommandSpec, workdir: str | None, wrapped_cmd: list[str] | None
+    ) -> ToolResult | None:
+        """Re-verify signed state and the exact sandbox plan just before spawn."""
+        task = current_task_execution.get()
+        if task is None:
+            return None
+        from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+        try:
+            if not isinstance(task, TrustedTaskExecution):
+                raise TaskExecutionError("task_context_untrusted")
+            plan = task.preflight(spec.launch_command, str(workdir or "."), self._sandbox_mode)
+            expected_cmd = list(plan.argv)
+            if spec.exec_argv is not None:
+                expected_cmd, ok = self._sandbox_exec_argv(
+                    expected_cmd, spec.command, spec.exec_argv
+                )
+                if not ok:
+                    raise TaskExecutionError("task_argv_sandbox_incompatible")
+            if expected_cmd != wrapped_cmd:
+                raise TaskExecutionError("task_sandbox_plan_changed")
+        except (TaskExecutionError, RuntimeError, ValueError) as exc:
+            reason = (
+                exc.reason_code
+                if isinstance(exc, TaskExecutionError)
+                else "task_effect_recheck_failed"
+            )
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content=f"[任务授权拒绝] {reason}（未启动子进程）",
+                error_type=reason,
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        return None
 
     def _register_background_job(
         self, proc: subprocess.Popen, spec: _CommandSpec, workdir: str | None
@@ -1291,6 +1388,9 @@ class ExecuteCommandTool:
                 _bg_target, _bg_shell = spec.exec_argv, False
             else:
                 _bg_target, _bg_shell = spec.launch_command, True
+            task_denial = self._task_effect_check(spec, workdir, bg_cmd)
+            if task_denial is not None:
+                return task_denial
             proc = subprocess.Popen(
                 _bg_target,
                 shell=_bg_shell,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
@@ -1379,6 +1479,9 @@ class ExecuteCommandTool:
                 _fg_target, _fg_shell = spec.exec_argv, False
             else:
                 _fg_target, _fg_shell = spec.launch_command, True
+            task_denial = self._task_effect_check(spec, workdir, sandbox_cmd)
+            if task_denial is not None:
+                return task_denial
             proc = subprocess.Popen(
                 _fg_target,
                 shell=_fg_shell,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
@@ -1620,6 +1723,16 @@ class ExecuteCommandTool:
             error_detail=f"{reason}: {detail}",
         )
 
+    def _task_host_grant_denial(self) -> ToolResult:
+        """Task Lease and legacy one-shot host grant are mutually exclusive."""
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 任务级 Lease 与一次性 host_grant_id 不得混用",
+            error_type="task_host_grant_conflict",
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
     def execute(self, **kwargs) -> ToolResult:
         # ── P2-2（2026-10-25）: command / argv 二选一的结构化执行入口 ──
         # argv 模式: shell=False 直执行（不经 /bin/sh），守卫按 shlex.join(argv)
@@ -1669,6 +1782,8 @@ class ExecuteCommandTool:
         host_grant_id = str(kwargs.get("host_grant_id", "") or "").strip()
         grant_ctx: dict | None = None
         if host_grant_id:
+            if current_task_execution.get() is not None:
+                return self._task_host_grant_denial()
             if esc_id or esc_token:
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
@@ -1699,7 +1814,6 @@ class ExecuteCommandTool:
         gate_line = self._review_gate_line(command)
         # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
         if workdir is None:
-
             workdir = workspace_base()
         # RULE-AI-34 补充（2026-11-06）: main 直写机械门——存在他人 active lane 时
         # 拒绝 git commit/push main（并行会话合并闸竞争防护；无冲突时零行为变化）。
@@ -1729,7 +1843,6 @@ class ExecuteCommandTool:
         pinned_grant_fd: int | None = None
         if grant_ctx is not None:
             from llm_loop.tools.sandbox import resolve_auto_backend, sandbox_mode
-
             backend = sandbox_mode(self._sandbox_mode)
             if backend == "auto":
                 backend, _reasons = resolve_auto_backend()

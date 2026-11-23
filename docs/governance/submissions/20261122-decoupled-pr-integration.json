@@ -1,0 +1,81 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "decoupled-pr-integration-20261122",
+  "summary": "Low-risk PR integration and production deployment are separate opt-in actions.",
+  "declarations": [
+    {
+      "declaration_id": "decoupled-pr-integration",
+      "g1": {
+        "necessity": "Reduce repeated human merge handoffs: ordinary low-risk PRs with protected CI should merge automatically without restarting or deploying services."
+      },
+      "g2": {
+        "authority_owner": "GitHub protected main branch, pinned required CI Apps, existing MergeQueueStore flock",
+        "relationship": "reuse",
+        "non_duplication": "No new signer, branch-protection mutation, release controller or deployment authority. GitHub's SHA-pinned protected merge endpoint remains the final authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "PR86 and PR88 incident review showed excessive queue-only transitions, expiring Reviewer/Host evidence and redundant deployment coupling.",
+          "35 targeted positive and negative tests cover stale SHA, trusted CI, high-risk path refusal, shared merge-slot locking and post-merge verification."
+        ],
+        "recovery_or_reason": "Any high-risk path, incomplete CI, stale head/base, untrusted App, protection drift or occupied merge slot returns HOLD/WAIT without merging. Unknown merge outcome is not reported as success."
+      },
+      "g4": {
+        "rollback": "Revert this isolated PR through normal protected GitHub PR. The tool is opt-in, default read-only, and does not alter any service or branch-protection settings.",
+        "verification": [
+          "Ruff, targeted pytest, A.5 exact changed-path coverage, original complete R9 and remote CI.",
+          "Read-only live PR86 must HOLD as high risk; low-risk fixture must merge only with all five trusted checks and exact SHA.",
+          "No code path may call service_control, restart, deploy or publish production."
+        ]
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "decoupled-pr-integration-1",
+      "paths": [
+        "scripts/managed_pr_integrate.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decoupled-pr-integration",
+      "owning_subsystem": "GitHub protected PR integration",
+      "disposition": "Opt-in low-risk PR readiness and protected GitHub merge with exact SHA, trusted CI, shared queue flock, no deploy.",
+      "evidence": [
+        "New opt-in CLI and 35 focused tests; no existing production/Host code changed."
+      ],
+      "verification_level": "Local targeted tests, Ruff, A.5, complete R9 and remote CI before protected merge.",
+      "model_evidence_veto_recovery_exit": "Missing or contradictory evidence means HOLD; high-risk changes remain on independent Host review path.",
+      "rollback_route": "Protected GitHub revert; no deployment rollback necessary because this PR does not deploy."
+    },
+    {
+      "component_id": "decoupled-pr-integration-2",
+      "paths": [
+        "tests/unit/test_managed_pr_integrate.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "PR integration verification",
+      "disposition": "Fail-closed unit tests for security, concurrency, stale SHA and deployment separation.",
+      "evidence": [
+        "New opt-in CLI and 35 focused tests; no existing production/Host code changed."
+      ],
+      "verification_level": "Local targeted tests, Ruff, A.5, complete R9 and remote CI before protected merge.",
+      "model_evidence_veto_recovery_exit": "Missing or contradictory evidence means HOLD; high-risk changes remain on independent Host review path.",
+      "rollback_route": "Protected GitHub revert; no deployment rollback necessary because this PR does not deploy."
+    },
+    {
+      "component_id": "decoupled-pr-integration-3",
+      "paths": [
+        "docs/governance/submissions/20261122-decoupled-pr-integration.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "PR integration verification",
+      "disposition": "A.5 exact changed-path declaration and risk/rollback contract.",
+      "evidence": [
+        "New opt-in CLI and 35 focused tests; no existing production/Host code changed."
+      ],
+      "verification_level": "Local targeted tests, Ruff, A.5, complete R9 and remote CI before protected merge.",
+      "model_evidence_veto_recovery_exit": "Missing or contradictory evidence means HOLD; high-risk changes remain on independent Host review path.",
+      "rollback_route": "Protected GitHub revert; no deployment rollback necessary because this PR does not deploy."
+    }
+  ]
+}

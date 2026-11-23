@@ -5,6 +5,7 @@ import { useConnection, useLearningPage, useMainView } from "../../core/stores";
 import { fetchAuthStatus, fetchHealth, logoutBrowserSession } from "../../core/api";
 import { useEffect, useState } from "react";
 import { SessionHeaderActions } from "./SessionHeaderActions";
+import { isAuthRequired } from "../../core/authSession";
 
 export function TopBar({
   onToggleSidebar,
@@ -26,6 +27,7 @@ export function TopBar({
   useEffect(() => {
     let alive = true;
     const poll = async () => {
+      if (isAuthRequired()) return; // avoid repeated 401 /health after login expiry
       const info = await fetchHealth();
       if (!alive) return;
       connStoreSet(info);

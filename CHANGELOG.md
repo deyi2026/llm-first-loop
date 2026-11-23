@@ -1,7 +1,49 @@
 # Changelog（公开变更记录）
 
-## v0.6.54 — 可信共享工作状态与多 Agent 协同安全发行（2026-11-15）
+> 此处记录源码与发行候选的变更，**不等于 GitHub 已正式发布版本列表**；实际稳定版以 [GitHub releases/latest](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准。
 
+## 具身 M2：移动目标重规划 + 鲜观测目标绑定（issue #79，未发版）
+
+- 新增 `embodied_sim/goal_binding.py`：在四个观测点（决策前、动作后、重复意图、验证前）重新观测托盘位姿，digest 变化即作废旧证据、重新绑定目标并重规划；`max_goal_rebinds` 默认 4，耗尽后以 `hold_unknown` 终止，绝不报成功。
+- 每次成功判定都携带 `GoalBinding` 契约，收据记录"针对哪个目标"完成验证；目标在 verify 前移动不再抛异常，而是走 `GOAL_CHANGED_BEFORE_VERIFICATION` 重规划。
+- 不确定执行（settle 超时 / 状态非 `done`）一律 `hold_unknown_pending_reconciliation`，且优先级高于并发目标移动——不用 replan 掩盖未对账动作。
+- 被作废的动作保留在 trace/history，但标注其执行时目标（`stale_goal` + 旧 digest）；同一 `intent_key` 重放会以 `DUPLICATE_INTENT_STALE_GOAL` 暴露，而非被幂等路径静默吞掉；重复键同时记录执行时的 `scene_epoch`，同姿态的场景重置因此也不会让重放被吞掉。
+- 收据的 `goal` 块即使调用方未传期望 digest 也校验自洽性（篡改无法借"没传期望"绕过）；`run_episode` 在把 claim 置为 `pending_oracle` 前用绑定目标自检收据，自检失败即退回 `hold_unknown`。
+- `max_provider_attempts` 语义明确为每次 `provider.decide` 调用计数（M1 只计异常），使无效决策循环也受预算约束。
+- 覆盖：`tests/embodied_m2/`（goal binding 单测、scripted runner 12 个场景、MuJoCo 集成）；M1 物理基线以 `M1-baseline-v1.8.json`（首个 M2 通过）与 `M1-baseline-v1.9.json`（第二轮审查修复后的代码）重跑（10/10、确定性、负例 fail-closed），v1.7 保留冻结供追溯。
+- 未发版：本条不递增 `pyproject.toml` 版本、不打 tag；按本文件纪律视为未发布，正式发行由发布流程统一 bump 版本并打 tag。
+
+## v0.6.58 — Deepin Web 模型设置交互优化候选（2026-11-23，待受管部署）
+
+- 对齐 DSH 的常用操作路径：GLM 等 Provider 卡片直接配置或更换 API Key；不必进入整包编辑，模型/运行时高级选项按需展开，窄屏操作按钮可换行。
+- API Key 写入与 Provider 配置修改分离；写入失败保留编辑状态并展示原因，写入成功但配置回读失败时明确提示「已接受但尚未确认」，不误报生效。
+- GLM-5.4 等推理模型的显式连接探测将输出上限从 8 调至 256 Token，减少思考预算耗尽造成的空响应误报；仍不回传模型生成文本。
+- Deepin 本地候选发行沿用原有 wheel SHA 校验、版本指针、受管 CAS/服务重启及回滚机制；`0.6.57` 保留为上一个可回退版本。未完成 PR/CI、真实 Host 验收前不宣称已部署或正式发布。
+
+## v0.6.57 — Linux Chrome/CDP 感知通道 + 视觉坐标契约候选（2026-11-22，待受管发布）
+
+- 新增 `cdp_probe` 只读探针：发现并探测本机 CDP 端点（配置项 / 常见端口 / `DevToolsActivePort`），只取版本与目标计数等元信息，不回传页面内容，不改配置、不启动浏览器、不放宽既有 `browser_*` 显式 opt-in 门禁。
+- `read_image` 输出确定性坐标契约：固定给出原图/裁剪/送检尺寸、缩放系数与换算式，模型自报 bbox 明确标注"未经验证"。
+- 视觉链路大图兜底：`WEB_VISION_MAX_SIDE`（默认 1568）+ 本地降采样 + 失败再降采样一次重试，两次失败如实报错不伪装成功。
+- 独立审查（不同模型只读子代理）首轮 FAIL 的 3 项 P1 与 P2 已全部修复，相关回归用例随本次一并入库。
+- 本版仅为本地受管候选：GitHub 正式公开 Release 与本机受管部署是不同状态；正式切换前仍须完成精确候选独立审查 PASS、全量门禁、PR/远端 CI 与合并后 `main` CI 复核。
+
+## v0.6.56 — Deepin 最新已集成 main 快照安装候选（2026-11-20，待验收部署）
+
+- 以远端 `main` 的已合并提交 `07fd45f0de4eb62d7f2094014af6d3e3bdb5b867` 为版本基线，包含此前合入的任务执行、Host 授权与审计、多 Agent 协调、具身 M1 仿真和 CI 改进；不将实验能力宣称为生产就绪。
+- 本次发行差异仅递增 Python 包、锁文件、Web API 版本及中英文 README 的候选版本标识，并新增 A.5 变更声明；不改写已安装的 0.6.55 wheel，也不覆盖其他并行工作。
+- 正式切换前必须重新完成精确候选独立 Reviewer PASS（P0/P1=0）、原版完整 R9 exit 0、PR/远端 CI、合并后 `main` CI、不可变 wheel 溯源/摘要与 Deepin 受管三服务收敛验收。
+- GitHub 正式公开 Release 与 Deepin 本地候选部署是不同状态；截至本条记录，最新正式 Release 为 `v0.6.54`，本版尚未发布。
+
+## v0.6.55 — Deepin 出站隐私守卫误拦截修复候选（2026-11-16，待受管发布）
+
+- 本版承接经独立 DeepSeek-v4-flash Reviewer PASS（P0/P1/P2=0）的出站隐私投影最小修复：统一 cache_guard 终检与脱敏器的敏感模式，修复历史 `reasoning_content` 中仅讨论私钥标记的文本误拦截，补齐嵌入式凭据检测，并对拒绝原因做无明文分类；真实凭据、受保护字段及脱敏异常继续 fail-closed。
+- 0.6.54 wheel 已安装在 Deepin，不能以相同版本覆盖不同字节，因此递增发行包版本、Web SERVICE_VERSION、双语 README 与 uv.lock；本次版本声明不额外修改隐私守卫实现。
+- 版本号仅表示待验收发行候选，不代表 GitHub 正式 Release 已发布。须经完整 R9、远端 PR/CI、main 合并、wheel SHA/安装隔离验收及 Deepin 受管发布回执，方可称生产生效；旧 0.6.54 保留回滚。
+
+## v0.6.54 — 可信共享工作状态与多 Agent 协同安全发行（2026-11-15，Draft）
+
+- **发行状态（2026-11-16 核验）**：`v0.6.54` tag、Release Draft 与 Linux wheel/sdist 已存在，但 macOS arm64 正式 `.pkg` 缺失，`Finalize Release` 尚未转正；最新正式 Release 为 `v0.6.50`。本节是候选变更记录，不代表已对外正式发行。
 - 以 GitHub `main` 精确提交 `1b4570429d30ee6075dcb7089bfeb4db5027add2` 为代码基线，包含已合并 PR #34 的本地知识与 Reviewer 门禁修复，以及 PR #35 的可信共享工作状态、Goal 写入权限和审计保护。
 - 本次发行候选只同步包版本、Web SERVICE_VERSION、双语 README、锁文件和发行说明；不新增安全权限、沙盒执行路径或模型行为。
 - Mac 四服务在 gen423 已按精确主线 SHA 受管验收；Deepin 现有 0.6.53 wheel 不得同版本覆盖。0.6.54 需先通过独立 Reviewer、完整 R9、GitHub CI、wheel 成品与 Deepin 旁路验收，实际切换须单独授权。

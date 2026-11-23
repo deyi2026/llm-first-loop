@@ -11,16 +11,33 @@ from llm_loop.tools.registry import ToolRegistry
 from llm_loop.tools.review_host_admission import HostReviewAdmission
 from tests.unit.test_review_host_admission import _repo
 
+# 生产无内置 reviewer 模型默认：测试必须显式声明模型链。
+TEST_REVIEWER_MODELS = "glm/glm-5.3,glm/glm-5.3-flashx"
+
 
 class _HostTaskFakeLLM:
     def __init__(self) -> None:
         self.last_task = ""
         self.last_tools = []
+        # P1-1：provider 侧自报的 model（默认空=未自报）。测试可显式设为
+        # 请求的 label（一致）或其它 label（模拟"请求 A 响应 B"）。
+        self.observed_model = ""
 
     def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
         self.last_tools = tools
         self.last_task = str(messages[-1].get("content") or "")
-        return LLMResponse(content="Review complete, but no explicit PASS verdict",tool_calls=[],provider="fake")
+        return LLMResponse(
+            content="Review complete, but no explicit PASS verdict",
+            tool_calls=[], provider="fake", observed_model=self.observed_model,
+        )
+
+
+def _resolver_for(fake: _HostTaskFakeLLM):
+    """按子代理请求的 label 回填 provider 自报 model，模拟真实一致响应。"""
+    def resolve(label: str) -> _HostTaskFakeLLM:
+        fake.observed_model = label
+        return fake
+    return resolve
 
 
 def test_real_child_terminal_proves_live_identity_not_disk_only(tmp_path) -> None:  # noqa: ANN001
@@ -30,9 +47,9 @@ def test_real_child_terminal_proves_live_identity_not_disk_only(tmp_path) -> Non
     registry = ToolRegistry()
     runner = SubAgentRunner(
         llm=fake, registry=registry, session_store=store,
-        max_iterations=1, llm_resolver=lambda label: fake,
+        max_iterations=1, llm_resolver=_resolver_for(fake),
     )
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     started = host.start("parent-real", "full_test", workdir=str(repo), command="pytest -q")
     assert started["accepted"], started
@@ -70,18 +87,21 @@ def test_successful_real_child_emits_verified_host_review_receipt(tmp_path) -> N
     sha, _ = _source_snapshot(str(repo))
 
     class _AcceptLLM:
+        # P1-1：真实 Provider 会自报 model；缺失自报 ⇒ Host 必须 DENIED。
+        observed_model = ""
+
         def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
             return LLMResponse(
                 content=f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {sha}",
-                tool_calls=[],provider="fake",
+                tool_calls=[],provider="fake", observed_model=self.observed_model,
             )
 
     llm = _AcceptLLM()
     runner = SubAgentRunner(
         llm=llm, registry=ToolRegistry(),session_store=store,max_iterations=1,
-        llm_resolver=lambda model: llm,
+        llm_resolver=_resolver_for(llm),
     )
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     host.attach_event_store(event_store)
     issued = host.start("owner-verified", "full_test", workdir=str(repo),command="pytest -q")
@@ -127,9 +147,9 @@ def test_host_reviewer_refuses_parent_steer_but_ordinary_child_still_allows(tmp_
     llm = _WaitLLM()
     runner = SubAgentRunner(
         llm=llm,registry=ToolRegistry(),session_store=sessions,
-        llm_resolver=lambda _: llm,max_iterations=1,
+        llm_resolver=_resolver_for(llm),max_iterations=1,
     )
-    host = HostReviewAdmission()
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
     host.attach_runner(runner)
     review = host.start("owner-steer", "full_test", workdir=str(repo), command="pytest -q")
     assert review["accepted"] and llm.entered.wait(2)
@@ -173,3 +193,49 @@ def test_host_reviewer_refuses_parent_steer_but_ordinary_child_still_allows(tmp_
     finally:
         current_session_id.reset(token)
         llm2.release.set()
+
+
+def test_review_terminal_current_does_not_self_deadlock(tmp_path) -> None:  # noqa: ANN001
+    """P1 死锁回归：review_terminal_current 不得在持 _children_guard 时二次加锁。"""
+    import threading
+
+    repo = _repo(tmp_path)
+    store = SessionStore(
+        tmp_path / "dl-sessions",
+        event_store=EventStore(tmp_path / "dl-events", enabled=True),
+    )
+    fake = _HostTaskFakeLLM()
+    runner = SubAgentRunner(
+        llm=fake, registry=ToolRegistry(), session_store=store,
+        max_iterations=1, llm_resolver=_resolver_for(fake),
+    )
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    host.attach_runner(runner)
+    started = host.start("parent-dl", "full_test", workdir=str(repo), command="pytest -q")
+    assert started["accepted"], started
+    cid = started["child_id"]
+    token = current_session_id.set("parent-dl")
+    try:
+        for _ in range(100):
+            ok, _, snap = runner.result_current(cid, wait_seconds=0.05)
+            assert ok
+            if snap.get("state") != "running":
+                break
+        else:
+            raise AssertionError("real child never reached terminal")
+
+        box: dict = {}
+
+        def _call() -> None:
+            box["value"] = runner.review_terminal_current(cid, "parent-dl")
+
+        worker = threading.Thread(target=_call, daemon=True)
+        worker.start()
+        worker.join(10.0)
+        assert not worker.is_alive(), "review_terminal_current 自死锁（_children_guard 重入）"
+        attested = box.get("value")
+        assert attested is not None
+        # P1-1：观测 model 来自 provider 自报，且与 Host 请求的 label 一致。
+        assert attested["observed_model"] == "glm/glm-5.3"
+    finally:
+        current_session_id.reset(token)

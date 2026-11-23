@@ -233,6 +233,10 @@ class LLMResponse:
     # reasoning_content: the latter is normalized for display/telemetry, while
     # this field preserves wire structure for the same provider only.
     provider_replay: dict[str, Any] | None = None
+    # 2026-11-16 外部独立复核 P1-1：Provider 响应体里 self-reported 的 model
+    # （流式 chunk 的 ``model`` 字段）。这是"服务端说它用了哪个模型"的传输事实，
+    # 与请求侧 payload["model"] 无关；缺失时保持空串，绝不用请求值回填。
+    observed_model: str = ""
 
 
 @dataclass
@@ -499,6 +503,22 @@ class _StreamAcc:
     reasoning_tokens: int | None = None
     provider_replay_fields: dict[str, Any] = field(default_factory=dict)
     reasoning_details_text: str = ""
+    # Provider 响应体声明的 model（缺失为空；不克隆请求侧 model）。
+    observed_model: str = ""
+
+
+def _reasoning_only_disconnect(
+    attempt: int, acc: _StreamAcc, *, non_plain_seen: bool, tool_seen: bool
+) -> bool:
+    """Only a first-attempt plain reasoning fragment can be retried as display-only."""
+    return bool(
+        attempt == 1
+        and acc.reasoning_parts
+        and not non_plain_seen
+        and not acc.content_parts
+        and not tool_seen
+        and not acc.finish_reason
+    )
 
 
 def _reasoning_details_text(value: Any) -> str:
@@ -640,6 +660,7 @@ def _finish_response(
     client: LLMClient | None = None,
     guard_context: GuardRequestContext | None = None,
     actual_model: str | None = None,
+    observed_model: str = "",
 ) -> LLMResponse:
     raw_calls = agg.finish()
     tool_calls: list[ToolCall] = [
@@ -681,6 +702,7 @@ def _finish_response(
         completion_tokens=acc.completion_tokens,
         prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
         reasoning_tokens=acc.reasoning_tokens,
+        observed_model=str(observed_model or ""),
         provider_replay=(
             client._provider_replay_envelope(
                 acc.provider_replay_fields,
@@ -1034,12 +1056,38 @@ class LLMClient:
         base = (self.base_url or "").lower()
         _is_local_base = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0"))
         self._is_local_base = _is_local_base  # 2026-08-24: 供 _stream_openai 判本地关 thinking
-        if _is_local_base:
-            headers: dict[str, str] = {}
-        else:
-            headers = {"Connection": "close"}
-        trust_env = bool(self.trust_env) if self.trust_env is not None else not _is_local_base
-        self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+        self._client = self._new_http_client()
+
+    def _new_http_client(self) -> httpx.Client:
+        """Build transport from the current proxy snapshot without changing routing policy."""
+        headers = {} if self._is_local_base else {"Connection": "close"}
+        trust_env = (
+            bool(self.trust_env)
+            if self.trust_env is not None
+            else not self._is_local_base
+        )
+        return httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+
+    @contextmanager
+    def _retry_transport_client(
+        self, retry_index: int, prior_error: BaseException | None = None
+    ) -> Iterator[httpx.Client]:
+        """Refresh only connection/TLS failures, preserving other retry transports.
+
+        The pool retires the original client for the next call. Only the retry
+        transport is attempt-local and closed after the retry completes.
+        """
+        if retry_index == 0 or not (
+            isinstance(prior_error, (httpx.ConnectError, httpx.ConnectTimeout))
+            or "UNEXPECTED_EOF_WHILE_READING" in str(prior_error)
+        ):
+            yield self._client
+            return
+        retry_client = self._new_http_client()
+        try:
+            yield retry_client
+        finally:
+            retry_client.close()
 
     def count_tool_schema_tokens(self, tools: list[dict]) -> int | None:
         """Return exact provider-template token cost for ``tools`` when mechanically known.
@@ -2165,7 +2213,7 @@ class LLMClient:
                 or acc.reasoning_details_text or _tc_seen
             )
 
-        def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
+        def _openai_stream_once(transport_retry_index: int, prior_error: BaseException | None) -> Iterator[StreamDelta]:
             """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）.
 
             ASSESS-20261008 BUG-12: 每次 transport attempt 重新初始化 response
@@ -2185,7 +2233,7 @@ class LLMClient:
             acc = _StreamAcc()
             agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
-            with self._transport_attempt_scope(
+            with self._retry_transport_client(transport_retry_index, prior_error) as transport_client, self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
                 target_url=url,
@@ -2196,7 +2244,7 @@ class LLMClient:
                     knowledge_probe=(guard_context.knowledge_reference_probe if guard_context else None),
                 ),
             ), _task_budget_provider_stream(
-                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+                transport_client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
@@ -2220,7 +2268,7 @@ class LLMClient:
                     if _observed_model is None:
                         _m = chunk.get("model")
                         if isinstance(_m, str) and _m:
-                            _observed_model = _m
+                            _observed_model = acc.observed_model = _m
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):
                         self._observe_transport_usage(usage, model_id=str(payload["model"]))
@@ -2361,10 +2409,11 @@ class LLMClient:
                     provider_observed_model=_observed_model,
                 )
         _attempt = 0
+        _last_retry_exc: BaseException | None = None
         while True:
             _attempt += 1
             try:
-                yield from _openai_stream_once(_attempt - 1)
+                yield from _openai_stream_once(_attempt - 1, _last_retry_exc)
                 break  # 流完整结束（含 [DONE]）
             except httpx.TimeoutException as exc:
                 if _deadline is not None:
@@ -2391,6 +2440,7 @@ class LLMClient:
                         raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
                     if _deadline is not None:
                         _check_stream_deadline(_deadline, effective_timeout)
+                    _last_retry_exc = exc
                     continue
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
             except (httpx.NetworkError, httpx.ProtocolError) as exc:
@@ -2404,13 +2454,8 @@ class LLMClient:
                 # A single same-payload retry may recover it without re-executing
                 # tools. Keep this inside the existing shared transport budget;
                 # timeouts, opaque replay and any content/tool draft remain excluded.
-                _reasoning_only_retry = bool(
-                    _attempt == 1
-                    and acc.reasoning_parts
-                    and not _non_plain_reasoning_seen
-                    and not acc.content_parts
-                    and not _tc_seen
-                    and not acc.finish_reason
+                _reasoning_only_retry = _reasoning_only_disconnect(
+                    _attempt, acc, non_plain_seen=_non_plain_reasoning_seen, tool_seen=_tc_seen
                 )
                 if (
                     _attempt <= _retry_disconnect
@@ -2442,6 +2487,7 @@ class LLMClient:
                     # Stop may arrive while the backoff sleeps. Check the same
                     # owner again immediately before issuing another request.
                     if not _retry_cancelled():
+                        _last_retry_exc = exc
                         continue
                 if _response_started:
                     raise LLMStreamInterruptedError(
@@ -2459,7 +2505,7 @@ class LLMClient:
                 raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
         return _finish_response(
             acc, agg, self.provider, client=self, guard_context=guard_context,
-            actual_model=str(payload["model"]),
+            actual_model=str(payload["model"]), observed_model=acc.observed_model,
         )
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──

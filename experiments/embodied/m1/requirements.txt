@@ -1,0 +1,10 @@
+# M1 embodied sim isolated environment (data/.venv-m1, Python 3.11.15, Apple Silicon).
+# Scope: running scripts/embodied/m1_gate_a_probe.py and tests/embodied_m1 only.
+# Full-repo test deps live in the repo pyproject (other lanes own that file);
+# root tests/conftest.py needs httpx only for importability of its two imports.
+mujoco==4.0.1
+numpy==2.4.6
+pytest==9.2.0
+httpx==0.28.1
+# Run: LFL_SKIP_ENV_PREFLIGHT=1 data/.venv-m1/bin/python -m pytest tests/embodied_m1 -q
+# (escape hatch documented by repo env preflight; M1 venv intentionally slim)

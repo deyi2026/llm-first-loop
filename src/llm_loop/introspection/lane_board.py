@@ -10,28 +10,261 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.lane import TERMINAL_STATUSES, LaneStore
 from llm_loop.timekeeping import system_local_now
 
+# service_control 的强契约（runtime/service_control.py）: git_head 必须是
+# `re.fullmatch(r"[0-9a-f]{40}")`。Board 只能接受同形状的完整 SHA——短 sha
+# 或任意长度十六进制都不是"服务实际记录的 identity"（R4 P2-b）。
+_SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
-def _probe_git_head(workspace_root: str) -> str:
-    if not workspace_root:
+
+def _sha40(value: Any) -> str:
+    """把「40 位十六进制字符串」规范成小写 SHA；其余一律返回空串 = 无值。
+
+    ``True`` / ``123`` / 列表经 ``str()`` 会变成 ``"True"`` / ``"123"``，那是伪造
+    版本段（P1）。大小写是同一 identity 的写法差异，归一成小写后比较（R4 P2-b）；
+    长度不足 40 或含非十六进制字符则不是 service_control 会写下的值 → unknown。
+    """
+    if not isinstance(value, str):
         return ""
+    text = value.strip()
+    return text.lower() if _SHA40_RE.match(text) else ""
+
+
+def _probe_git(workspace_root: str, *args: str) -> tuple[str, str]:
+    """只读 git 探针：返回 (输出, 错误)。错误非空 = 不可核验，调用方必须显式 unknown。"""
+    if not workspace_root:
+        return "", "no_workspace_root"
     try:
         proc = subprocess.run(
-            ["git", "-C", workspace_root, "rev-parse", "HEAD"],
+            ["git", "-C", workspace_root, *args],
             capture_output=True,
             text=True,
+            # 固定 UTF-8：text=True 默认用 locale 编码，非 UTF-8 locale 下坏字节可能
+            # 被解成乱码而不是抛错，乱码就会被当成"可核验的值"投影出去（R6 P2-1）。
+            encoding="utf-8",
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        # git 输出可能含非 UTF-8 字节（分支名/路径）：text=True 的解码失败是
+        # ValueError 子类，不属 OSError，必须在探针层降级而不是炸穿 Board。
+        return "", type(exc).__name__
+    if proc.returncode != 0:
+        first = (proc.stderr.strip().splitlines() or ["git_failed"])[0]
+        return "", first[:80]
+    return proc.stdout.strip(), ""
+
+
+def _probe_versions(workspace_root: str, main_head: str, degraded: list[str]) -> dict[str, Any]:
+    """版本条带：checkout HEAD / 可验证 origin/main 各自独立。
+
+    BUG-16: worktree HEAD 绝不冒充 main——detached checkout（例如已合并 PR 的
+    head）与 origin/main 可能相差数十个提交，混用会制造假 in_sync=mismatch。
+    """
+    head, head_err = _probe_git(workspace_root, "rev-parse", "HEAD")
+    ref_worktree, ref_err = _probe_git(workspace_root, "rev-parse", "--abbrev-ref", "HEAD")
+    if head_err or not head:
+        head = ""
+        degraded.append("worktree_head_unknown")
+    if ref_err:
+        # 分支身份不可核验（探针失败或非 UTF-8 分支名）：ref 置空并降级，
+        # 且不据此断言 detached——未知不等于"处于 detached HEAD"。
+        ref_worktree = ""
+        degraded.append("worktree_ref_unknown")
+    detached = bool(head) and ref_worktree == "HEAD"
+
+    # 先定 main 身份，再测量 behind——顺序本身是契约：任何未通过校验的值都
+    # 不得参与 behind 计算，否则会出现 main.head="" 而 behind 有数值的自相矛盾
+    # （R6 P1: main_head="HEAD"/"main"/"origin/main" 曾被当成 behind 基准）。
+    if main_head:
+        # 显式值必须与 service_control 的 identity 同形状（小写 40 位十六进制）：
+        # 大写只是同一 sha 的写法差异，归一小写；其余值不可核验 → 置空降级，
+        # 绝不把调用方字符串原样投影成 main_head，也绝不换成别的 sha。
+        # 校验先于任何 subprocess：含 NUL 的显式值若进 argv 会抛 ValueError（P2-4）。
+        normalized = _sha40(main_head)
+        if normalized:
+            verified, source, ref = normalized, "explicit", ""
+            # behind 基准必须能解析成本地 commit；解析不到就 None，不退回 origin/main。
+            resolved, _ = _probe_git(
+                workspace_root, "rev-parse", "--verify", f"{normalized}^{{commit}}"
+            )
+            base_sha = _sha40(resolved)
+        else:
+            verified, source, ref = "", "unknown", ""
+            base_sha = ""
+            degraded.append("main_head_invalid")
+            degraded.append("main_head_unknown")
+    else:
+        # 必须 peel 成 commit：坏 ref 指向 blob/tree 时裸 rev-parse 会返回该对象 sha，
+        # 那会被当成 main（R6 P2-3）。
+        resolved, err = _probe_git(workspace_root, "rev-parse", "--verify", "origin/main^{commit}")
+        base_sha = "" if err else _sha40(resolved)
+        if base_sha:
+            verified, source, ref = base_sha, "local_tracking", "origin/main"
+            # origin/main 只是本地 remote-tracking ref：没联网就是没核验远端，
+            # 不能把它说成"远端已验证"（P2）。新鲜度必须显式 unknown。
+        else:
+            verified, source, ref = "", "unknown", ""
+            degraded.append("origin_main_unavailable")
+            degraded.append("main_head_unknown")
+
+    behind: int | None = None
+    if head and base_sha:
+        raw, err = _probe_git(workspace_root, "rev-list", "--count", f"HEAD..{base_sha}")
+        if not err and raw.isdigit():
+            behind = int(raw)
+    return {
+        "worktree": {
+            "head": head,
+            "ref": "" if detached else ref_worktree,
+            "detached": detached,
+            "behind_main": behind,
+        },
+        "main": {
+            "head": verified,
+            "source": source,
+            "ref": ref,
+            "remote_verified": False,
+            "freshness": "unknown",
+        },
+    }
+
+
+def _read_desired_deployment(data_root: Path) -> tuple[dict, str]:
+    """读 service_control 的 desired deployment（generation / git_head）。
+
+    这是「应该跑哪个 sha」的操作员意图，与 restart-receipt 的「实际在跑」分开；
+    两者都不由 Board 推导——缺失即 unknown，不拿 live 或 checkout 顶替。
+    """
+    path = data_root / "runtime" / "managed_service_deployment.json"
+    if not path.is_file():
+        return {}, "desired_deployment_missing"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    # UnicodeDecodeError 是 ValueError 子类，既不是 OSError 也不是 JSONDecodeError：
+    # 半个 UTF-8 字符必须降级成 unknown，不能炸穿 build_board / 路由（P1）。
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {}, f"desired_deployment_unreadable:{type(exc).__name__}"
+    if not isinstance(doc, dict) or not _sha40(doc.get("git_head")):
+        return {}, "desired_deployment_invalid"
+    return doc, ""
+
+
+def _desired_strip(doc: dict) -> dict[str, Any]:
+    generation = doc.get("generation")
+    if not isinstance(generation, int) or isinstance(generation, bool):
+        generation = None
+    # 防御第二道：即便调用方传进来未经校验的 doc，也只输出 40 位小写 SHA；
+    # 短 sha / 大小写混杂在这里统一收敛，比较口径与 service_control 契约一致。
+    sha = _sha40(doc.get("git_head"))
+    return {
+        "generation": generation,
+        "sha": sha,
+        "deployment_id": str(doc.get("deployment_id") or ""),
+        "source": "managed_service_deployment" if sha else "unknown",
+    }
+
+
+# 同版本两行的"有意义 payload"：这些字段描述 lane 事实本身，任一不同都说明
+# 账本被两条不同写入分叉（典型：同一 lane 被两个 owner_session 各写一行）。
+# 时间戳/活动时间是易变簿记，不参与比较；完全相同的重复 append 视为幂等重放。
+_TIE_MEANINGFUL_FIELDS = (
+    "goal_id",
+    "branch",
+    "worktree",
+    "status",
+    "base_main_sha",
+    "head_sha",
+    "verify_ref",
+    "paths",
+    "contract_changes",
+    "lane_role",
+    "priority",
+    "owner_session_id",
+)
+
+
+def _payload_fingerprint(row: dict) -> str:
+    return json.dumps(
+        {field: row.get(field) for field in _TIE_MEANINGFUL_FIELDS},
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def _lane_versions(
+    rows: list[dict], *, include_terminal: bool, degraded: list[str]
+) -> tuple[list[dict], dict]:
+    """按 lane_id 最高 version 取终态（BUG-14a）；冲突/坏版本 fail-closed.
+
+    账本是 append-only：同一 lane 的历史行会同时存在。按文件顺序取首行会把已
+    closed lane 的早期 active 行当成在途（ghost lane）。version 单调，故「最高
+    version」是确定性终态；同版本且有意义 payload 不同才是真冲突（双写/分叉）
+    → 该 lane 不给结论并降级；完全相同的重复行按幂等重放兼容。
+    version 必须是 >=1 的 int：bool 是 int 子类、0/负数不可能是合法版本号（P2-2）。
+    低版本的历史分叉若已被更高版本决出终态，只留证据、不排除终态（P2-1）。
+    """
+    latest: dict[str, dict] = {}
+    totals: dict[str, int] = {}
+    seen_fingerprints: dict[str, dict[int, str]] = {}
+    conflicted: dict[str, set[int]] = {}
+    invalid: set[str] = set()
+    for row in rows:
+        lane_id = str(row.get("lane_id") or "").strip()
+        if not lane_id:
+            degraded.append("lane_row_without_id")
+            continue
+        version = row.get("version")
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            degraded.append(f"lane_version_invalid:{lane_id}")
+            invalid.add(lane_id)
+            continue
+        totals[lane_id] = totals.get(lane_id, 0) + 1
+        fingerprint = _payload_fingerprint(row)
+        per_version = seen_fingerprints.setdefault(lane_id, {})
+        if version in per_version:
+            # P1-B：同版本不等于同事实。只比 status 会让"同一 lane 被两个
+            # owner_session 各写一行"静默取首行；任何有意义字段不同都标记分叉。
+            if per_version[version] != fingerprint:
+                conflicted.setdefault(lane_id, set()).add(version)
+        else:
+            per_version[version] = fingerprint
+        prev = latest.get(lane_id)
+        if prev is None or version > int(prev["version"]):
+            latest[lane_id] = {"version": version, "row": row}
+
+    unresolved = set(invalid)
+    for lane_id, versions in conflicted.items():
+        if int(latest[lane_id]["version"]) in versions:
+            # 最高版本自己分叉：终态不确定，该 lane 不给结论。
+            degraded.append(f"lane_version_conflict:{lane_id}")
+            unresolved.add(lane_id)
+        else:
+            # P2-1：低版本的历史分叉已被更高版本决出终态，保留证据但不排除终态。
+            degraded.append(f"lane_version_conflict_history:{lane_id}:v{max(versions)}")
+
+    selected: list[dict] = []
+    for lane_id, entry in latest.items():
+        row = entry["row"]
+        if lane_id in unresolved:
+            continue
+        if not include_terminal and str(row.get("status") or "") in TERMINAL_STATUSES:
+            continue
+        selected.append(row)
+    selected.sort(key=lambda e: str(e.get("last_activity") or ""), reverse=True)
+    return selected, {
+        "lane_rows_total": len(rows),
+        "duplicate_lane_ids": sorted(k for k, v in totals.items() if v > 1),
+        "lane_conflicts": sorted(unresolved),
+    }
 
 
 def _read_latest_deployment(dep_dir: Path) -> tuple[dict, str]:
@@ -56,7 +289,9 @@ def _read_latest_deployment(dep_dir: Path) -> tuple[dict, str]:
                     ts = str(row.get("ts") or "")
                     if ts >= best_ts:
                         best, best_ts = row, ts
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # 非 UTF-8 字节在迭代中被触发时是 UnicodeDecodeError（ValueError 子类）：
+            # 一个坏历史文件不能拖垮整个部署段（与 desired/receipt 同口径）。
             continue
     if not best:
         return {}, "deployments_empty"
@@ -76,16 +311,22 @@ def _read_authoritative_receipt(data_root: Path) -> tuple[dict, str]:
         return {}, "restart_receipt_missing"
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return {}, f"restart_receipt_unreadable:{type(exc).__name__}"
     if not isinstance(raw, dict):
         return {}, "restart_receipt_bad_shape"
     # 非 authoritative 的回执（例如子代理手工跑脚本留下）不能冒充部署事实。
     if raw.get("authoritative") is not True:
         return {}, "restart_receipt_not_authoritative"
-    sha = str(raw.get("git_head_full") or "").strip()
+    sha = _sha40(raw.get("git_head_full"))
     if not sha:
-        return {}, "restart_receipt_no_sha"
+        # 区分"没给"与"给了但不是 40 位十六进制"：两种都不得进 live 段。
+        if not str(raw.get("git_head_full") or "").strip():
+            return {}, "restart_receipt_no_sha"
+        # P2-3：权威回执必须给全 40 位 sha。短/残缺 sha 一旦进 live 段，
+        # prefix 比较就能把 exact 判出来（假绿）；来源本身已声明 authoritative，
+        # 形状不符只能是坏回执 → 退成 unknown，绝不降格接受。
+        return {}, "restart_receipt_bad_sha"
     return {
         "target_sha": sha,
         "ts": str(raw.get("ts") or ""),
@@ -251,30 +492,61 @@ def build_board(
     audit = Path(audit_dir)
     degraded: list[str] = []
 
-    lanes: list[dict] = []
+    raw_lanes: list[dict] = []
     if not audit.is_dir():
         # A6: 目录不存在时绝不 mkdir（LaneStore.__init__ 会建目录），直接降级。
         degraded.append("audit_missing")
     else:
         try:
+            # M2-A（P1-B 声明）: Board 是只读投影，此处保持默认 warn 构造——
+            # 严格锁/跨 Goal 检查只约束写路径（create/update/close），不参与
+            # 只读 list；写侧统一经 lane_store_from_host（宿主 lane_* 配置）。
             store = LaneStore(audit)
-            lanes = store.list(include_terminal=include_terminal)
+            # 取全量再由本层按版本收敛：store.list() 只按文件顺序返回，不解释 version。
+            raw_lanes = store.list(include_terminal=True)
         except Exception as exc:  # noqa: BLE001 — 读不到要如实降级，不能让 Board 整体 500
             degraded.append(f"lanes_unreadable:{type(exc).__name__}")
+    lanes, lane_meta = _lane_versions(
+        raw_lanes, include_terminal=include_terminal, degraded=degraded
+    )
 
-    head = str(main_head or "").strip() or _probe_git_head(workspace_root)
-    if not head:
-        degraded.append("main_head_unknown")
+    versions = _probe_versions(workspace_root, str(main_head or "").strip(), degraded)
+    head = str(versions["main"]["head"])
 
     # 权威源优先：restart-receipt 记录"当前实际在跑的 sha"；deployments/*.jsonl
     # 是人工历史记录，可能长期停在旧 sha。权威源缺失才回退，且回退原因如实进 degraded。
     dep_row, dep_reason = _read_authoritative_receipt(audit.parent)
+    live_authoritative = not dep_reason
     if dep_reason:
         degraded.append(dep_reason)
         dep_row, hist_reason = _read_latest_deployment(audit / "deployments")
         if hist_reason:
             degraded.append(hist_reason)
+    # legacy 兼容：deployed_sha 仍可来自历史行（字段不删），但"实际在跑"只有
+    # 权威回执能证明（P1-A）。历史行与 desired 恰好同 sha 也不构成 in_sync 证据。
+    # 契约边界（R6 P2-2）：deployed_sha 是**legacy 原样投影的显示字段**（历史行可写
+    # 短 sha，例如 test_coordination_routes 断言的 12 位），不是版本 identity；因此
+    # 这里不套 _sha40——强转会破坏既有消费方。版本身份只由 versions.{main,desired,
+    # live}.sha 提供，三者一律 40 位小写十六进制。
     deployed_sha = str(dep_row.get("target_sha") or "")
+    live_sha = deployed_sha if live_authoritative else ""
+
+    desired_row, desired_reason = _read_desired_deployment(audit.parent)
+    if desired_reason:
+        degraded.append(desired_reason)
+    desired = _desired_strip(desired_row)
+    versions["desired"] = desired
+    versions["live"] = {
+        "sha": live_sha,
+        # P2-1：时间戳同样只能由权威回执证明。历史行的 ts 属于 deployed 历史，
+        # 挂在 live 段会让人把它读成"最近一次实际在跑的记录"。
+        "recorded_at": str(dep_row.get("ts") or "") if live_authoritative else "",
+        "source": "restart-receipt" if live_authoritative else "unknown",
+        "authoritative": live_authoritative,
+    }
+    desired_matches_live: bool | None = (
+        desired["sha"] == live_sha if desired["sha"] and live_sha else None
+    )
 
     by_status: dict[str, int] = {}
     for row in lanes:
@@ -286,23 +558,32 @@ def build_board(
     # in_sync 必须精确：部署记录可能是短 sha 或残缺 sha，startswith 会把
     # "head 只是以它开头"误判成"已部署的就是当前 head"（假绿）。三态显式化，
     # 只有 exact 才算同步，prefix_only 单独暴露给 Board 显示。
-    if head and deployed_sha:
-        if head == deployed_sha:
+    if head and live_sha:
+        if head == live_sha:
             sync_state = "exact"
-        elif len(deployed_sha) >= 12 and head.startswith(deployed_sha):
+        elif len(live_sha) >= 12 and head.startswith(live_sha):
             sync_state = "prefix_only"
         else:
             sync_state = "mismatch"
+    elif head and deployed_sha:
+        # 只有历史 deployments 行：可展示但不可信（P1-A）——明确 unverified，
+        # 绝不因为恰好同 sha 就显示 verified exact。
+        sync_state = "unverified"
     else:
         sync_state = "unknown"
 
     return {
         "generated_at": system_local_now().isoformat(),
         "main_head": head,
+        "versions": versions,
         "deployment": {
             "deployed_sha": deployed_sha,
+            "deployed_authoritative": live_authoritative,
             "deployed_at": str(dep_row.get("ts") or ""),
             "deployed_phase": str(dep_row.get("phase") or ""),
+            "desired_sha": desired["sha"],
+            "desired_generation": desired["generation"],
+            "desired_matches_live": desired_matches_live,
             "in_sync": sync_state == "exact",
             "sync_state": sync_state,
             "source": str(dep_row.get("source") or "audit/deployments"),
@@ -313,6 +594,7 @@ def build_board(
             "inflight": len(lanes),
             "by_status": by_status,
             "overlaps": _path_overlaps(lanes),
+            **lane_meta,
         },
         "degraded": degraded,
     }

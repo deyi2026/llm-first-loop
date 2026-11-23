@@ -1,0 +1,156 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261122-evo-20261121-efa320ab-vision-contract-upstream",
+  "summary": "EVO-20261121-efa320ab 的 vision 坐标契约 + crop + 大图降采样 + CDP 端点探针，以及 compact 预算回归修复；成果已在本地 main 快进合并完成（f8a04a1），本清单用于经受保护分支的 PR 流程送上 origin/main。",
+  "declarations": [
+    {
+      "declaration_id": "evo-20261121-efa320ab-vision-contract",
+      "g1": {
+        "necessity": "vision 工具链此前只回传整图 base64，大图既无法按坐标消费也会放大 token/带宽成本，因此需要坐标契约（read_image 输出与几何一致）、crop 与大图降采样；同时 Chrome 136+ 对默认用户目录禁用 --remote-debugging-port，需要一个只读 CDP 端点发现探针与可执行指引；此外 compact 预算在本次 A/B 基线对照中暴露 lazy<full 不变量被破坏，必须修复以免 compact 路径下历史被静默截断。"
+      },
+      "g2": {
+        "authority_owner": "既有 Host 独立审查体系与 GitHub 受保护 main 的 required status checks；本次不新增签名者、不修改分支保护规则、不引入新的部署或合并权威。",
+        "relationship": "reuse",
+        "non_duplication": "不新增 CI 组件、Host 组件或发布通道：复核沿用既有 review_admission 审查与受保护分支既有的 5 项 required checks（门禁、安全扫描、privacy-gate、A.5、managed-premerge-evidence）。"
+      },
+      "g3": {
+        "model_evidence": [
+          "Host review_admission(kind=full_test) 两次 PASS：child=subagent_c0621e1f8b57（candidate_sha256=ec5f2407…，head=59d6dff）与 child=subagent_f02d67f9b6a0（candidate_sha256=7f268056…，head=a958297），reviewer=glm/glm-5.3。",
+          "合并审查子代理三次 PASS（p0=0 p1=0）：subagent_1d3a2a1b1a01（base=5708f28/head=59d6dff）、subagent_1b64000ce4ff（head=e9b2a35）、subagent_26a31a1b5448（head=a958297）；逐条 finding 处置见 docs/governance/receipts/merge_GOAL-20261121-61234b03_evo-20261121-efa320ab.json。",
+          "定向门禁：cdp_probe/read_image/几何契约/降采样定向用例全部通过（本轮新增 10 条：额外端口与缺省合并、额外输入与候选数上界、整体时限到点即停、端点内两次请求共享预算、失败路径回报实际送检尺寸、超时不超过剩余预算、截断如实回报、滴字节端点的墙钟上限、候选发现也受整体时限约束）；tests/unit/test_runtime_env_access_gate.py 11 项通过；ruff 对改动源码文件全部通过；与 base 的定向 A/B 失败集合一致（无新增回归）。",
+          "远端 CI 首轮（PR #93）：「门禁（pytest + ruff + pyright）」红——pyright 对 read_image.py 报 4 条新诊断（送检几何对象声明为 object 却访问 input_width/input_height/scale_x/scale_y），「改动文件零红」门禁 DENIED，managed-premerge-evidence 连带失败（A.5/安全扫描/privacy-gate/两个 Linux 安装验收/env 泄漏门禁均绿）。已修：_run_vision 返回类型改为 VisionGeometry | None（TYPE_CHECKING 导入，无运行期依赖），本地 pyright 对 13 个改动文件复核 errorCount=0。",
+          "远端 CI 第二轮（PR #93）：「门禁」红——环境访问单向棘轮判「新增/扩大」：候选发现实现拆出 _discover_candidates_impl（为把候选发现纳入整体探测时限），其中那处 os.environ 读取随之迁入，基线按「文件+函数+键」登记故登记键迁移（非访问范围扩大：同文件/同配置键/同只读方式/仍 1 处）。已按既定通道 scripts/audit_runtime_env.py --update-baseline 显式登记（reason + parent_commit=e870806…，基线 diff 仅键改名 + 一条登记日志），并按 RULE-AI-35 复测：注入后棘轮仍以 AssertionError 拦下并指认新签名，移除注入后 11 项转绿。",
+          "全量 A/B 对照：head 与 base 的节点级差异仅 1+1（并行顺序抖动，非回归），462 项失败为 base 与 head 数量一致的存量环境红。",
+          "RULE-AI-35 棘轮实测：向 src/llm_loop/ 注入一次 os.environ 读取后，tests/unit/test_runtime_env_access_gate.py 以 AssertionError 拦下；移除注入后 11 项通过。",
+          "Host 推送审查五轮均判定 REVISE：child=subagent_654883c3dd6a（ports 参数契约与实现不一致——描述「额外」实为替换；10 秒超时非整体上界）、child=subagent_1705b9f2684d（总时限未贯穿端点内两次请求；失败路径回报的送检尺寸是原图/裁剪尺寸而非实际送检尺寸）、child=subagent_63abc9c691ae（超时下限会越过绝对时限；截断是静默的、工具无法如实回报）、child=subagent_ef88fd497214（httpx 无活动超时不是墙钟上限；README 版本号与发布状态段自相矛盾）、child=subagent_09969d87673e（10 秒上限此前不含候选发现阶段）。九条 P2 均属实并已修：契约对齐（额外输入与缺省合并）+ 上界（候选 32 / 额外端口·目录各 8）+ 10 秒整体时限（端点内两次请求共享预算；请求与候选发现均走守护线程 + 剩余预算，墙钟上限真正成立且含发现阶段）+ 截断计数上报并写进回执 + 失败路径回报本地预处理事实的真实送检尺寸 + 两份 README 的版本/发布状态段统一为 0.6.57，并补 10 条回归用例；重审结论以本次落地的 push 回执为准。"
+        ],
+        "recovery_or_reason": "任一 required check 缺失或为红、head/base SHA 漂移、或路径被判高风险（src/llm_loop/tools/、src/llm_loop/web/）时一律 HOLD：不合并、不放宽保护规则、不以模型自述 PASS 替代远端 CI。合并只走受保护分支既有流程；异常时关闭 PR 或逐提交回退。"
+      },
+      "g4": {
+        "rollback": "PR 关闭即取消本次落地；已合并则按提交链 a07fdbe..HEAD 逐提交回退，不重写历史、不强制推送、不触碰服务与部署。",
+        "verification": [
+          "A.5 机械校验：scripts/check_architecture_submission.py 以 base=5708f281b7ca1734f92b2ce2fbace5790880b712、head=本次 head 运行并 PASS（changed-path 精确覆盖）。",
+          "远端 CI 的 5 项 required checks 全绿后，才允许受保护分支接受合并。",
+          "合并后核对 origin/main 同时含 f8a04a1 与本提交，并复核合并回执所载 main_sha_after 与分支 tip 一致。"
+        ]
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "vision-runtime-contract",
+      "declaration_id": "evo-20261121-efa320ab-vision-contract",
+      "paths": [
+        "src/llm_loop/browser/cdp_probe.py",
+        "src/llm_loop/tools/builtin/cdp_probe.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/vision.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "vision 图像坐标/降采样与 CDP 只读端点发现",
+      "disposition": "新增坐标契约、crop、大图降采样与只读 CDP 端点探针；既有 browser_* 显式 opt-in 门禁未被放宽。",
+      "evidence": [
+        "src/llm_loop/browser/cdp_probe.py 与 src/llm_loop/tools/builtin/cdp_probe.py：只读端点发现与 Chrome 136+ 策略说明。",
+        "src/llm_loop/web/vision.py：坐标契约、crop 与降采样实现。",
+        "src/llm_loop/web/routes.py：0.6.57 候选版本的版本号同步。"
+      ],
+      "verification_level": "定向单元测试 34 项通过 + ruff 通过 + 合并审查 P1 修复与 P2 收紧复审（p0=0 p1=0）。",
+      "model_evidence_veto_recovery_exit": "几何契约与降采样比例若不可证伪，则以 HOLD 拒绝合并并回到独立审查路径。",
+      "rollback_route": "逐提交回退本演进提交链；CDP 探针移除后既有 browser_* 门禁行为不变。"
+    },
+    {
+      "component_id": "tool-contract-surface",
+      "declaration_id": "evo-20261121-efa320ab-vision-contract",
+      "paths": [
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/builtin/read_file.py",
+        "src/llm_loop/tools/builtin/read_image.py",
+        "src/llm_loop/tools/registry.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "工具注册与 read_image/read_file/execute_command 工具契约",
+      "disposition": "read_image 几何契约与降采样接入；工具名 browser_probe 更名 cdp_probe；read_file 描述句截断修复；compact 预算 lazy<full 不变量修复。",
+      "evidence": [
+        "src/llm_loop/tools/builtin/read_image.py：坐标/降采样与既有 tool 行为的兼容实现。",
+        "src/llm_loop/tools/registry.py：compact 预算回归修复（A/B 基线对照定位）。",
+        "src/llm_loop/tools/builtin/read_file.py：描述句截断修复（merge-review P2-2）。"
+      ],
+      "verification_level": "定向单元测试（read_image/几何契约/降采样）通过 + ruff 通过 + 合并审查 P2-1/P2-2 窄复审 PASS。",
+      "model_evidence_veto_recovery_exit": "工具契约描述与实际行为不一致时不得合并；缺证据即按未通过处理。",
+      "rollback_route": "逐提交回退本演进提交链，工具名与预算行为回到 5708f28 状态。"
+    },
+    {
+      "component_id": "vision-tests-and-baseline",
+      "paths": [
+        "tests/fixtures/runtime_env_access_baseline.json",
+        "tests/unit/test_cdp_probe_v01.py",
+        "tests/unit/test_read_image.py",
+        "tests/unit/test_read_image_geometry_contract_v01.py",
+        "tests/unit/test_vision_downsample_v01.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "vision 行为的可执行契约与环境访问棘轮基线",
+      "disposition": "新增几何契约/降采样/CDP 探针测试，并按仓库既定通道显式登记 cdp_probe 与 vision_max_side 两处环境读取到单向棘轮基线。",
+      "evidence": [
+        "tests/unit/test_read_image_geometry_contract_v01.py 与 tests/unit/test_vision_downsample_v01.py：坐标与降采样不变量。",
+        "tests/fixtures/runtime_env_access_baseline.json：登记前后棘轮门禁实测（拦截注入、移除后转绿）。"
+      ],
+      "verification_level": "34 项定向测试通过 + 棘轮门禁 11 项通过 + 登记由 scripts/audit_runtime_env.py --update-baseline 生成。",
+      "model_evidence_veto_recovery_exit": "测试若只是弱断言（merge-review P2-4），须由既有能力身份用例承担锁定，否则按未通过处理。",
+      "rollback_route": "逐提交回退提交链；棘轮基线随之回退。"
+    },
+    {
+      "component_id": "docs-and-release-surface",
+      "paths": [
+        "CHANGELOG.md",
+        "README.en.md",
+        "README.md",
+        "docs/TOOL-CONTRACT-ENV-20261121.md",
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "工具契约文档与 0.6.57 候选版本元数据",
+      "disposition": "同步 cdp_probe 改名与独立审查修复项到工具契约文档，并登记 0.6.57 候选版本号与锁文件。",
+      "evidence": [
+        "docs/TOOL-CONTRACT-ENV-20261121.md：Chrome 136+ 政策段与探针改名后的契约描述。",
+        "CHANGELOG.md / pyproject.toml / uv.lock：0.6.57 候选版本登记。"
+      ],
+      "verification_level": "文档与代码行为逐条对照；合并审查 P2-1 复审 PASS。",
+      "model_evidence_veto_recovery_exit": "文档与实现不一致时以实现为准并拒绝合并。",
+      "rollback_route": "逐提交回退提交链，文档与版本号回到原状态。"
+    },
+    {
+      "component_id": "merge-governance-receipt",
+      "paths": [
+        "docs/governance/receipts/merge_GOAL-20261121-61234b03_evo-20261121-efa320ab.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "RULE-AI-34 合并审查回执留痕",
+      "disposition": "落盘本地 fast-forward 合并的审查回执：base/head、评审链、finding 处置、全量 A/B 与棘轮实测记录。",
+      "evidence": [
+        "docs/governance/receipts/merge_GOAL-20261121-61234b03_evo-20261121-efa320ab.json：main_sha_after=a958297…，merge_mode=ff。"
+      ],
+      "verification_level": "回执内容与 git 历史、审查回执一致；不含待回填占位。",
+      "model_evidence_veto_recovery_exit": "回执与实际提交不符时以 git 历史为准，回执须更正后才能合并。",
+      "rollback_route": "回退该提交即可移除回执文件。"
+    },
+    {
+      "component_id": "a5-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261122-evo-20261121-efa320ab-vision-contract-upstream.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交声明（本清单自身）",
+      "disposition": "本次上线的 changed-path 精确覆盖声明，供 A.5 机械校验。",
+      "evidence": [
+        "本文件：components.paths 与 5708f28..<head> 的变更路径集合精确一致（22 条，含本文件自身）。"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py 以 base=5708f281b7ca1734f92b2ce2fbace5790880b712、head=本次 head 运行并 PASS。",
+      "model_evidence_veto_recovery_exit": "覆盖不精确即 FAIL；不得放宽校验。",
+      "rollback_route": "回退该提交即移除本清单。"
+    }
+  ]
+}
+

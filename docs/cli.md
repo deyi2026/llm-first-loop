@@ -30,6 +30,32 @@ lfl chat --session FULL_SESSION_ID "继续"
 不会降级成聊天消息。旧 `list/search/delete/archive/unarchive/extract/fork/rename` 与
 `evolve-*`、`event-*` 命令继续保留；参数由共享契约在副作用前验证。
 
+## Host 完成态只读核验（不调用模型）
+
+`lfl owner-finality` 是供可信本机 Host/操作员显式调用的**只读查询**，
+不是聊天命令、模型工具、Goal 完成按钮或发布授权。必须显式绑定当前
+数据目录与 Evidence 所属工作区；知识资产由**已安装代码版本**解析，
+不接受任意 Rule/Skill 路径或模型提供的 EvidenceRef。
+
+```bash
+lfl --data-dir /path/to/lfl-data --workspace /path/to/project \
+  owner-finality --goal-id GOAL-20261122-xxxxxxxx --session SESSION-ID --json
+```
+
+Host 在准备重试**已完成**的准确 Goal 前调用；只有真实 Goal owner/session、
+所有 Task 终态、当前 OwnerScope 下 EvidenceRef 的存在/完整性、
+`RULE-AI-01` 全文及 `owner-finality-verify` Skill 完整性/必需步骤均通过，
+才返回 `decision=NO_WRITE_VERIFIED`（退出码 **0**，`model_calls=0`）。
+Host 此时可返回只读完成态回执，**不得再次调用模型或重复 `update_goal`**。
+其他任何结果返回 `HOLD`（退出码 **3**）；它**不表示**有权执行或完成任务，
+新任务需走原正常入口。输出固定 `no_write=true`、
+`host_permission_granted=false`，不包含原始 Evidence 内容或私密凭据。
+
+本命令**不自动接管**普通 Web/Feishu/CLI 聊天，不改变活跃 Goal 的模型
+执行策略；它只为可信 Host 提供明确可调用、可审计的完成态短路入口。
+如果 Evidence 存储尚未启用或缺失，按 `HOLD` 处理，不创建存储目录。
+调用前必须绑定**当时产生 EvidenceRef 的准确 Owner 工作区**（可能是历史 Git worktree，未必是当前主仓根目录）；不凭同名项目/历史经验推断。
+
 ## stdout、退出码和脚本
 
 ```bash

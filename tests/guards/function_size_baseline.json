@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "head_commit": "66aad8ad0",
+    "head_commit": "823e7c7a8",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
-    "生成时间": "2026-11-16",
+    "生成时间": "2026-11-22",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
     "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升；实测更高时按实测重定＝抬高，属 EVO-20261025-e0bff8ee 批准的红线放宽，须随 guard(r9) 提交逐条可见，不是静默放宽）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
@@ -236,6 +236,24 @@
         "rationale": "embedding cache 跨运行复用且采用锁/临时文件更新。",
         "status": "observe",
         "tier": "T2"
+      },
+      "embodied_sim_paired_cost_ledger": {
+        "owner": "embodied-sim",
+        "paths": [
+          "src/llm_loop/embodied_sim/paired_budget.py"
+        ],
+        "rationale": "M1-SIM-003 Host 授权配对实验 USD 成本账本：跨进程 flock 下 reserve/settle 追加 JSONL，每条 flush+file fsync；回放对未结清调用、未知计费、损坏事件 fail-closed，拒绝盲重试。60 次真实配对实验独立审计核对 319 次 Provider 调用与 0.39625350 USD 保守估算；未完成断电故障注入、实际 Provider 账单对账和跨主机恢复验证，因此按 T1 partial 登记，不冒充全面持久化合规。guard(r9): M1-SIM-003。",
+        "status": "partial",
+        "tier": "T1"
+      },
+      "embodied_sim_unknown_ledger": {
+        "owner": "embodied-sim",
+        "paths": [
+          "src/llm_loop/embodied_sim/contract.py"
+        ],
+        "rationale": "M1 隔离仿真 FrozenLedger 为 UNKNOWN/动作不确定性追加审计 JSONL，尚无 fsync/跨进程单写者/断电恢复证明；登记为 T1 partial，不宣称 durable SoT 或独立 Host Oracle 已验收。Gate C 保持 HOLD/PENDING_ORACLE。",
+        "status": "partial",
+        "tier": "T1"
       },
       "episode_store": {
         "owner": "memory",
@@ -600,6 +618,15 @@
         "rationale": "loop signals 为运行审计/诊断追加事实。",
         "status": "observe",
         "tier": "T1"
+      },
+      "managed_git_commit": {
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/managed_git.py"
+        ],
+        "rationale": "Host Task Git broker 通过受限 Git 子进程写入 index/objects/HEAD，并通过 os.open 创建独立 advisory flock 锁文件；签名 Lease、Goal/Task 状态、Lane/CAS 与精确 worktree 在锁内及提交前复核。Git commit 与 Lane ledger 更新尚非单个原子事务，未知效果必须显式 reconcile，故只登记 T2 partial，不宣称跨崩溃全域一致或生产 Host 已安装。",
+        "status": "partial",
+        "tier": "T2"
       },
       "memory_store": {
         "owner": "memory",
@@ -1084,7 +1111,7 @@
     "src/llm_loop/core/loop/engine_services/knowledge_runtime.py::observe_receipts": 135,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py::_try_err1210_recovery": 92,
     "src/llm_loop/core/loop/engine_services/routing.py::_resolve_history_budget": 163,
-    "src/llm_loop/core/loop/engine_services/routing.py::_route_model": 92,
+    "src/llm_loop/core/loop/engine_services/routing.py::_route_model": 79,
     "src/llm_loop/core/loop/engine_services/run_finalizer.py::_persist_turn": 253,
     "src/llm_loop/core/loop/engine_services/run_finalizer.py::_settle_run_end": 130,
     "src/llm_loop/core/loop/engine_services/tool_cycle.py::_execute_tools": 257,
@@ -1102,6 +1129,7 @@
     "src/llm_loop/core/provider_transport_usage_stats.py::summarize_physical_provider_usage": 142,
     "src/llm_loop/core/recent_continuity.py::apply_recent_continuity_suffix": 150,
     "src/llm_loop/core/tool_execution_journal.py::recover": 169,
+    "src/llm_loop/embodied_sim/episode.py::run_episode": 138,
     "src/llm_loop/eval/oracle_1210.py::run_oracle": 236,
     "src/llm_loop/event_log/fork.py::fork_session": 118,
     "src/llm_loop/event_log/inventory.py::run_inventory": 131,
@@ -1151,10 +1179,10 @@
     "src/llm_loop/resources/lfrt_runtime.py::parse_lfrt_status": 122,
     "src/llm_loop/resources/vendor_adapters/minimax.py::map_token_plan_remains_response": 130,
     "src/llm_loop/runtime/doctor.py::inspect_first_use": 189,
-    "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 119,
+    "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 140,
     "src/llm_loop/runtime/service_control.py::compose_lifecycle_evidence_view": 105,
     "src/llm_loop/runtime/service_control.py::compose_service_identity_view": 91,
-    "src/llm_loop/runtime/service_control.py::run_action_worker": 266,
+    "src/llm_loop/runtime/service_control.py::run_action_worker": 287,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_predicate_evaluate": 169,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_version_assess": 190,
     "src/llm_loop/semantic_logic/serialization.py::_fact_graph_from_dict": 143,
@@ -1173,7 +1201,7 @@
     "src/llm_loop/tools/builtin/read_file.py::execute": 157,
     "src/llm_loop/tools/builtin/search_files.py::execute": 223,
     "src/llm_loop/tools/builtin/service_control.py::_update": 120,
-    "src/llm_loop/tools/builtin/service_control.py::execute": 80,
+    "src/llm_loop/tools/builtin/service_control.py::execute": 90,
     "src/llm_loop/tools/builtin/smx_perceive.py::_diff": 122,
     "src/llm_loop/tools/builtin/spawn_subagent.py::execute": 175,
     "src/llm_loop/tools/builtin/subagent_result.py::execute": 140,
@@ -1194,13 +1222,13 @@
     "src/llm_loop/web/routes.py::_stats_for_loaded_session": 138,
     "src/llm_loop/web/routes.py::_stream_background": 235,
     "src/llm_loop/web/routes.py::chat": 174,
-    "src/llm_loop/web/routes.py::escalation_review": 210,
+    "src/llm_loop/web/routes.py::escalation_review": 207,
     "src/llm_loop/web/routes.py::event_stream": 199,
     "src/llm_loop/web/routes.py::learning_status": 130,
     "src/llm_loop/web/routes.py::list_models": 148,
     "src/llm_loop/web/routes.py::queue_interject": 124,
     "src/llm_loop/workspace/archive_stale.py::run_archive_stale": 121,
-    "src/llm_loop/workspace/file_service.py::_edit_locked": 253,
+    "src/llm_loop/workspace/file_service.py::_edit_locked": 250,
     "src/llm_loop/workspace/human_file_ops.py::edit": 137,
     "src/llm_loop/introspection/tools_lane.py::run_lane_reap": 132,
     "src/llm_loop/core/loop/engine_services/observation_visibility.py::_qualified_exact_ref_projection": 174,
@@ -1208,7 +1236,8 @@
     "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 186,
     "src/llm_loop/tools/builtin/execute_command.py::execute": 234,
     "src/llm_loop/tools/review_host_admission.py::_consume_joint_push_batches": 131,
-    "src/llm_loop/tools/review_host_admission.py::_target": 170
+    "src/llm_loop/tools/review_host_admission.py::_target": 170,
+    "src/llm_loop/runtime/service_control.py::accept_restart": 122
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
@@ -1235,19 +1264,20 @@
   ],
   "known_cycles": [],
   "legacy_super_functions": {
-    "src/llm_loop/browser/action.py::execute": 406,
+    "src/llm_loop/browser/action.py::execute": 417,
     "src/llm_loop/cli.py::application_main": 323,
-    "src/llm_loop/config.py::load_settings": 370,
+    "src/llm_loop/config.py::load_settings": 363,
     "src/llm_loop/core/history.py::build_history_messages": 745,
     "src/llm_loop/core/loop/engine.py::_run_stream_inner": 2207,
     "src/llm_loop/core/loop/lifecycle.py::run_stream": 311,
-    "src/llm_loop/factory.py::build_engine": 2157,
+    "src/llm_loop/factory.py::build_engine": 2143,
     "src/llm_loop/llm/client.py::_stream_openai": 433,
     "src/llm_loop/runtime/service_control.py::main": 555,
     "src/llm_loop/subagent/runner.py::_execute_subagent": 619,
     "src/llm_loop/subagent/runner.py::start": 394,
     "src/llm_loop/tools/builtin/browser_perceive.py::execute": 350,
-    "src/llm_loop/web/routes.py::chat_stream": 381
+    "src/llm_loop/web/routes.py::chat_stream": 381,
+    "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 459
   },
   "local_imports": {
     "src/llm_loop/core/history.py": 30,
@@ -1282,6 +1312,7 @@
       "cognitive": "Evaluation（cache-tagging 机械辅助，原 Cognitive Runtime 已退役）",
       "core": "kernel-candidate（跨面聚合根）",
       "desktop": "Action（M3 桌面只读感知：CG/AX/截屏 ctypes 通道 + privacy/see 名单 + §6.4 审计；无 M4 动作面，DESIGN-20261027 §5.3/D0-A′）",
+      "embodied_sim": "Action/Evaluation（M0/M1 隔离 MuJoCo 物理仿真与安全合同；非真实机器人硬件入口；独立 UID463 Oracle Gate C 尚未完成 Host 验收）",
       "eval": "Evaluation",
       "event_log": "kernel-candidate",
       "experiences": "Learning",

@@ -1,0 +1,36 @@
+{
+  "experiment_id": "m1-sim-gateb-001",
+  "files_sha256": {
+    "experiments/embodied/m1/gate_a/physics_probe.json": "112088ac9e7843120cd128bd8657f6184d246bf6d15db3b9236b53b4e2421363",
+    "experiments/embodied/m1/gate_b/e2e_report.json": "3f760916aa5a7828bbd247f875afd9132d94736bbe391fc96a1463a29e217105",
+    "experiments/embodied/m1/gate_b/e2e_stdout.txt": "5f96189674845d945a6bcacb01a3eecb3dc16d734cf5530ea692a5e73c28ce70",
+    "experiments/embodied/m1/requirements.txt": "22043dd555a270b33c928f275b75a1d3c07265084c9dd8385bf52fc72ec99154",
+    "scripts/embodied/m1_gate_a_probe.py": "87531c7ee4dc74140a761ce7c4f4ca9c6c09fed6754eca737d97dee25239e84c",
+    "scripts/embodied/m1_gate_b_e2e.py": "de5c8315f18230904953baf810308cc143adca7acc7655cd8eb4bfd859fb169f",
+    "scripts/embodied/m1_receipt.py": "ce44f92e1712fdcd7979b4034b02d4959c1ed34c0abed51794825f03df5c2739",
+    "scripts/embodied/m1_weld_probe.py": "359ca364db85e251a0e39d83788a3f566b6789bbb74b1b80b952036ad8377470",
+    "scripts/embodied/provision_oracle_user_macos.sh": "81c9a78076974e3dcde3d0d42302803b021d2dd1c7f9e2b96fd1d6b93ce8b080",
+    "scripts/embodied/verify_oracle_uid_macos.py": "07880563da1890cbe3deec6f64364c57e4d31dbcc73e194f7d6c6d7b7eca972e",
+    "src/llm_loop/embodied_sim/__init__.py": "8e8a9507925513c11471283aaaf104e30de6eeae1f528b1867cbbe05d40807a9",
+    "src/llm_loop/embodied_sim/contract.py": "51232f770873ec4fe387a7f536b6d8f7ce8ae8940b9bfb22fc38a579f6629d5d",
+    "src/llm_loop/embodied_sim/oracle.py": "861ae368c807d59d90fcfdb627afb0b1c767d5e08fe2c3e0d52da4ce4c780cd4",
+    "src/llm_loop/embodied_sim/scene.py": "03c3deea8a4e9bf10d29f2cc563667d40768d1e297f1c3d25b406c1942ce766f",
+    "src/llm_loop/embodied_sim/sim.py": "416a4aa3d183759810ec523e17b2fee31f015526dd35d3dd4f5e0ac6a51ee23a",
+    "src/llm_loop/embodied_sim/skills.py": "d7942f7346ea16e70f28d906fef2cc39ed19e5d32c056f1dcd6fb135da66c37e",
+    "tests/embodied_m1/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/embodied_m1/conftest.py": "d3fcf5967d190a1f82ab123c198694dc3b4ae0866936fafce7a38fe5a13f5bf2",
+    "tests/embodied_m1/test_contract.py": "0825adf6f79c492f6f7d90a7bd1131a041528070e1d3d813bcee69d311c03d1a",
+    "tests/embodied_m1/test_gate_b_e2e.py": "9694572a6127ee7ceda8bfbe92c439da2759ca874a7c55cf9368dbfe2a347053",
+    "tests/embodied_m1/test_no_external_entries.py": "8b9447548e547cc4ff1716e8f1ed7c7a1a83c7676424b19fb24318ed44e96710",
+    "tests/embodied_m1/test_scene_physics.py": "67812897d505ab2a87a433327f3ad5260713a87afc73aa4b52180ce01ada3f11"
+  },
+  "frozen_at": "2026-11-19T08:48:04+0800",
+  "gate": "B",
+  "verdicts": {
+    "gate_b_e2e": "exit0 (grasp/place local geometry true; L3 recovery true)",
+    "independent_oracle": "PENDING_ORACLE (uid463 channel not yet Host-accepted)",
+    "pyright": "0 errors, exit0",
+    "pytest": "25 passed, exit0",
+    "ruff": "0 errors, exit0"
+  }
+}

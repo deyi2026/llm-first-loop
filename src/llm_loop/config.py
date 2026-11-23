@@ -152,7 +152,9 @@ def _strip_quotes(val: str) -> str:
     return val
 
 
-def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
+def _raw_env(
+    name: str, env: Mapping[str, str] | None = None, *, preserve_raw: bool = False
+) -> str:
     """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
 
     防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
@@ -161,6 +163,8 @@ def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
     """
     values = os.environ if env is None else env
     if name in values:
+        if preserve_raw:
+            return values[name]
         return _strip_quotes(_strip_inline_comment(values[name]))
     return ""
 
@@ -676,6 +680,12 @@ class Settings:
     # 空（默认）= 所有 child 工具面剔除 spawn_subagent（防递归舰队，程序级）；
     # "*" = 全量授予；否则逗号分隔 parent session_id，精确授予该父的 child。
     child_spawn_grant: str = ""
+    # M2-A（DESIGN-20261116 §3.2，P1-A 宿主接线）: LaneStore 严格锁/跨 Goal
+    # 路径检查；默认全关=历史 warn 行为。enforce=true 隐含要求 lock_strict=true
+    # 与有效 repo_root（LaneStore 构造 fail-fast，INV-1/INV-2）。
+    lane_lock_strict: bool = False
+    lane_enforce_cross_goal: bool = False
+    lane_repo_root: str = ""  # 路径根绑定基准（绝对路径；空=不绑定）
     self_eval_enabled: bool = True  # 自我评估能力开关（0 时 self_evaluate 工具不注册）
     self_eval_min_samples: int = 5  # 指标最小样本数（不足 → 如实标注"样本不足"）
     self_eval_span: int = 50  # 评估聚合窗口（近 N 轮/条）
@@ -814,6 +824,9 @@ class Settings:
             "evolve_local_exec": self.evolve_local_exec,
             "evolve_exec_whitelist": self.evolve_exec_whitelist,
             "child_spawn_grant": self.child_spawn_grant,
+            "lane_lock_strict": self.lane_lock_strict,
+            "lane_enforce_cross_goal": self.lane_enforce_cross_goal,
+            "lane_repo_root": self.lane_repo_root,
             "self_eval_enabled": self.self_eval_enabled,
             # Method Learning v1: expose only non-sensitive runtime mode/thresholds, never local paths.
             "method_reflection_mode": self.method_reflection_mode,
@@ -950,6 +963,19 @@ def _codearts_settings(env: Mapping[str, str]) -> CodeArtsSettings:
     )
 
 
+def _env_optional_true_set(name: str, env_values: Mapping[str, str]) -> bool | None:
+    """Preserve legacy optional bool semantics without later process-env reads."""
+    if name not in env_values:
+        return None
+    return str(env_values.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+def _env_optional_hit_telemetry(name: str, env_values: Mapping[str, str]) -> bool | None:
+    """Preserve CACHE_GUARD_HIT_TELEMETRY's historical explicit-value rule."""
+    if name not in env_values:
+        return None
+    return str(env_values.get(name, "")) not in {"0", "false", "False"}
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """从显式 mapping（默认进程环境）装配不可变 Settings。"""
     _fallback_notes.clear()
@@ -963,18 +989,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     def env_bool(name: str, default: bool) -> bool:
         return _env_bool(name, default, env_values)
-
-    def env_optional_true_set(name: str) -> bool | None:
-        """Preserve legacy optional bool semantics without later process-env reads."""
-        if name not in env_values:
-            return None
-        return str(env_values.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
-
-    def env_optional_hit_telemetry(name: str) -> bool | None:
-        """Preserve CACHE_GUARD_HIT_TELEMETRY's historical explicit-value rule."""
-        if name not in env_values:
-            return None
-        return str(env_values.get(name, "")) not in {"0", "false", "False"}
 
     def env_one(fn, name: str):
         return fn(name, env_values)
@@ -1154,10 +1168,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         llm_timeout_s=_env_float("LLM_TIMEOUT_S", 120.0, env_values),
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
-        llm_trust_env=env_optional_true_set("LLM_TRUST_ENV"),
+        llm_trust_env=_env_optional_true_set("LLM_TRUST_ENV", env_values),
         llm_retry_disconnect=env_int("LLM_RETRY_DISCONNECT", 1),
-        anthropic_cache_control=env_optional_true_set("ANTHROPIC_CACHE_CONTROL"),
-        cache_guard_hit_telemetry=env_optional_hit_telemetry("CACHE_GUARD_HIT_TELEMETRY"),
+        anthropic_cache_control=_env_optional_true_set("ANTHROPIC_CACHE_CONTROL", env_values),
+        cache_guard_hit_telemetry=_env_optional_hit_telemetry("CACHE_GUARD_HIT_TELEMETRY", env_values),
         data_dir=str(_resolved_paths.data_dir),
         history_policy=_history_policy,
         tool_runtime=_tool_runtime,
@@ -1286,6 +1300,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         evolve_local_exec=env_one(_env_evolve_level, "EVOLVE_LOCAL_EXEC"),
         evolve_exec_whitelist=env_values.get("EVOLVE_EXEC_WHITELIST", "").strip(),
         child_spawn_grant=env_values.get("CHILD_SPAWN_GRANT", "").strip(),
+        # M2-A（P1-A）: LANE_LOCK_STRICT / LANE_ENFORCE_CROSS_GOAL 用 env_bool
+        # 显式解析（false/0/off → False，无 bool("false") 陷阱）。
+        lane_lock_strict=env_bool("LANE_LOCK_STRICT", False),
+        lane_enforce_cross_goal=env_bool("LANE_ENFORCE_CROSS_GOAL", False),
+        lane_repo_root=env_values.get("LANE_REPO_ROOT", "").strip(),
         self_eval_enabled=env_bool("SELF_EVAL_ENABLED", True),
         self_eval_min_samples=env_int("SELF_EVAL_MIN_SAMPLES", 5),
         self_eval_span=env_int("SELF_EVAL_SPAN", 50),

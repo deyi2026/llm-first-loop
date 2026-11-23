@@ -298,7 +298,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
         <small>desired · live · stable</small>
       </button>
       {/* 总协调通道栏（常驻条，非 tab）：服务入口之下、tab 区之上 */}
-      <CoordinationChannel collapsed={collapsed} />
+      <CoordinationChannel collapsed={collapsed} onNavigate={onNavigate} />
       <div className="v2-sidebar-tabs">
         <button
           type="button"
@@ -373,7 +373,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       ) : view === "metrics" ? (
         <InterjectMetricsPanel sessionId={currentId ?? ""} />
       ) : view === LANES_VIEW ? (
-        <LaneBoard />
+        <LaneBoard onNavigate={onNavigate} />
       ) : view === "archived" ? (
         <div className="v2-archived-list" data-testid="archived-list">
           {archivedError ? (

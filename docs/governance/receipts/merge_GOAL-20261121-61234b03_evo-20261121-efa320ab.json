@@ -1,0 +1,118 @@
+{
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "reviewed_at": "2026-11-22",
+  "goal_id": "GOAL-20261121-61234b03",
+  "evolution": "EVO-20261121-efa320ab",
+  "branch": "feat/evo-20261121-efa320ab-linux-chrome-vision-contract",
+  "based_on_main": "5708f281b7ca1734f92b2ce2fbace5790880b712（合并时的 origin/main tip；分支已 merge 该提交，零落后）",
+  "main_sha_after": "a9582974551b3e543792ad9874950e2d9011e431",
+  "main_sha_verification": "git rev-parse main == a9582974551b3e543792ad9874950e2d9011e431（fast-forward 合并后核对）；git diff main feat/evo-20261121-efa320ab-linux-chrome-vision-contract 为空；git diff --stat 5708f28..a958297 = 20 files, +1440/-80",
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "commits": [
+    "a07fdbe feat(vision): 坐标契约 + crop + 大图降采样 + CDP 端点探针（EVO-20261121-efa320ab）",
+    "04fae5d fix(vision): 独立审查 P1 修复 + P2 收紧（EVO-20261121-efa320ab）",
+    "10e6294 docs(vision): 工具契约文档同步探针改名 cdp_probe 与独立审查修复项（EVO-20261121-efa320ab）",
+    "174b93f fix(tools): compact 预算回归修复——A/B 基线对照发现 lazy<full 不变量被破坏",
+    "851871e Merge remote-tracking branch 'origin/main' into feat/...",
+    "c046b66 Merge remote-tracking branch 'origin/main' into feat/...",
+    "24036f6 chore(r9): prepare v0.6.57 candidate from merged main",
+    "59d6dff Merge remote-tracking branch 'origin/main' into feat/...",
+    "e9b2a35 docs(contract): 修正工具契约旧工具名残留与 read_file 描述句截断（merge-review P2-1/P2-2）",
+    "a958297 chore(env): 登记 cdp_probe/vision_max_side 的环境读取到单向棘轮基线（EVO-20261121-efa320ab）"
+  ],
+  "reviewer": {
+    "primary": "merge-review-gate 子代理 subagent_1d3a2a1b1a01（glm/glm-5.3；工具白名单仅 read_file+search_files；inherit=false；29 轮）",
+    "primary_verdict": "PASS p0=0 p1=0 p2=4（base=5708f28 / head=59d6dff）",
+    "narrow_review_1": "子代理 subagent_1b64000ce4ff（glm/glm-5.3）——窄复审 P2-1/P2-2 修复：PASS p0=0 p1=0 p2=0（head=e9b2a35）",
+    "narrow_review_2": "子代理 subagent_26a31a1b5448（glm/glm-5.3）——窄复审单向棘轮基线登记：PASS p0=0 p1=0 p2=2（head=a958297）",
+    "rule28_code_gate": "Host review_admission(kind=full_test) 两次 PASS：child=subagent_c0621e1f8b57（candidate_sha256=ec5f2407…，head=59d6dff）、child=subagent_f02d67f9b6a0（candidate_sha256=7f268056…，head=a958297）；reviewer=glm/glm-5.3；scope=patch（19/20 条声明路径）"
+  },
+  "host_verify_ref_status": {
+    "verify_ref": "not_issued",
+    "reason": "Host merge_review_start 入口在本机不可用：调用返回 lane_repo_mismatch（Host 侧 repo_root 取自宿主进程的 LFL_RUNTIME_ROOT（指向另一 clone，与本 lane worktree 非同一 git common dir））；且 verify_receipt 的签发发生在 Web 进程 authority.issue()，其冻结审查记录仅进程内可见，跨进程发起的审查无法被 Web 签发。",
+    "fallback": "按 skills/merge-review-gate 的旧部署回退路径执行：以 spawn_subagent 独立只读审查子代理完成合并审查，回执落盘本目录；不伪造 Host 签发资格，也未向 lane 合并队列提交（无 verify_ref 机检资格）。"
+  },
+  "focused_gates": [
+    {
+      "command": ".venv/bin/python -m pytest -q tests/unit/test_cdp_probe_v01.py tests/unit/test_read_image.py tests/unit/test_read_image_geometry_contract_v01.py tests/unit/test_vision_downsample_v01.py",
+      "result": "34 passed"
+    },
+    {
+      "command": "ruff check（7 个改动源码文件）",
+      "result": "All checks passed"
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q tests/unit/test_runtime_env_access_gate.py",
+      "result": "11 passed（单向棘轮基线登记后转绿）"
+    },
+    {
+      "command": "python3 scripts/knowledge_flush.py --check",
+      "result": "无待入库知识资产（推送前知识闸口径）"
+    }
+  ],
+  "full_test_gate": {
+    "composition": "仓库 scripts/ci_gate.sh 第 5 步口径：serial_signal 串行 + serial_perf 串行 + xdist 并行集（并行集排除 serial_signal/serial_perf，两者串行补跑）",
+    "head_a958297": "serial_signal 7 passed/2 skipped(rc=0)；serial_perf 6 passed/2 skipped(rc=0)；并行集 462 failed / 15902 passed / 180 skipped / 3 xfailed / 6 errors（338s）",
+    "base_5708f28": "serial_signal 7 passed/2 skipped(rc=0)；serial_perf 6 passed/2 skipped(rc=0)；并行集 462 failed / 15868 passed / 188 skipped / 3 xfailed / 6 errors（337s）",
+    "ab_diff": "节点级差异：head-only 1（tests/unit/test_execute_command_scrubs_env.py::test_non_lfl_workdir_keeps_host_python_environment，隔离复跑 1 passed → 并行顺序抖动，非回归）；base-only 1（tests/unit/test_config.py::test_load_settings_process_bootstrap_uses_runtime_dotenv_knowledge_paths，base 红 head 绿）",
+    "regression_found_and_fixed": "首轮 A/B（head=59d6dff）发现真回归：tests/unit/test_runtime_env_access_gate.py::test_direct_environment_access_is_one_way_ratchet 在 head 隔离复跑失败、在 base 通过——本分支新增 2 处直读 os.environ（cdp_probe 读 LFL_BROWSER_PERCEPTION_CDP_URL；vision_max_side 读 WEB_VISION_MAX_SIDE），超出单向棘轮基线。已按仓库既定通道 scripts/audit_runtime_env.py --update-baseline 显式登记（reason + parent_commit=a07fdbe + relaxations=true），登记后该门禁转绿，并在 a958297 提交后重跑全量门禁确认无新增红。",
+    "known_reds": "462 项失败为本机沙盒环境下的既有红（host_grant/escalation web 端点、session 物理删除、restart preflight 等），base 与 head 数量一致，属登记在案的存量环境红，非本演进引入"
+  },
+  "rule35_probe": {
+    "claim": "棘轮基线登记后，单向棘轮仍能拦住新增环境访问（登记未把红线放宽成豁免）",
+    "method": "在 src/llm_loop/ 注入一次临时 os.environ 读取（_tmp_env_probe.py）后运行 tests/unit/test_runtime_env_access_gate.py，随后删除注入文件复测",
+    "expected_blocked_result": "AssertionError: 直接 os.environ/os.getenv 访问 新增/扩大，需显式审查 baseline：{'src/llm_loop/_tmp_env_probe.py|_tmp_env_probe|read|LFL_TMP_PROBE': 1}",
+    "after_removal": "11 passed（棘轮恢复绿）",
+    "logs": "work/abo/ratchet_block_probe.txt、work/abo/ratchet_clean_probe.txt"
+  },
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "status": "fixed",
+      "issue": "工具契约文档头部仍写旧工具名 browser_probe",
+      "fix_commit": "e9b2a35",
+      "verified_by": "subagent_1b64000ce4ff PASS"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "status": "fixed",
+      "issue": "read_file 工具描述被新增的运行环境事实句从中间截断",
+      "fix_commit": "e9b2a35",
+      "verified_by": "subagent_1b64000ce4ff PASS"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "status": "accepted_with_record",
+      "issue": "需求 A 的实际交付面窄于标题：Chrome 136+ 对默认用户目录禁用 --remote-debugging-port，已打开并已登录的默认配置浏览器无法直接被接入。本演进交付的是只读端点发现探针与指引；真实操作仍需以非默认 user-data-dir 启动 Chrome 并显式配置 LFL_BROWSER_PERCEPTION_CDP_URL，既有 browser_* 显式 opt-in 门禁未被放宽",
+      "evidence": "src/llm_loop/browser/cdp_probe.py 的策略说明；docs/TOOL-CONTRACT-ENV-20261121.md 的 Chrome 136+ 政策段"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "status": "accepted_with_record",
+      "issue": "tests/unit/test_cdp_probe_v01.py 中 test_probe_is_not_in_browser_page_capability_family 仅断言工具名常量，属弱用例",
+      "evidence": "能力身份的行为锁定由既有 tests/unit/test_browser_cognition_preserving_capability_identity_mf5_3_2a.py 承担，组合覆盖成立"
+    },
+    {
+      "id": "P2-5",
+      "severity": "P2",
+      "status": "accepted_with_record",
+      "issue": "棘轮基线登记 reason 所引独立审查当时仅以子代理 ID 记录，仓库内无对应留痕文件",
+      "resolution": "本回执即该审查链的仓库内留痕（子代理 ID、base/head、verdict、P0/P1 计数齐备）"
+    },
+    {
+      "id": "P2-6",
+      "severity": "P2",
+      "status": "accepted_with_record",
+      "issue": "登记 reason 中『完全同模式直读』措辞略强：既有旋钮传字面量键名，vision_max_side 经模块常量间接传键，扫描器登记为 <dynamic>",
+      "resolution": "机械登记由扫描器产出且正确，不影响基线语义；prose 精度问题留待下次登记时措辞收敛"
+    }
+  ],
+  "branch_disposition": "kept：分支 tip 与 main tip 相同（a958297），保留为本次演进的追溯锚点；main 已包含全部成果",
+  "receipt_note": "本回执在 fast-forward 合并之后落盘于 main；main_sha_after 指合并后 main 所指提交 a958297，本回执为其后继提交（自身 sha 见 git log --oneline -1 -- docs/governance/receipts/merge_GOAL-20261121-61234b03_evo-20261121-efa320ab.json）。"
+}

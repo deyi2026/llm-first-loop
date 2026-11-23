@@ -1,0 +1,30 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "pr86-cryptography-runtime-dependency-20261122",
+  "summary": "Separate the already-locked cryptography direct runtime dependency from PR86 before the Host trusted-gate check; no control logic or authority changes.",
+  "components": [
+    {
+      "component_id": "runtime-dependency-declaration",
+      "paths": [
+        "pyproject.toml",
+        "uv.lock",
+        "docs/governance/submissions/20261122-pr86-cryptography-dependency.json",
+        "tests/web/test_video_generation.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Python locked dependency metadata, A.5 traceability, and non-control video worker timeout test isolation",
+      "disposition": "Declare cryptography>=43 directly for the existing Ed25519 verifier. Keep the guardian test checking a real backend PID is terminated on timeout; use a test-only 2.0-second deadline so macOS cold-start completes, and run this wall-clock-sensitive case in the existing serial_perf group. No production timeout or Host/CI authority changes.",
+      "evidence": [
+        "main uv.lock already resolves cryptography; this PR only adds a root direct dependency and its metadata.",
+        "uv lock --check --offline and commit-time security scan passed for the dependency files.",
+        "Earlier Reviewer PASS and partial R9 belong to prior SHA; the manifest-amended SHA requires a new independent review and full R9 exit 0.",
+        "Original R9 exit 1 diagnosed local worktree hook mode 0700 (Git index 100755; restored 0755) and xdist scheduling race before backend.pid creation; guardian serial replay passed. New SHA must pass full R9.",
+        "Targeted RED showed a 0.5s deadline expired before fake backend.pid was created (guardian log: Video generation timed out); the test-only 2.0s deadline preserves PID+termination assertions and is reverified below."
+      ],
+      "verification_level": "Local lock/A.5 and targeted tests pending; new exact-SHA Reviewer, original R9, and remote CI required.",
+      "model_evidence_veto_recovery_exit": "Do not treat model text or old SHA receipts as new candidate evidence; A.5, independent Reviewer, full R9 and protected CI remain mandatory.",
+      "rollback_route": "Revert this dependency declaration and A.5 manifest through a protected PR; no Host privilege or service change is part of this commit."
+    }
+  ],
+  "declarations": []
+}

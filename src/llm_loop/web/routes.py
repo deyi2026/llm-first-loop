@@ -533,7 +533,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.54"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.58"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -2920,6 +2920,40 @@ def escalation_detail(request: Request, id: str = "") -> Response:
     )
 
 
+def _decide_escalation_with_host_verify(
+    request: Request, store: Any, payload: Any, record: dict,
+    decided_by: str, channel: str, expected: str, host_grant_id: str,
+    base: Any, audit: Any, command_sha256: str,
+) -> tuple[dict | None, str] | Response:
+    """Keep protected Host issuance separate from the existing review route."""
+    issue_verify = None
+    if record.get("request_kind") == "verify_receipt" and payload.decision == "approved":
+        authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
+        if authority is None or getattr(authority, "audit_dir", None) != (base / "audit").resolve():
+            audit("host_verify_unavailable", decided_by=decided_by, channel=channel)
+            return JSONResponse({"error": "host_verify_unavailable"}, status_code=503)
+
+        def _issue_verify(row: dict) -> str:
+            return authority.issue(row, approver=decided_by)
+
+        issue_verify = _issue_verify
+    try:
+        return store.decide(
+            payload.id, payload.decision, decided_by=decided_by,
+            channel=channel, note=payload.note, ttl_minutes=payload.ttl_minutes,
+            expected_sha256=expected, host_grant_id=host_grant_id,
+            issue_verify=issue_verify,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("Host verify receipt issue rejected: %s", exc)
+        audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
+              command_sha256=command_sha256, detail=str(exc)[:200])
+        return JSONResponse(
+            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            status_code=409,
+        )
+
+
 @router.post("/api/v1/escalation/review")
 async def escalation_review(request: Request) -> Response:
     """web 提权审批（人工决定端点；批准 = 铸造一次性令牌，拒绝 = 记录理由）.
@@ -2999,7 +3033,7 @@ async def escalation_review(request: Request) -> Response:
     # loopback 免认证部署下 web:loopback 对本类**不满足**人类授权要求
     # （本机任何进程都可直连回环，loopback 不能自批）；必须持有有效浏览器
     # 登录会话（web_session 通道）。灾难命令类审批语义不变。
-    if rec.get("request_kind") == "host_grant" and channel != "web_session":
+    if rec.get("request_kind") in ("host_grant", "verify_receipt") and channel != "web_session":
         _audit(
             "rejected_human_auth_required",
             decided_by=decided_by,
@@ -3104,16 +3138,13 @@ async def escalation_review(request: Request) -> Response:
                 status_code=503,
             )
 
-    rec, reason = store.decide(
-        payload.id,
-        payload.decision,
-        decided_by=decided_by,
-        channel=channel,
-        note=payload.note,
-        ttl_minutes=payload.ttl_minutes,
-        expected_sha256=expected,
-        host_grant_id=host_grant_id,
+    outcome = _decide_escalation_with_host_verify(
+        request, store, payload, rec, decided_by, channel, expected,
+        host_grant_id, base, _audit, command_sha256,
     )
+    if isinstance(outcome, Response):
+        return outcome
+    rec, reason = outcome
     if rec is None:
         if host_grant_id and grant_store is not None:
             # decide 失败（冲突/状态漂移）→ 撤销孤儿 grant，杜绝批准外泄漏
@@ -4264,8 +4295,15 @@ def _sessions_fingerprint(sessions_dir: str | Path) -> str:
         return "err"
 
 
+# 同进程多个 SSE 客户端的 3s 轮询不应各自扫描数千个 session 文件。
+# 1s 复用窗口只影响通知延迟，不改变底层指纹或会话读写语义。
+_SSE_FINGERPRINT_CACHE_TTL_S = 1.0
+_SSE_FINGERPRINT_CACHE_LOCK = threading.Lock()
+_SSE_FINGERPRINT_CACHE: dict[str, tuple[float, str]] = {}
+
+
 def _session_events_fingerprint(engine: Any) -> str:
-    """当前SessionStore根 + 内容指纹；workspace切换本身也视为会话视图变化。"""
+    """当前 SessionStore 根 + 内容指纹；跨 SSE 连接短时复用同根扫描。"""
     session = getattr(engine, "session", None)
     sessions_dir = getattr(session, "root", None)
     if sessions_dir is None:
@@ -4274,7 +4312,21 @@ def _session_events_fingerprint(engine: Any) -> str:
             or "./data/sessions"
         )
     root = Path(sessions_dir)
-    return f"{root}:{_sessions_fingerprint(root)}"
+    key = os.path.abspath(os.fspath(root))
+    with _SSE_FINGERPRINT_CACHE_LOCK:
+        now = time.monotonic()
+        cached = _SSE_FINGERPRINT_CACHE.get(key)
+        if cached is not None and now - cached[0] < _SSE_FINGERPRINT_CACHE_TTL_S:
+            fingerprint = cached[1]
+        else:
+            fingerprint = _sessions_fingerprint(root)
+            if fingerprint == "err":
+                _SSE_FINGERPRINT_CACHE.pop(key, None)  # 读取失败不得伪装成旧成功
+            else:
+                _SSE_FINGERPRINT_CACHE[key] = (time.monotonic(), fingerprint)
+                if len(_SSE_FINGERPRINT_CACHE) > 32:
+                    _SSE_FINGERPRINT_CACHE.pop(next(iter(_SSE_FINGERPRINT_CACHE)))
+    return f"{root}:{fingerprint}"
 
 
 def _providers_events_fingerprint(engine: Any) -> tuple[str, dict[str, Any]]:
@@ -4679,17 +4731,23 @@ def get_session_messages(
     # UI text is durably stored in EventStore; hydrate only this Web response by the seq
     # recorded in provider-invisible Message.metadata.
     _program_final_text_by_seq: dict[int, str] = {}
+    def _program_final_seq(message) -> int:
+        metadata = getattr(message, "metadata", {}) or {}
+        if metadata.get("program_final_placeholder") is not True:
+            return 0
+        try:
+            return max(0, int(metadata.get("program_final_event_seq") or 0))
+        except (TypeError, ValueError):
+            return 0
+
     _wanted_program_final_seqs = {
-        int((getattr(m, "metadata", {}) or {}).get("program_final_event_seq") or 0)
-        for m in source_messages
-        if (getattr(m, "metadata", {}) or {}).get("program_final_placeholder") is True
+        seq for m in source_messages if (seq := _program_final_seq(m)) > 0
     }
-    _wanted_program_final_seqs.discard(0)
     if _wanted_program_final_seqs:
         try:
             _event_store = getattr(engine, "_event_store", None)
             _events = (
-                _event_store.read_cached(session_id)
+                _event_store.read_seqs(session_id, _wanted_program_final_seqs).values()
                 if _event_store is not None and getattr(_event_store, "enabled", False)
                 else []
             )
@@ -4710,7 +4768,7 @@ def get_session_messages(
     def _history_content(message) -> str:
         _md = getattr(message, "metadata", {}) or {}
         if _md.get("program_final_placeholder") is True:
-            _seq = int(_md.get("program_final_event_seq") or 0)
+            _seq = _program_final_seq(message)
             if _seq > 0 and _seq in _program_final_text_by_seq:
                 return _program_final_text_by_seq[_seq]
         return str(getattr(message, "content", "") or "")

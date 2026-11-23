@@ -1,0 +1,181 @@
+{
+  "budget": {
+    "deadline_s": 180.0,
+    "max_provider_attempts": 6,
+    "max_tool_actions": 8
+  },
+  "elapsed_s": 17.292,
+  "elapsed_wall_s": 17.338,
+  "experiment_id": "M1-SIM-001",
+  "learning": "off",
+  "local_verdict": {
+    "evidence": {
+      "cube_speed": 0.025263702780933223,
+      "cube_z": 0.07685036572438694,
+      "height_ok": true,
+      "inside_tray_xy": true
+    },
+    "ok": true
+  },
+  "model_used": "glm/glm-5.3-flash",
+  "oracle_channel_hold": {
+    "independent_verification": "PENDING_ORACLE",
+    "reason": "uid 463 (_lfl_oracle) exists but non-interactive sudo requires a password; no cross-UID oracle execution without formal Host authorization. Worker entrypoint ready: python -m llm_loop.embodied_sim.oracle_worker.",
+    "status": "HOLD"
+  },
+  "oracle_execution": "in_process_pending_host_uid",
+  "oracle_receipt": {
+    "claim_kind": "place",
+    "evidence": {
+      "cube_speed": 0.025263702780933223,
+      "cube_z": 0.07685036572438694,
+      "height_ok": true,
+      "inside_tray_xy": true
+    },
+    "experiment_id": "M1-SIM-001",
+    "oracle_execution": "in_process_pending_host_uid",
+    "oracle_impl": "embodied-m1-oracle-local-v0",
+    "scene_epoch": 1,
+    "snapshot_sha256": "a8f586d01dbd3d3f9f36ddf635415a7862d1266f0e76638a146dd56912f7e47d",
+    "verdict": "success"
+  },
+  "provider_attempts": 4,
+  "provider_calls": [
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.0899}, \"intent_key\": \"k1\"}",
+      "content_len": 89,
+      "finish_reason": "stop",
+      "latency_ms": 5326.6,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.18, \"y\": 0.0009, \"z\": 0.0319}, \"intent_key\": \"k2\"}",
+      "content_len": 89,
+      "finish_reason": "stop",
+      "latency_ms": 5762.5,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"grasp\", \"params\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0}, \"intent_key\": \"k3\"}",
+      "content_len": 80,
+      "finish_reason": "stop",
+      "latency_ms": 3052.3,
+      "status": 200
+    },
+    {
+      "content_head": "{\"skill\": \"move_to\", \"params\": {\"x\": 0.0, \"y\": 0.18, \"z\": 0.09}, \"intent_key\": \"k4\"}",
+      "content_len": 84,
+      "finish_reason": "stop",
+      "latency_ms": 3124.5,
+      "status": 200
+    }
+  ],
+  "replans": 0,
+  "status": "ok",
+  "stop_receipts": {},
+  "t_stop_provenance": {
+    "backfill_for": "M0 P2 prereg gap; old prereg untouched (frozen sha 56f79674...)",
+    "request_confirm_ms": 0.032,
+    "settle_ms": 3450.0,
+    "settle_steps": 1725,
+    "source": "gate_c measured (m1_gate_c_episode.py), timestep=2ms",
+    "stop_confirmation": {
+      "state": "confirmed",
+      "stop_id": "stop-000001"
+    },
+    "stop_request": {
+      "reason": "t_stop provenance measurement",
+      "state": "requested",
+      "stop_id": "stop-000001"
+    },
+    "t_stop_max_ms": 3450.0
+  },
+  "terminated_by": "place_verified_locally_pending_oracle",
+  "tool_actions": 4,
+  "trace": [
+    {
+      "decision": {
+        "intent_key": "k1",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.0899
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000001",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013228786390869622,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 150
+      },
+      "t_s": 5.331
+    },
+    {
+      "decision": {
+        "intent_key": "k2",
+        "params": {
+          "x": 0.18,
+          "y": 0.0009,
+          "z": 0.0319
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000002",
+        "grasp_mechanism": null,
+        "last_err_m": 0.0132947609010157,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 87
+      },
+      "t_s": 11.097
+    },
+    {
+      "decision": {
+        "intent_key": "k3",
+        "params": {},
+        "skill": "grasp"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000003",
+        "grasp_mechanism": "contact_confirmed_weld",
+        "last_err_m": 0.004438299373160141,
+        "reason": null,
+        "skill": "grasp",
+        "state": "done",
+        "steps": 82
+      },
+      "t_s": 14.152
+    },
+    {
+      "decision": {
+        "intent_key": "k4",
+        "params": {
+          "x": 0.0,
+          "y": 0.18,
+          "z": 0.09
+        },
+        "skill": "move_to"
+      },
+      "event": "tool_action",
+      "status": {
+        "action_id": "act-000004",
+        "grasp_mechanism": null,
+        "last_err_m": 0.013003798191187502,
+        "reason": null,
+        "skill": "move_to",
+        "state": "done",
+        "steps": 603
+      },
+      "t_s": 17.292
+    }
+  ]
+}

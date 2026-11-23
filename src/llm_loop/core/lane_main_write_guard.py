@@ -33,6 +33,117 @@
 - **--git-dir/--work-tree**：目标仓库不明 → 保守当 main（fail-closed），
   不再静默按 workdir 当前分支放行。
 
+2026-11-19（EVO-20261119-0fa86cab，人工批准）：
+- **shell 层 ``cd`` 链跟随**：段首 ``cd <literal>``（命令首或 ``&&``/``;`` 之后；
+  ``~`` 经 expanduser；``$var``/反引号等不可解析 → 未知）更新判定 cwd，其后
+  无重定向的 git 动词按实际落点判分支——修复「``cd <worktree> && git commit``
+  无 workdir 参数被误判 main 直写」的假阳性；``|``/``&``/``||`` 子壳语义 →
+  未知（fail-closed）。
+- **token 化收紧**：``shlex.split`` 启用 ``punctuation_chars``，``;``/``&&``/``|``
+  独立成 token——``cd wt&&git commit`` 粘写使 ``git`` 动词整体逃过判定的
+  既有旁路同批闭合。
+- **括号子壳精确建模（审查 subagent_a645e424028c P0-2 修复）**：``(``/``)`` 以栈
+  建模——子壳继承父壳视图、内部 ``cd`` 正常跟踪、``)`` 弹栈还原；不配对 ``)``
+  弹空栈置未知（保守）。闭合 ``(cd wt && git commit)`` 内层 ``cd`` 逃过判定的
+  fail-open 旁路；``$( )`` 命令替换中的命令同被跟踪。
+- **commenters ``#``**（fe01ff8da0cd P2-2 / ecc9877d2e93 P2-1 / 61bbdabfee9d
+  P2-2 三轮复核；本机 shlex 3.13 探针实证：``cd wt#note`` → ``[cd, wt]``
+  词中即截断、``cd 'wt#note'`` → 全名保留）：未加引号词中 ``#`` 在 lexer 层
+  截断，截断路径与 bash 字面路径分歧时两方向都可能误解析 → **引号形式含
+  ``#`` 的目标一律保守 ""**；未加引号形态属 shlex 边界，截断结果若通过
+  ``is_dir`` 则按其判定（残留已知风险，罕见路径名）。
+- **``cd`` 存在性校验**（审查 ecc9877d2e93 P1-1）：``cd`` 目标经 ``is_dir``
+  校验，不存在/非目录 → ""（bash cd 失败时 shell 停留原处，字面落点不可
+  信）；相对 ``cd`` 的基准目录同样校验。代价：对失效目录名的合法命令
+  过拦（安全方向）。未知 cd 链后的相对 ``git -C`` 不回落 workdir 解析
+  （P2-2）；词法失败（引号不配对）→ 保守哨兵而非盲放行（P2-3）。
+- **``cd`` 多操作数 = 失败**（审查 4289cf3401e0 P1-1）：bash 对
+  ``cd wt extra`` 报 "too many arguments" 且 cwd 不变——按成功跟踪是
+  fail-open，现按失败处理（cwd 保持）。
+- **cd 任意选项形 / here-string（审查 subagent_02c9e0493bb0 P1-1/2 修复）**：
+  ``cd -e/-@/-Pe <main>`` 等任意选项形 token 一律跳过、真实落点跟踪其后
+  （无效选项 bash 报错不改 cwd → 跳过并跟踪属保守过拦方向）；
+  ``<<<``（here-string）并入操作数边界集与 fd 重定向正则（``[<>]{1,2}``
+  匹配不了三个 ``<``）。环境边界（审查 P2-4 建议记录）：相对 ``cd`` 的
+  ``CDPATH`` 语义未建模——``CDPATH`` 首组件非空/非 ``.`` 时 bash 可能落
+  CDPATH 目录，静态解析无法感知该环境变量，属声明边界（外层执行闸兜底）。
+  词中 ``#`` 截断残留经实测复核（shlex 3.13 punctuation_chars 模式下
+  ``wt#note``→``wt`` 截断成立、bash 保持整词），docstring 记录准确。
+- **已知边界（既有，非本批引入，4289cf3401e0 P2-1；2026-11-20 修订，审查
+  subagent_3eab63eb5e61 P2-1/P2-2）**：反引号替换与 ``$( … )`` 内的 git 命令
+  按上文"引号内命令替换 = 保守哨兵"拦截（任一 token 含 ``$(`` 或反引号即
+  哨兵）；旧版"反引号内放行"的说法与哨兵行为矛盾，已更正。整串单 token
+  的带引号 ``eval "cd wt && git commit"``（不含 ``$(``/反引号）自 r11 起也
+  走命令位不透明词哨兵（见下）。``bash -c``/``sh -c`` 嵌套解释器载荷仍是
+  文档声明的表达力边界：子进程内落点不在父 shell cwd 模型内，依赖外层
+  执行闸（execute_command 沙箱/宿主策略）。
+- **cd 后重定向不是操作数**（审查 61bbdabfee9d P1-1）：``<``/``>``/``>>`` 不
+  计入多操作数判定——``cd wt > log && git push`` 的 cd 在 bash 中成功，
+  误判失败会放行真实落点。
+- **数字 fd 重定向与判定顺序**（审查 18c9ecb809a5 P1-1/P1-2）：``2>``/``2>&1``
+  等 fd 前缀重定向经裸数字拆分（``2``+``>``），先合并为单 token 再判定；
+  ``cd`` 的"无参数/边界/多操作数"按序判定，避免把 ``cd && git commit`` 的
+  下一命令词误当第二操作数。
+- **引号内命令替换 = 保守哨兵**（审查 18c9ecb809a5 P1-3）：``"$( … git … )"``
+  或反引号整串单 token 内的 git 动词不可见，而 bash 会真实执行 → 任一
+  token 含 ``$(`` 或 `` ` `` 即返回保守哨兵（当 main 上的 commit 判定）。
+  代价：``git commit -m "$(date)"`` 类合法形态被过拦（安全方向）。
+- **已知边界补充（既有，18c9ecb809a5 P2-1）**：``pushd``/``popd`` 与命令位
+  前缀 ``command cd``/``time cd`` 暂不进入 cd 链跟踪，属文档声明的解析
+  表达力边界。（2026-11-20 起由下批修复收敛，见下。）
+- **逻辑行拆分与命令位前缀（审查 subagent_cde453f77b91 P1-1/P1-2 修复）**：
+  shlex 把 ``\n`` 当空白、段边界只剩 ``&&``/``;``——``cd a\ncd b && git
+  commit`` 的第二个 ``cd`` 逃过段首判定（还被读成第一个 ``cd`` 的第二操作
+  数 → 误判 cd 失败 → cwd 停留 workdir → 放行真实落点）。现在按引号感知
+  拆逻辑行（引号内换行是数据不是分隔符；``\\<newline>`` 按 bash 续行拼接），
+  行间补 ``;`` 边界；顺带把 ``#`` 注释收敛到行尾（bash 语义，旧实现会把
+  后续行全部吞进注释）。命令位前缀建模：赋值词（``X=1 cd wt``）、
+  ``builtin``/``command``/``time``/``!`` 与花括号组标记（``{``/``}``）不改
+  变 cd 语义 → 透明跳过、命令位保持；``eval``/``pushd``/``popd``/``source``
+  /``.`` 可能改 cwd 且参数不可静态解析 → 置未知（""，fail-closed，收敛
+  18c9ecb809a5 P2-1 遗留）。
+- **bash ``&>``/``&>>`` 重定向识别（审查 subagent_cde453f77b91 P1-3）**：
+  归入 fd 重定向算子集——``cd wt &>log && git commit`` 不再把 ``&>`` 误当
+  cd 第二操作数（旧解析误判 cd 失败 → cwd 停留 workdir → 放行真实落点）。
+  ``2>&1`` 的 shlex 拆分残留（``2>&`` + ``1``）合并回单 token；git 动词参数
+  切片遇重定向算子时跳过算子及其目标词继续收集——``git commit 2>log --
+  docs/x`` 的 pathspec 不再被误丢（P2-2：审计保真 + 回执窄通道不因前置
+  重定向失效；``2>&1`` 无独立目标词，不吞后续 token）。
+- **P2-5 核验**：``re``/``Path`` 等导入均在模块顶部 import 区，审查器 diff
+  视野不可见项，此处显式确认存在。
+- **shell 复合关键字透明化（审查 subagent_3eab63eb5e61 P1-1 修复）**：
+  ``if``/``then``/``else``/``elif``/``fi``/``while``/``until``/``for``/
+  ``do``/``done``/``case``/``esac``/``select`` 是普通词，旧解析在命令位遇
+  到它们会终结 seg_start——``if cd <main>; then git commit; fi`` 的 cd
+  失踪 → fail-open。现并入透明前缀集（命令位保持）。注：``if cd`` 失败
+  分支的 cwd 条件性不建模——把落点记到 cd 目标属保守方向（失败时实际
+  不执行 then 体，无 fail-open）；条件分支精确建模不在射程。
+- **命令位不透明词哨兵（审查 subagent_3eab63eb5e61 P2-2）**：命令位上含
+  空白/``&&``/``;``/``|`` 的单 token（引号折叠产物，如
+  ``eval "cd wt && git commit"``）可能携带隐藏 git 动词 → 保守哨兵（当
+  main commit 判定）。bash 命令名不可能含未引号空白，此类 token 均属
+  引号/展开不可静态解析形态；代价：命令位带引号含空格的怪形态被过拦
+  （安全方向，罕见）。
+- **双引号内反斜杠转义（审查 subagent_3eab63eb5e61 P2-3 修复）**：
+  ``_split_logical_lines`` 在双引号内按 bash 消费 ``\\<char>``（``\\"``/
+  ``\\\\``/``\\$``/续行），修复引号状态失步导致的伪段界或误触未配对
+  引号哨兵；单引号内反斜杠保持字面（bash 语义）。实测偏差本就偏保守，
+  此为保真度补齐。
+- **透明前缀旗标 / cd 选项 / clobber 重定向（审查 subagent_f8b3178c6f57
+  P1-1/2/3 修复）**：``time -p cd``/``command -p cd`` 的旗标词不再终结
+  命令位；``cd -P/-L/--`` 的真实落点在选项之后（``--`` 后按字面）；
+  ``>|``/``2>|``（clobber 重定向）并入 fd 重定向集。三者旧解析均会把
+  真实落点误判为"第二操作数/普通词"→ cwd 不变 → fail-open，已关闭。
+- **条件体内 cd 降级（审查 subagent_cd3f526623bf P1-1 修复）**：``then``/
+  ``do`` 分支体、``case`` 分支、函数体（``f() { … }`` / ``function f { … }``）
+  内的 ``cd`` 可能永不执行（分支未选中/case 只跑一支/函数仅定义）——按
+  词法位置归属落点是 fail-open（``if false; then cd <wt>; fi && git commit``
+  原本按 workdir 拦截，会被放行）。现命中条件体即置未知哨兵（当 main
+  判定）；条件位置的 ``cd``（``if cd wt; then …``，bash 先执行条件）仍正常
+  跟踪。代价：分支确实执行时的合法落点被过拦（安全方向）。声明边界：
+  ``;;``/``esac`` 仅命令位识别（数据词 ``echo ";;"`` 不参与状态机），单行
+  case 的 esac 漏识别只会延续降级（过拦方向）。
+
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
 一致：拒绝必须基于已证事实）。
@@ -63,6 +174,19 @@ STALE_AFTER_S = 4 * 3600.0
 # verifying/merging 超过该时长仍未终态 → 不再阻断 push。只豁免 push；commit
 # 仍被任意 live lane 挡（共享 worktree 直写会落错分支）。0 或负数=关闭豁免。
 CLOSING_BLOCK_MAX_S = 30 * 60.0
+# 数字 fd 重定向算子（bash）：`2>` / `2>>` / `2>&1` / `>&2` 等——shlex
+# punctuation_chars 会把 `2>/dev/null` 拆成裸数字 `2` + `>` + 路径，
+# 需先合并为单 token 再参与段边界判定（review 18c9ecb809a5 P1-1）。
+# `&>`/`&>>`（bash 双流重定向）同属此集：不识别会把 `cd wt &>log` 的
+# `&>` 误当 cd 第二操作数 → 误判 cd 失败 → 放行真实落点
+# （review subagent_cde453f77b91 P1-3）。`>|`/`2>|`（clobber 重定向）
+# 同理（review subagent_f8b3178c6f57 P1-3）。
+_FD_REDIRECT_RE = re.compile(r"^(?:[0-9]*[<>]{1,2}&?[0-9]*|&(?:>>|>)|[0-9]*>[|]|<{3})$")
+# 操作数边界 token 集：cd 落点判定与 git refs 切片共用（含 here-string
+# `<<<`，review subagent_02c9e0493bb0 P1-2——`[<>]{1,2}` 匹配不了三个 `<`）；
+# `;;` 为 case 分支结束符（cd3f526623bf 轮补充：refs 不再吞 `;;`/`esac`，
+# `cd wt;;` 不再被误判为多操作数 cd 失败）。
+_TOK_OPERAND_BOUNDARY = ("(", ")", "<", ">", ">>", "<<<", ";;")
 # 回执/证据窄通道（审查残余①，2026-11-09 收紧）：`git commit ... -- <paths>`
 # 显式列出且全部落在这些前缀下时，不受他人 live lane 阻挡（只追加证据，改不到
 # 代码）。原 `docs/` 整树过宽——`docs/ai_rules.md` 这类行为性文档也能借道；
@@ -93,21 +217,373 @@ def _git_verbs(
 
     ``-C`` 按 git 语义**顺序链式**解析（后段相对前段）；无法解析时返回哨兵
     ``""``（调用方按"目标仓库不明"保守当 main 处理，不静默放行）。
+    EVO-20261119-0fa86cab：token 化启用 ``punctuation_chars``（``;``/``&&``/``|``
+    独立成 token，粘写不再逃过动词识别），并跟踪 shell 层段首 ``cd`` 链——
+    无重定向的动词以 cd 链落点为判定 cwd（无 cd 段时仍为 workdir 参数，历史
+    行为不变）；``|``/``&``/``||`` 子壳/异步语义按未知（""）fail-closed。
     """
     try:
         from llm_loop.core.command_scope_guard import _strip_heredocs
 
-        stripped, _reason = _strip_heredocs(command)
+        stripped, _reason = _strip_heredocs(_strip_here_strings(command))
+        if not stripped.strip():
+            # 剥离后为空（如引号未闭合被判"跨行延续到命令末尾"）：命令的真实
+            # 执行形态不可解析（bash 对未闭合引号是语法错误、不执行任何命令）
+            # → 保守哨兵，不盲放行（ecc9877d2e93 P2-3 真实机制）。
+            return [("commit", [], "")]
         text = stripped
     except Exception:  # noqa: BLE001 — 剥离失败不阻断（按原串保守解析）
         text = command
     try:
-        tokens = shlex.split(text, posix=True)
+        # 逻辑行拆分（review subagent_cde453f77b91 P1-1）：shlex 把 \n 当空白，
+        # 段边界只剩 &&/;——`cd a\ncd b && git commit` 的第二个 cd 逃过段首判定
+        # （还被读成第一个 cd 的第二操作数→误判 cd 失败→放行真实落点）。
+        # 按引号感知拆逻辑行（引号内换行是数据；`\<newline>` 是 bash 续行），
+        # 行间补 ";" 段边界；每行独立 lex 同时让 # 注释止于行尾（bash 语义，
+        # 旧实现单次 lex 会把后续行整体吞进注释）。
+        tokens: list[str] = []
+        _adjacent: set[int] = set()  # 与后一 token 在原文紧邻的索引（review a37f665fb944 P1-2）
+        for _li, _line in enumerate(_split_logical_lines(text)):
+            if _has_unquoted_midword_hash(_line):
+                # 词中未加引号 #（review subagent_89ba9fb91a5f P2-1 实测升级）：
+                # shlex 截断整行余部致 git 动词对判定不可见（fail-open）→
+                # 保守哨兵，与词法失败同级。
+                return [("commit", [], "")]
+            if _li and tokens:
+                tokens.append(";")
+            _tok_start = len(tokens)
+            _lex = shlex.shlex(_line, posix=True, punctuation_chars=True)
+            _lex.commenters = "#"  # 词首 # 起注释（行内）；词中 # 截断为已知偏差（见 _resolve_shell_cd）
+            _lex.whitespace_split = True
+            tokens.extend(_lex)
+            # 邻接感知对齐（P1-2）：shlex 丢弃空白邻接信息，而 bash 里 ``2 >f``
+            # 的 ``2`` 是参数、``2>f`` 才是 fd 重定向 → 逐 token 贪心 find 对齐
+            # 行内原文（token 序与原文一致，find 只会提前命中、错判方向均保守），
+            # span 相接才算紧邻合并候选。
+            _spans: list[int] = []
+            _p = 0
+            for _t in tokens[_tok_start:]:
+                if _t:
+                    _j = _line.find(_t, _p)
+                    if _j >= 0:
+                        _spans.append(_j)
+                        _p = _j + len(_t)
+                        continue
+                _spans.append(-1)
+            for _k in range(len(_spans) - 1):
+                if (
+                    _spans[_k] >= 0
+                    and _spans[_k + 1] == _spans[_k] + len(tokens[_tok_start + _k])
+                ):
+                    _adjacent.add(_tok_start + _k)
     except ValueError:
-        return []
+        # 词法失败（引号不配对等，bash 语法错误本就不执行任何命令）→ 保守哨兵：
+        # 按 "" 目标上的 commit 判定（调用方当 main），不盲放行（ecc9877d2e93 P2-3）。
+        return [("commit", [], "")]
+    # 数字 fd 重定向合并（18c9ecb809a5 P1-1）：`2>/dev/null` → ["2", ">", "/dev/null"]
+    # → ["2>", "/dev/null"]，段边界判定不再把裸数字误当操作数。
+    merged: list[str] = []
+    _mk = 0
+    while _mk < len(tokens):
+        _tok = tokens[_mk]
+        if (
+            _tok.isdigit()
+            and _mk + 1 < len(tokens)
+            and _FD_REDIRECT_RE.match(tokens[_mk + 1] or "")
+            and _mk in _adjacent  # ``2 >f``（有空格）里 2 是参数，不合并（P1-2）
+        ):
+            _merged_tok = _tok + tokens[_mk + 1]
+            _after = tokens[_mk + 2] if _mk + 2 < len(tokens) else ""
+            if _merged_tok.endswith("&") and _after.isdigit():
+                # `2>&` + `1`：shlex 把 `2>&1` 拆成三段，裸数字 `1` 若漏成游离
+                # token 会干扰段内判定/审计切片 → 并回单 token（P2-2）。
+                merged.append(_merged_tok + _after)
+                _mk += 3
+            else:
+                merged.append(_merged_tok)
+                _mk += 2
+            continue
+        if (
+            _tok
+            and _FD_REDIRECT_RE.match(_tok)
+            and _tok.endswith("&")
+            and _mk + 1 < len(tokens)
+            and tokens[_mk + 1].isdigit()
+            and _mk in _adjacent  # ``>& 2``（有空格）里 2 是命令参数，不合并（P1-2）
+        ):
+            # `>&` + `2` 等未带前置数字的 fd 复制形 → 同样并回单 token。
+            merged.append(_tok + tokens[_mk + 1])
+            _mk += 2
+            continue
+        merged.append(_tok)
+        _mk += 1
+    tokens = merged
+    # 括号-标点合并拆分（review subagent_8d393977e0ec P0-1 复检发现）：
+    # punctuation_chars 把 `)` 与相邻标点并成 `');'`（同 `2>&1` 合并机制），
+    # 裸 `)` 子壳分支失配 → 栈不弹 → 后续 git 误归属子壳内 cwd（fail-open，
+    # `( cd feat; : ); git commit` 实证）。首括号纯标点 token 拆出 `(`/`)`
+    # 保留栈语义，其余复合（`;;`/`&&` 等）原样保留不破坏既有分支。
+    # 排除仅 `()` 本身（数据词引号折叠的空括号对不是子壳边界）与单字符
+    # `(`/`)`（len==1 拆分会产生空 token 前缀，吃掉段首 seg_start——六测
+    # 回归实证）；其余首括号纯标点合并（`');'` 等多字符形）照拆。
+    if any(_tok and _tok[0] in "()" and len(_tok) > 1 and _tok != "()" and all(_c in "(){};&|<>" for _c in _tok) for _tok in tokens):
+        _expanded: list[str] = []
+        for _tok in tokens:
+            if _tok and _tok[0] in "()" and len(_tok) > 1 and _tok != "()" and all(_c in "(){};&|<>" for _c in _tok):
+                _expanded.append(_tok[0])
+                _expanded.append(_tok[1:])
+            else:
+                _expanded.append(_tok)
+        tokens = _expanded
+    # 引号内命令替换（18c9ecb809a5 P1-3）：`"$( … git … )"` / 反引号整串单
+    # token，内部 git 动词不可见而 bash 会真实执行 → 保守哨兵（当 main 判定）。
+    # 进程替换（review subagent_c50061b2c402 P0-1）：`<(`/`>(`（含 `2>(` fd 形）
+    # 的子 shell 会真实执行且内部 cd/git 对判定不可见 → 同入哨兵（保守当 main）。
+    if any("$(" in _tok or "`" in _tok or "<(" in _tok or ">(" in _tok for _tok in tokens):
+        return [("commit", [], "")]
     out: list[tuple[str, list[str], str | None]] = []
+    # EVO-20261119-0fa86cab：shell 层 ``cd`` 链跟踪。None=未见 cd（沿用 workdir
+    # 参数判定，行为与历史一致）；""=不可解析/子壳语义（调用方保守当 main）。
+    shell_cwd: str | None = workdir
+    # 括号子壳栈（review subagent_a645e424028c P0-2 修复）：``(`` 继承父壳视图
+    # 入栈、子壳内 ``cd`` 正常跟踪（精确建模，不再逃过判定）、``)`` 弹栈还原；
+    # 不配对 ``)`` → 弹空栈置未知（保守）。``$( )`` 命令替换中的命令同被跟踪。
+    stack: list[str | None] = []
+    # 条件体跟踪（review subagent_cd3f526623bf P1-1）：cd 位于 then/do 分支体、
+    # case 分支或函数体内时可能永不执行（分支未选中/case 只跑一支/函数仅定义），
+    # 按词法位置归属 cd 落点是 fail-open → 命中即置未知哨兵（""，当 main 判定）。
+    _cond_body_depth = 0
+    _case_depth = 0
+    _func_pending = False
+    _func_body_depth = 0
+    seg_start = True
     i = 0
     while i < len(tokens):
+        _prev_tok = tokens[i - 1] if i else ""
+        if tokens[i] in _SEG_PERSIST:
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] in _SEG_SUBSHELL:
+            # | & || ：子壳/异步/左臂成败不定，cd 语义不可靠 → 置未知（fail-closed）。
+            seg_start = True
+            shell_cwd = ""
+            i += 1
+            continue
+        if tokens[i] == "(":
+            if _case_depth > 0:
+                # case 模式可选 `(`（`case $x in (a) …` 合法 bash，review
+                # subagent_8d393977e0ec P0-1）：非子壳开口——push 会造成栈失衡
+                # （pattern `)` 被 case 门控不弹 → 真子壳闭合 `)` 弹到过期条目
+                # 恢复 stale cwd）。case 体内 cd 已被条件体哨兵降级，不 push
+                # 与 `)` 的 case 门控自洽保守。
+                seg_start = True
+                i += 1
+                continue
+            stack.append(shell_cwd)
+            _func_pending = False  # `f() ( … )` 子壳体形态：后续 `{` 不再是函数体开口
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == ")":
+            if _case_depth > 0:
+                # case 模式分隔符 `a)`（review subagent_a37f665fb944 P1-1）：
+                # 非子壳闭合——无条件弹栈会把开放子壳内的 cwd 恢复成过期父值
+                # （连 sticky unknown 一并被覆写）→ 只作段分隔，栈/cwd 原样保持。
+                seg_start = True
+                i += 1
+                continue
+            shell_cwd = stack.pop() if stack else ""
+            if _prev_tok == "(":
+                # `name()` 空参数括号 = 函数定义声明（bash 语法中空 () 仅此一用；
+                # 非空 () 在上面分支已消费）——其后 `{` 开函数体
+                # （review subagent_cd3f526623bf P1-1）。
+                _func_pending = True
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == ";;":
+            # case 分支结束符：其后 esac/下一分支模式词按命令位继续。与其余
+            # 保留字一致仅在命令位识别（数据词 `echo ";;"` 不参与状态机——
+            # 误识别会把后续词提为命令位，属 fail-open 方向）。
+            seg_start = True
+            i += 1
+            continue
+        if seg_start and tokens[i] in _COND_KEYWORDS:
+            # 条件体状态机（review subagent_cd3f526623bf P1-1）：then/do 进入
+            # 分支体；elif/fi/done 关闭；case/esac 成对计数（case 内任意位置
+            # 的 cd 一律降级——哪支会执行静态不可知）；function 声明（配合
+            # `name()` 括号检测）后 `{` 开函数体。
+            if tokens[i] in ("then", "do"):
+                _cond_body_depth += 1
+            elif tokens[i] in ("elif", "fi", "done"):
+                _cond_body_depth = max(0, _cond_body_depth - 1)
+            elif tokens[i] == "case":
+                _case_depth += 1
+            elif tokens[i] == "esac":
+                _case_depth = max(0, _case_depth - 1)
+            else:  # function
+                _func_pending = True
+            seg_start = True
+            i += 1
+            continue
+        if seg_start and tokens[i] == "()":
+            # `name()` 粘写形（punctuation_chars 把 () 并为单 token）：bash 中
+            # 空参数括号仅函数定义一用 → 其后 `{` 开函数体
+            # （review subagent_cd3f526623bf P1-1）。间隔写法 `f ()` 由上面
+            # `)` 分支的 prev_tok 检测覆盖。seg_start 门控（review
+            # subagent_89ba9fb91a5f P2-2）：数据词 `echo '()'` 不得 arm
+            # 函数体模式误降级后续顶层花括号组。
+            _func_pending = True
+            seg_start = True
+            i += 1
+            continue
+        if tokens[i] == "{" and (
+            _func_pending or (seg_start and _func_body_depth > 0)
+        ):
+            # 函数体开口不受 seg_start 门控（`function f {` 的 `{` 前是函数名
+            # 数据词）；体内嵌套花括号仍要求命令位。非函数语境的 `{` 落回
+            # 透明分支——那里还承担前缀旗标校验（`{ -x …` → 保守），绕过会
+            # 丢簿记（review subagent_6c60321fd479 P1-1 回归）。
+            if _func_pending:
+                _func_pending = False
+                _func_body_depth = 1
+            else:
+                _func_body_depth += 1
+            seg_start = True
+            i += 1
+            continue
+        if seg_start and tokens[i] == "}" and _func_body_depth > 0:
+            _func_body_depth -= 1
+            seg_start = True
+            i += 1
+            continue
+        if seg_start and tokens[i] in _CMD_POS_TRANSPARENT:
+            # 命令位透明前缀（builtin/command/time/!/{/} + shell 复合关键字）：
+            # bash 仍执行后续命令且 cd 语义不变（`! cd wt`/`time cd wt` 照常改
+            # cwd，必须跟踪；`{ cd wt; }` 花括号组在当前 shell 执行、cwd 持续
+            # 生效）→ 跳过、命令位保持（review subagent_cde453f77b91 P1-2、
+            # subagent_3eab63eb5e61 P1-1）。
+            _prefix = tokens[i]
+            i += 1
+            _conservative = False
+            while (
+                i < len(tokens)
+                and tokens[i].startswith("-")
+                and len(tokens[i]) > 1
+            ):
+                if tokens[i] in _TRANSPARENT_PREFIX_FLAGS.get(_prefix, set()):
+                    # 前缀接受的旗标（time -p / command -p）：透明跳过
+                    # （review subagent_f8b3178c6f57 P1-1）。
+                    i += 1
+                else:
+                    # 未被接受的旗标形 token（review subagent_6c60321fd479
+                    # P1-1）：bash 中前缀调用失败或该词是命令名——cd 链
+                    # 不可信 → 保守置未知（fail-closed），命令位终结。
+                    shell_cwd = ""
+                    seg_start = False
+                    _conservative = True
+                    break
+            if _conservative:
+                continue
+            continue
+        if seg_start and tokens[i] in _CMD_POS_CWD_UNKNOWABLE:
+            # eval/pushd/popd/source/.：可能改 cwd 且参数不可静态解析 → 置未知
+            # （P2-1 fail-closed；其后词不再是命令位，避免把参数误当命令）。
+            # 若其载荷（同段内后续 token）含不透明词（引号折叠的空白/段界
+            # 标点，如 eval "cd wt && git commit"），可能携带隐藏 git 动词 →
+            # 升级为保守哨兵（审查 subagent_3eab63eb5e61 P2-2）。
+            _k = i + 1
+            while (
+                _k < len(tokens)
+                and tokens[_k] not in _SEG_PERSIST
+                and tokens[_k] not in _SEG_SUBSHELL
+                and tokens[_k] not in ("(", ")")
+            ):
+                if _OPAQUE_CMDPOS_RE.search(tokens[_k]):
+                    return [("commit", [], "")]
+                _k += 1
+            seg_start = False
+            shell_cwd = ""
+            i += 1
+            continue
+        if seg_start and _ASSIGN_WORD_RE.match(tokens[i]):
+            # 命令位赋值词 `X=1 cd wt`：bash/dash 都执行后续命令、cd 语义不变
+            # → 透明跳过、命令位保持（review subagent_cde453f77b91 P1-2；
+            # `1=2` 这类非法赋值名不匹配正则，按普通词处理）。
+            i += 1
+            continue
+        if seg_start and _OPAQUE_CMDPOS_RE.search(tokens[i]):
+            # 命令位不透明词（审查 subagent_3eab63eb5e61 P2-2）：含空白/段界
+            # 标点的单 token（引号折叠产物，如 eval "cd wt && git commit"）
+            # 可能携带隐藏 git 动词 → 保守哨兵（当 main 上的 commit 判定）。
+            return [("commit", [], "")]
+        if seg_start and tokens[i] == "cd":
+            # bash cd 选项处理（review subagent_f8b3178c6f57 P1-2、
+            # subagent_02c9e0493bb0 P1-1、subagent_36174c1824ec P1-1）：
+            # 有效性白名单只含跨 bash 版本确定的 `-P`/`-L`（3.2+ 与 5.x 一致，
+            # 本机 3.2 实证 [-L|-P]）；
+            # 其余选项形（-e/-@/-q/-Pe 组合…）有效性随 bash 版本变化——
+            # 5.x 执行、3.2 报错，静态无法裁决，且两种现实下任何单一静态
+            # 落点都单向 fail-open（跟踪→workdir=main 场景；不跟踪→
+            # workdir=lane 场景）→ 唯一一致安全解是哨兵（当 main 判定）。
+            # `--` 之后第一个词是字面目标（目录名可以叫 `-P`）。
+            _opt = i + 1
+            while _opt < len(tokens) and tokens[_opt] in ("-P", "-L"):
+                _opt += 1
+            if _opt < len(tokens) and tokens[_opt] == "--":
+                _opt += 1
+                nxt = tokens[_opt] if _opt < len(tokens) else ""
+                extra = tokens[_opt + 1] if _opt + 1 < len(tokens) else ""
+                seg_start = False
+            elif (
+                _opt < len(tokens)
+                and tokens[_opt].startswith("-")
+                and len(tokens[_opt]) > 1
+            ):
+                # 有效性不明的选项形：cd 语义不可静态裁决 → 保守哨兵
+                return [("commit", [], "")]
+            else:
+                nxt = tokens[_opt] if _opt < len(tokens) else ""
+                extra = tokens[_opt + 1] if _opt + 1 < len(tokens) else ""
+                seg_start = False
+            if (
+                not nxt
+                or nxt in _SEG_PERSIST
+                or nxt in _SEG_SUBSHELL
+                or nxt in _TOK_OPERAND_BOUNDARY
+                or _FD_REDIRECT_RE.match(nxt)
+            ):
+                # cd 无参数（bash: cd → HOME，cwd 未知）或后随边界/重定向 → 保守
+                # （review 18c9ecb809a5 P1-2：先判无参/边界，再判多操作数）。
+                shell_cwd = ""
+                i = _opt
+                continue
+            if (
+                extra
+                and extra not in _SEG_PERSIST
+                and extra not in _SEG_SUBSHELL
+                and extra not in _TOK_OPERAND_BOUNDARY
+                and not _FD_REDIRECT_RE.match(extra)
+            ):
+                # bash: cd 多操作数 → "too many arguments"，cwd 不变
+                # （review subagent_4289cf3401e0 P1-1：按成功 cd 跟踪是 fail-open）。
+                i = _opt + 1
+                continue
+            if _cond_body_depth > 0 or _case_depth > 0 or _func_body_depth > 0:
+                # cd 位于条件分支体/case 分支/函数体（review
+                # subagent_cd3f526623bf P1-1）：可能不执行（分支未选中、
+                # case 只跑一支、函数仅定义）——按词法归属落点是 fail-open
+                # （`if false; then cd wt; fi && git commit` 原本按 workdir
+                # 拦截，会被放行）→ 唯一一致安全解是未知哨兵（当 main 判定）。
+                # 代价：分支确实执行时的合法落点被过拦（安全方向）。
+                shell_cwd = ""
+                i = _opt + 1
+                continue
+            shell_cwd = _resolve_shell_cd(shell_cwd, nxt, workdir)
+            i = _opt + 1
+            continue
+        seg_start = False
         if tokens[i] != "git":
             i += 1
             continue
@@ -122,11 +598,18 @@ def _git_verbs(
                 target = ""
                 break
             k -= 1
+        # -C 相对段基于 shell 层 cd 链落点（无 cd 时为 workdir 参数）；cd 链
+        # 处于未知（""）时相对 -C 不得回落 workdir 解析 → 直接未知
+        # （ecc9877d2e93 P2-2：Path("")/seg 相对误解析方向）。
+        cd_base = shell_cwd if shell_cwd is not None else workdir
+        cd_unknown = shell_cwd == ""
         while j < len(tokens) and tokens[j].startswith("-"):
             tok = tokens[j]
             if tok in _GIT_VALUE_OPTS:
                 if tok == "-C" and j + 1 < len(tokens):
-                    target = _chained_cwd(target, tokens[j + 1], workdir)
+                    target = "" if cd_unknown else _chained_cwd(
+                        target, tokens[j + 1], cd_base
+                    )
                 elif tok in ("--git-dir", "--work-tree"):
                     # 仓库被选项重定向，且不做后续路径语义跟随（--git-dir 可指
                     # .git 目录或 bare 仓库）→ 标记"目标仓库不明"，调用方按
@@ -139,11 +622,308 @@ def _git_verbs(
             else:
                 j += 1
         if j < len(tokens) and tokens[j] in ("commit", "push"):
-            out.append((tokens[j], tokens[j + 1 :], target))
+            if target is None:
+                # 无任何重定向 → 以 shell 层 cd 链落点为判定 cwd；无 cd 段时即
+                # workdir 参数（None 保持 None，历史行为不变）。
+                target = shell_cwd
+            # 参数/refspec 只吃到本段边界（&& ; | & || |& ( ) < > >>），不吞后续段
+            # 与重定向——旧无界切片会把 `git commit -m x > log` 的重定向目标
+            # 误收进 refspec（review subagent_4289cf3401e0 P2-2）。
+            k2 = j + 1
+            refs: list[str] = []
+            while k2 < len(tokens):
+                tok = tokens[k2]
+                if (
+                    tok in _SEG_PERSIST
+                    or tok in _SEG_SUBSHELL
+                    or tok in _TOK_OPERAND_BOUNDARY
+                    or _FD_REDIRECT_RE.match(tok)
+                ):
+                    if not _FD_REDIRECT_RE.match(tok):
+                        break
+                    # 重定向算子（含 &>/&>>、2>）：跳过算子与其目标词后继续
+                    # 收集——`git commit 2>log -- docs/x` 的 pathspec 不再被
+                    # 误丢（P2-2：审计保真 + 回执窄通道不因前置重定向失效）。
+                    # 注意用显式列表收集：连续切片 tokens[j+1:k2] 无法把被跳
+                    # 过的算子/目标从 args 中剔除。fd 复制形（2>&1 / >&2，
+                    # token 以 & 或数字收尾）没有独立目标词，不吞后续 token。
+                    _after = tokens[k2 + 1] if k2 + 1 < len(tokens) else ""
+                    if (
+                        _after
+                        and tok.endswith(("<", ">", "|"))
+                        and not _FD_REDIRECT_RE.match(_after)
+                        and _after not in _SEG_PERSIST
+                        and _after not in _SEG_SUBSHELL
+                        and _after not in _TOK_OPERAND_BOUNDARY
+                        and not _after.startswith("-")
+                    ):
+                        k2 += 2
+                    else:
+                        k2 += 1
+                    continue
+                refs.append(tok)
+                k2 += 1
+            out.append((tokens[j], refs, target))
+            seg_start = False  # 动词后的参数词不是命令位（`git commit cd wt` 的 cd 是 pathspec）
             i = j + 1
         else:
             i = j
     return out
+
+
+# EVO-20261119-0fa86cab：shell 段分隔符分类。顺序段（&& ;）cd 语义延续；
+# 子壳/异步/左臂成败不定（| & ||）cd 语义不可靠 → 其后按未知 fail-closed。
+_SEG_PERSIST = frozenset({"&&", ";"})
+_SEG_SUBSHELL = frozenset({"|", "||", "&", "|&"})  # |& = bash 双流管道（punctuation_chars 单 token）
+# 命令位前缀建模（review subagent_cde453f77b91 P1-2 / P2-1，2026-11-20）：
+# ①命令位赋值词 `X=1 cmd`——bash/dash 均执行后续命令且 cd 语义不变；
+# ②透明前缀——builtin/command/time/! 与花括号组标记 { } 都不改变 cd 语义
+#   （`! cd wt`、`time cd wt` 照常改 cwd，必须跟踪；`{ cd wt; }` 花括号组在
+#   当前 shell 执行、cwd 持续生效）；
+# ③cwd 不可静态判定——eval/pushd/popd/source/. 可能改 cwd 且参数无法解析 →
+#   置未知（""，fail-closed；18c9ecb809a5 P2-1 的文档边界就此收敛）。
+_ASSIGN_WORD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# 命令位不透明词（审查 subagent_3eab63eb5e61 P2-2）：含空白/段界标点的
+# 单 token 是引号折叠产物（eval "cd wt && git commit"），可能携带隐藏
+# git 动词 → 命令位出现即保守哨兵。bash 命令名不可能含未引号空白。
+_OPAQUE_CMDPOS_RE = re.compile(r"[\s&;|]")
+_CMD_POS_TRANSPARENT = frozenset({
+    "builtin",
+    "command",
+    "time",
+    "!",
+    "{",
+    "}",
+    # shell 复合关键字（审查 subagent_3eab63eb5e61 P1-1）：普通词形态会
+    # 终结命令位——`if cd wt; then git commit; fi` 的 cd 旧解析直接丢失
+    # （fail-open）。它们后面的词仍是命令位，必须透明跳过。
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "while",
+    "until",
+    "for",
+    "do",
+    "done",
+    "case",
+    "esac",
+    "select",
+})
+# 透明前缀接受的旗标白名单（审查 subagent_6c60321fd479 P1-1）：无效旗标
+# 使前缀调用失败、cd 不执行（`command -x cd wt; git commit` 真实落点是
+# 未变的 cwd）——旗标跳过不能无验证放行。`command -v/-V` 只查找不执行，
+# 也不在白名单；`builtin`/`!` 无旗标；`{`/`}` 与复合关键字后旗标形词是
+# 命令名，一律保守。
+_TRANSPARENT_PREFIX_FLAGS = {
+    "time": {"-p"},
+    "command": {"-p"},
+    "builtin": set(),
+    "!": set(),
+}
+_CMD_POS_CWD_UNKNOWABLE = frozenset({
+    "eval", "pushd", "popd", "source", ".", "env",
+    # wrapper 类（review subagent_89ba9fb91a5f P1-1）：执行后续命令且参数词法
+    # 未建模——`nohup env -C <main> git commit`/`exec env ...` 等 wrapper 前缀
+    # 会打断 seg_start 使 env 哨兵失配（fail-open）→ wrapper 词整体置未知
+    # （保守当 main 判定），与 eval/env 同级。
+    "exec", "nohup", "nice", "timeout", "setsid", "sudo", "stdbuf", "strace",
+})
+# env 含其中（review subagent_8d393977e0ec P1-1）：GNU coreutils `env -C <dir>`
+# （--chdir）会真实改变子进程 cwd——`env -C <main> git commit` 在 workdir=feat
+# 场景旧解析归属 feat（fail-open）。env 整体置未知（保守），与 eval 同级。
+# 条件体状态机词集（review subagent_cd3f526623bf P1-1）：仅命令位生效——
+# `echo then` 的 then 是数据词，命令位判定防止把数据词误当状态迁移。
+# then/do 进入分支体；elif/fi/done 关闭；case/esac 成对计数（case 内任意
+# 位置的 cd 一律降级——哪支会执行静态不可知）；function 声明（配合
+# `name()` 空括号检测）进入函数体。声明边界：``;;``/``esac`` 仅命令位识别，
+# 单行 case 的 esac 漏识别只会延续降级（过拦方向，不会 fail-open）。
+_COND_KEYWORDS = frozenset({
+    "then", "do", "elif", "fi", "done", "case", "esac", "function",
+})
+
+
+def _strip_here_strings(text: str) -> str:
+    """移除 bash here-string（``<<< word``）的算子与数据词（审查
+    subagent_02c9e0493bb0 P1-2）。
+
+    ``_strip_heredocs`` 把 ``<<<`` 判"暂不支持"整体失败 → 本模块收到空串
+    触发哨兵（过拦）。here-string 的数据词是 stdin 数据不是命令，纯数据词
+    移除不影响 git 动词判定。引号内的 ``<<<`` 是数据不动；数据词含 ``$(``
+    /反引号/进程替换/算术展开时**保留原串**（bash 会对数据词做展开，其中
+    可藏 ``$(cd /main && git commit)`` 类执行向量 → 上游哨兵兜底，fail-closed）；
+    未闭合引号同样保守保留原串。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote: str | None = None
+    while i < n:
+        ch = text[i]
+        if quote is None and ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if quote == '"' and ch == "\\" and i + 1 < n:
+            # bash 双引号内 `\<char>`：`\"` 不结束字符串（与 _split_logical_lines
+            # 同语义，review subagent_8d393977e0ec P2-3）——统一消费两字符，
+            # 防止 `\"` 提前翻转引号状态导致 here-string 边界误判。
+            out.append(ch)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if quote is None and ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if quote == ch:
+            quote = None
+            out.append(ch)
+            i += 1
+            continue
+        if quote is None and text.startswith("<<<", i):
+            j = i + 3
+            while j < n and text[j] in " \t":
+                j += 1
+            if j >= n:
+                i = j  # 句尾裸 <<<：bash 语法错误不执行，移除无妨
+                continue
+            if text[j] in ("'", '"'):
+                q = text[j]
+                k = j + 1
+                while k < n:
+                    if text[k] == "\\" and k + 1 < n:
+                        k += 2
+                        continue
+                    if text[k] == q:
+                        break
+                    k += 1
+                if k >= n:
+                    return text  # 未闭合：保守原样（上游哨兵兜底）
+                word = text[j : k + 1]
+                _end = k + 1  # 含闭引号整体消费（P2-1：残留闭引号会被当开引号
+                # 重新扫描 → 引号奇偶错位 → 伪 ValueError → 误触哨兵）
+            else:
+                k = j
+                while k < n and text[k] not in " \t\n;|&<>()":
+                    if text[k] == "\\" and k + 1 < n:
+                        k += 2
+                        continue
+                    k += 1
+                word = text[j:k]
+                _end = k
+            if any(m in word for m in ("$(", "`", "<(", ">(", "$[")):
+                return text  # 数据词含执行向量：bash 会展开执行 → 保守原样
+            i = _end
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _split_logical_lines(text: str) -> list[str]:
+    """按 bash 逻辑行拆命令文本（review subagent_cde453f77b91 P1-1）。
+
+    shlex 把 ``\\n`` 当普通空白——``cd a\\ncd b && git commit`` 的第二个 cd
+    既不在段首、还会被读成第一个 cd 的第二操作数（→ 误判 cd 失败 → cwd
+    停留 workdir → 放行真实落点）。规则：引号内的换行是数据不是分隔符；
+    引号外的 ``\\<newline>`` 是 bash 续行，两字符一并丢弃（等价 bash 行拼
+    接）。每行单独 lex 还能让 ``#`` 注释止于行尾（bash 语义），不再把后续
+    行整体吞进注释。引号不配对 → 保持单行交给 lex 报错 → 既有哨兵兜底。
+    """
+    lines: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n and (quote is None or quote == '"'):
+            # bash 转义/续行（引号外与双引号内同义；审查 subagent_3eab63eb5e61
+            # P2-3）：\<newline> 连行符一并丢弃，其余成对消费保持引号状态；
+            # 单引号内反斜杠保持字面（bash 语义，不走此分支）。
+            if text[i + 1] == "\n":
+                i += 2
+                continue
+            buf.append(ch)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        if quote is None and ch in ("'", '"'):
+            quote = ch
+        elif quote == ch:
+            quote = None
+        elif quote is None and ch == "\n":
+            lines.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    lines.append("".join(buf))
+    return lines
+
+
+def _has_unquoted_midword_hash(line: str) -> bool:
+    """引号感知检测词中未加引号 ``#``（review subagent_89ba9fb91a5f P2-1 实测升级）。
+
+    bash：词中未加引号 ``#`` 是字面字符（``cd wt#note`` 目标名含 #）；shlex
+    （commenters='#'）却从 ``#`` 起把整行余部截成注释 → ``&& git commit`` 对
+    判定完全不可见（verbs 缺失，`( cd …) ` 场景实证 fail-open）→ 命中即保守
+    哨兵（当 main 判定）。行首/空白后 ``#`` 两边语义一致（真注释）不触发；
+    引号内 ``#`` shlex 不截断（探针实证全名保留）不触发；``\\#`` 转义对两边
+    均为字面 # 不触发。
+    """
+    quote: str | None = None
+    prev: str = ""
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and i + 1 < n and (quote is None or quote == '"'):
+            i += 2
+            prev = "x"  # 转义对整体消费（含被转义的 #），等价一个词字符
+            continue
+        if quote is None and ch in ("'", '"'):
+            quote = ch
+        elif quote == ch:
+            quote = None
+        elif quote is None and ch == "#" and prev and not prev.isspace():
+            return True
+        prev = ch
+        i += 1
+    return False
+
+
+def _resolve_shell_cd(cur: str | None, seg: str, workdir: str | None) -> str:
+    """解析段首 ``cd <literal>``：返回新 cwd；不可解析返回 ""（保守当 main）。
+
+    bash 语义对齐（review ecc9877d2e93 P1-1）：``cd`` 可能失败（目标不存在/
+    不是目录），失败时 shell 停留原 cwd——解析结果必须过 ``is_dir`` 校验，
+    不存在/非目录 → ""（未知，调用方保守当 main），绝不把字面路径当必然
+    成功的落点。含 ``#`` 的目标（review P2-1）：shlex 词中截断 vs bash 词首
+    注释语义分歧，两个方向都可能误解析 → 一律保守 ""。
+    """
+    if cur == "":
+        return ""
+    if not seg or seg.startswith(("-", "$", "`")) or "#" in seg:
+        return ""  # 选项/命令替换/含 #（shlex 截断与 bash 注释语义分歧）
+    try:
+        path = Path(seg).expanduser()
+    except (RuntimeError, OSError):
+        return ""  # expanduser 失败（无 HOME / 未知用户）→ 未知
+    if str(path).startswith("~"):
+        return ""  # expanduser 未解析 → 未知
+    if path.is_absolute():
+        resolved = path
+    else:
+        base = cur if cur is not None else workdir
+        if not base or not Path(base).is_dir():
+            return ""  # 基准不存在 → cd 必失败 → 未知
+        resolved = Path(base) / path
+    if not resolved.is_dir():
+        return ""  # cd 目标不存在/非目录 → bash cd 失败、shell 停留原处 → 未知
+    return str(resolved)
 
 
 def _chained_cwd(current: str | None, seg: str, workdir: str | None) -> str:

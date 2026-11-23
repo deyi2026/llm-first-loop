@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.lane import LaneStore, LaneStoreConfigError
 from llm_loop.introspection.lane_gate import (
     GateConfig,
     S1Evidence,
@@ -26,6 +26,7 @@ from llm_loop.introspection.merge_queue import (
     MergeQueueVersionConflictError,
     build_merge_advice,
 )
+from llm_loop.introspection.tools_lane import lane_store_from_host
 
 _MAX_TEXT = 12000
 
@@ -70,13 +71,12 @@ def _store(
 
 
 def _lanes(host: Any) -> LaneStore | None:
-    audit_dir = _audit_dir(host)
-    if not audit_dir:
-        return None
-    try:
-        return LaneStore(audit_dir)
-    except OSError:
-        return None
+    """P1-B（2026-11-16 首轮核验）: 与 lane 工具入口同一配置源——复用
+    lane_store_from_host（宿主 lane_lock_strict / lane_enforce_cross_goal /
+    lane_repo_root 生效），不再默认 warn 构造。INV-1/INV-2 配置非法时抛
+    LaneStoreConfigError，由调用方转为显式回执（不静默降级、不崩进程）。
+    OSError（audit 目录不可读）仍返回 None=不可用。"""
+    return lane_store_from_host(host)
 
 
 def _fail(message: str, tool: str, reason_code: str) -> ToolResult:
@@ -101,8 +101,9 @@ TOOL_LANE_QUEUE_SUBMIT_DEF: dict[str, Any] = {
         "等人工确认）。失败对策: merge_slot_busy 表示他人正占用, 看 holder 后重试;"
         "机检不过返回 failed 与 reason_codes, 修复后重新 submit。"
         "注意 reason_code=verify_layer_not_enabled 时不要盲目重试: 该码表示层内"
-        "尚无任何凭证——先经 merge-review-gate 审查 PASS 并用 scripts/"
-        "issue_verify_receipt.py --apply 签发（verify_ref={lane_id}:{base_sha 前8}），"
+        "尚无任何凭证——先使用 merge_review_start 启动受管只读审查，"
+        "取得独立 PASS 后调用 verify_receipt_request，经已登录 Web 人工批准"
+        "由 Host 专用签发（verify_ref={lane_id}:{base_sha 前8}）；"
         "再带凭证 submit；无凭证重试只会再消耗一条不可逆的 failed 队列项。"
     ),
     "parameters": {
@@ -238,7 +239,11 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     if not lane_id:
         return _fail("lane_id 必填", tool, "missing_param")
     store = _store(host, args.get("repo_root"))
-    lanes = _lanes(host)
+    try:
+        lanes = _lanes(host)
+    except LaneStoreConfigError as exc:
+        # P1-B: 宿主 lane 严格配置非法（INV-1/INV-2）→ 显式失败，不静默降级。
+        return _fail(f"lane store 配置非法: {exc}", tool, "invalid_config")
     if store is None or lanes is None:
         return _fail("audit_dir 未装配或账本不可用", tool, "store_unavailable")
     try:
@@ -319,8 +324,9 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
             f"{layer.get('receipts_path') or 'data/audit/verify_receipts.jsonl'} "
             f"不存在或无任何凭证（file_exists={layer.get('file_exists')}, "
             f"receipt_count={layer.get('receipt_count')}），"
-            "生产代码只读不写、无签发者。补 verify_ref 或反复 requeue 都不会变绿；"
-            "该 lane 已落 failed 终态，先解决签发链路再重新登记。"
+            "Agent 侧不可写受保护审计账本；需走 merge_review_start → "
+            "verify_receipt_request → 已登录浏览器批准 → Host 签发。"
+            "该 lane 已落 failed 终态，先完成签发再重新登记。"
         )
     final_payload: dict[str, Any] = {"enqueued": entry, "preflight": result}
     if same_key_hint:
@@ -409,7 +415,12 @@ def _autosweep_lane_after_merge(host: Any, queue_entry: dict) -> dict:
     lane 账本不可用/找不到 lane/冲突时**不阻断** done 本身，把事实带回执交人工
     lane_close 兜底（拒绝必须基于已证事实，但 done 已是事实，不回滚）。
     """
-    lanes = _lanes(host)
+    try:
+        lanes = _lanes(host)
+    except LaneStoreConfigError as exc:
+        # P1-B: 宿主 strict/enforce 配置非法 → 如实回执不关闭；done 既成事实
+        # 不可回滚，也不静默降级为默认 warn 绕过严格锁（fail-closed 不谎称）。
+        return {"closed": False, "note": f"lane store 配置非法（不降级）: {exc}"}
     if lanes is None:
         return {"closed": False, "note": "lane 账本不可用"}
     lane_id = str((queue_entry or {}).get("lane_id") or "")

@@ -66,6 +66,11 @@ from llm_loop.fleet.coordinator import ProjectCoordinator  # fleet slice 4 (G1) 
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.docs_search import DocsSearcher
 from llm_loop.introspection.goal import GoalStore
+from llm_loop.introspection.host_verify_issuer import (
+    HostVerifyAuthority,
+    MergeReviewStartTool,
+    VerifyReceiptRequestTool,
+)
 from llm_loop.introspection.search import RecordSearcher
 
 # GOAL-20261015-ac085ab1：settlement 打点/投影装配名顶层化——原 build_engine
@@ -130,6 +135,7 @@ from llm_loop.runtime.service_control import (
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.timekeeping import system_local_now, system_local_now_iso
+from llm_loop.tools import task_runtime as _task_runtime
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
@@ -138,6 +144,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.cdp_probe import CdpProbeTool
 from llm_loop.tools.builtin.desktop_operate import DesktopOperateTool
 from llm_loop.tools.builtin.desktop_perceive import DesktopPerceiveTool, make_jsonl_audit_sink
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
@@ -167,6 +174,7 @@ from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
+from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
 from llm_loop.tools.builtin.task_state import TaskStateTool
 from llm_loop.tools.builtin.verify_path_scope import VerifyPathScopeTool
 from llm_loop.tools.builtin.video_generation import VideoGenerationTool
@@ -258,6 +266,38 @@ def _register_runtime_event_predicates() -> None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _make_tool_fault_observer(
+    status_provider: ArchitectureStatusProvider,
+) -> Callable[[str, Any], None]:
+    """Bind the existing post-result fault recorder to this engine status provider."""
+    def _observer(tool_name: str, result: Any) -> None:
+        status = getattr(result, "status", None)
+        content = str(getattr(result, "content", "") or "")
+        if getattr(status, "value", status) == "success":
+            if tool_name == "execute_command" and content.rstrip().endswith(
+                "（命令执行成功，无输出）"
+            ):
+                status_provider.record_tool_fault(
+                    tool_name, "empty_output", "exit=0 且 stdout/stderr 均空（哨兵回执形态）"
+                )
+            return
+        first_line = content.splitlines()[0][:200] if content else "(no content)"
+        dur = getattr(result, "duration_ms", None)
+        detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
+        # EVO-20261014-459a8a1e: 分层诊断码（E1..E6）随拒绝落 exception_log，
+        # 拒绝可按层/按会话统计（edit_file 路径码在 error_detail 前缀）。
+        # 严格形态 E<1-6>_<UPPER>，避免任意 E 开头字符串被误统计。
+        fence_code = str(getattr(result, "error_type", "") or "")
+        if not re.fullmatch(r"E[1-6]_[A-Z_]+", fence_code):
+            error_detail = str(getattr(result, "error_detail", "") or "")
+            m = re.match(r"\[(E[1-6]_[A-Z_]+)\]", error_detail)
+            fence_code = m.group(1) if m else ""
+        status_provider.record_tool_fault(
+            tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
+        )
+    return _observer
 
 
 class _CorrectionAdapterTool:
@@ -884,6 +924,24 @@ def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner
     engine.subagent_runner = subagent_runner
     correction_ctx.subagent_runner = subagent_runner
     correction_ctx.job_registry = job_registry
+
+
+def _wire_host_review_and_verify(
+    registry: Any, host_review: Any, runner: Any, settings: Settings,
+    escalation_store: EscalationStore, engine: Any,
+) -> None:
+    """One Host-owned wiring point; keep build_engine's frozen size unchanged."""
+    host_review.attach_runner(runner)
+    registry.register(ReviewAdmissionTool(host_review))
+    authority = HostVerifyAuthority(
+        audit_dir=settings.audit_dir,
+        repo_root=settings._extra.get("runtime_root") or "",
+        runner=runner,
+        escalation_store=escalation_store,
+    )
+    engine.host_verify_authority = authority
+    registry.register(MergeReviewStartTool(authority))
+    registry.register(VerifyReceiptRequestTool(authority))
 
 
 def build_engine(
@@ -1630,6 +1688,12 @@ def build_engine(
                 max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
             ),
         )
+    # EVO-20261121-efa320ab: CDP 端点可达性探针（只读 loopback 元信息）。
+    # 命名刻意**不进入 browser_* 家族**：既有能力身份契约（provider-visible browser 面
+    # 恰好一只眼 browser_perceive + 一只手 browser_operate）由测试锁定且不因本探针放宽——
+    # 本探针读不到页面、不能写页面，只是「端点存在吗/可达吗」的环境诊断。
+    # 与下方 browser 工具的显式 opt-in 门禁并列而非替代：不改配置、不启动浏览器。
+    _register_basic("cdp_probe", CdpProbeTool())
     # SMC Browser cognition-preserving surface: explicit loopback CDP opt-in only.
     # Provider-visible Browser capabilities are deliberately collapsed to `browser_perceive`
     # (read-only sensing/wait) and, when writes are enabled, `browser_operate`
@@ -1830,6 +1894,16 @@ def build_engine(
             safety_audit_dir=settings.audit_dir,
         ),
     )
+    # Task Git is available only after the independent Host authority has
+    # been installed. No model-supplied Lease/worktree/Git argv is accepted.
+    # The legacy tool surface remains unchanged before Host bootstrap.
+    _task_authority_root = _task_runtime._installed_authority_root()
+    if _task_authority_root is not None and _task_authority_root.is_dir():
+        try:
+            (Path(settings.audit_dir) / "git-locks").mkdir(mode=0o700, exist_ok=True)
+        except OSError:
+            logger.warning("Task Git lock root unavailable; broker will HOLD", exc_info=True)
+        _register_basic("task_git_commit", TaskGitCommitTool())
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.
     _register_service_tools(_register_basic, settings, _review_gate_recorder)
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
@@ -2098,39 +2172,7 @@ def build_engine(
         enabled=settings.tool_runtime.tool_octet,
     )
 
-    # B 最小闭环（工具故障可追溯，2026-09-24）：回执后观察者 → status 故障台账。
-    # registry.execute() 三个真实执行收口点（正常/BLOCKED post-hook/异常）统一通知；
-    # 非 SUCCESS（failure/timeout/error/blocked/unauthorized）与 execute_command
-    # "成功但零输出" 哨兵写入 exception_log.jsonl。观察者自身 fail-open。
-    # （ToolResultStatus 常量在函数体内以字面量 "success" 比较，避免函数内 import
-    #  触碰 local_imports 棘轮——status.value 恰为小写枚举名。）
-    def _tool_fault_observer(tool_name: str, result) -> None:
-        status = getattr(result, "status", None)
-        content = str(getattr(result, "content", "") or "")
-        if getattr(status, "value", status) == "success":
-            if tool_name == "execute_command" and content.rstrip().endswith(
-                "（命令执行成功，无输出）"
-            ):
-                status_provider.record_tool_fault(
-                    tool_name, "empty_output", "exit=0 且 stdout/stderr 均空（哨兵回执形态）"
-                )
-            return
-        first_line = content.splitlines()[0][:200] if content else "(no content)"
-        dur = getattr(result, "duration_ms", None)
-        detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
-        # EVO-20261014-459a8a1e: 分层诊断码（E1..E6）随拒绝落 exception_log，
-        # 拒绝可按层/按会话统计（edit_file 路径码在 error_detail 前缀）。
-        # 严格形态 E<1-6>_<UPPER>，避免任意 E 开头字符串被误统计。
-        fence_code = str(getattr(result, "error_type", "") or "")
-        if not re.fullmatch(r"E[1-6]_[A-Z_]+", fence_code):
-            error_detail = str(getattr(result, "error_detail", "") or "")
-            m = re.match(r"\[(E[1-6]_[A-Z_]+)\]", error_detail)
-            fence_code = m.group(1) if m else ""
-        status_provider.record_tool_fault(
-            tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
-        )
-
-    registry.add_post_result_observer(_tool_fault_observer)
+    registry.add_post_result_observer(_make_tool_fault_observer(status_provider))
 
     # Current-run model-window facts use the same run-latched registry as routing.
     # Outside a run, report the startup default registry explicitly as startup scope.
@@ -2176,6 +2218,9 @@ def build_engine(
         audit_dir=settings.audit_dir,
         status_provider=status_provider,
         archive_store=archive,  # T22: search_archive
+        lane_lock_strict=settings.lane_lock_strict,
+        lane_enforce_cross_goal=settings.lane_enforce_cross_goal,
+        lane_repo_root=settings.lane_repo_root,  # M2-A（P1-A）: 宿主配置接线
     )
     correction_ctx.retry_executor = lambda name, args: registry.execute(_make_tool_call(name, args))
     # M50（design §5.6）: refresh_config 扩展 — 重载 env 同时重读 data/providers.json，重建注册表
@@ -2956,9 +3001,8 @@ def build_engine(
         parent_session_provider=_subagent_parent_session,
         project_coordinator=_fleet_coordinator,
     )
-    # True child lifecycle/terminal is the sole review qualification authority.
-    _host_review.attach_runner(subagent_runner)
-    registry.register(ReviewAdmissionTool(_host_review))
+    # Host review and receipt issuance share a single trusted process boundary.
+    _wire_host_review_and_verify(registry, _host_review, subagent_runner, settings, _escalation_store, engine)
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面与 coordination_status 的 running 段都在这个装配点接线。

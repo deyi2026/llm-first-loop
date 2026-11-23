@@ -37,7 +37,12 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import hashlib
+import os
+import stat
+import time
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from llm_loop.desktop.macos_ax import (
     MacAxElement,
@@ -81,6 +86,10 @@ def _asf() -> ctypes.CDLL:
             CFTypeRef,
         ]
         lib.AXUIElementSetAttributeValue.restype = ctypes.c_int32
+        lib.AXUIElementIsAttributeSettable.argtypes = [
+            CFTypeRef, CFTypeRef, ctypes.POINTER(ctypes.c_bool),
+        ]
+        lib.AXUIElementIsAttributeSettable.restype = ctypes.c_int32
         _ACT_READY = True
     return lib
 
@@ -252,6 +261,378 @@ def resolve_element_by_axref(window: WindowInfo, ax_ref: str) -> tuple[MacAxElem
         with contextlib.suppress(Exception):
             el.release()
         return None, "ax_ref_not_found"
+
+
+def _validated_ax_file_url(raw: Any) -> str | None:
+    """Only a real, local, existing, non-symlink file:// Host document."""
+    if not isinstance(raw, str) or not raw or len(raw) > 8192:
+        return None
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme != "file"
+        or parsed.netloc not in ("", "localhost")
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    try:
+        path = unquote(parsed.path, encoding="utf-8", errors="strict")
+        if (
+            not path.startswith("/")
+            or "\0" in path
+            or os.path.realpath(path) != path
+            or not os.path.isfile(path)
+        ):
+            return None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return path
+
+
+def _ax_value_is_settable(el: MacAxElement) -> bool:
+    """Positive macOS AXValue settable evidence; AXRole is not sufficient."""
+    try:
+        lib = _asf()
+        attr = make_cfstr("AXValue")
+        try:
+            result = ctypes.c_bool(False)
+            err = int(lib.AXUIElementIsAttributeSettable(
+                ctypes.c_void_p(el.ref), attr, ctypes.byref(result),
+            ))
+            return err == 0 and bool(result.value)
+        finally:
+            cf_release(attr)
+    except Exception:  # noqa: BLE001 - unreadable Host proof must HOLD
+        return False
+
+
+def ax_editor_document_path(window: WindowInfo, ax_ref: str) -> str | None:
+    """Read an exact editable AX target's file:// document from the live Host.
+
+    No model-provided path, window title or inferred IDE tab name is accepted.
+    A missing/remote/non-file document, symlink, or non-editable target stays
+    HOLD. The caller must still verify the signed project file scope and
+    re-read this Host evidence immediately before AXSetValue delivery.
+    """
+    el, _failure = resolve_element_by_axref(window, ax_ref)
+    if el is None:
+        return None
+    try:
+        if (
+            el.attr("AXRole") not in ("AXTextArea", "AXTextField", "AXTextView")
+            or el.attr("AXEditable") is not True
+            or el.attr("AXEnabled") is False
+        ):
+            return None
+        return _validated_ax_file_url(el.attr("AXDocument") or el.attr("AXURL"))
+    finally:
+        el.release()
+
+
+def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str | None:
+    """Xcode/VS Code: bind a focused OS-writable editor to its Host window document.
+
+    Some real editors expose file:// AXDocument only on AXWindow, and omit
+    AXEditable on the AXTextArea. Never infer editability from role/title:
+    require a positive native AXValue-settable query and editor ancestry.
+    This is not available for terminals, other apps, or AXEditable=False.
+    """
+    bundle = str(window.bundle_id or "").lower()
+    if bundle not in ("com.microsoft.vscode", "com.apple.dt.xcode"):
+        return None
+    parts = _parse_ax_ref(ax_ref)
+    if parts is None or len(parts) < 2 or parts[0] != 0:
+        return None
+
+    root, _ = resolve_window_element(window)
+    if root is None:
+        return None
+    try:
+        if root.attr("AXRole") != "AXWindow":
+            return None
+        path = _validated_ax_file_url(root.attr("AXDocument") or root.attr("AXURL"))
+    finally:
+        root.release()
+    if path is None:
+        return None
+
+    target, _ = resolve_element_by_axref(window, ax_ref)
+    if target is None:
+        return None
+    saw_target_document = False
+    try:
+        if (
+            target.attr("AXRole") not in ("AXTextArea", "AXTextField", "AXTextView")
+            or target.attr("AXEditable") is not None
+            or target.attr("AXEnabled") is False
+            or target.attr("AXFocused") is not True
+            or not _ax_value_is_settable(target)
+        ):
+            return None
+        description = target.attr("AXDescription")
+        if bundle == "com.microsoft.vscode":
+            if (
+                description != os.path.basename(path)
+                or str(target.attr("AXRoleDescription") or "").strip().lower()
+                not in ("editor", "编辑器")
+            ):
+                return None
+        elif description != "Source Editor":
+            return None
+        # A target's explicit document identity must never disagree with the
+        # signed window document, even if the filenames are identical.
+        for name in ("AXDocument", "AXURL"):
+            raw = target.attr(name)
+            if raw not in (None, ""):
+                if _validated_ax_file_url(raw) != path:
+                    return None
+                saw_target_document = True
+    finally:
+        target.release()
+
+    # Host ancestry, not the model's target label, proves this is an editor
+    # rather than an integrated terminal inside the same trusted IDE window.
+    saw_editor = False
+    prefixes = ax_ref.split(".")
+    for depth in range(1, len(prefixes)):
+        ancestor, _ = resolve_element_by_axref(window, ".".join(prefixes[:depth]))
+        if ancestor is None:
+            return None
+        try:
+            fields = tuple(str(ancestor.attr(name) or "") for name in (
+                "AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXIdentifier",
+            ))
+            ancestor_documents = tuple(
+                ancestor.attr(name) for name in ("AXDocument", "AXURL")
+            )
+        finally:
+            ancestor.release()
+        for raw in ancestor_documents:
+            if raw not in (None, ""):
+                if _validated_ax_file_url(raw) != path:
+                    return None
+                if depth > 1:  # AXWindow alone does not bind a VS Code tab.
+                    saw_target_document = True
+        if any(
+            marker in field.lower()
+            for field in fields
+            for marker in ("terminal", "xterm", "shell", "console", "pty")
+        ):
+            return None
+        if bundle == "com.microsoft.vscode":
+            saw_editor |= fields[3] == os.path.basename(path)
+        else:
+            saw_editor |= fields[4] == "editor context"
+    # VS Code's Electron AXWindow path alone cannot distinguish two tabs with
+    # the same filename. Missing full-path target/ancestor evidence stays HOLD.
+    if bundle == "com.microsoft.vscode" and not saw_target_document:
+        return None
+    return path if saw_editor else None
+
+
+def _xcode_focused_window_matches(window: WindowInfo) -> bool:
+    """OS AXFocusedWindow must be the exact D4-bound Xcode window."""
+    if str(window.bundle_id or "").lower() != "com.apple.dt.xcode":
+        return False
+    app = app_element(window.pid)
+    if app is None:
+        return False
+    focused = 0
+    bound = None
+    try:
+        if app.attr("AXFrontmost") is not True:
+            return False
+        err, focused = ax_read_attr(app.ref, "AXFocusedWindow")
+        bound, _ = resolve_window_element(window)
+        if err != 0 or not focused or bound is None:
+            return False
+        core = load_framework("CoreFoundation")
+        core.CFEqual.argtypes = [CFTypeRef, CFTypeRef]
+        core.CFEqual.restype = ctypes.c_bool
+        return bool(core.CFEqual(ctypes.c_void_p(focused), ctypes.c_void_p(bound.ref)))
+    except Exception:  # noqa: BLE001 - unreadable Host focus is HOLD
+        return False
+    finally:
+        if focused:
+            cf_release(focused)  # AXUIElementCopyAttributeValue returns owned +1
+        if bound is not None:
+            bound.release()
+        app.release()
+
+
+def _is_exact_xcode_save_item(item: MacAxElement) -> bool:
+    """Reject Save All / Save As / arbitrary File menu actions."""
+    return (
+        item.attr("AXRole") == "AXMenuItem"
+        and item.attr("AXIdentifier") == "ide_saveDocument:"
+        and item.attr("AXMenuItemCmdChar") == "S"
+        and item.attr("AXMenuItemCmdModifiers") == 0
+        and item.attr("AXEnabled") is True
+    )
+
+
+def _xcode_press_exact_save_menu(window: WindowInfo) -> tuple[int | None, str]:
+    """AXPress only File→Save (never global HID / Cmd+S / Save All)."""
+    app = app_element(window.pid)
+    if app is None:
+        return None, "xcode_ax_app_unavailable"
+    bar = None
+    bar_items: list[Any] = []
+    menus: list[Any] = []
+    entries: list[Any] = []
+    try:
+        err, bar_ref = ax_read_attr(app.ref, "AXMenuBar")
+        if err != 0 or not bar_ref:
+            return None, "xcode_menu_bar_unavailable"
+        # AXUIElementCopyAttributeValue follows CoreFoundation Copy (+1);
+        # MacAxElement owns that copy, so an extra CFRetain would leak it.
+        bar = MacAxElement(bar_ref)
+        if bar.attr("AXRole") != "AXMenuBar":
+            return None, "xcode_menu_bar_invalid"
+        bar_items = bar.attr("AXChildren") or []
+        files = [item for item in bar_items if (
+            item.attr("AXRole") == "AXMenuBarItem"
+            and item.attr("AXTitle") in ("File", "文件")
+        )]
+        if len(files) != 1:
+            return None, "xcode_file_menu_ambiguous"
+        menus = files[0].attr("AXChildren") or []
+        if len(menus) != 1 or menus[0].attr("AXRole") != "AXMenu":
+            return None, "xcode_file_menu_unavailable"
+        entries = menus[0].attr("AXChildren") or []
+        saves = [item for item in entries if _is_exact_xcode_save_item(item)]
+        if len(saves) != 1:
+            return None, "xcode_save_item_unavailable"
+        # AXPress on the app menu acts on the *currently focused* document.
+        # Rebind after menu discovery, immediately before the irreversible press.
+        if not _xcode_focused_window_matches(window):
+            return None, "xcode_focus_changed_before_press"
+        try:
+            return ax_press(saves[0]), ""
+        except Exception:  # noqa: BLE001 - AXPress may already have dispatched
+            return -1, "xcode_save_press_uncertain"
+    except Exception:  # noqa: BLE001 - never substitute keyboard fallback
+        return None, "xcode_save_menu_probe_failed"
+    finally:
+        _release_ax_children(entries)
+        _release_ax_children(menus)
+        _release_ax_children(bar_items)
+        if bar is not None:
+            bar.release()
+        app.release()
+
+
+def _xcode_save_hold(reason: str, *, dispatched: bool = False) -> ActOutcome:
+    return ActOutcome(
+        ok=False,
+        error=DesktopErrorCode.BACKEND_ERROR,
+        detail=f"Xcode 精确文档保存 HOLD: {reason}（未放宽全局键盘权限）",
+        verified=False if dispatched else None,
+        dispatch_state="dispatched" if dispatched else "not_dispatched",
+        effect_state="unknown" if dispatched else "not_observed",
+        verification_state="failed" if dispatched else "unavailable",
+        verification_reason=reason,
+    )
+
+
+def _xcode_live_document_path(window: WindowInfo, ax_ref: str) -> str | None:
+    """Only a focused exact Xcode editor may be saved, regardless of AXEditable flavor."""
+    editor, _ = resolve_element_by_axref(window, ax_ref)
+    if editor is None:
+        return None
+    try:
+        if editor.attr("AXFocused") is not True:
+            return None
+    finally:
+        editor.release()
+    return ax_editor_os_attested_document_path(window, ax_ref)
+
+
+def _xcode_read_exact_regular_file(path: str) -> bytes | None:
+    """Read-only O_NOFOLLOW + fstat; never follow a swapped document symlink."""
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+            return None
+        data = source.read(1_048_577)
+    return data if len(data) <= 1_048_576 else None
+
+
+def ax_save_xcode_document(
+    window: WindowInfo, ax_ref: str, expected_path: str, pre_save_sha256: str,
+) -> ActOutcome:
+    """Signed Task Xcode only: exact AX editor → AXPress File/Save → disk SHA.
+
+    Caller must have checked Task Lease app+file, Lane/CAS, TCC, D4/D7 and
+    fresh Host document binding. This native last-mile rechecks OS evidence;
+    never accepts a model-supplied path, keyboard shortcut or arbitrary menu.
+    """
+    if (
+        str(window.bundle_id or "").lower() != "com.apple.dt.xcode"
+        or not isinstance(expected_path, str)
+        or not expected_path.startswith("/")
+        or os.path.realpath(expected_path) != expected_path
+        or os.path.islink(expected_path)
+        or len(pre_save_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in pre_save_sha256)
+        or not _xcode_focused_window_matches(window)
+        or _xcode_live_document_path(window, ax_ref) != expected_path
+    ):
+        return _xcode_save_hold("xcode_host_document_or_focus_changed")
+    editor, _ = resolve_element_by_axref(window, ax_ref)
+    if editor is None:
+        return _xcode_save_hold("xcode_editor_unavailable")
+    try:
+        value = ax_read_value_string(editor)
+    finally:
+        editor.release()
+    if not isinstance(value, str) or len(value.encode("utf-8")) > 1_048_576:
+        return _xcode_save_hold("xcode_editor_text_unreadable_or_too_large")
+    try:
+        info = os.stat(expected_path, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+            return _xcode_save_hold("xcode_document_not_regular_or_too_large")
+    except OSError:
+        return _xcode_save_hold("xcode_document_stat_failed")
+    try:
+        disk_preimage = _xcode_read_exact_regular_file(expected_path)
+    except OSError:
+        return _xcode_save_hold("xcode_disk_preimage_unreadable")
+    if (
+        disk_preimage is None
+        or hashlib.sha256(disk_preimage).hexdigest() != pre_save_sha256
+        or not _xcode_focused_window_matches(window)
+        or _xcode_live_document_path(window, ax_ref) != expected_path
+    ):
+        return _xcode_save_hold("xcode_document_preimage_or_identity_changed")
+    err, reason = _xcode_press_exact_save_menu(window)
+    if err is None:
+        return _xcode_save_hold(reason)
+    if err != 0:
+        return act_outcome_from_ax_err(err, "Xcode File/Save AXPress")
+    # After a successful AXPress, a focus/document switch makes the effect
+    # uncertain even if the originally bound file later has matching bytes.
+    if (
+        not _xcode_focused_window_matches(window)
+        or _xcode_live_document_path(window, ax_ref) != expected_path
+    ):
+        return _xcode_save_hold("xcode_focus_or_document_changed_after_press", dispatched=True)
+    expected_sha = hashlib.sha256(value.encode("utf-8")).digest()
+    deadline = time.monotonic() + 8
+    while True:
+        try:
+            saved = _xcode_read_exact_regular_file(expected_path)
+            if saved is not None and hashlib.sha256(saved).digest() == expected_sha:
+                return ActOutcome(
+                    ok=True, verified=True, dispatch_state="dispatched",
+                    effect_state="confirmed", verification_state="passed",
+                    verification_reason="xcode_exact_file_saved_to_disk",
+                )
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            return _xcode_save_hold("xcode_disk_save_not_verified", dispatched=True)
+        time.sleep(0.2)
 
 
 def ax_press(el: MacAxElement) -> int:

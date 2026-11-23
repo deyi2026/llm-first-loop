@@ -67,7 +67,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
-from llm_loop.tools.registry import ToolRegistry
+from llm_loop.tools.registry import _NORMAL_FINAL_PRESERVE_HOST_REVIEW, ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
 if TYPE_CHECKING:
@@ -480,6 +480,10 @@ class SubAgentRunner:
         self._delivery_journal = SubAgentDeliveryJournal(self.session_store.event_store)
         self._runner_owner_id = uuid.uuid4().hex
         self._children_guard = threading.Lock()
+        # P1-1（外部独立复核）：把子代理每轮 Provider 响应里自报的 model 记进进程内表，
+        # 供 Host 准入在 mint/consume 时核对"请求 A 实际响应 B"这类错配。只存传输事实，
+        # 不读盘、不克隆请求值；这里刻意与 handle 解耦，避免影响既有 handle 可变字段语义。
+        self._observed_models: dict[str, list[str]] = {}
         # Fleet run-boundary wiring (DESIGN-20260919 step-4): None keeps every
         # fleet behavior off; explicit injection is the opt-in/exit path.
         self._project_coordinator = project_coordinator
@@ -777,6 +781,9 @@ class SubAgentRunner:
             if not victim:
                 return
             self._handles.pop(victim, None)
+            # P2（外部复核 2026-11-16）：observed-model 记账与 handle 同生命周期，
+            # handle 被淘汰即回收，避免长进程内字典随 child 数无界增长。
+            self._observed_models.pop(victim, None)
             with suppress(ValueError):
                 self._handle_order.remove(victim)
 
@@ -803,9 +810,13 @@ class SubAgentRunner:
     def pending_obligations(
         self, parent_session_id: str, *, run_generation: str = ""
     ) -> list[dict[str, object]]:
-        """返回 parent 正常 final 时仍在运行、必须机械收束的 child 资源。
+        """Return active side-effect children that normal parent final must cancel.
 
-        terminal-but-unread result 不是完成门槛：模型可自行决定是否读取 child 结果。
+        A Host-created review_isolated child has an enforced empty tool scope:
+        its bounded Provider verdict is not a late external side effect.
+        It may finish after a normal parent answer and be polled by a later Run.
+        Explicit Stop still uses cancel_parent() and cancels it normally.
+        terminal-but-unread results do not block final.
         """
 
         target_generation = str(run_generation or current_run_generation.get() or "")
@@ -815,6 +826,7 @@ class SubAgentRunner:
                 for sid, handle in sorted(self._handles.items())
                 if handle.parent_id == parent_session_id
                 and handle.state == "running"
+                and not handle.review_isolated
                 and (
                     not target_generation
                     or handle.parent_run_generation == target_generation
@@ -1012,6 +1024,18 @@ class SubAgentRunner:
             for sid in self._children_by_parent.get(parent_session_id, set()):
                 owner_generation = self._parent_run_generation_by_child.get(sid, "")
                 if target_generation and owner_generation != target_generation:
+                    continue
+                handle = self._handles.get(sid)
+                if (
+                    not _all_generations
+                    and _NORMAL_FINAL_PRESERVE_HOST_REVIEW.get()
+                    and handle is not None
+                    and handle.review_isolated
+                    and handle.depth == 0
+                ):
+                    # Normal-final cancellation is for late side effects, not
+                    # a Host-created, zero-tool independent review. The same
+                    # child remains cancelable by explicit Stop (flag unset).
                     continue
                 rows.append(
                     (
@@ -2189,6 +2213,21 @@ class SubAgentRunner:
                 and handle.state not in {"running", "accepted"}
             )
 
+    def _record_observed_model(self, child_id: str, resp: object) -> None:
+        """记录一次 Provider 响应自报的 model（空值不落账，绝不回填请求值）。"""
+        observed = str(getattr(resp, "observed_model", "") or "").strip()
+        if not observed:
+            return
+        with self._children_guard:
+            bucket = self._observed_models.setdefault(str(child_id), [])
+            if observed not in bucket:
+                bucket.append(observed)
+
+    def observed_models(self, child_id: str) -> list[str]:
+        """读进程内观测到的 provider model 列表（按首见顺序，去重）。"""
+        with self._children_guard:
+            return list(self._observed_models.get(str(child_id), ()))
+
     def review_terminal_current(self, child_id: str, parent_id: str) -> dict[str, str | bool] | None:
         """P0-B: process-local terminal attestation, never a disk-replayed PASS.
 
@@ -2204,6 +2243,7 @@ class SubAgentRunner:
                 handle is None
                 or handle.parent_id != str(parent_id)
                 or not handle.review_isolated
+                or handle.cancel_requested
                 or handle.state != "completed"
                 or not handle.done_event.is_set()
                 or handle.result is None
@@ -2218,6 +2258,10 @@ class SubAgentRunner:
                 "state": handle.state,
                 "review_isolated": True,
                 "final_answer": handle.result.final_answer,
+                # 直接读表，不调用 observed_models()：后者会再次获取
+                # self._children_guard（threading.Lock 非重入），同线程二次加锁
+                # 即永久阻塞（2026-11-16 外部复核 P1 死锁，真实测试 337s 未返回）。
+                "observed_model": ",".join(self._observed_models.get(handle.child_id, ())),
             }
 
     def result_current(self, child_id: str, wait_seconds: float = 0.0) -> tuple[bool, str, dict]:
@@ -3214,7 +3258,6 @@ class SubAgentRunner:
         active_llm = llm_client or self.llm
         archived_once: set[int] = set()
         convergence_reminder_sent = False  # EVO-20261108-b5fead21 ①: 只注入一次
-
         while rounds < effective_rounds:
             if cancel_event is not None and cancel_event.is_set():
                 return SubAgentResult(
@@ -3358,6 +3401,7 @@ class SubAgentRunner:
                     attempt_kind=ProviderAttemptKind.PRIMARY,
                     site_index=0,
                 )
+                self._record_observed_model(sess.session_id, resp)
                 if _provider_call_coordinator is not None:
                     _provider_call_coordinator.settle_shadow_call(
                         _provider_call, ProviderCallOutcome.SUCCESS
