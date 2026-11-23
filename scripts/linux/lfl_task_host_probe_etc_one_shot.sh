@@ -79,7 +79,18 @@ require_kernel_bound_local_session() {
 # silently reports "absent" even for an existing file. All authoritative
 # presence and post-cleanup checks MUST run as root after local sudo -v.
 root_target_present() {
-  sudo -n test -e "$1" || sudo -n test -L "$1"
+  if sudo -n test -e "$1" || sudo -n test -L "$1"; then
+    return 0
+  fi
+  # A failed sudo -n test is indistinguishable from ENOENT by its exit code.
+  # Verify sudo is STILL usable after a negative result; otherwise never
+  # classify the protected rule as absent or claim successful cleanup.
+  sudo -n test -d /etc/polkit-1/rules.d >/dev/null 2>&1 &&
+    sudo -n test -d /usr/local/libexec >/dev/null 2>&1 || {
+    echo 'HOLD: sudo expired during root-side absence verification' >&2
+    exit 79
+  }
+  return 1
 }
 require_sudo_cached() {
   sudo -n true >/dev/null 2>&1 &&

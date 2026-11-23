@@ -297,7 +297,9 @@ def test_deepin_etc_runner_never_remounts_or_restarts_and_has_cleanup():
     assert "trap cleanup EXIT" in script
     assert "DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS_ROOT_VERIFIED" in script
     assert "unexpected content at $target, refusing removal" in script
-    assert 'sudo -n test -e "$1" || sudo -n test -L "$1"' in script
+    assert 'if sudo -n test -e "$1" || sudo -n test -L "$1"; then' in script
+    assert 'HOLD: sudo expired during root-side absence verification' in script
+    assert 'exit 79' in script
     assert 'require_sudo_cached' in script
     assert 'sudo -n test -d /etc/polkit-1/rules.d' in script
     assert 'sudo -n test -d /usr/local/libexec' in script
@@ -313,6 +315,7 @@ def test_deepin_etc_runner_never_remounts_or_restarts_and_has_cleanup():
     assert 'timeout 180 pkexec "$HELPER_DST" attest "$challenge"' not in script
     assert script.index('root_target_present "$target"') < script.index('sudo install -d')
     assert script.count('state=physical_local_pass') == 1
+    assert script.index('receipt_sha="$(sudo sha256sum "$receipt"') < script.index('completed=1')
     assert "XDG_SESSION_ID" in script and "loginctl show-session self" in script
     assert 'session_info="$(loginctl show-session self' in script
     assert 'for required in "Id=$XDG_SESSION_ID"' in script
