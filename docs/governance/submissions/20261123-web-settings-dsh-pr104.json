@@ -1,0 +1,33 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-web-settings-dsh-pr104",
+  "summary": "Simplify the existing LFL Web Provider settings on Deepin and Mac, keep API Key writes independent from Provider replacement, and make failed or unconfirmed saves explicit without introducing new authorization machinery.",
+  "components": [
+    {
+      "component_id": "existing-web-provider-settings-and-probe",
+      "paths": [
+        "docs/governance/submissions/20261123-web-settings-dsh-pr104.json",
+        "src/llm_loop/web/provider_admin.py",
+        "tests/web/test_provider_admin.py",
+        "webui/src/components/layout/ProviderManager.tsx",
+        "webui/src/components/layout/RightPanel.tsx",
+        "webui/src/provider-admin.test.tsx",
+        "webui/src/tokens/conversation.css"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web V2 ProviderManager, provider-admin API, credential persistence and model connection probe; existing Web authentication, Origin/CSRF, Provider config version and service reload remain authoritative.",
+      "disposition": "Move API Key entry to the Provider card and use the existing credential-only PUT endpoint. Keep the input visible on failure and on successful PUT followed by unconfirmed state reload; display an explicit uncertainty message rather than a false success. Render provider and model editors locally, collapse advanced settings, and give reasoning-capable model probes a bounded 256-token output budget instead of 8.",
+      "evidence": [
+        "Deepin 25 live LFL v0.6.57 on 2026-11-23: /health HTTP 200, GLM provider lists glm-5.4 and glm-5.3-flash but credential_configured=false and credential_source=missing. Existing live Web bundle lacks the new direct API Key action.",
+        "Original code-only SHA 706ac87f95d611a970214ca0e5c3519f5bdb0b0f passed the original complete ci_gate.sh --release exit 0: WebUI 624 tests and pytest 16542 passed / 162 skipped / 3 xfailed; Ruff and Pyright passed.",
+        "Independent read-only DeepSeek Flash reviewer identified the real post-write status-read failure edge case. Follow-up code-only SHA b058a84707fe2e2006297ba251eb6156c5517fba adds an explicit unconfirmed-save path and a deterministic regression; focused ProviderManager Vitest 21 passed and TypeScript noEmit passed.",
+        "Independent read-only reviewer on b058a84707fe2e2006297ba251eb6156c5517fba returned PASS, P0=0, P1=0, P2=2, observed model deepseek-flash, finish_reason stop; local evidence /tmp/lfl-pr104-independent-review-b058a847.json. The manifest-inclusive final SHA requires new review and full R9.",
+        "The existing PR #104 was initially Draft; remote PR CI, protected merge, Linux release identity and actual Deepin host testing have not yet passed at the time of this submission."
+      ],
+      "verification_level": "Code-only candidate has independent PASS and targeted regression tests. Final manifest-inclusive candidate must pass exact-SHA independent review, original full R9, remote PR CI, protected merge and main CI before a new versioned Deepin wheel is installed.",
+      "model_evidence_veto_recovery_exit": "A failed or unconfirmed credential write must not be reported as saved; do not expose key bytes in responses or UI text. Preserve Provider config version conflict feedback, existing model defaults, read-only mode, auth and CSRF. On physical host failure, retain the previous release and rollback pointer; no forced service restart while a Run is active.",
+      "rollback_route": "Revert the bounded Web Provider settings change through a protected PR and use the existing Deepin Linux installer --rollback to the retained prior version if a later managed deployment fails; do not overwrite user .env or unrelated active sessions."
+    }
+  ],
+  "declarations": []
+}
