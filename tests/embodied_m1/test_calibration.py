@@ -29,6 +29,9 @@ FROZEN_RECEIPT_SHA256 = {
     'M1-baseline-v1.6.3.json': 'cdb200973197f9493d4b11a5e630f8b675fe19e89f15eb045364f2c738683e3c',
     'M1-baseline-v1.6.4.json': '820b73cf54ddb13a0f86c179950b0fca58a7ddea632cbf565153772af5846f3d',
     'M1-baseline-v1.6.5.json': '3dedf7a8efa4288ef1a1ca785d1ae0e117b1e4b0e6e4cd2177f8677e24c71967',
+    'M1-baseline-v1.7.json': '7f803cc1d54dcce350d953aa71bec200bba6b3cf4214f308176fcd39326d74f9',
+    'M1-baseline-v1.8.json': '98dabd78d0e852c3d7a1e95e5bacaf28b2e7121790b32bee8ace232ded1719ce',
+    'M1-baseline-v1.9.json': 'eac131254de8efa786a248c2d48d8cd1e9e37f7fe97072d386bbecced29898e7',
     'M1-baseline-v1.6.json': '4e0f943a69910b8c9de3ad6f3459f5128b534c793f961d4e6cf8f4dfb37e819f',
     'M1-baseline-v1.json': 'f0ff6c636f8fbc188af95def72695e9b903c98fb4eb9abab6eb6ffb692919dcf',
 }
@@ -65,8 +68,14 @@ def test_is_unexpected_contact_hard_gate_matrix():
     assert f("cube_geom", "tray_floor") is False
 
 
-def test_v165_local_baseline_pass_metadata_consistent():
-    data = json.loads((CAL / "M1-baseline-v1.6.5.json").read_text())
+def test_v19_local_baseline_pass_metadata_consistent():
+    """v1.9 = the receipt for the review-fixed M2 code over the unchanged v1.6.2 physics.
+
+    v1.7/v1.8 stay frozen for QA traceability; neither describes the live code any
+    more, so the live code-hash pin moved to v1.9.
+    """
+    assert m1_calibrate.BASELINE_VERSION == "M1-baseline-v1.9"
+    data = json.loads((CAL / "M1-baseline-v1.9.json").read_text())
     assert data["verdict"] == "LOCAL_PHYSICS_BASELINE_PASS"
     assert data["independent_oracle"].startswith("PENDING_ORACLE")
     assert data["structural_whitelist_verification"]["adjacent_assembly_confirmed"] is True
@@ -81,6 +90,8 @@ def test_v165_local_baseline_pass_metadata_consistent():
     reason = data["scene_revision_reason"]
     assert "z0.12->0.11" in reason and "z[0.14,0.18]->z[0.12,0.13]" in reason
     assert "kinematically fine" in reason
+    assert "M2 (issue #79" in reason and "PHYSICS UNCHANGED" in reason
+    assert "M2 review fix" in reason and "behavior-relevant digest moved" in reason
     # live scene XML must hash exactly to what the receipt recorded
     import hashlib
     sys.path.insert(0, str(ROOT / "src"))
@@ -107,7 +118,8 @@ def test_existing_receipt_cannot_be_overwritten(monkeypatch):
 
 def test_sidecar_only_also_blocks_version_reuse(monkeypatch, tmp_path):
     monkeypatch.setattr(m1_calibrate, "OUT_DIR", tmp_path)
-    (tmp_path / "M1-baseline-v1.6.5.json.sha256").write_text("partial receipt")
+    # bind to the CURRENT version: a bump must not silently disable this guard
+    (tmp_path / (m1_calibrate.BASELINE_VERSION + ".json.sha256")).write_text("partial receipt")
     with pytest.raises(FileExistsError, match="immutable calibration receipt exists"):
         m1_calibrate.main()
 

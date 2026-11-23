@@ -1179,10 +1179,10 @@
     "src/llm_loop/resources/lfrt_runtime.py::parse_lfrt_status": 122,
     "src/llm_loop/resources/vendor_adapters/minimax.py::map_token_plan_remains_response": 130,
     "src/llm_loop/runtime/doctor.py::inspect_first_use": 189,
-    "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 119,
+    "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 140,
     "src/llm_loop/runtime/service_control.py::compose_lifecycle_evidence_view": 105,
     "src/llm_loop/runtime/service_control.py::compose_service_identity_view": 91,
-    "src/llm_loop/runtime/service_control.py::run_action_worker": 266,
+    "src/llm_loop/runtime/service_control.py::run_action_worker": 287,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_predicate_evaluate": 169,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_version_assess": 190,
     "src/llm_loop/semantic_logic/serialization.py::_fact_graph_from_dict": 143,
@@ -1201,7 +1201,7 @@
     "src/llm_loop/tools/builtin/read_file.py::execute": 157,
     "src/llm_loop/tools/builtin/search_files.py::execute": 223,
     "src/llm_loop/tools/builtin/service_control.py::_update": 120,
-    "src/llm_loop/tools/builtin/service_control.py::execute": 80,
+    "src/llm_loop/tools/builtin/service_control.py::execute": 90,
     "src/llm_loop/tools/builtin/smx_perceive.py::_diff": 122,
     "src/llm_loop/tools/builtin/spawn_subagent.py::execute": 175,
     "src/llm_loop/tools/builtin/subagent_result.py::execute": 140,
@@ -1236,7 +1236,8 @@
     "src/llm_loop/tools/builtin/execute_command.py::_resolve_host_grant": 186,
     "src/llm_loop/tools/builtin/execute_command.py::execute": 234,
     "src/llm_loop/tools/review_host_admission.py::_consume_joint_push_batches": 131,
-    "src/llm_loop/tools/review_host_admission.py::_target": 170
+    "src/llm_loop/tools/review_host_admission.py::_target": 170,
+    "src/llm_loop/runtime/service_control.py::accept_restart": 122
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
@@ -1263,7 +1264,7 @@
   ],
   "known_cycles": [],
   "legacy_super_functions": {
-    "src/llm_loop/browser/action.py::execute": 406,
+    "src/llm_loop/browser/action.py::execute": 417,
     "src/llm_loop/cli.py::application_main": 323,
     "src/llm_loop/config.py::load_settings": 363,
     "src/llm_loop/core/history.py::build_history_messages": 745,

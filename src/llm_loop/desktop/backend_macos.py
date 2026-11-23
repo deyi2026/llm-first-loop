@@ -240,6 +240,18 @@ class MacOSDesktopBackend:
         # 非 None 时先解析 ax_ref 再从该节点起遍历（refs 保持全局编码）。
         return macos_ax.ax_windows_view(window, depth, node_limit, subtree=subtree)
 
+    def editor_document_path(self, window: WindowInfo, ax_ref: str) -> str | None:
+        """Host-only AXDocument file identity for a single exact editable target."""
+        return macos_actuate.ax_editor_document_path(window, ax_ref)
+
+    def task_ax_permission_granted(self, pid: int) -> bool:
+        """Host read probe handles AXIsProcessTrusted false negatives on macOS."""
+        return macos_permissions.ax_trusted() or macos_ax.ax_readable_probe(pid) == 0
+
+    def editor_os_attested_document_path(self, window: WindowInfo, ax_ref: str) -> str | None:
+        """Native OS-settable AX editor with exact Host window file binding."""
+        return macos_actuate.ax_editor_os_attested_document_path(window, ax_ref)
+
     def capture_window(self, window: WindowInfo) -> CaptureOutcome:
         scale = macos_windows.display_scale_for_bounds(
             self.list_displays(), window.bounds_pt
