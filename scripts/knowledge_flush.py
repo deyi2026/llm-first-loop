@@ -188,10 +188,43 @@ def _main_worktree_root(root: Path) -> Path:
     return common.parent if common.name == ".git" else common
 
 
+def _worktree_state(path: Path) -> str:
+    """worktree 现状分类：``git`` / ``gone`` / ``unknown``（EVO-20261123-d43138fc）。
+
+    - ``git``：路径在且是 git 工作树（脏净另判）。
+    - ``gone``：路径不存在，或存在但已不是 git 工作树（``/tmp`` 被清、worktree
+      被 prune、路径被复用）。这种 lane 物理上已无写者，可回收。
+    - ``unknown``：不是目录 / 不可读 / git 不可用或超时 —— 读不懂，按 live 处理。
+
+    旧实现把 git 失败一律当 live，``/tmp`` worktree 消失的 lane 就永久挡住
+    所有人的知识 flush，进而挡住所有推送（2026-11-23 实测被卡 4 小时）。
+    """
+    if not path.exists():
+        return "gone"
+    if not path.is_dir() or not os.access(path, os.R_OK | os.X_OK):
+        return "unknown"
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if probe.returncode != 0:
+        return "gone"
+    return "git" if probe.stdout.strip() == "true" else "gone"
+
+
 def _lane_is_stale(
     row: dict[str, object], root: Path, now: datetime, *, base: Path | None = None
 ) -> bool:
-    """空闲超时且 worktree 干净 → 按失效回收（命令闸 stale 判定的保守子集）。"""
+    """空闲超时且 worktree 干净（或 worktree 已消失）→ 按失效回收。
+
+    保守子集不变：脏树/时间戳读不懂/git 状态读不出 一律仍判 live。
+    """
     raw = str(row.get("last_activity") or row.get("created_at") or "").strip()
     wt = str(row.get("worktree") or "").strip()
     if not raw or not wt:
@@ -207,6 +240,10 @@ def _lane_is_stale(
     path = Path(wt)
     if not path.is_absolute():
         path = (base if base is not None else _main_worktree_root(root)) / path
+    state = _worktree_state(path)
+    if state != "git":
+        # gone：已无写者；unknown：读不懂（fail-closed 按 live）
+        return state == "gone"
     try:
         run = subprocess.run(
             ["git", "-C", str(path), "status", "--porcelain"],

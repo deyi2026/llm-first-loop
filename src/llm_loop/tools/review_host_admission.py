@@ -1022,6 +1022,50 @@ def _knowledge_flush_pending(root: Path) -> tuple[list[str], list[str], list[str
     return cards, experiences, extras
 
 
+_DELETE_ONLY_PUSH_OPTS = frozenset({
+    "--delete", "-d", "--no-verify", "--dry-run", "-n", "--verbose", "-v",
+    "--quiet", "-q", "--force", "-f",
+})
+_REFSPEC_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _is_delete_only_push(command: str) -> bool:
+    """命令是否「只删远端 ref」的 push（不携带任何提交/文件）。
+
+    EVO-20261123-d43138fc：知识闸的关切是「本地知识资产只活在本机、随 push 交付
+    丢失」，而删除远端 ref 不发送任何对象，该关切不适用；反过来，未入库卡片会长期
+    存在，让清理动作被永久挡住（2026-11-23 实测：删一个已合并分支被
+    knowledge_flush_pending 拦死 4 小时，只能绕道 GitHub refs API）。口径与
+    .githooks/pre-push 的全零 local sha 判定对齐，且 fail-closed：看不懂/多命令
+    串联/内容型 refspec/--all|--mirror|--tags 一律返回 False（照旧走知识闸）。
+    """
+    text = str(command or "").strip()
+    if not text or any(tok in text for tok in ("&&", "||", ";", "|", "&", ">", "<", "\n", "`")):
+        return False
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        return False
+    if len(tokens) < 3 or Path(tokens[0]).name != "git" or tokens[1] != "push":
+        return False
+    delete_flag = False
+    positional: list[str] = []
+    for token in tokens[2:]:
+        if token.startswith("-"):
+            if token not in _DELETE_ONLY_PUSH_OPTS:
+                return False
+            delete_flag = delete_flag or token in ("--delete", "-d")
+            continue
+        positional.append(token)
+    refspecs = positional[1:]  # 首个位置参数是 remote
+    if not refspecs:
+        return False
+    if delete_flag:
+        return all(_REFSPEC_NAME_RE.match(item) for item in refspecs)
+    # `git push origin :branch`：冒号前缀即删除，且不带 src。
+    return all(item.startswith(":") and _REFSPEC_NAME_RE.match(item[1:]) for item in refspecs)
+
+
 def _knowledge_gate_receipt(workdir: str) -> dict[str, Any] | None:
     """git_push 准入前置：有未入库知识资产 → 拒绝回执；干净 → None。
 
@@ -1162,7 +1206,7 @@ def _receipt_placeholder_hits(root: Path) -> list[str]:
 
 
 def _start_preconditions(
-    kind: str, scope: str, paths: Sequence[str] | None, workdir: str
+    kind: str, scope: str, paths: Sequence[str] | None, workdir: str, command: str = ""
 ) -> tuple[dict[str, Any], tuple[str, ...], dict[str, Any] | None]:
     """start 的前置判定：scope 解析错误 → 拒；git_push 再有未入库知识资产/回执
     占位 → 拒。
@@ -1173,9 +1217,12 @@ def _start_preconditions(
     if scope_error:
         return scope_receipt, scope_paths, {"accepted": False, "reason": scope_error}
     if kind == "git_push":
-        blocked = _knowledge_gate_receipt(workdir)
-        if blocked is not None:
-            return scope_receipt, scope_paths, blocked
+        # 纯删 ref 的 push 不携带任何内容，知识闸的关切（资产随 push 交付丢失）
+        # 不适用（EVO-20261123-d43138fc）；回执占位闸不变——它管交付证据完整性。
+        if not _is_delete_only_push(command):
+            blocked = _knowledge_gate_receipt(workdir)
+            if blocked is not None:
+                return scope_receipt, scope_paths, blocked
         blocked = _receipt_placeholder_receipt(workdir)
         if blocked is not None:
             return scope_receipt, scope_paths, blocked
@@ -4012,7 +4059,7 @@ class HostReviewAdmission:
     ) -> dict[str, Any]:
         if not parent or self._runner is None or self._reviewer_model_error:
             return {"accepted": False, "reason": self._reviewer_model_error or "review_host_unavailable"}
-        scope_receipt, scope_paths, denial = _start_preconditions(kind, scope, paths, workdir)
+        scope_receipt, scope_paths, denial = _start_preconditions(kind, scope, paths, workdir, command)
         if denial is not None:
             return denial
         # 先算一次切片外绑定：材料头与回执必须说同一个数（分两次算会漂）。
@@ -5552,13 +5599,15 @@ class HostReviewAdmission:
             # 白烧一个审查周期。这里先做同一口径的只读判定（与 start 的
             # _knowledge_gate_receipt 一致），命中则非消费性拒绝。注意树已变
             # 必然重审（candidate sha 不再匹配），本闸省的是投递与兜底噪音。
-            knowledge_gate = _knowledge_gate_receipt(workdir)
-            if knowledge_gate is not None:
-                return self._deny(
-                    "工作区存在未入库知识资产（方法卡/经验卡），推送会被 pre-push "
-                    "知识闸拒绝；资格未被消费。",
-                    hint=str(knowledge_gate.get("fix") or ""),
-                )
+            # 纯删 ref 的 push 与 start 前置同口径豁免（EVO-20261123-d43138fc）。
+            if not _is_delete_only_push(command):
+                knowledge_gate = _knowledge_gate_receipt(workdir)
+                if knowledge_gate is not None:
+                    return self._deny(
+                        "工作区存在未入库知识资产（方法卡/经验卡），推送会被 pre-push "
+                        "知识闸拒绝；资格未被消费。",
+                        hint=str(knowledge_gate.get("fix") or ""),
+                    )
         for scope_paths, recorded_digest, tier, review_base, review_ref in scopes:
             try:
                 # full_test runs on the local worktree; recompute with the

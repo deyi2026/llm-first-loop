@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -182,3 +184,60 @@ def test_flush_in_linked_worktree_not_blocked_by_stale_relative_lane(tmp_path: P
 
     assert main(["--root", str(mine), "--session-id", "sess-me"]) == 0
     assert "data/methods/method-x/METHOD.md" in _git(mine, "ls-files", "data/methods")
+
+
+# --- EVO-20261123-d43138fc：worktree 已消失的 lane 必须可回收 ----------------
+def _bare_row(worktree: str, *, hours_ago: float = 6.0) -> dict[str, object]:
+    ts = datetime.now(UTC) - timedelta(hours=hours_ago)
+    return {
+        "lane_id": "lane-gone",
+        "branch": "lane/gone",
+        "worktree": worktree,
+        "status": "active",
+        "last_activity": ts.isoformat(),
+        "version": 1,
+    }
+
+
+def test_missing_worktree_lane_is_stale(tmp_path: Path) -> None:
+    """worktree 被清（/tmp）或被 prune：物理上已无写者 → 可回收。
+
+    旧实现把 `git -C <缺失路径> status` 的失败当成 live，这种 lane 永久挡住
+    所有人的知识 flush 与推送（2026-11-23 实测卡住 4 小时）。
+    """
+    repo = _repo(tmp_path)
+    row = _bare_row(str(tmp_path / "gone-worktree"))
+    assert _lane_is_stale(row, repo, datetime.now(UTC)) is True
+
+
+def test_non_git_worktree_lane_is_stale(tmp_path: Path) -> None:
+    """路径还在但已不是 git 工作树（/tmp 下被清空/复用）→ 同样无可写者。
+
+    目录必须落在任何仓库之外：在仓库子目录里，``git rev-parse`` 会一路向上找到
+    外层工作树，测不出「不是工作树」这一支。
+    """
+    repo = _repo(tmp_path)
+    hollow = Path(tempfile.mkdtemp(dir="/tmp"))
+    try:
+        row = _bare_row(str(hollow))
+        assert _lane_is_stale(row, repo, datetime.now(UTC)) is True
+    finally:
+        shutil.rmtree(hollow, ignore_errors=True)
+
+
+def test_worktree_path_that_is_a_file_stays_live(tmp_path: Path) -> None:
+    """应拦输入仍拦：路径是文件/读不懂 → 不回收（fail-closed）。"""
+    repo = _repo(tmp_path)
+    as_file = tmp_path / "not-a-dir"
+    as_file.write_text("x\n", encoding="utf-8")
+    row = _bare_row(str(as_file))
+    assert _lane_is_stale(row, repo, datetime.now(UTC)) is False
+
+
+def test_dirty_worktree_lane_stays_live(tmp_path: Path) -> None:
+    """应拦输入仍拦：空闲超时但 worktree 有未提交改动 → 可能有人正在写，不回收。"""
+    repo = _repo(tmp_path)
+    wt = _linked_worktree(repo)
+    (wt / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
+    row = _lane_row(repo, wt, hours_ago=6.0)
+    assert _lane_is_stale(row, repo, datetime.now(UTC)) is False
