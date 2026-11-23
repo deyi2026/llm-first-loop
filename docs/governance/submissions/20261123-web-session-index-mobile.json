@@ -1,0 +1,32 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-web-session-index-mobile",
+  "summary": "Keep large Web session inventories warm and make mobile history recovery explicit and read-only without changing Run authority.",
+  "components": [
+    {
+      "component_id": "web-session-index-and-mobile-history",
+      "paths": [
+        "docs/governance/submissions/20261123-web-session-index-mobile.json",
+        "src/llm_loop/core/session.py",
+        "tests/unit/test_session.py",
+        "webui/src/components/conversation/Conversation.test.tsx",
+        "webui/src/components/conversation/Conversation.tsx",
+        "webui/src/components/conversation/MessageList.test.tsx",
+        "webui/src/components/conversation/MessageList.tsx",
+        "webui/src/tokens/conversation.css"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing SessionStore metadata cache and Web V2 conversation components; no new API, task execution or authorization owner.",
+      "disposition": "Increase the bounded metadata-only cache to cover the measured 7,426-file workspace, preserve history on read failures, offer a read-only retry, and keep mobile history pagination scroll anchored.",
+      "evidence": [
+        "2026-11-23 production read-only baseline: /api/v1/sessions 17.975s, 1,199,891 response bytes; 7,426 workspace session files and 2,048 metadata cache slots.",
+        "Candidate 174060c28: 2,100-session cache regression checks no JSON reparse on second listing; targeted Python 108 passed, WebUI 619 passed, TypeScript and WebUI build exit 0.",
+        "Independent reviewer, original R9, remote CI and deployed production performance remain pending for this manifest-amended candidate."
+      ],
+      "verification_level": "Code-only targeted regression and WebUI build; not yet reviewed, merged or deployed.",
+      "model_evidence_veto_recovery_exit": "Reviewer may veto if enlarged metadata cache creates unacceptable RAM use, historical search/pinning regresses, a history retry resubmits a Run, mobile controls become inaccessible, or actual latency fails to improve.",
+      "rollback_route": "Revert this bounded cache and UI patch via protected PR; session JSON, event logs, Run and Goal facts remain untouched."
+    }
+  ],
+  "declarations": []
+}
