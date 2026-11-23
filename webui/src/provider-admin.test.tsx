@@ -865,6 +865,92 @@ describe("provider admin contract（§9.3）", () => {
     expect(within(card).queryByRole("button", { name: "配置 API Key" })).toBeNull();
   });
 
+  it.each(["http-503", "network-exception"] as const)(
+    "普通添加模型 %s 未知结果：回读未见也阻止关闭重开后重复 POST",
+    async (failureMode) => {
+      let posts = 0;
+      const calls = stubFetch((call) => {
+        if (call.url === "/api/v1/providers/alpha/models" && call.method === "POST") {
+          posts += 1;
+          if (failureMode === "network-exception") throw new TypeError("connection closed");
+          return json({ error: "provider_unavailable" }, 503);
+        }
+        return undefined;
+      });
+      render(<ProviderManager />);
+      const card = await screen.findByTestId("provider-alpha");
+      fireEvent.click(within(card).getByRole("button", { name: "+ 添加模型" }));
+      fireEvent.change(screen.getByRole("region", { name: "+ 添加模型" }).querySelector('input[placeholder="例如：model-name"]')!, {
+        target: { value: "m3" },
+      });
+      fireEvent.click(within(screen.getByRole("region", { name: "+ 添加模型" })).getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "刷新核验未知写入" })).toBeInTheDocument());
+      expect(posts).toBe(1);
+      fireEvent.click(screen.getByRole("button", { name: "关闭模型编辑" }));
+      fireEvent.click(within(card).getByRole("button", { name: "+ 添加模型" }));
+      fireEvent.change(screen.getByRole("region", { name: "+ 添加模型" }).querySelector('input[placeholder="例如：model-name"]')!, {
+        target: { value: "m3" },
+      });
+      expect(within(screen.getByRole("region", { name: "+ 添加模型" })).getByRole("button", { name: "保存" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "刷新核验未知写入" }));
+      await waitFor(() => expect(screen.getAllByText(/仍有写入结果无法核实/).length).toBeGreaterThan(0));
+      expect(posts).toBe(1);
+      expect(calls.filter((call) => call.url === "/api/v1/providers/alpha/models" && call.method === "POST")).toHaveLength(1);
+    }
+  );
+
+  it("普通 Provider 创建连接断开后，重开表单也不会重复 POST", async () => {
+    let posts = 0;
+    stubFetch((call) => {
+      if (call.url === "/api/v1/providers" && call.method === "POST") {
+        posts += 1;
+        throw new TypeError("server committed before disconnect");
+      }
+      return undefined;
+    });
+    render(<ProviderManager />);
+    await screen.findByTestId("provider-alpha");
+    fireEvent.click(screen.getByRole("button", { name: "+ 添加服务商" }));
+    let form = screen.getByTestId("provider-editor");
+    fireEvent.change(within(form).getByLabelText("服务商模板"), { target: { value: "minimax" } });
+    fireEvent.change(within(form).getByLabelText("Model ID"), { target: { value: "test-model" } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存并热重载" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新核验未知写入" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "关闭服务商编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ 添加服务商" }));
+    form = screen.getByTestId("provider-editor");
+    fireEvent.change(within(form).getByLabelText("服务商模板"), { target: { value: "minimax" } });
+    fireEvent.change(within(form).getByLabelText("Model ID"), { target: { value: "test-model" } });
+    expect(within(form).getByRole("button", { name: "保存并热重载" })).toBeDisabled();
+    expect(posts).toBe(1);
+  });
+
+  it("凭证 503 结果未知：保留密钥输入但阻止关闭重开后重复 PUT", async () => {
+    let puts = 0;
+    stubFetch((call) => {
+      if (call.url === "/api/v1/providers/alpha/credential" && call.method === "PUT") {
+        puts += 1;
+        return json({ error: "upstream_unavailable" }, 503);
+      }
+      return undefined;
+    });
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-alpha");
+    fireEvent.click(within(card).getByRole("button", { name: "更换 API Key" }));
+    let form = within(card).getByRole("form", { name: "alpha API Key 配置" });
+    fireEvent.change(within(form).getByLabelText("alpha API Key"), { target: { value: "fake-pending-secret" } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新核验未知写入" })).toBeInTheDocument());
+    expect(within(form).getByLabelText("alpha API Key")).toHaveValue("fake-pending-secret");
+    expect(document.body.textContent).not.toContain("fake-pending-secret");
+    fireEvent.click(within(form).getByRole("button", { name: "取消" }));
+    fireEvent.click(within(card).getByRole("button", { name: "更换 API Key" }));
+    form = within(card).getByRole("form", { name: "alpha API Key 配置" });
+    fireEvent.change(within(form).getByLabelText("alpha API Key"), { target: { value: "fake-new-secret" } });
+    expect(within(form).getByRole("button", { name: "保存 API Key" })).toBeDisabled();
+    expect(puts).toBe(1);
+  });
+
   it("批量添加部分成功后只重试剩余模型，不重复提交已成功项", async () => {
     const withM3 = snapshot({
       config_version: "version-10",

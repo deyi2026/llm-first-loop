@@ -90,6 +90,21 @@ function num(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+type PendingWrite = {
+  key: string;
+  kind: "provider-create" | "model-add" | "unverifiable";
+  providerId?: string;
+  modelId?: string;
+};
+
+/** Only existence of a newly created ID is independently verifiable from the public snapshot. */
+function writeConfirmed(snapshot: ProviderAdminSnapshot, pending: PendingWrite): boolean {
+  const provider = snapshot.providers.find((item) => item.id === pending.providerId);
+  if (pending.kind === "provider-create") return Boolean(provider);
+  if (pending.kind === "model-add") return Boolean(provider?.models.some((item) => item.id === pending.modelId));
+  return false; // Credential bytes and edits are deliberately not exposed by the read API.
+}
+
 function configuredModelIds(snapshot: ProviderAdminSnapshot | null, providerId: string): Set<string> {
   return new Set(snapshot?.providers.find((provider) => provider.id === providerId)?.models.map((model) => model.id) ?? []);
 }
@@ -282,6 +297,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<{ message: string; conflict?: boolean } | null>(null);
   const [flash, setFlash] = useState("");
+  const [pendingWrites, setPendingWrites] = useState<Record<string, PendingWrite>>({});
   const [tests, setTests] = useState<Record<string, string>>({});
   const [editor, setEditor] = useState<{
     mode: "create" | "edit";
@@ -391,13 +407,47 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
   };
 
   const runMutation = useCallback(
-    async (key: string, action: () => Promise<Awaited<ReturnType<typeof patchProvider>>>, success: string) => {
+    async (
+      key: string,
+      action: () => Promise<Awaited<ReturnType<typeof patchProvider>>>,
+      success: string,
+      pending: PendingWrite = { key, kind: "unverifiable" }
+    ) => {
+      if (pendingWrites[pending.key]) {
+        setError({ message: "该操作的上次写入结果尚未确认。请先刷新核验，避免重复提交。" });
+        return false;
+      }
       setBusy(key);
       setError(null);
       setFlash("");
+      const unknownResult = async (accepted = false, readAttempted = false): Promise<boolean> => {
+        // Do not retain the request body or any API Key in the pending-write record.
+        setPendingWrites((prev) => ({ ...prev, [pending.key]: pending }));
+        let latest: ProviderAdminSnapshot | null = null;
+        if (!readAttempted) {
+          try { latest = await fetchProviderAdmin(); } catch { /* uncertain, keep blocked */ }
+        }
+        if (latest) setSnapshot(latest);
+        if (latest && writeConfirmed(latest, pending)) {
+          setPendingWrites((prev) => {
+            const next = { ...prev };
+            delete next[pending.key];
+            return next;
+          });
+          setFlash("已从服务器核对到目标配置；请检查后继续。");
+          notifyModelCatalogChanged();
+          void onCatalogChanged?.();
+          return true;
+        }
+        setError({ message: accepted
+          ? "服务器已接受操作，但无法确认最新配置。暂不允许重复提交，请刷新核验。"
+          : "请求可能已执行，但结果未确认。已尝试回读配置，暂不允许重复提交；请刷新核验。" });
+        return false;
+      };
       try {
         const result = await action();
         if (!result.ok) {
+          if (result.status < 400 || result.status >= 500) return await unknownResult();
           setError({
             message: errorLabel(result.error, result.detail),
             conflict: result.status === 409 || result.error === "provider_config_conflict",
@@ -405,24 +455,41 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
           return false;
         }
         if (result.snapshot) setSnapshot(result.snapshot);
-        else if (!(await load())) {
-          // A 2xx write without a verifiable readback must not claim success.
-          setError({ message: "服务器已接受操作，但无法确认最新配置。请先刷新核验，不要重复提交。" });
-          return false;
-        }
+        else if (!(await load())) return await unknownResult(true, true);
         setFlash(result.detail || success);
         notifyModelCatalogChanged();
         void onCatalogChanged?.();
         return true;
-      } catch (err) {
-        setError({ message: err instanceof Error ? err.message : T.errors.unknown });
-        return false;
+      } catch {
+        return await unknownResult();
       } finally {
         setBusy("");
       }
     },
-    [load, onCatalogChanged]
+    [load, onCatalogChanged, pendingWrites]
   );
+
+  const refreshPendingWrites = async () => {
+    if (busy) return;
+    setBusy("pending-refresh");
+    try {
+      const latest = await fetchProviderAdmin();
+      if (!latest) throw new Error("unavailable");
+      setSnapshot(latest);
+      const remaining = Object.fromEntries(
+        Object.entries(pendingWrites).filter(([, pending]) => !writeConfirmed(latest, pending))
+      );
+      setPendingWrites(remaining);
+      setError(Object.keys(remaining).length
+        ? { message: "配置已刷新，但仍有写入结果无法核实；为防止重复写入，该操作仍被阻止。请核实服务端状态。" }
+        : null);
+      if (!Object.keys(remaining).length) setFlash("已核对服务器配置，可继续操作。");
+    } catch {
+      setError({ message: "配置读取失败，未知写入仍被阻止；请稍后再核验。" });
+    } finally {
+      setBusy("");
+    }
+  };
 
   const setDefault = async (value: string) => {
     if (!value) return;
@@ -553,7 +620,10 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         editor.mode === "create"
           ? createProvider(snapshot.config_version, editor.draft, editor.apiKey)
           : replaceProvider(editor.baseVersion ?? snapshot.config_version, editor.draft),
-      T.saved
+      T.saved,
+      { key: `provider:${editor.draft.id}:${editor.mode}`,
+        kind: editor.mode === "create" && !editor.apiKey ? "provider-create" : "unverifiable",
+        providerId: editor.draft.id }
     );
     if (!ok) return;
     setEditor(null);
@@ -574,7 +644,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     const ok = await runMutation(
       `credential:${providerId}`,
       () => updateProviderCredential(providerId, credentialEditor.apiKey.trim()),
-      "API Key 已保存并生效"
+      "API Key 已保存并生效",
+      { key: `credential:${providerId}`, kind: "unverifiable", providerId }
     );
     if (ok) setCredentialEditor(null);
   };
@@ -602,7 +673,10 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
               modelForm.draft
             )
           : addProviderModel(modelForm.providerId, snapshot.config_version, modelForm.draft),
-      T.saved
+      T.saved,
+      { key: `model:${modelForm.providerId}/${modelForm.draft.id}:${modelForm.mode}`,
+        kind: modelForm.mode === "add" ? "model-add" : "unverifiable",
+        providerId: modelForm.providerId, modelId: modelForm.draft.id }
     );
     if (ok) {
       setModelForm(null);
@@ -985,7 +1059,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       </details>
       {error ? <p className="v2-provider-warning" role="alert">{error.message}</p> : null}
       <div className="v2-provider-editor-actions">
-        <button type="button" className="v2-provider-primary" onClick={() => void saveEditor()} disabled={busy !== ""}>
+        <button type="button" className="v2-provider-primary" onClick={() => void saveEditor()}
+          disabled={busy !== "" || Boolean(pendingWrites[`provider:${editor.draft.id}:${editor.mode}`])}>
           {busy === "editor" ? T.saving : T.saveAndApply}
         </button>
         <button type="button" onClick={() => setEditor(null)}>{T.cancel}</button>
@@ -1091,7 +1166,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       {error ? <p className="v2-provider-warning" role="alert">{error.message}</p> : null}
       <div className="v2-provider-editor-actions">
         <button type="button" className="v2-provider-primary" onClick={() => void saveModel()}
-          disabled={busy !== "" || Boolean(discovery?.needsRefresh && discovery.providerId === modelForm.providerId)}>
+          disabled={busy !== "" || Boolean(discovery?.needsRefresh && discovery.providerId === modelForm.providerId)
+            || Boolean(pendingWrites[`model:${modelForm.providerId}/${modelForm.draft.id}:${modelForm.mode}`])}>
           {busy === "model-form" ? T.saving : T.save}
         </button>
         <button type="button" onClick={() => {
@@ -1118,6 +1194,14 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
           {error.message}
           {error.conflict ? ` ${T.conflictBanner}` : ""}
           {error.conflict ? <button type="button" onClick={() => void load()}>{T.refresh}</button> : null}
+        </div>
+      ) : null}
+      {Object.keys(pendingWrites).length ? (
+        <div className="v2-provider-warning" role="status">
+          有 {Object.keys(pendingWrites).length} 项写入结果未确认，已阻止相同操作的自动重试。
+          <button type="button" onClick={() => void refreshPendingWrites()} disabled={busy !== ""}>
+            {busy === "pending-refresh" ? T.loading : "刷新核验未知写入"}
+          </button>
         </div>
       ) : null}
       {flash ? <p className="v2-provider-ok" role="status">{flash}</p> : null}
@@ -1275,7 +1359,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                   {error ? <p className="v2-provider-warning" role="alert">{error.message}</p> : null}
                   <div className="v2-provider-editor-actions">
                     <button type="submit" className="v2-provider-primary"
-                      disabled={!credentialEditor.apiKey.trim() || busy !== ""}>
+                      disabled={!credentialEditor.apiKey.trim() || busy !== ""
+                        || Boolean(pendingWrites[`credential:${provider.id}`])}>
                       {busy === `credential:${provider.id}` ? T.saving : "保存 API Key"}
                     </button>
                     <button type="button" onClick={() => setCredentialEditor(null)} disabled={busy !== ""}>{T.cancel}</button>
