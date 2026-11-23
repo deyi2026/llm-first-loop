@@ -37,7 +37,11 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import hashlib
 import os
+import stat
+import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -425,6 +429,194 @@ def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str 
     if bundle == "com.microsoft.vscode" and not saw_target_document:
         return None
     return path if saw_editor else None
+
+
+def _xcode_focused_window_matches(window: WindowInfo) -> bool:
+    """OS AXFocusedWindow must be the exact D4-bound Xcode window."""
+    if str(window.bundle_id or "").lower() != "com.apple.dt.xcode":
+        return False
+    app = app_element(window.pid)
+    if app is None:
+        return False
+    focused = 0
+    bound = None
+    try:
+        if app.attr("AXFrontmost") is not True:
+            return False
+        err, focused = ax_read_attr(app.ref, "AXFocusedWindow")
+        bound, _ = resolve_window_element(window)
+        if err != 0 or not focused or bound is None:
+            return False
+        core = load_framework("CoreFoundation")
+        core.CFEqual.argtypes = [CFTypeRef, CFTypeRef]
+        core.CFEqual.restype = ctypes.c_bool
+        return bool(core.CFEqual(ctypes.c_void_p(focused), ctypes.c_void_p(bound.ref)))
+    except Exception:  # noqa: BLE001 - unreadable Host focus is HOLD
+        return False
+    finally:
+        if focused:
+            cf_release(focused)
+        if bound is not None:
+            bound.release()
+        app.release()
+
+
+def _is_exact_xcode_save_item(item: MacAxElement) -> bool:
+    """Reject Save All / Save As / arbitrary File menu actions."""
+    return (
+        item.attr("AXRole") == "AXMenuItem"
+        and item.attr("AXIdentifier") == "ide_saveDocument:"
+        and item.attr("AXMenuItemCmdChar") == "S"
+        and item.attr("AXMenuItemCmdModifiers") == 0
+        and item.attr("AXEnabled") is True
+    )
+
+
+def _xcode_press_exact_save_menu(window: WindowInfo) -> tuple[int | None, str]:
+    """AXPress only File→Save (never global HID / Cmd+S / Save All)."""
+    app = app_element(window.pid)
+    if app is None:
+        return None, "xcode_ax_app_unavailable"
+    bar = None
+    bar_items: list[Any] = []
+    menus: list[Any] = []
+    entries: list[Any] = []
+    try:
+        err, bar_ref = ax_read_attr(app.ref, "AXMenuBar")
+        if err != 0 or not bar_ref:
+            return None, "xcode_menu_bar_unavailable"
+        bar = MacAxElement(bar_ref)  # takes ownership of returned +1
+        if bar.attr("AXRole") != "AXMenuBar":
+            return None, "xcode_menu_bar_invalid"
+        bar_items = bar.attr("AXChildren") or []
+        files = [item for item in bar_items if (
+            item.attr("AXRole") == "AXMenuBarItem"
+            and item.attr("AXTitle") in ("File", "文件")
+        )]
+        if len(files) != 1:
+            return None, "xcode_file_menu_ambiguous"
+        menus = files[0].attr("AXChildren") or []
+        if len(menus) != 1 or menus[0].attr("AXRole") != "AXMenu":
+            return None, "xcode_file_menu_unavailable"
+        entries = menus[0].attr("AXChildren") or []
+        saves = [item for item in entries if _is_exact_xcode_save_item(item)]
+        if len(saves) != 1:
+            return None, "xcode_save_item_unavailable"
+        try:
+            return ax_press(saves[0]), ""
+        except Exception:  # noqa: BLE001 - AXPress may already have dispatched
+            return -1, "xcode_save_press_uncertain"
+    except Exception:  # noqa: BLE001 - never substitute keyboard fallback
+        return None, "xcode_save_menu_probe_failed"
+    finally:
+        _release_ax_children(entries)
+        _release_ax_children(menus)
+        _release_ax_children(bar_items)
+        if bar is not None:
+            bar.release()
+        app.release()
+
+
+def _xcode_save_hold(reason: str, *, dispatched: bool = False) -> ActOutcome:
+    return ActOutcome(
+        ok=False,
+        error=DesktopErrorCode.BACKEND_ERROR,
+        detail=f"Xcode 精确文档保存 HOLD: {reason}（未放宽全局键盘权限）",
+        verified=False if dispatched else None,
+        dispatch_state="dispatched" if dispatched else "not_dispatched",
+        effect_state="unknown" if dispatched else "not_observed",
+        verification_state="failed" if dispatched else "unavailable",
+        verification_reason=reason,
+    )
+
+
+def _xcode_live_document_path(window: WindowInfo, ax_ref: str) -> str | None:
+    """Only a focused exact Xcode editor may be saved, regardless of AXEditable flavor."""
+    editor, _ = resolve_element_by_axref(window, ax_ref)
+    if editor is None:
+        return None
+    try:
+        if editor.attr("AXFocused") is not True:
+            return None
+    finally:
+        editor.release()
+    return (
+        ax_editor_os_attested_document_path(window, ax_ref)
+        or ax_editor_document_path(window, ax_ref)
+    )
+
+
+def ax_save_xcode_document(
+    window: WindowInfo, ax_ref: str, expected_path: str, pre_save_sha256: str,
+) -> ActOutcome:
+    """Signed Task Xcode only: exact AX editor → AXPress File/Save → disk SHA.
+
+    Caller must have checked Task Lease app+file, Lane/CAS, TCC, D4/D7 and
+    fresh Host document binding. This native last-mile rechecks OS evidence;
+    never accepts a model-supplied path, keyboard shortcut or arbitrary menu.
+    """
+    if (
+        str(window.bundle_id or "").lower() != "com.apple.dt.xcode"
+        or not isinstance(expected_path, str)
+        or not expected_path.startswith("/")
+        or os.path.realpath(expected_path) != expected_path
+        or os.path.islink(expected_path)
+        or len(pre_save_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in pre_save_sha256)
+        or not _xcode_focused_window_matches(window)
+        or _xcode_live_document_path(window, ax_ref) != expected_path
+    ):
+        return _xcode_save_hold("xcode_host_document_or_focus_changed")
+    editor, _ = resolve_element_by_axref(window, ax_ref)
+    if editor is None:
+        return _xcode_save_hold("xcode_editor_unavailable")
+    try:
+        value = ax_read_value_string(editor)
+    finally:
+        editor.release()
+    if not isinstance(value, str) or len(value.encode("utf-8")) > 1_048_576:
+        return _xcode_save_hold("xcode_editor_text_unreadable_or_too_large")
+    try:
+        info = os.stat(expected_path, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+            return _xcode_save_hold("xcode_document_not_regular_or_too_large")
+    except OSError:
+        return _xcode_save_hold("xcode_document_stat_failed")
+    try:
+        with open(expected_path, "rb") as current:
+            disk_preimage = current.read(1_048_577)
+    except OSError:
+        return _xcode_save_hold("xcode_disk_preimage_unreadable")
+    if (
+        len(disk_preimage) > 1_048_576
+        or hashlib.sha256(disk_preimage).hexdigest() != pre_save_sha256
+        or not _xcode_focused_window_matches(window)
+        or _xcode_live_document_path(window, ax_ref) != expected_path
+    ):
+        return _xcode_save_hold("xcode_document_preimage_or_identity_changed")
+    err, reason = _xcode_press_exact_save_menu(window)
+    if err is None:
+        return _xcode_save_hold(reason)
+    if err != 0:
+        return act_outcome_from_ax_err(err, "Xcode File/Save AXPress")
+    expected_sha = hashlib.sha256(value.encode("utf-8")).digest()
+    deadline = time.monotonic() + 8
+    while True:
+        try:
+            if (
+                not os.path.islink(expected_path)
+                and hashlib.sha256(Path(expected_path).read_bytes()).digest() == expected_sha
+            ):
+                return ActOutcome(
+                    ok=True, verified=True, dispatch_state="dispatched",
+                    effect_state="confirmed", verification_state="passed",
+                    verification_reason="xcode_exact_file_saved_to_disk",
+                )
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            return _xcode_save_hold("xcode_disk_save_not_verified", dispatched=True)
+        time.sleep(0.2)
 
 
 def ax_press(el: MacAxElement) -> int:

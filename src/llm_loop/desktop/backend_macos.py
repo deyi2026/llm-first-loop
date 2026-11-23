@@ -342,6 +342,12 @@ class MacOSDesktopBackend:
         finally:
             el.release()
 
+    def act_save_document(
+        self, window: WindowInfo, ax_ref: str, path: str, pre_save_sha256: str,
+    ) -> ActOutcome:
+        """Xcode only: exact File/Save AXPress + CAS preimage + disk verification."""
+        return macos_actuate.ax_save_xcode_document(window, ax_ref, path, pre_save_sha256)
+
     def act_click_point(self, x_pt: float, y_pt: float) -> ActOutcome:
         """click(point)：CGEvent 左键点击（全局坐标，单位=点，与 AX 同单位）。
 
