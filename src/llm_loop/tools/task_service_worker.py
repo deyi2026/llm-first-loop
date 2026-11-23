@@ -9,8 +9,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
+import sys
 from pathlib import Path
 from typing import Any
+
+# The detached worker is invoked with -I from the exact immutable release
+# source path; bootstrap only that release's src tree, never user-site/PYTHONPATH.
+# The trusted interpreter's site-packages must remain for signature verification.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from llm_loop.core.run_context import current_session_id, current_task_execution
 from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
@@ -47,7 +56,22 @@ def verify_action(data_dir: str, action_id: str) -> dict[str, Any]:
         session_token = current_session_id.set(task.owner_session_id)
         task_token = current_task_execution.set(task)
         try:
-            task.authorize_service(action.target, os_permission_granted=True)
+            restart_script = Path(desired.runtime_root) / "scripts" / "restart_mirror.sh"
+            backend_supported = (
+                platform.system() in {"Darwin", "Linux"}
+                and restart_script.is_file()
+                and os.access(restart_script, os.X_OK)
+            )
+            os_permission_granted = (
+                backend_supported
+                and os.access(Path(desired.runtime_root), os.W_OK)
+                and os.access(restart_script, os.X_OK)
+            )
+            task.authorize_service(
+                action.target,
+                os_permission_granted=os_permission_granted,
+                backend_supported=backend_supported,
+            )
         finally:
             current_task_execution.reset(task_token)
             current_session_id.reset(session_token)

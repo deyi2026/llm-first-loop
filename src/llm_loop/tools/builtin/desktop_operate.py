@@ -810,7 +810,15 @@ class DesktopOperateTool:
                 ):
                     return None
                 ancestry.append((ref, role, subrole, title))
-            if ancestry[-1][1].lower() not in ("axtextarea", "axtextfield", "axtextview"):
+            target_node = by_ref[ax_ref]
+            if (
+                ancestry[-1][1].lower() not in ("axtextarea", "axtextfield", "axtextview")
+                or target_node.editable is not True
+                or target_node.enabled is False
+            ):
+                # The AXRole/title alone cannot distinguish an editor from an
+                # integrated terminal. Require positive Host AXEditable plus
+                # the native backend's exact file:// AXDocument evidence.
                 return None
             digest = hashlib.sha256(json.dumps(
                 ancestry, ensure_ascii=False, separators=(",", ":")
@@ -844,6 +852,7 @@ class DesktopOperateTool:
                 bundle,
                 verb="edit",
                 os_permission_granted=bool(flow.base["permissions"]["ax_trusted"]),
+                backend_supported=callable(getattr(flow.backend, "ax_probe", None)),
             )
         except TaskExecutionError as exc:
             return self._refuse(
@@ -1527,6 +1536,7 @@ class DesktopOperateTool:
                 window.bundle_id,
                 verb="edit",
                 os_permission_granted=bool(flow.backend.permission_snapshot().ax_trusted),
+                backend_supported=callable(getattr(flow.backend, "ax_probe", None)),
             )
         except TaskExecutionError as exc:
             return self._refuse(

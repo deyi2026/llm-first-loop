@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import pytest
 
@@ -31,6 +31,7 @@ class SignedTaskStub:
         *,
         verb: str,
         os_permission_granted: bool,
+        backend_supported: bool,
     ) -> None:
         self.calls.append((bundle_id, verb, os_permission_granted))
         if self.revoked:
@@ -54,6 +55,10 @@ def signed_task():
 def _ide_backend(*, perms=None):
     return FakeOperateBackend(
         windows=[_window(app="Visual Studio Code", bundle_id="com.microsoft.VSCode")],
+        ax_views={101: _view(
+            _node("0", "AXWindow", "approved.py - Visual Studio Code"),
+            replace(_node("0.1", "AXTextArea", "正文", value=""), editable=True),
+        )},
         perms=perms,
     )
 
@@ -308,3 +313,52 @@ def test_signed_ide_document_stable_two_phase_fake_dispatch(tmp_path):
     assert applied["applied"] is True
     assert len(backend.act_calls) == 1
     assert task.file_calls == [(str(path), "write")] * 3
+
+
+def test_signed_ide_rejects_unknown_ax_editable_even_with_safe_title_and_file_url(tmp_path):
+    """AX title and a stubbed path are not positive editor evidence."""
+    path = tmp_path / "approved.py"
+    path.write_text("safe\n")
+    backend = FakeOperateBackend(
+        windows=[_window(app="Visual Studio Code", bundle_id="com.microsoft.VSCode")],
+        ax_views={101: _view(
+            _node("0", "AXWindow", "approved.py - Visual Studio Code"),
+            _node("0.1", "AXTextArea", "正文", value="$ "),
+        )},
+    )
+    from typing import Any
+    host: Any = backend
+    host.editor_document_path = lambda _window, _ref: str(path)
+    task = _DocumentScopedTask(allowed_path=str(path))
+    token = current_task_execution.set(task)
+    try:
+        denied = _type(_tool(backend), dry_run=True)
+    finally:
+        current_task_execution.reset(token)
+    assert denied["error_code"] == "app_not_allowed"
+    assert "task_ide_editor_identity_unverified" in denied["guidance"]
+    assert backend.act_calls == [] and task.file_calls == []
+
+
+def test_signed_ide_rejects_terminal_structural_subrole_even_with_file_url(tmp_path):
+    path = tmp_path / "approved.py"
+    path.write_text("safe\n")
+    backend = FakeOperateBackend(
+        windows=[_window(app="Visual Studio Code", bundle_id="com.microsoft.VSCode")],
+        ax_views={101: _view(
+            _node("0", "AXWindow", "approved.py - Visual Studio Code"),
+            replace(_node("0.1", "AXTextArea", "正文", subrole="AXTerminal"), editable=True),
+        )},
+    )
+    from typing import Any
+    host: Any = backend
+    host.editor_document_path = lambda _window, _ref: str(path)
+    task = _DocumentScopedTask(allowed_path=str(path))
+    token = current_task_execution.set(task)
+    try:
+        denied = _type(_tool(backend), dry_run=True)
+    finally:
+        current_task_execution.reset(token)
+    assert denied["error_code"] == "app_not_allowed"
+    assert "task_ide_editor_identity_unverified" in denied["guidance"]
+    assert backend.act_calls == [] and task.file_calls == []

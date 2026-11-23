@@ -726,12 +726,10 @@ class BrowserActionAdapter:
                 str(version.get("webSocketDebuggerUrl") or "")
             ) != binding.browser_ws_uuid:
                 return "task_browser_host_process_changed"
-            # Bind the signed app resource to this exact Host-observed browser
-            # process + target, rather than a forgeable bundle/scope_ref string.
-            digest = hashlib.sha256("\0".join((
-                binding.browser_ws_uuid, binding.target_id,
-                binding.target_ws_url, argv_hash,
-            )).encode("utf-8")).hexdigest()
+            # Lease identity is stable and pre-signable; the live process/target
+            # identity is independently enforced by the fresh dedicated-profile
+            # OS attestation and the shared immutable CDP channel binding above.
+            # Never require the issuer to pre-sign a runtime-only process digest.
             authorize_app = getattr(task, "authorize_app", None)
             if not callable(authorize_app):
                 return "task_browser_lease_unavailable"
@@ -739,7 +737,14 @@ class BrowserActionAdapter:
                 # CDP uses a dedicated OS-attested channel; this is not AX/TCC.
                 # TaskExecution still verifies Host signature, parent, Lane CAS,
                 # expiry and revocation on EVERY invocation.
-                authorize_app(f"lfl.cdp.{digest}", verb="edit", os_permission_granted=True)
+                authorize_app(
+                    "lfl.cdp.dedicated", verb="edit",
+                    os_permission_granted=bool(
+                        getattr(fresh, "argv_sha256", None)
+                        and getattr(fresh, "verdict", None) == "dedicated"
+                    ),
+                    backend_supported=bool(callable(attest) and callable(version_probe)),
+                )
             except Exception as exc:  # noqa: BLE001 - fail-closed signed-lease boundary
                 return str(getattr(exc, "reason_code", "task_browser_lease_unavailable"))
             return None

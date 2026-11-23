@@ -216,14 +216,14 @@ def test_signed_exact_app_requires_tcc_and_fresh_lane(active_binding):
     ws = current_workspace_root.set(str(a))
     task = current_task_execution.set(ctx)
     try:
-        ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True)
+        ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True, backend_supported=True)
         with pytest.raises(TaskExecutionError, match="task_os_tcc_required"):
-            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=False)
+            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=False, backend_supported=True)
         with pytest.raises(TaskExecutionError, match="capability_scope_missing"):
-            ctx.authorize_app("com.apple.Terminal", os_permission_granted=True)
+            ctx.authorize_app("com.apple.Terminal", os_permission_granted=True, backend_supported=True)
         lanes.update(ctx.lane_id, expected_version=row["version"], status="verifying")
         with pytest.raises(TaskExecutionError, match="task_lane_cas_conflict"):
-            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True)
+            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True, backend_supported=True)
     finally:
         current_task_execution.reset(task)
         current_workspace_root.reset(ws)
@@ -245,7 +245,7 @@ def test_task_terminal_transition_denies_all_new_effects(active_binding):
             claims.goal_id, claims.task_id, status="done",
         )
         with pytest.raises(TaskExecutionError, match="task_not_in_progress"):
-            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True)
+            ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True, backend_supported=True)
         with pytest.raises(TaskExecutionError, match="task_not_in_progress"):
             ctx.authorize_file(str(b / "file.txt"), "write")
         with pytest.raises(TaskExecutionError, match="task_not_in_progress"):

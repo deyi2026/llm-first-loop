@@ -57,8 +57,13 @@ class _SignedAppLeaseProbe:
         self.calls: list[tuple[str, str, bool]] = []
         self.revoke_at = revoke_at
 
-    def authorize_app(self, identity: str, *, verb: str, os_permission_granted: bool) -> None:
+    def authorize_app(
+        self, identity: str, *, verb: str, os_permission_granted: bool,
+        backend_supported: bool,
+    ) -> None:
         self.calls.append((identity, verb, os_permission_granted))
+        if not backend_supported:
+            raise TaskExecutionError("task_backend_unsupported")
         if self.revoke_at and len(self.calls) >= self.revoke_at:
             raise TaskExecutionError("task_lease_revoked")
 
@@ -107,7 +112,7 @@ def test_task_browser_attested_host_and_exact_signed_app_lease_dispatches(tmp_pa
     assert backend.calls == 2
     assert len(lease.calls) == 2  # admission + immediately before physical dispatch
     identity, verb, os_permission = lease.calls[0]
-    assert identity.startswith("lfl.cdp.") and len(identity) == len("lfl.cdp.") + 64
+    assert identity == "lfl.cdp.dedicated"
     assert identity != command["scope_ref"]
     assert lease.calls == [(identity, "edit", True)] * 2
 

@@ -66,6 +66,7 @@ class TrustedTaskExecution:
         *,
         verb: str = "edit",
         os_permission_granted: bool,
+        backend_supported: bool,
     ) -> None:
         """Reverify exact Host-signed app scope before native AX delivery.
 
@@ -149,7 +150,7 @@ class TrustedTaskExecution:
                 authority="verified",
                 parent_scope_allows=True,
                 lane_fence_valid=True,
-                backend_supported=True,
+                backend_supported=bool(backend_supported),
                 os_permission_granted=bool(os_permission_granted),
                 protected_roots=protected,
             ),
@@ -162,7 +163,7 @@ class TrustedTaskExecution:
             )
 
     def authorize_service(
-        self, service: str, *, os_permission_granted: bool,
+        self, service: str, *, os_permission_granted: bool, backend_supported: bool,
     ) -> None:
         """Verify exact Host-signed service.restart, Goal/Task and Lane CAS.
 
@@ -224,7 +225,7 @@ class TrustedTaskExecution:
             request, lease=claims,
             facts=HostAuthorityFacts(
                 authority="verified", parent_scope_allows=True,
-                lane_fence_valid=True, backend_supported=True,
+                lane_fence_valid=True, backend_supported=bool(backend_supported),
                 os_permission_granted=bool(os_permission_granted),
                 protected_roots=protected,
             ),

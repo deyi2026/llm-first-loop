@@ -654,11 +654,23 @@ class ServiceControlTool:
                 return self._failure(_TASK_SERVICE_HOLD)
             # Runtime OS ACL check is advisory here; worker rechecks under its
             # own OS identity, with the exact Host-signed service scope.
+            desired = self.store.read()
+            if desired is None or desired.generation != expected_generation:
+                return self._failure(_TASK_SERVICE_HOLD)
+            runtime_root = Path(desired.runtime_root)
+            restart_script = runtime_root / "scripts" / "restart_mirror.sh"
+            backend_supported = (
+                os.name == "posix"
+                and restart_script.is_file()
+                and os.access(restart_script, os.X_OK)
+            )
             task.authorize_service(  # type: ignore[attr-defined]
-                target, os_permission_granted=(
-                    self.store.runtime_dir.is_dir()
-                    and os.access(self.store.runtime_dir, os.W_OK)
+                target,
+                os_permission_granted=(
+                    backend_supported
+                    and os.access(runtime_root, os.W_OK)
                 ),
+                backend_supported=backend_supported,
             )
         except Exception as exc:  # noqa: BLE001 - signed/OS/ledger refusal
             return self._failure(

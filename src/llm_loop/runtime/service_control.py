@@ -4670,18 +4670,29 @@ def _task_service_worker_fence(
     if action.origin != "task-restart" or action.target == "all":
         return "task_service_action_binding_invalid"
     try:
+        worker_script = Path(deployment.code_root) / "src" / "llm_loop" / "tools" / "task_service_worker.py"
+        if not worker_script.is_file():
+            return "task_service_worker_fence_unavailable:script_missing"
+        clean_env = os.environ.copy()
+        for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT"):
+            clean_env.pop(key, None)
+        # -I ignores untrusted PYTHONPATH/user-site and cwd while preserving
+        # the trusted interpreter's installed cryptography dependencies.
+        # -S would also remove the venv site-packages and break signed Lease
+        # verification in the real detached process (fail-closed, but unusable).
         proc = subprocess.run(
             [
-                sys.executable, "-m", "llm_loop.tools.task_service_worker",
+                sys.executable, "-I", str(worker_script),
                 "--data-dir", str(store.data_dir), "--action-id", action.action_id,
             ],
             cwd=deployment.runtime_root,
+            env=clean_env,
             capture_output=True,
             text=True,
             timeout=20,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except Exception as exc:  # noqa: BLE001 - no subprocess failure is an allow
         return f"task_service_worker_fence_unavailable:{type(exc).__name__}"
     try:
         result = json.loads(proc.stdout)
@@ -4695,7 +4706,8 @@ def _task_service_worker_fence(
         or result.get("target") != action.target
         or result.get("generation") != deployment.generation
     ):
-        return str(result.get("reason") or "task_service_worker_fence_denied") if isinstance(result, dict) else "task_service_worker_fence_denied"
+        reason = str(result.get("reason") or "task_service_worker_fence_denied") if isinstance(result, dict) else "task_service_worker_fence_denied"
+        return reason if re.fullmatch(r"[a-z0-9_:-]{1,120}", reason) else "task_service_worker_fence_denied"
     return None
 
 

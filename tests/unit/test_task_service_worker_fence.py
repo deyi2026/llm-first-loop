@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -29,10 +30,19 @@ class _Task:
     def get(self, _lane_id):
         return {"worktree": self.worktree}
 
-    def authorize_service(self, target: str, *, os_permission_granted: bool) -> None:
+    def authorize_service(self, target: str, *, os_permission_granted: bool, backend_supported: bool) -> None:
         self.calls.append((target, os_permission_granted))
         if self.revoked:
             raise TaskExecutionError("authority_lease_revoked")
+        if not os_permission_granted or not backend_supported:
+            raise TaskExecutionError("task_os_permission_required")
+
+
+def _host_restart_capability(root: Path) -> None:
+    script = root / "scripts" / "restart_mirror.sh"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o700)
 
 
 def _execute_as_task(tool, task, **kwargs):
@@ -48,6 +58,7 @@ def _execute_as_task(tool, task, **kwargs):
 def test_signed_task_service_restart_is_durable_and_worker_fenced(tmp_path):
     _git_fixture(tmp_path)
     _publish_gen1(tmp_path)
+    _host_restart_capability(tmp_path)
     store = sc.ManagedServiceDeploymentStore(tmp_path / "data")
     spawned: list[str] = []
     tool = ServiceControlTool(store=store, worker_spawner=spawned.append)
@@ -75,6 +86,7 @@ def test_signed_task_service_restart_is_durable_and_worker_fenced(tmp_path):
 def test_task_service_unapproved_actions_remain_hold(tmp_path, kwargs):
     _git_fixture(tmp_path)
     _publish_gen1(tmp_path)
+    _host_restart_capability(tmp_path)
     store = sc.ManagedServiceDeploymentStore(tmp_path / "data")
     spawned: list[str] = []
     task = _Task(worktree=str(tmp_path))
@@ -113,6 +125,9 @@ def test_task_worker_rejects_changed_lease_or_revocation(monkeypatch, tmp_path):
     import llm_loop.tools.task_runtime as task_runtime
 
     task = _Task(worktree=str(tmp_path))
+    worker_script = Path(deployment.code_root) / "src" / "llm_loop" / "tools" / "task_service_worker.py"
+    worker_script.parent.mkdir(parents=True, exist_ok=True)
+    worker_script.write_text("# test fixture\n")
     monkeypatch.setattr(task_runtime, "resolve_task_execution_for_run", lambda **_kwargs: task)
     import json
     from types import SimpleNamespace
@@ -186,7 +201,8 @@ def test_tools_plane_worker_verifies_persisted_action_and_real_resolver(monkeypa
         deployment_generation=4, deployment_id="deploy-4",
         task_owner_session_id="sess-task", task_worktree=str(tmp_path),
     )
-    desired = SimpleNamespace(generation=4, deployment_id="deploy-4")
+    desired = SimpleNamespace(generation=4, deployment_id="deploy-4", runtime_root=str(tmp_path))
+    _host_restart_capability(tmp_path)
     class Store:
         def __init__(self, _path): pass
         def read_action(self, _id): return action
@@ -213,7 +229,7 @@ def test_tools_plane_worker_denies_action_generation_or_forged_fields(monkeypatc
         deployment_generation=3, deployment_id="deploy-3",
         task_owner_session_id="sess-task", task_worktree=str(tmp_path),
     )
-    desired = SimpleNamespace(generation=4, deployment_id="deploy-4")
+    desired = SimpleNamespace(generation=4, deployment_id="deploy-4", runtime_root=str(tmp_path))
     class Store:
         def __init__(self, _path): pass
         def read_action(self, _id): return action
@@ -223,3 +239,33 @@ def test_tools_plane_worker_denies_action_generation_or_forged_fields(monkeypatc
     result = task_service_worker.verify_action(str(tmp_path), action.action_id)
     assert result["decision"] == "DENY"
     assert result["reason"] == "task_service_action_binding_invalid"
+
+
+def test_detached_worker_real_isolated_subprocess_denies_without_action(tmp_path):
+    """The real -I process must load crypto dependencies, not fail import."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    code_root = Path(__file__).resolve().parents[2]
+    script = code_root / "src" / "llm_loop" / "tools" / "task_service_worker.py"
+    env = {**os.environ, "PYTHONPATH": str(tmp_path / "poison"), "PYTHONHOME": str(tmp_path / "bad")}
+    proc = subprocess.run(
+        [sys.executable, "-I", str(script), "--data-dir", str(tmp_path / "data"), "--action-id", "missing"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert json.loads(proc.stdout) == {"decision": "DENY", "reason": "task_service_action_missing"}
+    assert "Traceback" not in proc.stderr
+
+    action = SimpleNamespace(
+        action_id="missing", task_lease_id="signed-lease", origin="task-restart", target="web",
+    )
+    deployment = SimpleNamespace(code_root=str(code_root), runtime_root=str(tmp_path), generation=1)
+    store = SimpleNamespace(data_dir=tmp_path / "data")
+    assert sc._task_service_worker_fence(
+        cast(Any, store), cast(Any, action), cast(Any, deployment),
+    ) == "task_service_action_missing"
