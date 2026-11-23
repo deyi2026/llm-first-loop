@@ -343,3 +343,36 @@ def test_native_menu_press_exception_is_not_false_not_dispatched(monkeypatch):
     err, reason = macos_actuate._xcode_press_exact_save_menu(_window(bundle_id="com.apple.dt.Xcode"))
     assert err == -1 and reason == "xcode_save_press_uncertain"
     assert app.released and bar.released and entry.released
+
+
+def test_xcode_save_rejects_same_content_different_document_within_broad_lease(tmp_path):
+    """Window title/AX world and disk bytes can be identical across two tabs."""
+    first = tmp_path / "one" / "receipt.txt"
+    second = tmp_path / "two" / "receipt.txt"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("same-bytes\\n")
+    second.write_text("same-bytes\\n")
+    backend = _xcode(first)
+    host: Any = backend
+    calls = 0
+    def document(_window, _ref):
+        nonlocal calls
+        calls += 1
+        return str(first if calls == 1 else second)
+    host.editor_document_path = document
+    task = _DocumentScopedTask(allowed_bundle="com.apple.dt.Xcode", allowed_path=str(first))
+    # Simulate a broad project root Lease that authorizes BOTH files.
+    scoped: Any = task
+    scoped.authorize_file = lambda path, verb: path
+    token = current_task_execution.set(task)
+    try:
+        tool = _tool(backend)
+        dry = _save(tool, dry_run=True)
+        assert dry["ok"]
+        denied = _save(tool, dry_run=False, confirm_token=dry["confirm_token"])
+    finally:
+        current_task_execution.reset(token)
+    assert denied["error_code"] == "confirm_token_mismatch"
+    assert backend.act_calls == []
+    assert first.read_text() == second.read_text() == "same-bytes\\n"

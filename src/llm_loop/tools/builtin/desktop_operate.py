@@ -1190,10 +1190,18 @@ class DesktopOperateTool:
             do, window.window_id, binding_address, options.get("text"), keys
         )
         if do == "save_document":
-            # Dry-run token must also bind the on-disk preimage; AX world alone
-            # cannot detect another process modifying the file before apply.
-            pre_sha = str((flow.task_editor_binding or {}).get("pre_save_sha256") or "")
-            action_fp = hashlib.sha256(f"{action_fp}:{pre_sha}".encode()).hexdigest()
+            # Bind exact Host document identity AND its on-disk preimage:
+            # two same-named files with identical bytes must not share a token.
+            binding = flow.task_editor_binding or {}
+            token_scope = {
+                key: binding.get(key)
+                for key in (
+                    "document_path", "pid", "window_id", "ax_ref",
+                    "ancestry_sha256", "editability_proof", "pre_save_sha256",
+                )
+            }
+            material = json.dumps(token_scope, sort_keys=True, separators=(",", ":"))
+            action_fp = hashlib.sha256(f"{action_fp}:{material}".encode()).hexdigest()
         # P2-1（R6）：会话免令牌的目标身份键——与令牌稳定寻址同源但不含
         # text/keys（type 换文本/press_key 换键仍算同目标，既定能力保持）；
         # 免令牌面从 (app, do) 收紧到 (app, do, 目标)，换目标即须新令牌。
