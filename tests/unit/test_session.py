@@ -443,6 +443,42 @@ def test_session_meta_cache_warm_list_at_600_sessions(tmp_path, monkeypatch):
             session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
 
 
+def test_session_meta_cache_covers_large_workspace_without_reparsing(tmp_path, monkeypatch):
+    """Regression: a 2k cache re-read most of a 7k-session workspace on every poll."""
+    import llm_loop.core.session as session_module
+
+    store = _store(tmp_path)
+    count = 2100  # crosses the old 2,048-entry limit
+    for index in range(count):
+        sid = f"many-{index:04d}"
+        (store.root / f"{sid}.json").write_text(
+            json.dumps({
+                "session_id": sid, "title": sid, "status": "active",
+                "created_at": "t", "updated_at": "t", "messages": [],
+            }),
+            encoding="utf-8",
+        )
+    with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+        session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
+    try:
+        assert len(store.list_sessions()) == count
+        real_load = session_module.json.load
+        loads = 0
+
+        def counted_load(*args, **kwargs):
+            nonlocal loads
+            loads += 1
+            return real_load(*args, **kwargs)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(session_module.json, "load", counted_load)
+            assert len(store.list_sessions()) == count
+        assert loads == 0, "unchanged session metadata must not be re-parsed on every poll"
+    finally:
+        with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+            session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
+
+
 def test_session_id_path_traversal_cannot_cross_workspace_roots(tmp_path):
     """外部session_id不得用../跨workspace读/删兄弟会话。"""
     base = tmp_path / "sessions"

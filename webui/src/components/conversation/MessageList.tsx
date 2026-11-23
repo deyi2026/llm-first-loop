@@ -10,6 +10,8 @@ import { zh } from "../../i18n/zh";
 export function MessageList({ historyLoading = false }: { historyLoading?: boolean }) {
   const conv = useConversation();
   const [atBottom, setAtBottom] = useState(true);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const earlierInFlight = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 展示层机械聚合 assistant(tool_calls) ↔ tool(receipt)。原始历史数组保持不变。
@@ -40,6 +42,32 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
       el.scrollTop = el.scrollHeight;
     }
   }, [conv.messages, atBottom]);
+
+  const loadEarlier = async () => {
+    if (earlierInFlight.current) return;
+    const sid = sessionStore.getState().currentSessionId;
+    if (!sid) return;
+    earlierInFlight.current = true;
+    setLoadingEarlier(true);
+    const node = scrollRef.current;
+    const oldHeight = node?.scrollHeight ?? 0;
+    const oldTop = node?.scrollTop ?? 0;
+    setAtBottom(false);
+    try {
+      await loadEarlierHistory(sid);
+    } finally {
+      // Preserve the visible message after rows are prepended.  A network
+      // failure leaves the height unchanged, so this never jumps the reader.
+      window.requestAnimationFrame(() => {
+        const current = scrollRef.current;
+        if (current && sessionStore.getState().currentSessionId === sid) {
+          current.scrollTop = oldTop + Math.max(0, current.scrollHeight - oldHeight);
+        }
+        earlierInFlight.current = false;
+        setLoadingEarlier(false);
+      });
+    }
+  };
 
   if (conv.messages.length === 0) {
     if (historyLoading) {
@@ -80,12 +108,10 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
         <button
           type="button"
           className="v2-load-earlier"
-          onClick={() => {
-            const sid = sessionStore.getState().currentSessionId;
-            if (sid) void loadEarlierHistory(sid);
-          }}
+          disabled={loadingEarlier}
+          onClick={() => void loadEarlier()}
         >
-          ↑ {zh.loadEarlier}
+          {loadingEarlier ? "正在读取更早消息…" : `↑ ${zh.loadEarlier}`}
         </button>
       )}
       {projectedMessages.map(({ msg: m, originalIndex }) => (

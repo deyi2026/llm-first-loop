@@ -44,7 +44,11 @@ _ARCHIVED = "archived"
 # 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
 _SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
 _SESSION_META_CACHE_LOCK = threading.Lock()
-_SESSION_META_CACHE_MAX = 2048
+# One workspace may have >7k sessions.  A 2,048-entry limit caused every
+# session-list refresh to re-parse thousands of unchanged, sometimes multi-MB
+# JSON files, delaying unrelated history requests.  Only small SessionMeta
+# projections are cached (never full message bodies), with a fixed RAM bound.
+_SESSION_META_CACHE_MAX = 16384
 
 
 def _validate_session_id(session_id: str) -> str:
