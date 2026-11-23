@@ -4,6 +4,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sys
+import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -12,6 +14,32 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts/linux/lfl_task_host_probe.py"
 POLICY = ROOT / "packaging/linux/org.llmfirstloop.task-host-probe.policy"
+
+
+@pytest.fixture
+def trusted_tmp_path(tmp_path):
+    """Positive rootless canary needs trusted ancestors, never Linux /tmp (1777).
+
+    Production helper deliberately rejects writable ancestors. GitHub Linux
+    pytest tmp_path is under /tmp; Mac's system pytest temp root is private.
+    Use an ignored 0700 pytest-cache test root on Linux, and remove the
+    per-test directory afterward without weakening the Host security check.
+    """
+    if sys.platform != "linux":
+        yield tmp_path
+        return
+    cache = ROOT / ".pytest_cache"
+    assert not cache.is_symlink(), "test cache root must not be a symlink"
+    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # GitHub Linux checkout may have umask 0002: tighten only the ignored
+    # pytest cache, never user data/ or the production root-chain guard.
+    cache.chmod(0o700)
+    base = cache / "polkit-rootless-tests"
+    assert not base.is_symlink(), "test receipt root must not be a symlink"
+    base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    base.chmod(0o700)
+    with tempfile.TemporaryDirectory(prefix="case-", dir=base) as directory:
+        yield Path(directory)
 
 
 def _load():
@@ -50,9 +78,9 @@ def test_helper_only_one_root_owned_fixed_directory_and_no_shell():
     assert "O_EXCL" in source and "O_NOFOLLOW" in source
 
 
-def test_rootless_private_dir_exact_receipt_and_replay_deny(tmp_path):
+def test_rootless_private_dir_exact_receipt_and_replay_deny(trusted_tmp_path):
     module = _load()
-    directory = tmp_path / "receipts"
+    directory = trusted_tmp_path / "receipts"
     directory.mkdir(mode=0o700)
     challenge = "a" * 32
     digest = module._write_attestation(
@@ -76,9 +104,9 @@ def test_rootless_private_dir_exact_receipt_and_replay_deny(tmp_path):
 
 
 @pytest.mark.parametrize("challenge", ["../etc/passwd", "A"*32, "f"*31, "f"*33, "00/abc", ""])
-def test_challenge_rejects_traversal_and_nonexact_hex(tmp_path, challenge):
+def test_challenge_rejects_traversal_and_nonexact_hex(trusted_tmp_path, challenge):
     module = _load()
-    directory = tmp_path / "receipts"
+    directory = trusted_tmp_path / "receipts"
     directory.mkdir(mode=0o700)
     with pytest.raises(module.ProbeDeniedError):
         module._write_attestation(
@@ -87,11 +115,11 @@ def test_challenge_rejects_traversal_and_nonexact_hex(tmp_path, challenge):
     assert list(directory.iterdir()) == []
 
 
-def test_private_dir_symlink_and_world_writable_fail_closed(tmp_path):
+def test_private_dir_symlink_and_world_writable_fail_closed(trusted_tmp_path):
     module = _load()
-    directory = tmp_path / "receipts"
+    directory = trusted_tmp_path / "receipts"
     directory.mkdir(mode=0o700)
-    link = tmp_path / "redirect"
+    link = trusted_tmp_path / "redirect"
     link.symlink_to(directory, target_is_directory=True)
     with pytest.raises(module.ProbeDeniedError):
         module._write_attestation(
@@ -154,9 +182,9 @@ def test_main_one_operation_and_no_environment_path_override(monkeypatch, capsys
     assert Path("/var/lib/lfl-task-host-probe/receipts") == module.RECEIPT_DIR
 
 
-def test_rootless_receipt_limit_is_bounded_and_no_new_file(tmp_path):
+def test_rootless_receipt_limit_is_bounded_and_no_new_file(trusted_tmp_path):
     module = _load()
-    directory = tmp_path / "receipts"
+    directory = trusted_tmp_path / "receipts"
     directory.mkdir(mode=0o700)
     for i in range(module.MAX_RECEIPTS):
         (directory / f"{i:032x}.json").write_text("{}")
@@ -165,3 +193,21 @@ def test_rootless_receipt_limit_is_bounded_and_no_new_file(tmp_path):
             "f"*32, 1000, directory=directory, expected_owner=os.getuid(),
         )
     assert len(list(directory.iterdir())) == module.MAX_RECEIPTS
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /tmp ancestor is the CI-specific denial")
+def test_linux_world_writable_tmp_ancestor_stays_denied(tmp_path):
+    """Do not relax the root-chain guard merely to make Linux CI tests pass."""
+    module = _load()
+    if not any(
+        (parent.stat().st_mode & 0o002) != 0
+        for parent in (tmp_path, *tmp_path.parents)
+    ):
+        pytest.skip("pytest temp root has no world-writable ancestor")
+    directory = tmp_path / "receipts"
+    directory.mkdir(mode=0o700)
+    with pytest.raises(module.ProbeDeniedError, match="unsafe_receipt_directory"):
+        module._write_attestation(
+            "b" * 32, 1000, directory=directory, expected_owner=os.getuid(),
+        )
+    assert list(directory.iterdir()) == []
