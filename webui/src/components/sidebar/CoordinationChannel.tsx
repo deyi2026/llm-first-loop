@@ -255,7 +255,17 @@ export function CoordinationChannel({ collapsed }: { collapsed: boolean }) {
           {expanded && (
             <div
               data-testid="coordination-channel-sessions"
-              style={{ marginTop: 4, borderTop: "1px solid rgba(128,128,128,0.25)", paddingTop: 4 }}
+              role="region"
+              aria-label="协调会话列表"
+              tabIndex={0}
+              style={{
+                marginTop: 4,
+                borderTop: "1px solid rgba(128,128,128,0.25)",
+                paddingTop: 4,
+                maxHeight: "min(42vh, 320px)",
+                overflowY: "auto",
+                overscrollBehaviorY: "contain",
+              }}
             >
               {Array.isArray(channel.sessions) && channel.sessions.length > 0 ? (
                 channel.sessions.map((s, i) => {

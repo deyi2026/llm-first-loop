@@ -107,6 +107,14 @@ export function LaneBoard() {
         </button>
       </div>
 
+      <div
+        className="v2-evo-body v2-lane-board-scroll"
+        data-testid="lane-board-scroll"
+        role="region"
+        aria-label="协同看板内容"
+        tabIndex={0}
+      >
+
       {/* 请求失败：错误态（不静默空白；已有旧数据时保留展示并叠加提示） */}
       {loadErr && (
         <div className="v2-sidebar-error" role="alert" data-testid="lane-board-error">
@@ -240,6 +248,7 @@ export function LaneBoard() {
           )}
         </>
       ) : null}
+      </div>
     </div>
   );
 }

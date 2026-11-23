@@ -317,9 +317,23 @@ describe("conversation stream ownership", () => {
       messages: [],
       has_more: false,
     });
+    const statusCalls = h.fetchStreamStatus.mock.calls.length;
     await loadHistory("s1");
     expect(conversationStore.getState().messages).toEqual([{ role: "assistant", content: "已知回答" }]);
     expect(conversationStore.getState().lastError).toContain("HTTP 503");
+    // History failure is not evidence that the underlying Run stopped.
+    expect(h.fetchStreamStatus).toHaveBeenCalledTimes(statusCalls + 1);
+    expect(h.fetchStreamStatus).toHaveBeenLastCalledWith("s1");
+  });
+
+  it("history failure retains its error if the independent Run status probe rejects", async () => {
+    h.fetchHistory.mockResolvedValueOnce({
+      ok: false, error: "会话历史读取超时，请重试。", messages: [], has_more: false,
+    });
+    h.fetchStreamStatus.mockRejectedValueOnce(new Error("status offline"));
+    await loadHistory("s1");
+    await nextTurn();
+    expect(conversationStore.getState().lastError).toContain("读取超时");
   });
 
   it("加载更早的旧会话迟到响应不得污染已经切换的新会话", async () => {

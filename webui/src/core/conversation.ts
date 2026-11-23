@@ -290,6 +290,11 @@ export async function loadHistory(sessionId: string): Promise<void> {
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resp.ok === false) {
     conversationStore.setState({ lastError: resp.error ?? "会话历史读取失败，请重试。" });
+    // History and Run are independent facts. A slow/corrupt history page must
+    // not hide a live background Run or invite a duplicate "继续" submission.
+    void checkBackgroundRun(sessionId).catch(() => {
+      // Status probe failure must not erase the history error or trigger a Run.
+    });
     return;
   }
   const messages = resp.messages.map(toChatMessage);
