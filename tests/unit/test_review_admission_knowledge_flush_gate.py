@@ -17,6 +17,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from llm_loop.tools import review_host_admission as admission_module
 from llm_loop.tools.review_host_admission import (
     AdmissionDecision,
@@ -322,3 +324,55 @@ def test_consume_side_knowledge_gate_does_not_burn_qualification(
     assert "未入库知识资产" in decision.reason
     assert "knowledge_flush.py" in decision.reason
     assert host._records["child-consume"].consumed is False
+
+
+# --- EVO-20261123-d43138fc：纯删 ref 的 push 不受知识闸约束 -----------------
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin --delete feat/merged-branch",
+        "git push --delete origin feat/merged-branch",
+        "git push origin :feat/merged-branch",
+        "git push origin --delete feat/a feat/b",
+        "git push --no-verify origin --delete feat/merged-branch",
+    ],
+)
+def test_delete_only_push_is_detected(command: str) -> None:
+    """删除型 refspec 不携带任何提交/文件。"""
+    assert admission_module._is_delete_only_push(command) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "",
+        "git push origin main",
+        "git push origin --delete feat/x && git push origin main",
+        "git push origin :feat/x main",
+        "git push --all origin",
+        "git push --mirror origin",
+        "git push --tags origin",
+        "git push origin feat/x:main",
+        "git push -u origin main",
+        "git push origin --delete",
+        "git push origin --delete 'weird ref'",
+        "git -C /tmp/repo push origin --delete feat/x",
+    ],
+)
+def test_content_or_unreadable_push_is_not_exempt(command: str) -> None:
+    """应拦输入仍拦：带内容/看不懂/多命令 → 照旧走知识闸（fail-closed）。"""
+    assert admission_module._is_delete_only_push(command) is False
+
+
+def test_start_preconditions_exempts_delete_only_push_only(tmp_path: Path) -> None:
+    """有未入库卡时：删除型 push 放行，内容型 push 仍被知识闸拒。"""
+    repo = _repo(tmp_path)
+    _card(repo, "data/methods/probe-delete/METHOD.md")
+    _scope, _paths, denial = admission_module._start_preconditions(
+        "git_push", "patch", ["example.py"], str(repo), "git push origin --delete feat/x"
+    )
+    assert denial is None, denial
+    _scope2, _paths2, blocked = admission_module._start_preconditions(
+        "git_push", "patch", ["example.py"], str(repo), "git push origin main"
+    )
+    assert blocked is not None and blocked["reason"] == "knowledge_flush_pending"
