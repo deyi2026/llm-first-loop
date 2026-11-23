@@ -1,0 +1,59 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-llm-tls-eof-recovery",
+  "summary": "Repair intermittent remote-provider TLS unexpected EOF after macOS proxy/TUN transitions by refreshing only the failed retry's transport; preserve bounded retries, concurrent callers, cancellation and response integrity.",
+  "components": [
+    {
+      "component_id": "llm-tls-transport-retry-and-feedback",
+      "paths": [
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/feedback/honesty.py",
+        "tests/unit/test_provider_retry_progress.py",
+        "tests/unit/test_quota_feedback.py",
+        "docs/governance/submissions/20261123-llm-tls-eof-recovery.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "existing-provider-transport-retry",
+      "owning_subsystem": "Existing LLMClient and ModelClientPool provider transport lifecycle",
+      "disposition": "Reuse the existing provider retry budget and retirement callback. On a permitted retry following ConnectError, ConnectTimeout or explicit TLS UNEXPECTED_EOF, create one attempt-local httpx.Client using the existing trust_env, timeout and Connection policy. Close only that temporary client; do not close a shared client used by concurrent callers. All other retry paths retain the original transport. Preserve identical payload, request budget, cancellation and partial-output safety.",
+      "evidence": [
+        "Mac Web and Learning logs on 2026-11-23 show recurring TLS unexpected EOF across GLM and DeepSeek. Both Surge and Clash were present during the incident; proxy/TUN switching is suspected, not conclusively proven as the sole root cause.",
+        "Exact candidate f655ef6d338884c7ee3b62aa2e18e2520e06f266 passed the original full R9 with exit 0: 16542 passed, 162 skipped, 3 xfailed; Ruff, env-pin and Pyright passed. Host-local receipts: /private/var/tmp/lfl-ssl-eof-r9-f655ef-recheck.log and .exit.",
+        "Independent read-only GLM-5.3-flash reviewer observed model identity glm-5.3-flash and returned PASS, P0=0, P1=0, P2=4 for candidate f655ef6d338884c7ee3b62aa2e18e2520e06f266. Host-local receipt: /private/var/tmp/lfl-ssl-eof-review-f655ef.json. The new manifest commit changes SHA and must be requalified before merging."
+      ],
+      "verification_level": "Isolated deterministic regression and full original R9 passed for code-only candidate; manifest-only new SHA, remote CI, production real-provider tests and managed deployment remain pending.",
+      "model_evidence_veto_recovery_exit": "No retry after user cancellation, stream deadline, delivered response content, tool draft or unsafe partial output. Retain the existing bounded reasoning-only exception and physical-attempt accounting. A failed retry returns a truthful network/stream error, not a fabricated answer or claim of Key/model misconfiguration. A reviewer or test receipt for a different SHA is not accepted as the final candidate.",
+      "rollback_route": "Revert the protected SSL recovery PR, restoring the prior LLMClient retry transport and feedback behavior; preserve existing ModelClientPool retirement and the previous managed deployment for rollback."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-provider-transport-retry",
+      "g1": {
+        "necessity": "After proxy/TUN changes, an in-flight TLS connection may close unexpectedly. Retiring a pooled client only helps the next logical call; the already-admitted retry could reuse the same stale client, repeatedly failing despite an available fresh connection."
+      },
+      "g2": {
+        "authority_owner": "Existing LLMClient transport attempt scope, ModelClientPool on_transport_failure retirement hook, TaskBudget physical-attempt gate and cancellation policy.",
+        "relationship": "reuse",
+        "non_duplication": "No new signer, proxy manager, global network configuration, retry authority, background worker, service controller or model fallback. Only an attempt-local transport refresh on an already permitted retry; existing owner, task and provider constraints remain authoritative."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent GLM-5.3-flash code review of frozen code-only SHA f655ef6d338884c7ee3b62aa2e18e2520e06f266: PASS, P0/P1=0, P2=4.",
+          "Original full R9 on that exact code-only SHA: exit 0, 16542 passed, 162 skipped, 3 xfailed; targeted retry, provider wire integrity, cancellation and error-feedback tests included.",
+          "The proxy/TUN correlation is supported by incident logs and DNS routing observations, but a single external root cause is not independently proven."
+        ],
+        "recovery_or_reason": "If a connection or TLS error occurs, refresh only when the existing retry budget and partial-output/cancellation guards permit it; otherwise fail closed with an accurate network error and no duplicated side effects."
+      },
+      "g4": {
+        "rollback": "Revert this exact small PR or roll back the managed service deployment to the previously verified generation; do not change system proxy settings or remove other in-progress PRs.",
+        "verification": [
+          "Requalify final manifest-inclusive SHA with independent Reviewer PASS P0/P1=0 and original full R9 exit 0.",
+          "Require remote A.5, privacy, security, pytest/Ruff/Pyright, D4 and Linux install checks before protected main merge, followed by successful main CI.",
+          "Wait for Web and Learning to be confirmed idle, perform one managed all-service deployment and verify actual SHA, PID, health and rollback.",
+          "Smoke test real GLM-5.3-flash and DeepSeek requests through the active Mac network path; check new TLS EOF rate and avoid duplicate tools or model calls."
+        ]
+      }
+    }
+  ]
+}

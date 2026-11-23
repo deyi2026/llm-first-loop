@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from llm_loop.core.run_context import child_cancel_event
-from llm_loop.llm.errors import LLMTimeoutError
+from llm_loop.llm.errors import LLMNetworkError, LLMTimeoutError
 from tests.unit.test_llm_client import _client
 from tests.unit.test_timeout_recovery import _success
 
@@ -53,3 +53,33 @@ def test_stop_after_retry_notice_cannot_start_another_request():
         assert stream.call_count == 1
     finally:
         child_cancel_event.reset(token)
+
+
+def test_ssl_eof_retry_rebuilds_transport_with_same_proxy_policy_and_payload():
+    """Pool retirement must not make the current retry reuse stale proxy mounts."""
+    first = mock.Mock()
+    second = mock.Mock()
+    first.stream.side_effect = httpx.ConnectError(
+        "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol"
+    )
+    second.stream.return_value = _success()
+    with mock.patch("httpx.Client", side_effect=[first, second]) as client_cls:
+        result = _client().chat([{"role": "user", "content": "task"}], [])
+    assert result.content == "recovered"
+    assert client_cls.call_count == 2
+    assert client_cls.call_args_list[0] == client_cls.call_args_list[1]
+    assert first.stream.call_count == second.stream.call_count == 1
+    assert first.stream.call_args == second.stream.call_args
+    first.close.assert_not_called()  # concurrent calls may still own it
+    second.close.assert_called_once_with()
+
+
+def test_ssl_eof_no_retry_does_not_create_second_transport():
+    first = mock.Mock()
+    first.stream.side_effect = httpx.ConnectError(
+        "[SSL: UNEXPECTED_EOF_WHILE_READING] handshake failed"
+    )
+    with mock.patch("httpx.Client", return_value=first) as client_cls, pytest.raises(LLMNetworkError):
+        _client(retry_disconnect=0).chat([], [])
+    assert client_cls.call_count == 1
+    first.close.assert_not_called()
