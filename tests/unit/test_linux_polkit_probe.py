@@ -152,3 +152,16 @@ def test_main_one_operation_and_no_environment_path_override(monkeypatch, capsys
     assert response["result"] == "POLKIT_ROOT_RECEIPT_WRITTEN"
     assert response["signed_task_lease"] is False
     assert Path("/var/lib/lfl-task-host-probe/receipts") == module.RECEIPT_DIR
+
+
+def test_rootless_receipt_limit_is_bounded_and_no_new_file(tmp_path):
+    module = _load()
+    directory = tmp_path / "receipts"
+    directory.mkdir(mode=0o700)
+    for i in range(module.MAX_RECEIPTS):
+        (directory / f"{i:032x}.json").write_text("{}")
+    with pytest.raises(module.ProbeDeniedError, match="receipt_limit_reached"):
+        module._write_attestation(
+            "f"*32, 1000, directory=directory, expected_owner=os.getuid(),
+        )
+    assert len(list(directory.iterdir())) == module.MAX_RECEIPTS

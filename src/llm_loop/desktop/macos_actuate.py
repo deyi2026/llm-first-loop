@@ -41,7 +41,6 @@ import hashlib
 import os
 import stat
 import time
-from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -540,10 +539,17 @@ def _xcode_live_document_path(window: WindowInfo, ax_ref: str) -> str | None:
             return None
     finally:
         editor.release()
-    return (
-        ax_editor_os_attested_document_path(window, ax_ref)
-        or ax_editor_document_path(window, ax_ref)
-    )
+    return ax_editor_os_attested_document_path(window, ax_ref)
+
+
+def _xcode_read_exact_regular_file(path: str) -> bytes | None:
+    """Read-only O_NOFOLLOW + fstat; never follow a swapped document symlink."""
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+            return None
+        data = source.read(1_048_577)
+    return data if len(data) <= 1_048_576 else None
 
 
 def ax_save_xcode_document(
@@ -583,12 +589,11 @@ def ax_save_xcode_document(
     except OSError:
         return _xcode_save_hold("xcode_document_stat_failed")
     try:
-        with open(expected_path, "rb") as current:
-            disk_preimage = current.read(1_048_577)
+        disk_preimage = _xcode_read_exact_regular_file(expected_path)
     except OSError:
         return _xcode_save_hold("xcode_disk_preimage_unreadable")
     if (
-        len(disk_preimage) > 1_048_576
+        disk_preimage is None
         or hashlib.sha256(disk_preimage).hexdigest() != pre_save_sha256
         or not _xcode_focused_window_matches(window)
         or _xcode_live_document_path(window, ax_ref) != expected_path
@@ -603,10 +608,8 @@ def ax_save_xcode_document(
     deadline = time.monotonic() + 8
     while True:
         try:
-            if (
-                not os.path.islink(expected_path)
-                and hashlib.sha256(Path(expected_path).read_bytes()).digest() == expected_sha
-            ):
+            saved = _xcode_read_exact_regular_file(expected_path)
+            if saved is not None and hashlib.sha256(saved).digest() == expected_sha:
                 return ActOutcome(
                     ok=True, verified=True, dispatch_state="dispatched",
                     effect_state="confirmed", verification_state="passed",

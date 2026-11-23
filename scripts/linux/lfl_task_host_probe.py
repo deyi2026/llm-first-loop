@@ -20,6 +20,7 @@ from pathlib import Path
 RECEIPT_DIR = Path("/var/lib/lfl-task-host-probe/receipts")
 CHALLENGE_RE = re.compile(r"[0-9a-f]{32}\Z", re.ASCII)
 SCHEMA = "lfl.task-host-polkit-attestation/v1"
+MAX_RECEIPTS = 64  # Bounded test-only canary; no unbounded privileged disk growth.
 
 
 class ProbeDeniedError(RuntimeError):
@@ -54,6 +55,9 @@ def _write_attestation(
         info = os.fstat(directory_fd)
         if info.st_uid != expected_owner or stat.S_IMODE(info.st_mode) & 0o022:
             raise ProbeDeniedError("unsafe_receipt_directory")
+        with os.scandir(directory_fd) as existing:
+            if sum(1 for item in existing if item.name.endswith(".json")) >= MAX_RECEIPTS:
+                raise ProbeDeniedError("receipt_limit_reached")
         record = {
             "schema": SCHEMA,
             "challenge": challenge,
@@ -61,6 +65,7 @@ def _write_attestation(
             "issued_at_utc": datetime.now(UTC).isoformat(),
             "effect": "polkit_root_receipt_only",
             "signed_task_lease": False,
+            "polkit_identity_proof": "pkexec_uid_environment_claim_only",
         }
         body = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
         fd = os.open(

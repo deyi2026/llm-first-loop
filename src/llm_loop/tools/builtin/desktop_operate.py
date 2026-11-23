@@ -69,6 +69,7 @@ import json
 import os
 import platform as _platform
 import secrets as _secrets
+import stat
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -857,10 +858,14 @@ class DesktopOperateTool:
                 "editability_proof": "os_axvalue_settable" if os_attested else "ax_editable",
             }
             if flow.do == "save_document":
-                # Freeze the on-disk preimage across dry-run/apply (no lost updates).
-                if os.path.getsize(path) > 1_048_576 or os.path.islink(path):
+                # A Save is more privileged than AX type: require OS-attested
+                # focused Xcode AXDocument, not the generic editable fallback.
+                if not os_attested or not hasattr(os, "O_NOFOLLOW"):
                     return None
-                with open(path, "rb") as original:
+                with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as original:
+                    info = os.fstat(original.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+                        return None
                     data = original.read(1_048_577)
                 if len(data) > 1_048_576:
                     return None
@@ -1666,6 +1671,11 @@ class DesktopOperateTool:
                     f"Task IDE 投递前文档授权失效: {exc.reason_code}；未投递。",
                 )
             if flow.do == "save_document":
+                if not isinstance(binding.get("pre_save_sha256"), str):
+                    return self._refuse(
+                        flow, DesktopErrorCode.APP_NOT_ALLOWED,
+                        "Task Xcode 保存缺少可信文件前像；未投递。",
+                    )
                 # Internal Host evidence only; never accept a model-authored path.
                 flow.options["_task_document_path"] = binding["document_path"]
                 flow.options["_task_pre_save_sha256"] = binding["pre_save_sha256"]

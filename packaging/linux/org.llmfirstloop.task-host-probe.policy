@@ -3,6 +3,11 @@
   "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
   "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
 <policyconfig>
+  <!-- CANDIDATE ONLY: no system install without separate Owner authorization.
+       Approved install must place the helper at the exact exec.path below,
+       root:root mode 0555; policy root:root 0644; receipt dir root:root 0700.
+       This action records a canary only; it cannot issue a Task Lease. -->
+
   <vendor>LLM First Loop</vendor>
   <vendor_url>https://llmfirstloop.com</vendor_url>
   <action id="org.llmfirstloop.task-host-probe.attest">

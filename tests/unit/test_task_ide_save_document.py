@@ -20,7 +20,7 @@ from tests.unit.test_desktop_operate_m4_v01 import (
 from tests.unit.test_desktop_task_capability import _DocumentScopedTask
 
 
-def _xcode(path, *, os_attested=False, bundle="com.apple.dt.Xcode"):
+def _xcode(path, *, os_attested=True, bundle="com.apple.dt.Xcode"):
     backend = FakeOperateBackend(
         windows=[_window(app="Xcode", bundle_id=bundle)],
         ax_views={101: _view(
@@ -30,7 +30,7 @@ def _xcode(path, *, os_attested=False, bundle="com.apple.dt.Xcode"):
         )},
     )
     host: Any = backend
-    host.editor_document_path = lambda _window, _ref: str(path)
+    host.editor_document_path = lambda _window, _ref: None if os_attested else str(path)
     host.editor_os_attested_document_path = lambda _window, _ref: str(path)
     host.act_save_document = lambda window, ax_ref, doc, pre_sha: (
         backend.act_calls.append({"do": "save_document", "ax_ref": ax_ref,
@@ -56,6 +56,10 @@ def test_xcode_signed_save_exact_file_two_phase_and_new_token(tmp_path, os_attes
     try:
         tool = _tool(backend)
         dry = _save(tool, dry_run=True)
+        if not os_attested:
+            assert dry["error_code"] == "app_not_allowed"
+            assert backend.act_calls == []
+            return
         assert dry["ok"] and dry["risk_class"] == "irreversible"
         assert backend.act_calls == []
         applied = _save(tool, dry_run=False, confirm_token=dry["confirm_token"])
@@ -103,7 +107,7 @@ def test_xcode_save_rechecks_document_and_revocation_before_dispatch(tmp_path):
         nonlocal calls
         calls += 1
         return str(other if calls >= 3 else path)
-    host.editor_document_path = probe
+    host.editor_os_attested_document_path = probe
     token = current_task_execution.set(task)
     try:
         tool = _tool(backend)
@@ -112,7 +116,7 @@ def test_xcode_save_rechecks_document_and_revocation_before_dispatch(tmp_path):
         denied = _save(tool, dry_run=False, confirm_token=dry["confirm_token"])
         assert denied["error_code"] == "app_not_allowed"
         assert "Host 文档/祖先链已变化" in denied["guidance"]
-        host.editor_document_path = lambda _w, _r: str(path)
+        host.editor_os_attested_document_path = lambda _w, _r: str(path)
         dry2 = _save(tool, dry_run=True)
         assert dry2["ok"]
         task.revoked = True
@@ -360,7 +364,7 @@ def test_xcode_save_rejects_same_content_different_document_within_broad_lease(t
         nonlocal calls
         calls += 1
         return str(first if calls == 1 else second)
-    host.editor_document_path = document
+    host.editor_os_attested_document_path = document
     task = _DocumentScopedTask(allowed_bundle="com.apple.dt.Xcode", allowed_path=str(first))
     # Simulate a broad project root Lease that authorizes BOTH files.
     scoped: Any = task
@@ -376,3 +380,104 @@ def test_xcode_save_rejects_same_content_different_document_within_broad_lease(t
     assert denied["error_code"] == "confirm_token_mismatch"
     assert backend.act_calls == []
     assert first.read_text() == second.read_text() == "same-bytes\\n"
+
+
+def test_save_dry_run_symlink_swap_during_open_is_denied(monkeypatch, tmp_path):
+    import os
+
+    from llm_loop.tools.builtin import desktop_operate as desktop_module
+
+    path = tmp_path / "receipt.txt"
+    secret = tmp_path / "private.txt"
+    path.write_text("seed\n")
+    secret.write_text("secret-unchanged\n")
+    backend = _xcode(path, os_attested=True)
+    task = _DocumentScopedTask(allowed_bundle="com.apple.dt.Xcode", allowed_path=str(path))
+    real_open = os.open
+    swapped = False
+
+    def race_open(name, flags, *args, **kwargs):
+        nonlocal swapped
+        if str(name) == str(path) and flags & os.O_NOFOLLOW and not swapped:
+            swapped = True
+            path.unlink()
+            path.symlink_to(secret)
+        return real_open(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(desktop_module.os, "open", race_open)
+    token = current_task_execution.set(task)
+    try:
+        denied = _save(_tool(backend), dry_run=True)
+    finally:
+        current_task_execution.reset(token)
+    assert swapped and denied["error_code"] == "app_not_allowed"
+    assert backend.act_calls == []
+    assert secret.read_text() == "secret-unchanged\n"
+
+
+def test_native_preimage_symlink_swap_is_not_followed(monkeypatch, tmp_path):
+    import hashlib
+    import os
+
+    path = tmp_path / "receipt.txt"
+    secret = tmp_path / "private.txt"
+    path.write_text("seed\n")
+    secret.write_text("secret-unchanged\n")
+    window = _window(bundle_id="com.apple.dt.Xcode")
+    monkeypatch.setattr(macos_actuate, "_xcode_focused_window_matches", lambda _w: True)
+    monkeypatch.setattr(macos_actuate, "ax_editor_os_attested_document_path", lambda _w, _r: str(path))
+    monkeypatch.setattr(macos_actuate, "resolve_element_by_axref", lambda _w, _r: (FakeAx({"AXFocused": True}), None))
+    monkeypatch.setattr(macos_actuate, "ax_read_value_string", lambda _el: "after\n")
+    pressed = []
+    monkeypatch.setattr(macos_actuate, "_xcode_press_exact_save_menu", lambda _w: pressed.append(True))
+    real_open = os.open
+    swapped = False
+
+    def race_open(name, flags, *args, **kwargs):
+        nonlocal swapped
+        if str(name) == str(path) and flags & os.O_NOFOLLOW and not swapped:
+            swapped = True
+            path.unlink()
+            path.symlink_to(secret)
+        return real_open(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(macos_actuate.os, "open", race_open)
+    outcome = macos_actuate.ax_save_xcode_document(
+        window, "0.1", str(path), hashlib.sha256(b"seed\n").hexdigest(),
+    )
+    assert swapped and not outcome.ok and outcome.dispatch_state == "not_dispatched"
+    assert outcome.verification_reason == "xcode_disk_preimage_unreadable"
+    assert pressed == [] and secret.read_text() == "secret-unchanged\n"
+
+
+def test_native_save_rejects_non_os_attested_editor_even_if_editable(monkeypatch, tmp_path):
+    import hashlib
+
+    path = tmp_path / "receipt.txt"
+    path.write_text("seed\n")
+    window = _window(bundle_id="com.apple.dt.Xcode")
+    monkeypatch.setattr(macos_actuate, "_xcode_focused_window_matches", lambda _w: True)
+    monkeypatch.setattr(macos_actuate, "ax_editor_os_attested_document_path", lambda _w, _r: None)
+    monkeypatch.setattr(macos_actuate, "ax_editor_document_path", lambda _w, _r: str(path))
+    monkeypatch.setattr(macos_actuate, "resolve_element_by_axref", lambda _w, _r: (FakeAx({"AXFocused": True}), None))
+    pressed = []
+    monkeypatch.setattr(macos_actuate, "_xcode_press_exact_save_menu", lambda _w: pressed.append(True))
+    outcome = macos_actuate.ax_save_xcode_document(
+        window, "0.1", str(path), hashlib.sha256(b"seed\n").hexdigest(),
+    )
+    assert not outcome.ok and outcome.dispatch_state == "not_dispatched"
+    assert pressed == []
+
+
+def test_save_rejects_large_document_before_confirmation(tmp_path):
+    path = tmp_path / "receipt.txt"
+    path.write_bytes(b"x" * (1_048_576 + 1))
+    backend = _xcode(path, os_attested=True)
+    task = _DocumentScopedTask(allowed_bundle="com.apple.dt.Xcode", allowed_path=str(path))
+    token = current_task_execution.set(task)
+    try:
+        result = _save(_tool(backend), dry_run=True)
+    finally:
+        current_task_execution.reset(token)
+    assert result["error_code"] == "app_not_allowed"
+    assert backend.act_calls == []
