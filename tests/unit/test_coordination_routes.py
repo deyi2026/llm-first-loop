@@ -90,11 +90,13 @@ def test_board_contract_and_readonly_empty_audit(tmp_path: Path) -> None:
 
     assert resp.status_code == 200
     body = resp.json()
-    assert {"generated_at", "main_head", "deployment", "lanes", "overlaps", "degraded"} <= set(body)
+    assert {"generated_at", "main_head", "deployment", "lanes", "overlaps", "degraded", "channel"} <= set(body)
     assert {"deployed_sha", "deployed_at", "deployed_phase", "in_sync", "source"} <= set(
         body["deployment"]
     )
     assert body["lanes"] == []
+    assert body["channel"]["active_lanes"] == 0
+    assert body["channel"]["sessions"] == []
     assert body["overlaps"] == []
     assert isinstance(body["degraded"], list)
     assert body["deployment"]["in_sync"] is False
@@ -105,6 +107,20 @@ def test_board_contract_and_readonly_empty_audit(tmp_path: Path) -> None:
     assert before == after
     # 未顺手创建 deployments 子目录
     assert not (audit / "deployments").exists()
+
+
+def test_board_missing_channel_is_explicitly_unavailable_not_fake_zero(tmp_path: Path, monkeypatch) -> None:
+    from llm_loop.web import coordination_routes
+
+    client, _ = _make_client(tmp_path)
+    monkeypatch.setattr(coordination_routes, "build_board", lambda *_args, **_kw: {
+        "generated_at": "", "main_head": "", "deployment": {}, "lanes": [],
+        "summary": {}, "degraded": ["channel_unavailable"],
+    })
+    response = client.get(BOARD_PATH)
+    assert response.status_code == 200
+    assert response.json()["channel"] is None
+    assert "channel_unavailable" in response.json()["degraded"]
 
 
 def test_board_lanes_overlaps_deployment_readonly(tmp_path: Path) -> None:
@@ -135,6 +151,10 @@ def test_board_lanes_overlaps_deployment_readonly(tmp_path: Path) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert [row["lane_id"] for row in body["lanes"]] == ["lane-aaaa0001", "lane-bbbb0002"]
+    assert body["channel"]["active_lanes"] == 2
+    assert [row["lane_id"] for row in body["channel"]["sessions"]] == [
+        "lane-aaaa0001", "lane-bbbb0002"
+    ]
     assert body["lanes"][0]["goal_id"] == "goal-board"
     assert body["lanes"][1]["verify_ref"] == "t-889"
     assert body["deployment"]["deployed_sha"] == "b4b4b4b4b4b4"

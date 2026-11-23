@@ -1956,6 +1956,18 @@
   outline-offset: -2px;
 }
 
+/* The six-column Lane Board lives in the narrow sidebar: both axes must be
+   scrollable, otherwise the flex root's overflow:hidden clips most rows. */
+.v2-evo-body.v2-lane-board-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.v2-lane-board-scroll table {
+  min-width: 680px;
+}
+
 .v2-evo-receipt,
 .v2-evo-action-msg {
   min-width: 0;
