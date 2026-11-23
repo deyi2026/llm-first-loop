@@ -253,13 +253,32 @@ def test_flush_reclaims_lane_with_missing_worktree(repo: Path) -> None:
     assert out.returncode == 0, out.stdout + out.stderr
 
 
-def test_flush_reclaims_lane_whose_worktree_is_not_a_git_tree(repo: Path, tmp_path: Path) -> None:
-    """路径还在但已不是 git 工作树（被复用/清空）→ 同样无可写者，按失效回收。
+def _dir_outside_any_repo() -> Path:
+    """造一个不在任何 git 仓库内的一次性目录。
 
-    目录必须落在任何仓库之外（/tmp）：仓库子目录会让 ``git rev-parse`` 向上找到
-    外层工作树，测不到这一支。
+    「不是 git 工作树」这一支必须在仓库之外测：仓库子目录里 ``git rev-parse``
+    会一路向上找到外层工作树。候选目录不写死（``/tmp`` 可能不可写，也可能本身
+    就在某个仓库里），逐个探测，全不行则 skip。
     """
-    hollow = Path(tempfile.mkdtemp(dir="/tmp"))
+    for base in (tempfile.gettempdir(), "/tmp"):
+        try:
+            made = Path(tempfile.mkdtemp(prefix="lfl-gate-", dir=base))
+        except OSError:
+            continue
+        probe = subprocess.run(
+            ["git", "-C", str(made), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            return made
+        shutil.rmtree(made, ignore_errors=True)
+    pytest.skip("找不到任何仓库之外的可写临时目录")
+
+
+def test_flush_reclaims_lane_whose_worktree_is_not_a_git_tree(repo: Path, tmp_path: Path) -> None:
+    """路径还在但已不是 git 工作树（被复用/清空）→ 同样无可写者，按失效回收。"""
+    hollow = _dir_outside_any_repo()
     try:
         _make_card(repo, "data/methods/card-i/METHOD.md")
         _ledger(
@@ -300,6 +319,15 @@ def test_hook_allows_delete_only_push_with_untracked_card(repo: Path) -> None:
     out = _run_hook(repo, stdin=delete_refs)
     assert out.returncode == 0, out.stdout + out.stderr
     assert "跳过知识闸" in out.stdout
+
+
+@pytest.mark.parametrize("garbled", ["foo bar\n", "(delete)  refs/heads/gone 1111\n"])
+def test_hook_does_not_exempt_garbled_refspec(repo: Path, garbled: str) -> None:
+    """应拦输入仍拦：refspec 行读不懂（字段缺失/非全零 sha）→ 不豁免。"""
+    _make_card(repo, "data/methods/card-m/METHOD.md")
+    out = _run_hook(repo, stdin=garbled)
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "未入库的知识资产" in out.stderr
 
 
 def test_hook_still_blocks_content_push_with_untracked_card(repo: Path) -> None:

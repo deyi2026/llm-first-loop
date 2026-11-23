@@ -356,6 +356,7 @@ def test_delete_only_push_is_detected(command: str) -> None:
         "git push -u origin main",
         "git push origin --delete",
         "git push origin --delete 'weird ref'",
+        "git push $R --delete feat/x",
         "git -C /tmp/repo push origin --delete feat/x",
     ],
 )
