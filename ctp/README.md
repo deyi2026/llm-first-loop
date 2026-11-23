@@ -18,9 +18,10 @@ ctp/
 │   └── errors.py                    # 稳定错误码
 ├── src/ctp_calib/                   # B2 不确定度数学（依赖 numpy）
 │   ├── se3.py                       # 四元数 / exp-log / Adjoint（左扰动，[v,ω] 顺序）
-│   └── uncertainty.py               # 声明模板、一阶传播、蒙特卡洛自检
+│   ├── uncertainty.py               # 声明模板、一阶传播、蒙特卡洛自检
+│   └── pixel.py                     # 角点像素噪声 → 6DoF 协方差（雅可比 + 真解算 MC）
 ├── docs/uncertainty-declaration-template.md  # 11.1-c 填写模板
-└── tests/                           # 10 合法 + 22 非法样本 + schema 一致性 + B2 数学
+└── tests/                           # 10 合法 + 22 非法样本 + schema 一致性 + B2 数学（含退化位形边界）
 ```
 
 `ctp_contract` 保持零第三方依赖（契约要能跨语言重写）；`ctp_calib` 只为参考实现与自检服务，
