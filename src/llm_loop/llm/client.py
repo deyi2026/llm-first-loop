@@ -1055,13 +1055,15 @@ class LLMClient:
         return httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
 
     @contextmanager
-    def _retry_transport_client(self, retry_index: int) -> Iterator[httpx.Client]:
-        """Retry with fresh proxy routing, without closing a concurrent caller's client.
+    def _retry_transport_client(
+        self, retry_index: int, *, refresh: bool = False
+    ) -> Iterator[httpx.Client]:
+        """Refresh only connection/TLS failures, preserving other retry transports.
 
         The pool retires the original client for the next call. Only the retry
         transport is attempt-local and closed after the retry completes.
         """
-        if retry_index == 0:
+        if retry_index == 0 or not refresh:
             yield self._client
             return
         retry_client = self._new_http_client()
@@ -2172,6 +2174,7 @@ class LLMClient:
         _response_started = False
         _attempt_started = time.monotonic()
         _deadline: float | None = None
+        _refresh_transport_for_retry = False
 
         def _retry_cancelled() -> bool:
             # Reuse lifecycle's exact run/generation cancellation authority and
@@ -2214,7 +2217,9 @@ class LLMClient:
             acc = _StreamAcc()
             agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
-            with self._retry_transport_client(transport_retry_index) as transport_client, self._transport_attempt_scope(
+            with self._retry_transport_client(
+                transport_retry_index, refresh=_refresh_transport_for_retry
+            ) as transport_client, self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
                 target_url=url,
@@ -2420,6 +2425,7 @@ class LLMClient:
                         raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
                     if _deadline is not None:
                         _check_stream_deadline(_deadline, effective_timeout)
+                    _refresh_transport_for_retry = isinstance(exc, httpx.ConnectTimeout)
                     continue
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
             except (httpx.NetworkError, httpx.ProtocolError) as exc:
@@ -2471,6 +2477,10 @@ class LLMClient:
                     # Stop may arrive while the backoff sleeps. Check the same
                     # owner again immediately before issuing another request.
                     if not _retry_cancelled():
+                        _refresh_transport_for_retry = (
+                            isinstance(exc, httpx.ConnectError)
+                            or "UNEXPECTED_EOF_WHILE_READING" in str(exc)
+                        )
                         continue
                 if _response_started:
                     raise LLMStreamInterruptedError(

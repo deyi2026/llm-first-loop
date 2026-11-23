@@ -178,13 +178,7 @@ def test_timeout_retry_preserves_each_transport_receipt(tmp_path):
     site = ProviderCallSite(call=call, attempt_kind=ProviderAttemptKind.PRIMARY, site_index=0,
                             provider_id="glm", model_id="glm-5.3")
     try:
-        # The retry now builds an attempt-local client; keep both attempts on
-        # the deterministic mock transport rather than contacting a real proxy.
-        with bind_provider_call_site(site), mock.patch.object(
-            client, "_new_http_client", side_effect=lambda: httpx.Client(
-                transport=httpx.MockTransport(handler)
-            ),
-        ):
+        with bind_provider_call_site(site):
             assert client.chat([{"role": "user", "content": "task"}], []).content == "ok"
     finally:
         client.close()
