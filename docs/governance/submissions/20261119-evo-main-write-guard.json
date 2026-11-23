@@ -225,9 +225,10 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "governance-docs",
-      "disposition": "add",
+      "disposition": "withdrawn",
       "evidence": [
-        "knowledge_flush 分支安全入库（宿主知识闸要求随 push 入库）：多会话长期积累的 89 个方法卡目录 + 40 个经验卡（主仓 runtime data 目录 untracked backlog，knowledge_health method_store_untracked_backlog 警告源）自主仓 data/methods、experiences 移入本分支后提交（commit 88d6d8d4f，129 文件 +4133 行，git_security_scan 129 文件通过）。原计划 scripts/knowledge_flush.py 入库，其 main 直写自检（EVO-20261109-b1dad92e P4，设计假定主仓场景、不区分 cwd 分支）因他人 live lane（lane-d656ddb7 verifying、lane-1a2b434b active，账本最新 version 核实）拒绝 → 等价分支提交路径：lane 台账对照确认提交仅落本分支 worktree（lane-d8e86774=本 lane，不触 main）。内容为运行时学习卡（方法卡 slug 目录 METHOD.md、经验卡 md），无敏感内容（security scan 通过）。"
+        "knowledge_flush 分支安全入库（宿主知识闸要求随 push 入库）：多会话长期积累的 89 个方法卡目录 + 40 个经验卡（主仓 runtime data 目录 untracked backlog，knowledge_health method_store_untracked_backlog 警告源）自主仓 data/methods、experiences 移入本分支后提交（commit 88d6d8d4f，129 文件 +4133 行，git_security_scan 129 文件通过）。原计划 scripts/knowledge_flush.py 入库，其 main 直写自检（EVO-20261109-b1dad92e P4，设计假定主仓场景、不区分 cwd 分支）因他人 live lane（lane-d656ddb7 verifying、lane-1a2b434b active，账本最新 version 核实）拒绝 → 等价分支提交路径：lane 台账对照确认提交仅落本分支 worktree（lane-d8e86774=本 lane，不触 main）。内容为运行时学习卡（方法卡 slug 目录 METHOD.md、经验卡 md），无敏感内容（security scan 通过）。",
+        "withdrawn-20261123: 收口时 git revert 88d6d8d4f 撤出全部 129 文件——理由（1）超受管 PR 规模上限（managed_pr_integrate _changed_files 上限 100，PR#80 实际 136 文件判 changed_files_out_of_scope HOLD）；（2）超出本 lane 原始授权范围（GOAL-20261119-8ef71728 仅授权保全 guard 两文件）。知识卡保留在分支历史 88d6d8d4f 可随时找回，后续经专门授权/专门 lane 入库。"
       ],
       "verification_level": "host_gate_required_flush_branch_safe_path_security_scan_passed",
       "model_evidence_veto_recovery_exit": "不适用（学习卡内容，非控制机器）。",
