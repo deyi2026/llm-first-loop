@@ -83,6 +83,10 @@ def _asf() -> ctypes.CDLL:
             CFTypeRef,
         ]
         lib.AXUIElementSetAttributeValue.restype = ctypes.c_int32
+        lib.AXUIElementIsAttributeSettable.argtypes = [
+            CFTypeRef, CFTypeRef, ctypes.POINTER(ctypes.c_bool),
+        ]
+        lib.AXUIElementIsAttributeSettable.restype = ctypes.c_int32
         _ACT_READY = True
     return lib
 
@@ -256,6 +260,49 @@ def resolve_element_by_axref(window: WindowInfo, ax_ref: str) -> tuple[MacAxElem
         return None, "ax_ref_not_found"
 
 
+def _validated_ax_file_url(raw: Any) -> str | None:
+    """Only a real, local, existing, non-symlink file:// Host document."""
+    if not isinstance(raw, str) or not raw or len(raw) > 8192:
+        return None
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme != "file"
+        or parsed.netloc not in ("", "localhost")
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    try:
+        path = unquote(parsed.path, encoding="utf-8", errors="strict")
+        if (
+            not path.startswith("/")
+            or "\0" in path
+            or os.path.realpath(path) != path
+            or not os.path.isfile(path)
+        ):
+            return None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return path
+
+
+def _ax_value_is_settable(el: MacAxElement) -> bool:
+    """Positive macOS AXValue settable evidence; AXRole is not sufficient."""
+    try:
+        lib = _asf()
+        attr = make_cfstr("AXValue")
+        try:
+            result = ctypes.c_bool(False)
+            err = int(lib.AXUIElementIsAttributeSettable(
+                ctypes.c_void_p(el.ref), attr, ctypes.byref(result),
+            ))
+            return err == 0 and bool(result.value)
+        finally:
+            cf_release(attr)
+    except Exception:  # noqa: BLE001 - unreadable Host proof must HOLD
+        return False
+
+
 def ax_editor_document_path(window: WindowInfo, ax_ref: str) -> str | None:
     """Read an exact editable AX target's file:// document from the live Host.
 
@@ -274,31 +321,110 @@ def ax_editor_document_path(window: WindowInfo, ax_ref: str) -> str | None:
             or el.attr("AXEnabled") is False
         ):
             return None
-        raw = el.attr("AXDocument") or el.attr("AXURL")
-        if not isinstance(raw, str) or not raw or len(raw) > 8192:
-            return None
-        parsed = urlsplit(raw)
-        if (
-            parsed.scheme != "file"
-            or parsed.netloc not in ("", "localhost")
-            or parsed.query
-            or parsed.fragment
-        ):
-            return None
-        try:
-            path = unquote(parsed.path, encoding="utf-8", errors="strict")
-            if (
-                not path.startswith("/")
-                or "\0" in path
-                or os.path.realpath(path) != path
-                or not os.path.isfile(path)
-            ):
-                return None
-        except (OSError, UnicodeError, ValueError):
-            return None
-        return path
+        return _validated_ax_file_url(el.attr("AXDocument") or el.attr("AXURL"))
     finally:
         el.release()
+
+
+def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str | None:
+    """Xcode/VS Code: bind a focused OS-writable editor to its Host window document.
+
+    Some real editors expose file:// AXDocument only on AXWindow, and omit
+    AXEditable on the AXTextArea. Never infer editability from role/title:
+    require a positive native AXValue-settable query and editor ancestry.
+    This is not available for terminals, other apps, or AXEditable=False.
+    """
+    bundle = str(window.bundle_id or "").lower()
+    if bundle not in ("com.microsoft.vscode", "com.apple.dt.xcode"):
+        return None
+    parts = _parse_ax_ref(ax_ref)
+    if parts is None or len(parts) < 2 or parts[0] != 0:
+        return None
+
+    root, _ = resolve_window_element(window)
+    if root is None:
+        return None
+    try:
+        if root.attr("AXRole") != "AXWindow":
+            return None
+        path = _validated_ax_file_url(root.attr("AXDocument") or root.attr("AXURL"))
+    finally:
+        root.release()
+    if path is None:
+        return None
+
+    target, _ = resolve_element_by_axref(window, ax_ref)
+    if target is None:
+        return None
+    saw_target_document = False
+    try:
+        if (
+            target.attr("AXRole") not in ("AXTextArea", "AXTextField", "AXTextView")
+            or target.attr("AXEditable") is not None
+            or target.attr("AXEnabled") is False
+            or target.attr("AXFocused") is not True
+            or not _ax_value_is_settable(target)
+        ):
+            return None
+        description = target.attr("AXDescription")
+        if bundle == "com.microsoft.vscode":
+            if (
+                description != os.path.basename(path)
+                or str(target.attr("AXRoleDescription") or "").strip().lower()
+                not in ("editor", "编辑器")
+            ):
+                return None
+        elif description != "Source Editor":
+            return None
+        # A target's explicit document identity must never disagree with the
+        # signed window document, even if the filenames are identical.
+        for name in ("AXDocument", "AXURL"):
+            raw = target.attr(name)
+            if raw not in (None, ""):
+                if _validated_ax_file_url(raw) != path:
+                    return None
+                saw_target_document = True
+    finally:
+        target.release()
+
+    # Host ancestry, not the model's target label, proves this is an editor
+    # rather than an integrated terminal inside the same trusted IDE window.
+    saw_editor = False
+    prefixes = ax_ref.split(".")
+    for depth in range(1, len(prefixes)):
+        ancestor, _ = resolve_element_by_axref(window, ".".join(prefixes[:depth]))
+        if ancestor is None:
+            return None
+        try:
+            fields = tuple(str(ancestor.attr(name) or "") for name in (
+                "AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXIdentifier",
+            ))
+            ancestor_documents = tuple(
+                ancestor.attr(name) for name in ("AXDocument", "AXURL")
+            )
+        finally:
+            ancestor.release()
+        for raw in ancestor_documents:
+            if raw not in (None, ""):
+                if _validated_ax_file_url(raw) != path:
+                    return None
+                if depth > 1:  # AXWindow alone does not bind a VS Code tab.
+                    saw_target_document = True
+        if any(
+            marker in field.lower()
+            for field in fields
+            for marker in ("terminal", "xterm", "shell", "console", "pty")
+        ):
+            return None
+        if bundle == "com.microsoft.vscode":
+            saw_editor |= fields[3] == os.path.basename(path)
+        else:
+            saw_editor |= fields[4] == "editor context"
+    # VS Code's Electron AXWindow path alone cannot distinguish two tabs with
+    # the same filename. Missing full-path target/ancestor evidence stays HOLD.
+    if bundle == "com.microsoft.vscode" and not saw_target_document:
+        return None
+    return path if saw_editor else None
 
 
 def ax_press(el: MacAxElement) -> int:
