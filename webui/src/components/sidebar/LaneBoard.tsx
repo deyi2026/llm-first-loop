@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { mainViewStore, sessionStore } from "../../core/stores";
+import { fetchCoordinationBoard } from "../../core/coordinationBoard";
 
 interface LaneRow {
   lane_id: string;
@@ -57,9 +58,7 @@ function shortSha(sha: string | undefined | null): string {
 
 async function fetchBoard(): Promise<BoardResp | null> {
   try {
-    const r = await fetch("/api/v1/coordination/board");
-    if (!r.ok) return null;
-    return await r.json() as BoardResp;
+    return await fetchCoordinationBoard<BoardResp>();
   } catch {
     return null;
   }

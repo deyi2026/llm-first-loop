@@ -17,6 +17,8 @@ import type {
   UploadResult,
 } from "./types";
 
+import { isAuthRequired, reportUnauthorized } from "./authSession";
+
 export interface StreamHandlers {
   onRunStarted?: (data: { session_id?: string; run_generation?: string }) => void;
   onAnswerDelta?: (text: string) => void;
@@ -58,6 +60,7 @@ export async function streamChatRequest(
     if (isAbort(err)) return { ok: false, errorType: "network", error: { detail: "已停止" }, data: null };
     return { ok: false, errorType: "network", error: { detail: "连接中断，已保留已生成内容" }, data: null };
   }
+  reportUnauthorized(resp.status);
   if (!resp.ok || !resp.body || typeof resp.body.getReader !== "function") {
     let data: { detail?: string } | null = null;
     try {
@@ -133,6 +136,9 @@ export async function fetchHistory(
   offset: number,
   signal?: AbortSignal
 ): Promise<HistoryResponse> {
+  if (isAuthRequired()) {
+    return { ok: false, error: "会话历史读取失败：登录已失效，请重新登录。", messages: [], has_more: false };
+  }
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -143,10 +149,13 @@ export async function fetchHistory(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`,
       { signal: controller.signal }
     );
+    reportUnauthorized(resp.status);
     if (!resp.ok) {
       return {
         ok: false,
-        error: `会话历史读取失败（HTTP ${resp.status}）`,
+        error: resp.status === 401
+          ? "会话历史读取失败：登录已失效，请重新登录。"
+          : `会话历史读取失败（HTTP ${resp.status}）`,
         messages: [],
         has_more: false,
       };
@@ -223,8 +232,10 @@ export function notifyModelCatalogChanged(): void {
 /** /api/v1/models: ids + mechanical model capability facts; never provider secrets. */
 export async function fetchModels(): Promise<ModelCatalog> {
   const empty: ModelCatalog = { models: [], current: null, catalog: [] };
+  if (isAuthRequired()) return empty;
   try {
     const resp = await fetch("/api/v1/models");
+    reportUnauthorized(resp.status);
     if (!resp.ok) return empty;
     const data = (await resp.json().catch(() => ({}))) as {
       models?: unknown; current?: unknown; current_available?: unknown; catalog?: unknown;
@@ -276,8 +287,10 @@ export interface QueueListResponse {
 
 /** 队列状态列表（FIFO 序；仅活跃项 queued/claimed） */
 export async function fetchQueueList(sessionId: string): Promise<QueueListResponse | null> {
+  if (isAuthRequired()) return null;
   try {
     const resp = await fetch(`/api/v1/chat/queue?session_id=${encodeURIComponent(sessionId)}`);
+    reportUnauthorized(resp.status);
     if (!resp.ok) return null;
     const data = (await resp.json().catch(() => ({}))) as Partial<QueueListResponse>;
     return {
@@ -549,8 +562,10 @@ export interface StreamStatus {
 }
 
 export async function fetchStreamStatus(sessionId: string): Promise<StreamStatus | null> {
+  if (isAuthRequired()) return null;
   try {
     const resp = await fetch(`/api/v1/chat/stream/status?session_id=${encodeURIComponent(sessionId)}`);
+    reportUnauthorized(resp.status);
     if (!resp.ok) return null;
     return (await resp.json()) as StreamStatus;
   } catch {

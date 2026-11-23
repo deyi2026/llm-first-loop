@@ -7,12 +7,14 @@ import { refreshCurrentSessionMessages } from "./conversation";
 import { sessionStore } from "./stores";
 import { notifyModelCatalogChanged } from "./chat";
 import { readSessionIdFromLocation } from "./sessionUrl";
+import { isAuthRequired, subscribeAuthRequired } from "./authSession";
 
 let lastSyncEvent = Date.now();
 let es: EventSource | null = null;
 let watchdogTimer: number | null = null;
 let onVisibilityChange: (() => void) | null = null;
 let hiddenSyncPending = false;
+let unsubscribeAuth: (() => void) | null = null;
 const watchdogMs = 20000;
 const staleThresholdMs = 25000;
 
@@ -22,6 +24,7 @@ let syncRunning = false;
 let syncAgain = false;
 
 function refreshFromSync(): void {
+  if (isAuthRequired()) return;
   if (document.hidden) {
     hiddenSyncPending = true; // 后台标签页不刷新；恢复可见时补一次
     return;
@@ -97,9 +100,12 @@ export async function refreshSessionsAndCurrent(): Promise<boolean> {
 }
 
 export function initEventStream(): void {
-  if (typeof EventSource === "undefined") return; // 老旧浏览器降级为手动刷新
+  if (typeof EventSource === "undefined" || isAuthRequired()) return;
   if (es) return;
   es = new EventSource("/api/v1/events");
+  unsubscribeAuth = subscribeAuthRequired(() => {
+    if (isAuthRequired()) stopEventStream(); // stop EventSource automatic 401 reconnects
+  });
   es.addEventListener("connected", () => {
     lastSyncEvent = Date.now();
     void refreshSessionsAndCurrent();
@@ -150,6 +156,8 @@ export function initEventStream(): void {
 }
 
 export function stopEventStream(): void {
+  unsubscribeAuth?.();
+  unsubscribeAuth = null;
   if (es) {
     es.close();
     es = null;
