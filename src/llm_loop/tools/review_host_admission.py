@@ -1040,7 +1040,8 @@ def _is_delete_only_push(command: str) -> bool:
     串联/内容型 refspec/--all|--mirror|--tags 一律返回 False（照旧走知识闸）。
     """
     text = str(command or "").strip()
-    if not text or any(tok in text for tok in ("&&", "||", ";", "|", "&", ">", "<", "\n", "`")):
+    banned = ("&&", "||", ";", "|", "&", ">", "<", "\n", "`", "$")
+    if not text or any(tok in text for tok in banned):
         return False
     try:
         tokens = shlex.split(text)

@@ -36,9 +36,13 @@ DELETE_ONLY=0
 if [[ -n "$PUSH_REFS" ]]; then
   DELETE_ONLY=1
   while read -r _d_ref _d_sha _d_rref _d_rsha; do
-    [[ -n "${_d_sha:-}" ]] || continue
+    # 字段缺失 = 读不懂，一律不豁免（fail-closed）；只有全零 sha 才算删除。
+    if [[ -z "${_d_ref:-}" || -z "${_d_sha:-}" || -z "${_d_rref:-}" ]]; then
+      DELETE_ONLY=0
+      continue
+    fi
     [[ "$_d_sha" =~ ^0+$ ]] || DELETE_ONLY=0
-  done <<< "$PUSH_REFS"
+  done < <(printf '%s\n' "$PUSH_REFS")
 fi
 
 if [[ "$DELETE_ONLY" -eq 1 ]]; then
@@ -123,8 +127,8 @@ while IFS= read -r f; do
 done <<< "$untracked_new_receipts"
 
 # refspec 已在上方一次性读入 PUSH_REFS（知识闸豁免判定与隐私扫描共用这份输入）。
-# 空 PUSH_REFS 走 here-string 会喂进一条空行、让循环体带空 SHA 跑一次（实测
-# git diff '' → bad revision → 误判 fail-closed）；空 SHA 一律跳过，等价旧行为。
+# 用进程替换而非 here-string：空输入时 read 直接 EOF、零迭代（here-string 会喂
+# 进一条空行，带空 SHA 跑一次 → git diff '' → bad revision → 误判 fail-closed）。
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ -n "${local_sha:-}" ]] || continue
   [[ "$local_sha" =~ ^0+$ ]] && continue
@@ -250,7 +254,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "[pre-push] $local_ref -> $remote_ref  (${RANGE_ARGS[*]})"
     bash "$SCAN" "${RANGE_ARGS[@]}" || exit 1
   fi
-done <<< "$PUSH_REFS"
+done < <(printf '%s\n' "$PUSH_REFS")
 
 if [[ "$receipt_hit" -ne 0 ]]; then
   echo "[pre-push] 修复：回填 main_sha_after / verify_receipt_id 等占位字段后重试推送。" >&2
