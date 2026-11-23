@@ -31,7 +31,7 @@ import { notifyModelCatalogChanged } from "../../core/chat";
 /** 错误码 → 可操作文案（§6.1.4/§7.7）：服务端 detail 优先，码兜底。 */
 function errorLabel(code?: string, raw?: string): string {
   const known = code ? T.errors[code] : "";
-  return known || raw || T.errors.unknown;
+  return raw || known || T.errors.unknown;
 }
 
 function blankModel(): ProviderModelConfigInput {
@@ -135,76 +135,81 @@ function ModelFields({ draft, isNew, onChange }: ModelFormProps) {
           onChange={(event) => onChange({ ...draft, max_tokens: num(event.target.value) })}
         />
       </label>
-      <label className="v2-provider-check">
-        <input
-          type="checkbox"
-          checked={Boolean(draft.long_context)}
-          onChange={(event) => onChange({ ...draft, long_context: event.target.checked })}
-        />
-        {T.longContext}
-      </label>
-      <label className="v2-provider-check">
-        <input
-          type="checkbox"
-          checked={Boolean(draft.reasoning)}
-          onChange={(event) => onChange({ ...draft, reasoning: event.target.checked })}
-        />
-        {T.reasoningField}
-      </label>
-      <label>
-        {T.reasoningEfforts}
-        <input
-          value={(draft.reasoning_efforts ?? []).join(",")}
-          onChange={(event) =>
-            onChange({
-              ...draft,
-              reasoning_efforts: event.target.value
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean),
-            })
-          }
-        />
-      </label>
-      <label>
-        {T.reasoningDefault}
-        <input
-          value={draft.reasoning_default_effort ?? ""}
-          onChange={(event) =>
-            onChange({ ...draft, reasoning_default_effort: event.target.value.trim() || null })
-          }
-        />
-      </label>
-      <label>
-        {T.wireProtocol}
-        <input
-          value={draft.wire_protocol ?? "openai"}
-          onChange={(event) => onChange({ ...draft, wire_protocol: event.target.value })}
-        />
-      </label>
-      <label>
-        {T.reasoning}
-        <select
-          value={draft.reasoning_capable ? "on" : "off"}
-          onChange={(event) =>
-            onChange({
-              ...draft,
-              reasoning_capable: event.target.value === "on",
-              reasoning_control: event.target.value === "on" ? draft.reasoning_control ?? "effort" : "unknown",
-            })
-          }
-        >
-          <option value="off">关</option>
-          <option value="on">开</option>
-        </select>
-      </label>
-      <label>
-        {T.note}
-        <input
-          value={draft.note ?? ""}
-          onChange={(event) => onChange({ ...draft, note: event.target.value })}
-        />
-      </label>
+      <details className="v2-provider-advanced">
+        <summary>高级模型参数（推理、协议与备注）</summary>
+        <div className="v2-provider-fields">
+          <label className="v2-provider-check">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.long_context)}
+              onChange={(event) => onChange({ ...draft, long_context: event.target.checked })}
+            />
+            {T.longContext}
+          </label>
+          <label className="v2-provider-check">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.reasoning)}
+              onChange={(event) => onChange({ ...draft, reasoning: event.target.checked })}
+            />
+            {T.reasoningField}
+          </label>
+          <label>
+            {T.reasoningEfforts}
+            <input
+              value={(draft.reasoning_efforts ?? []).join(",")}
+              onChange={(event) =>
+                onChange({
+                  ...draft,
+                  reasoning_efforts: event.target.value
+                    .split(",")
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </label>
+          <label>
+            {T.reasoningDefault}
+            <input
+              value={draft.reasoning_default_effort ?? ""}
+              onChange={(event) =>
+                onChange({ ...draft, reasoning_default_effort: event.target.value.trim() || null })
+              }
+            />
+          </label>
+          <label>
+            {T.wireProtocol}
+            <input
+              value={draft.wire_protocol ?? "openai"}
+              onChange={(event) => onChange({ ...draft, wire_protocol: event.target.value })}
+            />
+          </label>
+          <label>
+            {T.reasoning}
+            <select
+              value={draft.reasoning_capable ? "on" : "off"}
+              onChange={(event) =>
+                onChange({
+                  ...draft,
+                  reasoning_capable: event.target.value === "on",
+                  reasoning_control: event.target.value === "on" ? draft.reasoning_control ?? "effort" : "unknown",
+                })
+              }
+            >
+              <option value="off">关</option>
+              <option value="on">开</option>
+            </select>
+          </label>
+          <label>
+            {T.note}
+            <input
+              value={draft.note ?? ""}
+              onChange={(event) => onChange({ ...draft, note: event.target.value })}
+            />
+          </label>
+        </div>
+      </details>
     </div>
   );
 }
@@ -216,6 +221,9 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
   const [error, setError] = useState<{ message: string; conflict?: boolean } | null>(null);
   const [flash, setFlash] = useState("");
   const [tests, setTests] = useState<Record<string, string>>({});
+  const [credentialEditor, setCredentialEditor] = useState<{ providerId: string; apiKey: string } | null>(null);
+  const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
+  const [showExtras, setShowExtras] = useState(false);
   const [editor, setEditor] = useState<{
     mode: "create" | "edit";
     providerId?: string;
@@ -235,19 +243,23 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     error?: string;
   } | null>(null);
 
-  const load = useCallback(async () => {
-    const next = await fetchProviderAdmin();
-    if (next) {
-      setSnapshot(next);
-      setError(null);
-    } else {
+  const load = useCallback(async (clearError = false) => {
+    try {
+      const next = await fetchProviderAdmin();
+      if (next) {
+        setSnapshot(next);
+        if (clearError) setError(null);
+      }
+      else setError({ message: T.errors.load });
+    } catch {
       setError({ message: T.errors.load });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    void load();
+    void load(true);
   }, [load]);
 
   useEffect(() => subscribeProvidersUpdated(() => void load()), [load]);
@@ -293,8 +305,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         void onCatalogChanged?.();
         return true;
       } catch (err) {
-        setError({ message: err instanceof Error ? err.message : T.errors.unknown });
         await load();
+        setError({ message: err instanceof Error ? err.message : T.errors.unknown });
         return false;
       } finally {
         setBusy("");
@@ -373,13 +385,42 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
   const runTest = async (provider: ProviderAdminFact, modelId: string) => {
     const key = `${provider.id}/${modelId}`;
     setBusy(`test:${key}`);
-    const result = await testProviderConnection(provider.id, modelId);
-    setTests((prev) => ({ ...prev, [key]: result.detail }));
-    setBusy("");
+    setTests((prev) => ({ ...prev, [key]: "正在连接测试…" }));
+    try {
+      const result = await testProviderConnection(provider.id, modelId);
+      setTests((prev) => ({ ...prev, [key]: result.detail }));
+    } catch {
+      setTests((prev) => ({ ...prev, [key]: "连接测试未完成，请检查网络后重试。" }));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const openCredential = (providerId: string) => {
+    setError(null);
+    setFlash("");
+    setEditor(null);
+    setModelForm(null);
+    setCredentialEditor({ providerId, apiKey: "" });
+  };
+
+  const saveCredential = async () => {
+    if (!credentialEditor || !credentialEditor.apiKey.trim() || readOnly || busy) return;
+    const providerId = credentialEditor.providerId;
+    const ok = await runMutation(
+      `credential:${providerId}`,
+      () => updateProviderCredential(providerId, credentialEditor.apiKey.trim()),
+      "API Key 已保存并生效"
+    );
+    if (ok) {
+      setCredentialEditor(null);
+      setFlash("API Key 已保存并生效，可立即测试连接。");
+    }
   };
 
   const openCreate = () => {
     setError(null);
+    setCredentialEditor(null);
     setEditor({ mode: "create", draft: blankProvider(), apiKey: "" });
     setModelForm(null);
     setDiscovery(null);
@@ -387,6 +428,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
 
   const openEdit = (provider: ProviderAdminFact) => {
     setError(null);
+    setCredentialEditor(null);
     setEditor({
       mode: "edit",
       providerId: provider.id,
@@ -412,9 +454,6 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       T.saved
     );
     if (!ok) return;
-    if (editor.mode === "edit" && editor.apiKey.trim() && editor.providerId) {
-      await runMutation("credential", () => updateProviderCredential(editor.providerId as string, editor.apiKey), T.saved);
-    }
     setEditor(null);
   };
 
@@ -560,14 +599,17 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
             onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, base_url: event.target.value } })}
           />
         </label>
-        <label>
-          {editor.mode === "create" ? T.apiKey : T.apiKeyKeep}
-          <input
-            type="password"
-            value={editor.apiKey}
-            onChange={(event) => setEditor({ ...editor, apiKey: event.target.value })}
-          />
-        </label>
+        {editor.mode === "create" ? (
+          <label>
+            {T.apiKey}
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={editor.apiKey}
+              onChange={(event) => setEditor({ ...editor, apiKey: event.target.value })}
+            />
+          </label>
+        ) : null}
         <label>
           {T.apiKeyEnv}
           <input
@@ -635,7 +677,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         </div>
         <pre className="v2-provider-raw">{JSON.stringify(editor.draft, null, 2)}</pre>
       </details>
-      <div className="v2-provider-model-editor-list">
+      {editor.mode === "create" ? <div className="v2-provider-model-editor-list">
         {editor.draft.models.map((model, index) => (
           <div className="v2-provider-model-editor" key={`${model.id}-${index}`}>
             <ModelFields
@@ -666,11 +708,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
             </div>
           </div>
         ))}
-      </div>
+      </div> : null}
       <div className="v2-provider-editor-actions">
-        <button type="button" onClick={() => setEditor({ ...editor, draft: { ...editor.draft, models: [...editor.draft.models, blankModel()] } })}>
+        {editor.mode === "create" ? <button type="button" onClick={() => setEditor({ ...editor, draft: { ...editor.draft, models: [...editor.draft.models, blankModel()] } })}>
           {T.addModel}
-        </button>
+        </button> : null}
         <button type="button" onClick={() => void saveEditor()} disabled={busy !== ""}>
           {busy === "editor" ? T.saving : T.saveAndApply}
         </button>
@@ -753,18 +795,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       <header className="v2-provider-head">
         <div>
           <h3>{T.title}</h3>
-          <p className="v2-provider-subhead">{T.subtitle}</p>
+          <p className="v2-provider-subhead">先连接密钥，再选择模型；高级配置按需展开。</p>
         </div>
         <div className="v2-provider-actions">
-          <button type="button" onClick={() => void load()} disabled={loading}>
+          <button type="button" onClick={() => void load(true)} disabled={loading}>
             {T.refresh}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runMutation("reload", () => reloadProviderRegistry(), T.applied)}
-            disabled={readOnly || busy !== ""}
-          >
-            {T.reload}
           </button>
           <button type="button" onClick={openCreate} disabled={readOnly || !snapshot}>
             {T.addProvider}
@@ -776,26 +811,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         <div className="v2-provider-warning" role="alert" aria-live="assertive">
           {error.message}
           {error.conflict ? ` ${T.conflictBanner}` : ""}
-          {error.conflict ? <button type="button" onClick={() => void load()}>{T.refresh}</button> : null}
+          {error.conflict ? <button type="button" onClick={() => void load(true)}>{T.refresh}</button> : null}
         </div>
       ) : null}
       {flash ? <p className="v2-provider-ok" role="status">{flash}</p> : null}
       {readOnly ? <p className="v2-provider-readonly-note">{T.envReadonly}</p> : null}
-
-      {snapshot ? (
-        <div className="v2-provider-summary" data-testid="provider-summary">
-          <div><span>{T.source}</span><strong>{snapshot.source}</strong></div>
-          <div><span>{T.configDefault}</span><strong>{defaultModel || "—"}</strong></div>
-          <div><span>{T.runtimeDefault}</span><strong>{runtimeModel || "—"}</strong></div>
-          <div><span>{T.persistence}</span><strong>{def?.persistence ?? "—"}</strong></div>
-          <div>
-            <span>{T.applied}</span>
-            <strong>{restartRequired ? T.restartRequired : T.applied}</strong>
-          </div>
-          {restartRequired ? <p className="v2-provider-warning">{T.restartHint}</p> : null}
-          {snapshot.degraded ? <p className="v2-provider-warning">{T.degraded}</p> : null}
-        </div>
-      ) : null}
 
       {snapshot ? (
         <label className="v2-provider-fields">
@@ -811,8 +831,29 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         </label>
       ) : null}
 
-      {providerEditor}
-      {modelEditor}
+      <details className="v2-provider-runtime-details">
+        <summary>运行状态 · {restartRequired ? T.restartRequired : T.applied} · 高级维护</summary>
+        {snapshot ? (
+          <div className="v2-provider-summary" data-testid="provider-summary">
+            <div><span>{T.source}</span><strong>{snapshot.source}</strong></div>
+            <div><span>{T.configDefault}</span><strong>{defaultModel || "—"}</strong></div>
+            <div><span>{T.runtimeDefault}</span><strong>{runtimeModel || "—"}</strong></div>
+            <div><span>{T.persistence}</span><strong>{def?.persistence ?? "—"}</strong></div>
+            <div><span>{T.applied}</span><strong>{restartRequired ? T.restartRequired : T.applied}</strong></div>
+            {restartRequired ? <p className="v2-provider-warning">{T.restartHint}</p> : null}
+            {snapshot.degraded ? <p className="v2-provider-warning">{T.degraded}</p> : null}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void runMutation("reload", () => reloadProviderRegistry(), T.applied)}
+          disabled={readOnly || busy !== ""}
+        >
+          {T.reload}
+        </button>
+      </details>
+
+      {editor?.mode === "create" ? providerEditor : null}
 
       {loading ? <p>{T.loading}</p> : null}
 
@@ -827,23 +868,19 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                   <strong>{provider.display_name || provider.id}</strong>
                   <p className="v2-provider-meta">
                     <span>{provider.id}</span>
-                    <span>{provider.base_url}</span>
                     <span>{provider.credential_configured ? "已配置" : "未配置"} · {provider.credential_source ?? "none"}</span>
                     <span>{provider.enabled === false ? T.disabled : T.enabled}</span>
                   </p>
                 </div>
                 <div className="v2-provider-card-actions">
-                  <button type="button" onClick={() => void toggleProvider(provider)} disabled={readOnly || busy !== ""}>
-                    {provider.enabled === false ? T.enabled : T.disabled}
-                  </button>
-                  <button type="button" onClick={() => openEdit(provider)} disabled={readOnly}>{T.edit}</button>
-                  {provider.credential_configured ? (
-                    <button type="button" onClick={() => void clearCredential(provider)} disabled={readOnly || busy !== ""}>
-                      {T.clearKey}
-                    </button>
-                  ) : null}
-                  <button type="button" onClick={() => void removeProvider(provider)} disabled={readOnly || busy !== ""}>
-                    {T.remove}
+                  <button
+                    type="button"
+                    className={provider.credential_configured ? "" : "v2-provider-primary-action"}
+                    onClick={() => openCredential(provider.id)}
+                    disabled={readOnly || busy !== ""}
+                    aria-expanded={credentialEditor?.providerId === provider.id}
+                  >
+                    {provider.credential_configured ? "更换 API Key" : "配置 API Key"}
                   </button>
                   <button type="button" onClick={() => void runTest(provider, "")} disabled={busy !== ""}>
                     {busy === `test:${provider.id}/` ? T.testing : T.test}
@@ -851,9 +888,64 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                 </div>
               </div>
 
+              {credentialEditor?.providerId === provider.id ? (
+                <form
+                  className="v2-provider-credential-form"
+                  aria-label={`${provider.id} API Key 配置`}
+                  onSubmit={(event) => { event.preventDefault(); void saveCredential(); }}
+                >
+                  <label>
+                    API Key（只写入，不回显）
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      autoFocus
+                      aria-label={`${provider.id} API Key`}
+                      value={credentialEditor.apiKey}
+                      onChange={(event) => setCredentialEditor({ ...credentialEditor, apiKey: event.target.value })}
+                      disabled={busy !== ""}
+                    />
+                  </label>
+                  <p className="v2-provider-footnote">保存后立即用于新请求，不更改默认模型，也不需要重启。</p>
+                  {error ? <p className="v2-provider-warning" role="alert">{error.message}</p> : null}
+                  <div className="v2-provider-editor-actions">
+                    <button type="submit" disabled={!credentialEditor.apiKey.trim() || busy !== ""}>
+                      {busy === `credential:${provider.id}` ? T.saving : "保存 API Key"}
+                    </button>
+                    <button type="button" onClick={() => setCredentialEditor(null)} disabled={busy !== ""}>{T.cancel}</button>
+                  </div>
+                </form>
+              ) : null}
+
               {tests[`${provider.id}/`] ? (
                 <p className="v2-provider-test-fact" role="status">{tests[`${provider.id}/`]}</p>
               ) : null}
+
+              <details
+                className="v2-provider-details"
+                open={expandedProviders[provider.id] ?? providerModels.length <= 2}
+                onToggle={(event) => {
+                  const open = event.currentTarget.open;
+                  setExpandedProviders((prev) => prev[provider.id] === open ? prev : { ...prev, [provider.id]: open });
+                }}
+              >
+                <summary>模型与高级设置 · {providerModels.length} 个模型</summary>
+              <p className="v2-provider-footnote">连接地址：{provider.base_url}</p>
+              <div className="v2-provider-card-actions">
+                <button type="button" onClick={() => void toggleProvider(provider)} disabled={readOnly || busy !== ""}>
+                  {provider.enabled === false ? T.enabled : T.disabled}
+                </button>
+                <button type="button" onClick={() => openEdit(provider)} disabled={readOnly || busy !== ""}>{T.edit}</button>
+                {provider.credential_configured ? (
+                  <button type="button" onClick={() => void clearCredential(provider)} disabled={readOnly || busy !== ""}>
+                    {T.clearKey}
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => void removeProvider(provider)} disabled={readOnly || busy !== ""}>
+                  {T.remove}
+                </button>
+              </div>
+              {editor?.mode === "edit" && editor.providerId === provider.id ? providerEditor : null}
 
               <label className="v2-provider-fields">
                 {T.providerDefault}
@@ -910,6 +1002,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                         </button>
                       </div>
                       {tests[key] ? <span className="v2-provider-test-fact">{tests[key]}</span> : null}
+                      {modelForm?.mode === "edit" && modelForm.providerId === provider.id && modelForm.originalId === model.id
+                        ? modelEditor : null}
                     </div>
                   );
                 })}
@@ -926,17 +1020,26 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                   {T.addModel}
                 </button>
               </div>
+              {modelForm?.mode === "add" && modelForm.providerId === provider.id ? modelEditor : null}
+              </details>
             </article>
           );
         })}
       </div>
 
-      <LocalRuntimePanel
-        onSynced={() => {
-          setFlash(T.runtimeSynced);
-        }}
-      />
-      <VideoPanel />
+      <details className="v2-provider-runtime-details" onToggle={(event) => setShowExtras(event.currentTarget.open)}>
+        <summary>本地运行时与视频（高级）</summary>
+        {showExtras ? (
+          <>
+            <LocalRuntimePanel
+              onSynced={() => {
+                setFlash(T.runtimeSynced);
+              }}
+            />
+            <VideoPanel />
+          </>
+        ) : null}
+      </details>
     </section>
   );
 }
