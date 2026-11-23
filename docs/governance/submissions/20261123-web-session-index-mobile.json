@@ -9,6 +9,8 @@
         "docs/governance/submissions/20261123-web-session-index-mobile.json",
         "src/llm_loop/core/session.py",
         "tests/unit/test_session.py",
+        "tests/unit/test_terminal_pty.py",
+        "tests/web/test_webui_responsive_contract.py",
         "webui/src/components/conversation/Conversation.test.tsx",
         "webui/src/components/conversation/Conversation.tsx",
         "webui/src/components/conversation/MessageList.test.tsx",
@@ -21,7 +23,8 @@
       "evidence": [
         "2026-11-23 production read-only baseline: /api/v1/sessions 17.975s, 1,199,891 response bytes; 7,426 workspace session files and 2,048 metadata cache slots.",
         "Candidate 174060c28: 2,100-session cache regression checks no JSON reparse on second listing; targeted Python 108 passed, WebUI 619 passed, TypeScript and WebUI build exit 0.",
-        "Independent reviewer, original R9, remote CI and deployed production performance remain pending for this manifest-amended candidate."
+        "The first full R9 exposed an unrelated timing-sensitive background-cancel test; the second R9 found an overfitted old mobile CSS contract and an xdist-parallel SIGTERM PTY timing failure. The new mobile contract checks equivalent new scroll/touch behavior, and the physical-signal test moves into the existing serial_signal gate rather than being omitted.",
+        "Independent reviewer, clean original R9, remote CI and deployed production performance remain pending for this amended candidate."
       ],
       "verification_level": "Code-only targeted regression and WebUI build; not yet reviewed, merged or deployed.",
       "model_evidence_veto_recovery_exit": "Reviewer may veto if enlarged metadata cache creates unacceptable RAM use, historical search/pinning regresses, a history retry resubmits a Run, mobile controls become inaccessible, or actual latency fails to improve.",

@@ -32,8 +32,14 @@ def test_mobile_touch_and_narrow_layout_contracts() -> None:
     assert ".v2-composer-tools {\n    flex-wrap: wrap;" in conversation_css
     assert ".v2-chat-queue-item {\n    flex-wrap: wrap;" in conversation_css
     assert "min-height: var(--v2-mobile-touch-target)" in conversation_css
-    assert ".v2-conversation-header {\n    overflow-x: auto;" in conversation_css
-    assert ".v2-catalog-trigger,\n  .v2-conversation-header > .v2-btn" in conversation_css
+    # The mobile title now has its own row.  Keep the actions independently
+    # scrollable and touch-sized rather than requiring the old whole-header
+    # horizontal scroller (which truncated titles on narrow screens).
+    assert ".v2-conversation-header {\n    flex-direction: column;" in conversation_css
+    assert ".v2-conversation-header-actions {\n    flex: 0 0 auto;" in conversation_css
+    assert ".v2-conversation-header-actions {\n  flex: 1 1 auto;" in conversation_css
+    assert "overflow-x: auto;" in conversation_css
+    assert ".v2-catalog-trigger,\n  .v2-conversation-header-actions > .v2-btn" in conversation_css
     assert ".v2-tool-activity-toggle,\n  .v2-tool-activity-row-toggle" in conversation_css
 
 
