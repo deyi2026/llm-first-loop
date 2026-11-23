@@ -373,3 +373,178 @@ def test_issuer_owned_session_binding_real_signatures_and_ambiguity(
     binding_dir.chmod(0o777)
     with pytest.raises(TaskAuthorityError, match="authority_bindings_untrusted"):
         authority.discover_for_session(session)
+
+
+def test_trusted_task_execution_authorize_app_uses_real_signed_exact_cdp_resource(
+    tmp_path, signed_receipts, monkeypatch,
+):
+    import os
+    import subprocess
+
+    from llm_loop.core.run_context import current_session_id, current_task_execution
+    from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+    pem, original, original_state, sign, _request = signed_receipts
+    project = tmp_path / "project-a"
+    subprocess.run(["git", "-C", str(project), "init", "-q"], check=True)
+    (project / "file.py").write_text("safe\n")
+    subprocess.run(["git", "-C", str(project), "add", "file.py"], check=True)
+    subprocess.run(["git", "-C", str(project), "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial"], check=True)
+    head = subprocess.run(["git", "-C", str(project), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+    from datetime import UTC, datetime, timedelta
+    lease = {
+        **original,
+        "issued_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+        "resources": [
+            {"kind": "app", "identity": "lfl.cdp.dedicated", "verbs": ["edit"]}
+        ],
+    }
+    state = {
+        **original_state,
+        "lease_sha256": hashlib.sha256(_canonical_json(lease)).hexdigest(),
+    }
+    root = tmp_path / "authority"
+    (root / "leases").mkdir(parents=True, mode=0o700)
+    (root / "states").mkdir(mode=0o700)
+    root.chmod(0o700)
+    (root / "leases" / f"{lease['lease_id']}.json").write_bytes(sign(lease, b"lfl.task-lease.v1"))
+    (root / "states" / f"{lease['lease_id']}.json").write_bytes(sign(state, b"lfl.task-lease-state.v1"))
+    (root / "leases" / f"{lease['lease_id']}.json").chmod(0o600)
+    (root / "states" / f"{lease['lease_id']}.json").chmod(0o600)
+    monkeypatch.setattr(RootOwnedTaskAuthority, "_trust", lambda self: (os.getuid(), pem))
+    authority = RootOwnedTaskAuthority(root)
+
+    lanes_dir = tmp_path / "lanes"
+    lanes_dir.mkdir(mode=0o700)
+    lane = {
+        "status": "active", "goal_id": lease["goal_id"],
+        "owner_session_id": lease["owner_session_id"], "version": 2,
+        "head_sha": head, "worktree": str(project),
+    }
+    class Lanes:
+        _dir = lanes_dir
+        def get(self, _lane_id): return lane
+
+    from typing import Any, cast
+    task = TrustedTaskExecution(
+        authority=authority, lanes=cast(Any, Lanes()), lease_id=lease["lease_id"],
+        goal_id=lease["goal_id"], task_id=lease["task_id"],
+        owner_session_id=lease["owner_session_id"], agent_id=lease["agent_id"],
+        lane_id=lease["lane_id"], revision=lease["revision"], lane_version=2,
+        expected_head=head, protected_roots=(str(root), str(lanes_dir)),
+        task_state_validator=lambda: None,
+    )
+    session_token = current_session_id.set(lease["owner_session_id"])
+    task_token = current_task_execution.set(task)
+    try:
+        task.authorize_app(
+            "lfl.cdp.dedicated", verb="edit", os_permission_granted=True,
+            backend_supported=True,
+        )
+        with pytest.raises(TaskExecutionError, match="capability_scope_missing"):
+            task.authorize_app(
+                "lfl.cdp.other", verb="edit", os_permission_granted=True,
+                backend_supported=True,
+            )
+        with pytest.raises(TaskExecutionError, match="sandbox_backend_unsupported"):
+            task.authorize_app(
+                "lfl.cdp.dedicated", verb="edit", os_permission_granted=True,
+                backend_supported=False,
+            )
+    finally:
+        current_task_execution.reset(task_token)
+        current_session_id.reset(session_token)
+
+
+def test_trusted_service_real_ed25519_lease_lane_cas_parent_and_revocation(
+    tmp_path, signed_receipts, monkeypatch,
+):
+    """Real signed service scope and LaneStore; no fake allow verdict."""
+    import subprocess
+
+    from llm_loop.core.run_context import current_session_id, current_task_execution
+    from llm_loop.introspection.lane import LaneStore
+    from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
+
+    pem, original, original_state, sign, _ = signed_receipts
+    project = tmp_path / "project-a"
+    subprocess.run(["git", "-C", str(project), "init", "-q"], check=True)
+    (project / "file.py").write_text("safe\n")
+    subprocess.run(["git", "-C", str(project), "add", "file.py"], check=True)
+    subprocess.run([
+        "git", "-C", str(project), "-c", "user.name=test",
+        "-c", "user.email=test@example.invalid", "commit", "-qm", "initial",
+    ], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(project), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    lanes = LaneStore(tmp_path / "lanes")
+    row = lanes.create(
+        branch="feat/test-signed-service", worktree=str(project),
+        base_main_sha=head, goal_id=original["goal_id"],
+        owner_session_id=original["owner_session_id"], paths=["file.py"],
+    )
+    lanes.update(row.lane_id, expected_version=1, status="active", head_sha=head)
+    lease = {
+        **original, "lane_id": row.lane_id,
+        "issued_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+        "resources": [{"kind": "service", "identity": "web", "verbs": ["restart"]}],
+    }
+    state = {**original_state, "lease_sha256": hashlib.sha256(_canonical_json(lease)).hexdigest()}
+    root = tmp_path / "host-service"
+    (root / "leases").mkdir(parents=True, mode=0o700)
+    (root / "states").mkdir(mode=0o700)
+    root.chmod(0o700)
+    monkeypatch.setattr(RootOwnedTaskAuthority, "_trust", lambda self: (os.getuid(), pem))
+
+    def write_receipts(payload, status="active"):
+        current = {
+            **state, "status": status,
+            "lease_sha256": hashlib.sha256(_canonical_json(payload)).hexdigest(),
+        }
+        for folder, value, domain in (
+            ("leases", payload, b"lfl.task-lease.v1"),
+            ("states", current, b"lfl.task-lease-state.v1"),
+        ):
+            path = root / folder / f"{payload['lease_id']}.json"
+            path.write_bytes(sign(value, domain))
+            path.chmod(0o600)
+
+    write_receipts(lease)
+    task = TrustedTaskExecution(
+        authority=RootOwnedTaskAuthority(root), lanes=lanes,
+        lease_id=lease["lease_id"], goal_id=lease["goal_id"],
+        task_id=lease["task_id"], owner_session_id=lease["owner_session_id"],
+        agent_id=lease["agent_id"], lane_id=row.lane_id,
+        revision=lease["revision"], lane_version=2, expected_head=head,
+        protected_roots=(str(root), str(lanes._dir)),
+        task_state_validator=lambda: None,
+    )
+    sid = current_session_id.set(lease["owner_session_id"])
+    token = current_task_execution.set(task)
+    try:
+        task.authorize_service("web", os_permission_granted=True, backend_supported=True)
+        with pytest.raises(TaskExecutionError, match="capability_scope_missing"):
+            task.authorize_service("feishu", os_permission_granted=True, backend_supported=True)
+        with pytest.raises(TaskExecutionError, match="sandbox_backend_unsupported"):
+            task.authorize_service("web", os_permission_granted=True, backend_supported=False)
+        with pytest.raises(TaskExecutionError, match="os_permission_required"):
+            task.authorize_service("web", os_permission_granted=False, backend_supported=True)
+        write_receipts(lease, status="revoked")
+        with pytest.raises(TaskExecutionError, match="authority_lease_revoked"):
+            task.authorize_service("web", os_permission_granted=True, backend_supported=True)
+        parented = {**lease, "parent_lease_id": "lease-parent-12345678"}
+        write_receipts(parented)
+        with pytest.raises(TaskExecutionError, match="task_parent_lease_chain_unverified"):
+            task.authorize_service("web", os_permission_granted=True, backend_supported=True)
+        write_receipts(lease)
+        lanes.update(row.lane_id, expected_version=2, status="verifying")
+        with pytest.raises(TaskExecutionError, match="task_lane_cas_conflict"):
+            task.authorize_service("web", os_permission_granted=True, backend_supported=True)
+    finally:
+        current_task_execution.reset(token)
+        current_session_id.reset(sid)

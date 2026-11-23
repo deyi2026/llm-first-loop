@@ -1,0 +1,66 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-web-history-coordination-hotfix",
+  "summary": "Restore fast page-scoped Web history and readable, live coordination sidebar; no change to Host, Goal, Run or deployment authority.",
+  "components": [
+    {
+      "component_id": "web-history-and-coordination-hotfix",
+      "paths": [
+        "docs/governance/submissions/20261123-web-history-coordination-hotfix.json",
+        "src/llm_loop/event_log/store.py",
+        "src/llm_loop/web/coordination_routes.py",
+        "src/llm_loop/web/routes.py",
+        "tests/unit/test_coordination_routes.py",
+        "tests/unit/test_event_store_seq_lookup.py",
+        "tests/web/test_history_seq_lookup.py",
+        "webui/src/components/sidebar/CoordinationChannel.test.tsx",
+        "webui/src/components/sidebar/CoordinationChannel.tsx",
+        "webui/src/components/sidebar/LaneBoard.test.tsx",
+        "webui/src/components/sidebar/LaneBoard.tsx",
+        "webui/src/conversation-stream.test.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/tokens/conversation.css"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Existing EventStore/Web history read-only API and WebUI coordination read-only board; Host Run/merge authority unchanged.",
+      "disposition": "Reuse durable event seq and existing board channel projection; scan only page-needed event rows, retain session/Run separation, enable accessible sidebar scrolling without changing approval, merge or service control.",
+      "evidence": [
+        "Independent DeepSeek-v4-flash reviewer PASS P0/P1=0 on exact source tree a7eddf72578a5eaec9940ca12eb55f67c268fff0; commit 912fab761 (local) / 2e3ce12 (remote) share identical tree.",
+        "71 Python targeted tests; 614 WebUI tests before latest focused additions, new Vitest targeted tests; full R9 and remote CI required for final manifest SHA.",
+        "216MiB real event log exact seq under 1ms; missing seq about 0.6s; privacy and A.5 gates remain enforced."
+      ],
+      "verification_level": "Candidate code tests and independent review PASS; manifest-only addition requires A.5/CI and full R9 on final exact SHA before merge.",
+      "model_evidence_veto_recovery_exit": "HOLD if event seq lookup returns wrong session/seq, corrupt rows crash worker, history errors trigger duplicate Run, coordination channel unavailable is shown as empty success, scroll clipping persists, or CI/reviewer fails.",
+      "rollback_route": "Revert this hotfix and declaration via protected PR, keep all append-only events and prior Run/Goal facts intact.",
+      "declaration_id": "web-readonly-control"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "web-readonly-control",
+      "g1": {
+        "necessity": "History GET timed out at 15s while hydrating a single program.final event from 216MiB replay; coordination sidebar omitted channel and clipped content."
+      },
+      "g2": {
+        "authority_owner": "Existing EventStore, Web history/board APIs and WebUI state; no new signing, scheduling or Host authority.",
+        "relationship": "reuse",
+        "non_duplication": "No second event store or duplicate Run; use exact seq lookups, existing channel builder and existing polling."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent read-only DeepSeek-v4-flash review PASS P0=0/P1=0 on unchanged source tree.",
+          "Targeted Python and Vitest regression plus real event-log timing; full R9 and remote CI still required."
+        ],
+        "recovery_or_reason": "On missing/corrupt event keep placeholder empty and retain error, query Run status separately without restarting; rollback by reverting code if latency or rendering regresses."
+      },
+      "g4": {
+        "rollback": "Revert code and declaration via protected main; preserve session/event/Goal data.",
+        "verification": [
+          "A.5 exact changed-path coverage and read-only safety.",
+          "Original R9 release exit 0, required remote CI, exact SHA/tree check, then managed deployment only after live Run drains.",
+          "Production verify history latency, coordination channel/scroll, four-service health and rollback readiness."
+        ]
+      }
+    }
+  ]
+}

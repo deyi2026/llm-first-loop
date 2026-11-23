@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -543,8 +544,18 @@ class ServiceControlTool:
             return self._failure(contract_error)
         if action == "status":
             return self._status(kwargs)
-        if current_task_execution.get() is not None:
-            return self._failure(_TASK_SERVICE_HOLD)
+        task = current_task_execution.get()
+        if task is not None:
+            if (
+                action != "restart"
+                or str(kwargs.get("target") or "").lower() not in _MANAGED_SERVICES
+                or kwargs.get("expected_generation") is None
+                or any(key in kwargs for key in (
+                    "task_lease_id", "task_owner_session_id", "task_worktree", "origin",
+                ))
+            ):
+                return self._failure(_TASK_SERVICE_HOLD)
+            return self._task_restart(kwargs, task)
         if action == "publish":
             return self._publish_action(kwargs)
 
@@ -615,6 +626,83 @@ class ServiceControlTool:
             ),
             tool_call_id="",
             tool_name=self.name,
+        )
+
+    def _task_restart(self, kwargs: dict[str, object], task: object) -> ToolResult:
+        """Only exact signed single-service restart; no publish/override/all.
+
+        The worker must re-resolve this Lease before physical effects. Neither
+        the model nor this tool may supply or forge the persisted Host fields.
+        """
+        target = str(kwargs.get("target") or "").lower()
+        try:
+            expected_generation = int(str(kwargs["expected_generation"]))
+            if expected_generation < 1:
+                raise ValueError("generation must be positive")
+            owner = str(getattr(task, "owner_session_id", ""))
+            lease_id = str(getattr(task, "lease_id", ""))
+            lane_id = str(getattr(task, "lane_id", ""))
+            lane = task.lanes.get(lane_id)  # type: ignore[attr-defined]
+            worktree = str((lane or {}).get("worktree") or "")
+            if (
+                not owner or not lease_id or not lane_id
+                or owner != self._session_id_getter()
+                or not os.path.isabs(worktree)
+                or os.path.realpath(worktree) != worktree
+                or not os.path.lexists(os.path.join(worktree, ".git"))
+            ):
+                return self._failure(_TASK_SERVICE_HOLD)
+            # Runtime OS ACL check is advisory here; worker rechecks under its
+            # own OS identity, with the exact Host-signed service scope.
+            desired = self.store.read()
+            if desired is None or desired.generation != expected_generation:
+                return self._failure(_TASK_SERVICE_HOLD)
+            runtime_root = Path(desired.runtime_root)
+            restart_script = runtime_root / "scripts" / "restart_mirror.sh"
+            backend_supported = (
+                os.name == "posix"
+                and restart_script.is_file()
+                and os.access(restart_script, os.X_OK)
+            )
+            task.authorize_service(  # type: ignore[attr-defined]
+                target,
+                os_permission_granted=(
+                    backend_supported
+                    and os.access(runtime_root, os.W_OK)
+                ),
+                backend_supported=backend_supported,
+            )
+        except Exception as exc:  # noqa: BLE001 - signed/OS/ledger refusal
+            return self._failure(
+                f"[task service denied] {getattr(exc, 'reason_code', 'task_service_worker_fence_unavailable')}"
+            )
+        try:
+            receipt = self.store.accept_restart(
+                target=target, expected_generation=expected_generation,
+                requester_session_id=owner, origin="task-restart",
+                task_lease_id=lease_id, task_owner_session_id=owner,
+                task_worktree=worktree,
+            )
+        except (DeploymentGenerationConflictError, BarrierConflictError, OSError, ValueError) as exc:
+            return self._failure(f"[task service restart rejected] {type(exc).__name__}: {exc}")
+        try:
+            self._worker_spawner(receipt.action_id)
+        except Exception as exc:  # noqa: BLE001 - durable failure on spawn error
+            with contextlib.suppress(Exception):
+                self.store.update_action(
+                    receipt.action_id, status="failed",
+                    detail=f"worker spawn failed: {type(exc).__name__}: {exc}",
+                )
+            return self._failure(f"[task service worker spawn failed] {type(exc).__name__}: {exc}")
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=(
+                f"[task service accepted] action_id={receipt.action_id} "
+                f"target={target} generation={expected_generation}; "
+                "受理不等于生效，worker将在物理重启前重新核验Host签名、撤销、Goal/Lane CAS、"
+                "目标空闲与部署绑定；请查询service_control(action=status, action_id=...)终态。"
+            ),
+            tool_call_id="", tool_name=self.name,
         )
 
     def _status(self, kwargs: dict[str, object]) -> ToolResult:

@@ -17,9 +17,11 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NamedTuple, Protocol
 from urllib.parse import urlparse
 
+from llm_loop.browser.channel_binding import extract_browser_ws_uuid
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
 from llm_loop.config import _raw_env
 from llm_loop.core.run_context import current_task_execution, current_workspace_root
@@ -667,6 +669,88 @@ class BrowserActionAdapter:
         self.receipt_diff_summary_enabled = bool(receipt_diff_summary_enabled)
         self.receipt_diff_summary_cap = max(1, int(receipt_diff_summary_cap))
 
+    def _task_host_authorization_reason(self) -> str | None:
+        """Verify a Host-only exact CDP binding and signed Task app scope.
+
+        The model's scope_ref is intentionally never consulted. Both CDP hosts
+        must share the factory-owned coordinator; the read-only host must have
+        established the channel and the OS process/Chrome UUID are reattested
+        on each check. The mutation host itself enforces coordinator matching
+        when opening its session. A missing/real-profile/stale binding stays HOLD.
+        """
+        task = current_task_execution.get()
+        if task is None:
+            return None
+        coordinator = getattr(self.capture_backend, "_binding_coordinator", None)
+        if coordinator is None or coordinator is not getattr(self.actuator, "_binding_coordinator", None):
+            return "task_browser_host_binding_unavailable"
+        try:
+            binding = coordinator.binding
+            if binding is None:
+                return "task_browser_host_binding_unavailable"
+            argv_hash = str(binding.argv_sha256 or "")
+            if (
+                binding.verdict != "dedicated"
+                or len(argv_hash) != 64
+                or any(ch not in "0123456789abcdef" for ch in argv_hash)
+                or not binding.browser_ws_uuid
+                or not binding.target_id
+                or not binding.target_ws_url
+            ):
+                return "task_browser_host_attestation_unavailable"
+            backend = self.capture_backend
+            actuator = self.actuator
+            if (
+                getattr(backend, "_session", None) is None
+                or getattr(backend, "_bound_target_id", None) != binding.target_id
+                or getattr(backend, "_bound_websocket_url", None) != binding.target_ws_url
+                or str(getattr(actuator, "_configured_target_id", "") or "")
+                not in ("", binding.target_id)
+            ):
+                return "task_browser_host_binding_unavailable"
+            if getattr(actuator, "_session", None) is not None and (
+                getattr(actuator, "_bound_target_id", None) != binding.target_id
+                or getattr(actuator, "_bound_websocket_url", None) != binding.target_ws_url
+            ):
+                return "task_browser_host_binding_unavailable"
+            attest = getattr(backend, "_attest_fn", None)
+            version_probe = getattr(backend, "_http_get_version_dict", None)
+            debug_url = getattr(backend, "debug_base_url", None)
+            if not callable(attest) or not callable(version_probe) or not isinstance(debug_url, str):
+                return "task_browser_host_binding_unavailable"
+            fresh = attest(debug_url)  # Host lsof/PID/native argv, not CDP self-report
+            if getattr(fresh, "verdict", None) != "dedicated" or getattr(fresh, "argv_sha256", None) != argv_hash:
+                return "task_browser_host_attestation_stale"
+            version = version_probe(f"{debug_url}/json/version")
+            if not isinstance(version, dict) or extract_browser_ws_uuid(
+                str(version.get("webSocketDebuggerUrl") or "")
+            ) != binding.browser_ws_uuid:
+                return "task_browser_host_process_changed"
+            # Lease identity is stable and pre-signable; the live process/target
+            # identity is independently enforced by the fresh dedicated-profile
+            # OS attestation and the shared immutable CDP channel binding above.
+            # Never require the issuer to pre-sign a runtime-only process digest.
+            authorize_app = getattr(task, "authorize_app", None)
+            if not callable(authorize_app):
+                return "task_browser_lease_unavailable"
+            try:
+                # CDP uses a dedicated OS-attested channel; this is not AX/TCC.
+                # TaskExecution still verifies Host signature, parent, Lane CAS,
+                # expiry and revocation on EVERY invocation.
+                authorize_app(
+                    "lfl.cdp.dedicated", verb="edit",
+                    os_permission_granted=bool(
+                        getattr(fresh, "argv_sha256", None)
+                        and getattr(fresh, "verdict", None) == "dedicated"
+                    ),
+                    backend_supported=bool(callable(attest) and callable(version_probe)),
+                )
+            except Exception as exc:  # noqa: BLE001 - fail-closed signed-lease boundary
+                return str(getattr(exc, "reason_code", "task_browser_lease_unavailable"))
+            return None
+        except Exception:  # noqa: BLE001 - incomplete Host evidence never grants authority
+            return "task_browser_host_binding_unavailable"
+
     @staticmethod
     def _settle_mode(verb: str, semantic_object: dict[str, Any] | None) -> str:
         """Server-side fixed rule for the FR-2 settle predicate mode.
@@ -1197,9 +1281,11 @@ class BrowserActionAdapter:
             ):
                 raise ValueError(f"Browser SemanticAction contract rejected: {validation_error}")
             return self._append_rejected(session_id, action, validation_error)
-        # Model-owned scope_ref is not an OS-attested CDP process identity.
-        if current_task_execution.get() is not None:
-            return self._append_rejected(session_id, action, "task_browser_host_binding_unavailable")
+        # Only Host CDP+OS attestation and a matching signed Task Lease can
+        # authorize browser mutation; the model's scope_ref is never identity.
+        task_denial = self._task_host_authorization_reason()
+        if task_denial is not None:
+            return self._append_rejected(session_id, action, task_denial)
         fingerprint = _sha256_json(
             {
                 "scope_ref": action["scope_ref"],
@@ -1400,16 +1486,25 @@ class BrowserActionAdapter:
                 dispatch_authority_lost = True
                 dispatch_authority_verdict = mutation_allowed
             else:
-                try:
-                    # M1 B1 + fix(P0-1): dispatch_args carries the canonicalized
-                    # absolute upload paths, rechecked above (see helper).
-                    dispatch_result = self.actuator.dispatch(
-                        verb=str(action["verb"]),
-                        physical_target=physical_target,
-                        args=dispatch_args,
+                # Recheck signed Lease/revocation and OS process identity at the
+                # physical effect boundary, after observation and upload checks.
+                task_denial = self._task_host_authorization_reason()
+                if task_denial is not None:
+                    dispatch_authority_lost = True
+                    dispatch_authority_verdict = SimpleNamespace(
+                        code="E_TASK_BROWSER_HOST", reason=task_denial, facts={}
                     )
-                except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
-                    dispatch_error = exc
+                else:
+                    try:
+                        # M1 B1 + fix(P0-1): dispatch_args carries the canonicalized
+                        # absolute upload paths, rechecked above (see helper).
+                        dispatch_result = self.actuator.dispatch(
+                            verb=str(action["verb"]),
+                            physical_target=physical_target,
+                            args=dispatch_args,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
+                        dispatch_error = exc
 
         # R2-7: navigate 被确认后复检落地 URL（重定向闸门）。仅在 dispatch 已被
         # acknowledge 时执行；被拒时已尽力导航到 about:blank，receipt 落 failed

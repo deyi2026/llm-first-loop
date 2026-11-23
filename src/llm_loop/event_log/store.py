@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import threading
@@ -18,6 +19,7 @@ import time
 import uuid
 import weakref
 from collections import OrderedDict
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ from llm_loop.event_log.model import Event, serialize_event
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
+_EVENT_SEQ_RE = re.compile(rb'"seq"\s*:\s*(\d+)')
 
 
 class EventDurabilityError(RuntimeError):
@@ -654,6 +657,86 @@ class EventStore:
             if (events[-1].seq if events else 0) == after_last:
                 self._store_read_cache(session_id, events, skipped=skipped)
             return events
+
+    @staticmethod
+    def _reverse_event_lines(stream) -> Iterator[bytes]:
+        """Reverse JSONL scan with bounded reads; safe if a writer truncates a file.
+
+        Unlike mmap, a concurrent in-place truncate cannot SIGBUS the Web worker.
+        A short read ends the snapshot instead of emitting a partial event.
+        """
+        pos = os.fstat(stream.fileno()).st_size
+        tail = b""
+        while pos > 0:
+            size = min(65536, pos)
+            pos -= size
+            stream.seek(pos)
+            chunk = stream.read(size)
+            if len(chunk) != size:
+                return
+            parts = (chunk + tail).split(b"\n")
+            tail = parts[0]
+            yield from (line for line in reversed(parts[1:]) if line)
+        if tail:
+            yield tail
+
+    def read_seqs(self, session_id: str, seqs: set[int]) -> dict[int, Event]:
+        """Find exact event seqs without replaying an entire long session.
+
+        This is a read-only UI hydration path, not an integrity audit. Newest segments
+        and rows are inspected first; an unreadable/missing row stays absent rather
+        than inventing a terminal message. It never populates the full replay cache.
+        """
+        if not self._enabled:
+            return {}
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError:
+            return {}
+        wanted = {seq for seq in seqs if type(seq) is int and seq > 0}
+        if not wanted:
+            return {}
+        wanted_bytes = {str(seq).encode("ascii") for seq in wanted}
+        paths = (
+            self._all_segment_paths(session_id)
+            if self._is_multi_segment(session_id)
+            else [self._path(session_id)]
+        )
+        found: dict[int, Event] = {}
+        for path in reversed(paths):
+            try:
+                fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(fd, "rb") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or not info.st_size:
+                        continue
+                    for raw in self._reverse_event_lines(stream):
+                        if len(found) == len(wanted):
+                            break
+                        raw = raw.strip()
+                        if not raw or not any(
+                            match.group(1) in wanted_bytes
+                            for match in _EVENT_SEQ_RE.finditer(raw)
+                        ):
+                            continue
+                        try:
+                            event = self._parse_line(raw.decode("utf-8"))
+                        except UnicodeDecodeError:
+                            continue
+                        if (
+                            event is not None
+                            and event.session_id == session_id
+                            and event.seq in wanted
+                            and event.seq not in found
+                        ):
+                            found[event.seq] = event
+            except FileNotFoundError:
+                continue  # missing/rotated segment: absence is not a synthetic event
+            except (OSError, ValueError) as exc:
+                logger.warning("事件日志精确序号读取失败: %s: %s", path, exc)
+            if len(found) == len(wanted):
+                break
+        return found
 
     @staticmethod
     def _tail_last_seq(path: str | os.PathLike[str]) -> int:
