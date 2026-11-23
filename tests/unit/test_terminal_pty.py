@@ -257,6 +257,7 @@ def test_dumb_terminal_uses_explicit_plain_multiline_fallback(tmp_path):
         os.close(slave)
 
 
+@pytest.mark.serial_signal
 def test_sigterm_during_composer_restores_terminal_modes(tmp_path):
     pytest.importorskip("prompt_toolkit")
     import pty
