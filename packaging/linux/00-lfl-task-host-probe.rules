@@ -1,0 +1,19 @@
+/* Deepin 25 immutable-/usr compatibility: root-owned /etc/polkit-1/rules.d.
+ * The system action is org.freedesktop.policykit.exec, NOT a new action ID.
+ * This rule handles ONLY the exact fixed root-owned probe executable.
+ * All other pkexec programs and actions keep their existing policy.
+ * No AUTH_ADMIN_KEEP: authorization is per request, not retained.
+ * The helper itself only writes a bounded, one-time root receipt; no Task Lease.
+ */
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.policykit.exec" ||
+        action.lookup("program") !== "/usr/local/libexec/lfl-task-host-probe") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (action.lookup("user") !== "root" ||
+        subject.local !== true || subject.active !== true ||
+        subject.seat !== "seat0") {
+        return polkit.Result.NO;
+    }
+    return polkit.Result.AUTH_ADMIN;
+});

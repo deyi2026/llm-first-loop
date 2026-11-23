@@ -8,8 +8,9 @@
 // 注：本文件不使用模板字面量（写作通道限制），统一字符串拼接。
 
 import { useCallback, useEffect, useState } from "react";
-import { sidebarViewStore, useSidebarView } from "../../core/stores";
+import { mainViewStore, sessionStore, sidebarViewStore, useSidebarView } from "../../core/stores";
 import { formatRelative } from "./WorkspaceGroups";
+import { fetchCoordinationBoard } from "../../core/coordinationBoard";
 
 interface ChannelSession {
   session_id: string;
@@ -59,9 +60,8 @@ type FetchResult =
 
 async function fetchChannel(): Promise<FetchResult> {
   try {
-    const r = await fetch("/api/v1/coordination/board");
-    if (!r.ok) return { kind: "error" };
-    const body = (await r.json()) as BoardResp | null;
+    const body = await fetchCoordinationBoard<BoardResp>();
+    if (!body) return { kind: "error" };
     if (!body || typeof body !== "object" || body.channel == null) {
       return { kind: "ok", channel: null };
     }
@@ -71,7 +71,7 @@ async function fetchChannel(): Promise<FetchResult> {
   }
 }
 
-export function CoordinationChannel({ collapsed }: { collapsed: boolean }) {
+export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const [channel, setChannel] = useState(undefined as ChannelState);
   const [loadErr, setLoadErr] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -106,9 +106,18 @@ export function CoordinationChannel({ collapsed }: { collapsed: boolean }) {
   const onMainRowClick = () => {
     if (view !== "lanes") {
       sidebarViewStore.setView("lanes");
+      setExpanded(true); // 首次点击直接露出可操作的 Goal 列表，手机少点一次。
       return;
     }
     setExpanded((v) => !v);
+  };
+
+  // 使用现有会话导航，不提交消息或重启 Run；手机端由 Sidebar 关闭抽屉。
+  const openSession = (sessionId: string) => {
+    mainViewStore.setView("chat");
+    sessionStore.setNewSessionPending(false);
+    sessionStore.setCurrentSession(sessionId);
+    onNavigate?.();
   };
 
   // 侧栏收起态：仅 🛤 图标 + 计数徽标，不渲染文字行（三态仍如实呈现，不伪造 0）
@@ -269,21 +278,46 @@ export function CoordinationChannel({ collapsed }: { collapsed: boolean }) {
             >
               {Array.isArray(channel.sessions) && channel.sessions.length > 0 ? (
                 channel.sessions.map((s, i) => {
-                  return (
-                    <div
-                      key={s.session_id + "-" + i}
+                  const sessionId = typeof s.session_id === "string" ? s.session_id.trim() : "";
+                  const goalId = typeof s.goal_id === "string" ? s.goal_id.trim() : "";
+                  const goal = goalId || "未关联 Goal";
+                  const detail = (s.branch || "—") + " · " + (s.status || "—") +
+                    (s.last_activity ? " · " + formatRelative(s.last_activity) : "");
+                  const commonStyle = {
+                    display: "block", width: "100%", padding: "7px 8px", minHeight: 44,
+                    textAlign: "left" as const, color: "inherit", borderRadius: 6,
+                  };
+                  const content = (
+                    <>
+                      <span style={{ display: "block", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {goal}
+                      </span>
+                      <span style={{ display: "block", opacity: 0.7, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {detail}
+                      </span>
+                    </>
+                  );
+                  return sessionId && goalId ? (
+                    <button
+                      key={s.lane_id + "-" + i}
+                      type="button"
                       data-testid="coordination-channel-session"
-                      title={s.session_id + " · " + s.branch + " · " + s.status + " · " + (s.last_activity || "")}
-                      style={{
-                        padding: "3px 6px",
-                        opacity: 0.85,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
+                      aria-label={"打开 Goal " + goal + " 的会话"}
+                      title={"打开进行中的会话 " + sessionId + " · " + detail}
+                      onClick={() => openSession(sessionId)}
+                      style={{ ...commonStyle, background: "transparent", border: "none", cursor: "pointer" }}
                     >
-                      <code>{(s.session_id || "").slice(0, 8)}</code> · {s.branch || "—"} · {s.status || "—"}
-                      {s.last_activity ? " · " + formatRelative(s.last_activity) : ""}
+                      {content}
+                    </button>
+                  ) : (
+                    <div
+                      key={s.lane_id + "-" + i}
+                      data-testid="coordination-channel-session-unbound"
+                      title={goalId ? "Goal " + goal + " 尚未绑定会话" : "未关联 Goal，无法打开会话"}
+                      style={{ ...commonStyle, opacity: 0.55 }}
+                    >
+                      {content}
+                      <span style={{ fontSize: 11 }}>未绑定会话</span>
                     </div>
                   );
                 })

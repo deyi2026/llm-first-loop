@@ -203,6 +203,10 @@ function SettingsView({
   reload: () => Promise<void>;
   providerAdminEnabled: boolean;
 }) {
+  const [catalogOpen, setCatalogOpen] = useState(!providerAdminEnabled);
+  useEffect(() => {
+    if (!providerAdminEnabled) setCatalogOpen(true);
+  }, [providerAdminEnabled]);
   const themes: Array<{ key: ThemePreference; label: string }> = [
     { key: "system", label: "跟随系统" },
     { key: "light", label: "亮色" },
@@ -211,32 +215,11 @@ function SettingsView({
   return (
     <div className="v2-settings-sections" data-testid="settings-sections">
       <section>
-        <h3>界面</h3>
-        <div className="v2-choice-row">
-          {themes.map((item) => (
-            <button
-              type="button"
-              key={item.key}
-              className={theme.preference === item.key ? "active" : ""}
-              onClick={() => themeStore.setPreference(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </section>
-      <section>
-        <h3>输入与文件</h3>
-        <div className="v2-settings-facts">
-          <span>多文件上传：已启用</span>
-          <span>拖放 / 粘贴图片：已启用</span>
-          <span>单文件上限：10 MB</span>
-          <span>附件进入模型前使用 workspace-scoped opaque ref 再校验</span>
-        </div>
-      </section>
-      <section>
-        <h3>模型与推理</h3>
-        <div className="v2-model-catalog" data-testid="model-catalog">
+        {!providerAdminEnabled ? <h3>模型与连接</h3> : null}
+        <details className="v2-settings-model-directory" open={catalogOpen}
+          onToggle={(event) => setCatalogOpen(event.currentTarget.open)}>
+          <summary>运行模型目录（{catalog.models.length}）</summary>
+          <div className="v2-model-catalog" data-testid="model-catalog">
           {catalog.catalog.length > 0
             ? catalog.catalog.map((model) => (
                 <div key={model.id} className={`v2-catalog-item ${model.id === catalog.current ? "current" : ""}`}>
@@ -262,13 +245,41 @@ function SettingsView({
             </div>
           ) : null}
           {catalog.models.length === 0 ? <div className="v2-placeholder">模型目录暂不可用</div> : null}
-        </div>
+          </div>
+        </details>
         {providerAdminEnabled ? (
           <ProviderManager onCatalogChanged={reload} />
         ) : (
           <div className="v2-provider-readonly-note">当前后端未提供 Provider 管理 API；保留只读模型目录。</div>
         )}
       </section>
+      <details className="v2-settings-other">
+        <summary>界面与输入</summary>
+      <section>
+        <h3>界面</h3>
+        <div className="v2-choice-row">
+          {themes.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              className={theme.preference === item.key ? "active" : ""}
+              onClick={() => themeStore.setPreference(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section>
+        <h3>输入与文件</h3>
+        <div className="v2-settings-facts">
+          <span>多文件上传：已启用</span>
+          <span>拖放 / 粘贴图片：已启用</span>
+          <span>单文件上限：10 MB</span>
+          <span>附件进入模型前使用 workspace-scoped opaque ref 再校验</span>
+        </div>
+      </section>
+      </details>
       <section>
         <h3>连接与安全</h3>
         <div className="v2-kv">
