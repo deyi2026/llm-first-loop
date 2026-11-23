@@ -19,14 +19,15 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "Existing SessionStore metadata cache and Web V2 conversation components; no new API, task execution or authorization owner.",
-      "disposition": "Increase the bounded metadata-only cache to cover the measured 7,426-file workspace, preserve history on read failures, offer a read-only retry, and keep mobile history pagination scroll anchored.",
+      "disposition": "Increase the bounded metadata-only cache to cover the measured 2,478 JSON sessions in this workspace and 9,633 across workspace roots, preserve history on read failures, offer a read-only retry, and keep mobile history pagination scroll anchored.",
       "evidence": [
-        "2026-11-23 production read-only baseline: /api/v1/sessions 17.975s, 1,199,891 response bytes; 7,426 workspace session files and 2,048 metadata cache slots.",
+        "2026-11-23 production read-only baseline: /api/v1/sessions 17.975s, 1,199,891 response bytes; workspace directory had 2,478 session JSON files plus 4,963 lock files, and all workspace roots had 9,633 JSON files; prior process cache held 2,048 metadata entries.",
+        "Read-only isolated benchmark on 2,401 valid sessions in that workspace: after warmup, 2,048-entry cache list took 2.286s versus 0.011s with 16,384 entries; cold reads were 3.19s and 3.21s respectively. These are backend function times, not deployed HTTP latency.",
         "Candidate 174060c28: 2,100-session cache regression checks no JSON reparse on second listing; targeted Python 108 passed, WebUI 619 passed, TypeScript and WebUI build exit 0.",
         "The first full R9 exposed an unrelated timing-sensitive background-cancel test; the second R9 found an overfitted old mobile CSS contract and an xdist-parallel SIGTERM PTY timing failure. The new mobile contract checks equivalent new scroll/touch behavior, and the physical-signal test moves into the existing serial_signal gate rather than being omitted.",
-        "Independent reviewer, clean original R9, remote CI and deployed production performance remain pending for this amended candidate."
+        "Independent GLM-5.3-flash read-only reviewer PASS P0/P1=0 for code candidate 0c4ebe4a3; original R9 --release exit 0 on successor 49c9628a3 with 16,542 parallel pytest passed and 621 WebUI tests. Exact final SHA review and R9, remote CI and deployed performance remain pending after this factual-only correction."
       ],
-      "verification_level": "Code-only targeted regression and WebUI build; not yet reviewed, merged or deployed.",
+      "verification_level": "Previous code candidate independently reviewed and prior tree passed complete R9; final factual-correction SHA still needs exact-tree gates, remote CI and deployment.",
       "model_evidence_veto_recovery_exit": "Reviewer may veto if enlarged metadata cache creates unacceptable RAM use, historical search/pinning regresses, a history retry resubmits a Run, mobile controls become inaccessible, or actual latency fails to improve.",
       "rollback_route": "Revert this bounded cache and UI patch via protected PR; session JSON, event logs, Run and Goal facts remain untouched."
     }

@@ -44,10 +44,11 @@ _ARCHIVED = "archived"
 # 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
 _SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
 _SESSION_META_CACHE_LOCK = threading.Lock()
-# One workspace may have >7k sessions.  A 2,048-entry limit caused every
-# session-list refresh to re-parse thousands of unchanged, sometimes multi-MB
-# JSON files, delaying unrelated history requests.  Only small SessionMeta
-# projections are cached (never full message bodies), with a fixed RAM bound.
+# The active workspace has >2.4k session JSON files and the host has >9k
+# across workspace roots.  A 2,048-entry process cache caused each refresh to
+# re-parse hundreds of unchanged JSON files, delaying unrelated history reads.
+# Cache only small SessionMeta projections (not message bodies), with a fixed
+# process-wide entry bound.
 _SESSION_META_CACHE_MAX = 16384
 
 

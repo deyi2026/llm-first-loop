@@ -444,7 +444,7 @@ def test_session_meta_cache_warm_list_at_600_sessions(tmp_path, monkeypatch):
 
 
 def test_session_meta_cache_covers_large_workspace_without_reparsing(tmp_path, monkeypatch):
-    """Regression: a 2k cache re-read most of a 7k-session workspace on every poll."""
+    """Regression: a 2k cache repeatedly re-read unchanged files in larger workspaces."""
     import llm_loop.core.session as session_module
 
     store = _store(tmp_path)
