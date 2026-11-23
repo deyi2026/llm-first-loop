@@ -23,6 +23,8 @@ import {
   useRightPanel,
 } from "./core/stores";
 import { syncSessionIdInLocation } from "./core/sessionUrl";
+import { clearAuthRequired, useAuthRequired } from "./core/authSession";
+import { fetchAuthStatus } from "./core/api";
 
 // ── 右面板宽度（对齐 DSH 可调右侧栏）：拖拽把手调宽，localStorage 持久化 ──
 export const PANEL_WIDTH_KEY = "lfl-panel-width-v1";
@@ -88,6 +90,22 @@ export function App() {
   const currentSessionId = useCurrentSessionId();
   const newSessionPending = useNewSessionPending();
   const mainView = useMainView();
+  const authRequired = useAuthRequired();
+  const [checkingAuth, setCheckingAuth] = useState(false);
+
+  const recheckLogin = async () => {
+    if (checkingAuth) return;
+    setCheckingAuth(true);
+    try {
+      const status = await fetchAuthStatus();
+      if (status?.authenticated) {
+        clearAuthRequired();
+        window.location.reload(); // refresh session data, never resubmit a Run
+      }
+    } finally {
+      setCheckingAuth(false);
+    }
+  };
 
   useEffect(() => {
     rightPanelStore.setOpen(!isMobile); // 初始：桌面常开、移动收起（与原行为一致）
@@ -247,6 +265,22 @@ export function App() {
           onToggleSidebar={toggleSidebar}
           onShowFiles={showConversationFiles}
         />
+        {authRequired ? (
+          <div role="alert" data-testid="auth-recovery-banner" style={{
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10,
+            padding: "9px 14px", background: "rgba(214,158,46,0.12)",
+            borderBottom: "1px solid rgba(214,158,46,0.45)", fontSize: 13,
+          }}>
+            <span>登录状态已失效，后台任务不会因此停止。请重新登录以恢复会话和协调数据。</span>
+            <a href={"/login?next=" + encodeURIComponent(window.location.pathname + window.location.search)}>
+              重新登录
+            </a>
+            <button type="button" className="v2-btn ghost" disabled={checkingAuth}
+              onClick={() => void recheckLogin()}>
+              {checkingAuth ? "检查中…" : "已登录，刷新"}
+            </button>
+          </div>
+        ) : null}
         {mainView === "chat" ? <InteropNotice /> : null}
         {mainView === "learning" ? (
           <LearningPlane />

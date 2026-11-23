@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isAuthRequired, reportUnauthorized } from "../core/authSession";
 
 interface InteropMessage {
   id: string;
@@ -28,8 +29,10 @@ export function InteropNotice() {
   useEffect(() => {
     let alive = true;
     const load = async () => {
+      if (document.hidden || isAuthRequired()) return;
       try {
         const resp = await fetch("/api/v1/interop/messages");
+        reportUnauthorized(resp.status);
         if (resp.ok && alive) setData((await resp.json()) as InteropPayload);
       } catch {
         /* 端点不可用 → 静默隐藏（纯展示组件） */

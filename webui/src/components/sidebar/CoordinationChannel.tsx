@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { mainViewStore, sessionStore, sidebarViewStore, useSidebarView } from "../../core/stores";
 import { formatRelative } from "./WorkspaceGroups";
+import { fetchCoordinationBoard } from "../../core/coordinationBoard";
 
 interface ChannelSession {
   session_id: string;
@@ -59,9 +60,8 @@ type FetchResult =
 
 async function fetchChannel(): Promise<FetchResult> {
   try {
-    const r = await fetch("/api/v1/coordination/board");
-    if (!r.ok) return { kind: "error" };
-    const body = (await r.json()) as BoardResp | null;
+    const body = await fetchCoordinationBoard<BoardResp>();
+    if (!body) return { kind: "error" };
     if (!body || typeof body !== "object" || body.channel == null) {
       return { kind: "ok", channel: null };
     }
