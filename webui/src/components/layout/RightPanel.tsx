@@ -203,6 +203,10 @@ function SettingsView({
   reload: () => Promise<void>;
   providerAdminEnabled: boolean;
 }) {
+  const [catalogOpen, setCatalogOpen] = useState(!providerAdminEnabled);
+  useEffect(() => {
+    if (!providerAdminEnabled) setCatalogOpen(true);
+  }, [providerAdminEnabled]);
   const themes: Array<{ key: ThemePreference; label: string }> = [
     { key: "system", label: "跟随系统" },
     { key: "light", label: "亮色" },
@@ -210,6 +214,45 @@ function SettingsView({
   ];
   return (
     <div className="v2-settings-sections" data-testid="settings-sections">
+      <section>
+        {!providerAdminEnabled ? <h3>模型与连接</h3> : null}
+        <details className="v2-settings-model-directory" open={catalogOpen}
+          onToggle={(event) => setCatalogOpen(event.currentTarget.open)}>
+          <summary>运行模型目录（{catalog.models.length}）</summary>
+          <div className="v2-model-catalog" data-testid="model-catalog">
+          {catalog.catalog.length > 0
+            ? catalog.catalog.map((model) => (
+                <div key={model.id} className={`v2-catalog-item ${model.id === catalog.current ? "current" : ""}`}>
+                  <span className="v2-catalog-id">{model.id}</span>
+                  <span className="v2-catalog-detail">
+                    {model.context ? `${Math.round(model.context / 1000)}k ctx` : "ctx?"} · {model.cost_tier || "cost?"} · {model.reasoning_capable ? `reasoning/${model.reasoning_control}` : "reasoning 未证实"}
+                  </span>
+                  {model.id === catalog.current ? <span className="v2-catalog-current">当前</span> : null}
+                </div>
+              ))
+            : catalog.models.map((model) => (
+                <div key={model} className={`v2-catalog-item ${model === catalog.current ? "current" : ""}`}>
+                  <span className="v2-catalog-id">{model}</span>
+                  <span className="v2-catalog-detail">能力元数据未提供；请求时保持 provider 默认。</span>
+                  {model === catalog.current ? <span className="v2-catalog-current">当前</span> : null}
+                </div>
+              ))}
+          {catalog.current && catalog.currentAvailable === false ? (
+            <div className="v2-catalog-item current-unavailable" data-testid="stale-current-model">
+              <span className="v2-catalog-id">{catalog.current}</span>
+              <span className="v2-catalog-detail">当前会话仍选择此模型，但它已不在有效 Registry。</span>
+              <span className="v2-catalog-current">当前不可用</span>
+            </div>
+          ) : null}
+          {catalog.models.length === 0 ? <div className="v2-placeholder">模型目录暂不可用</div> : null}
+          </div>
+        </details>
+        {providerAdminEnabled ? (
+          <ProviderManager onCatalogChanged={reload} />
+        ) : (
+          <div className="v2-provider-readonly-note">当前后端未提供 Provider 管理 API；保留只读模型目录。</div>
+        )}
+      </section>
       <details className="v2-settings-other">
         <summary>界面与输入</summary>
       <section>
@@ -237,44 +280,6 @@ function SettingsView({
         </div>
       </section>
       </details>
-      <section>
-        <h3>模型与连接</h3>
-        {providerAdminEnabled ? (
-          <ProviderManager onCatalogChanged={reload} />
-        ) : (
-          <div className="v2-provider-readonly-note">当前后端未提供 Provider 管理 API；保留只读模型目录。</div>
-        )}
-        <details className="v2-settings-catalog">
-          <summary>模型目录 · {catalog.models.length} 个 · 当前 {catalog.current ?? "默认"}</summary>
-        <div className="v2-model-catalog" data-testid="model-catalog">
-          {catalog.catalog.length > 0
-            ? catalog.catalog.map((model) => (
-                <div key={model.id} className={`v2-catalog-item ${model.id === catalog.current ? "current" : ""}`}>
-                  <span className="v2-catalog-id">{model.id}</span>
-                  <span className="v2-catalog-detail">
-                    {model.context ? `${Math.round(model.context / 1000)}k ctx` : "ctx?"} · {model.cost_tier || "cost?"} · {model.reasoning_capable ? `reasoning/${model.reasoning_control}` : "reasoning 未证实"}
-                  </span>
-                  {model.id === catalog.current ? <span className="v2-catalog-current">当前</span> : null}
-                </div>
-              ))
-            : catalog.models.map((model) => (
-                <div key={model} className={`v2-catalog-item ${model === catalog.current ? "current" : ""}`}>
-                  <span className="v2-catalog-id">{model}</span>
-                  <span className="v2-catalog-detail">能力元数据未提供；请求时保持 provider 默认。</span>
-                  {model === catalog.current ? <span className="v2-catalog-current">当前</span> : null}
-                </div>
-              ))}
-          {catalog.current && catalog.currentAvailable === false ? (
-            <div className="v2-catalog-item current-unavailable" data-testid="stale-current-model">
-              <span className="v2-catalog-id">{catalog.current}</span>
-              <span className="v2-catalog-detail">当前会话仍选择此模型，但它已不在有效 Registry。</span>
-              <span className="v2-catalog-current">当前不可用</span>
-            </div>
-          ) : null}
-          {catalog.models.length === 0 ? <div className="v2-placeholder">模型目录暂不可用</div> : null}
-        </div>
-        </details>
-      </section>
       <section>
         <h3>连接与安全</h3>
         <div className="v2-kv">
