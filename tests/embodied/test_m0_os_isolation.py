@@ -8,6 +8,8 @@ import sys
 import pytest
 from m0_isolation_probe import run
 
+from tests import env_channel
+
 # Capture trusted process launcher before the M0-A autouse sentinel patches it.
 # This test alone launches a bounded sandboxed child; all other tests keep the sentinel.
 _ORIGINAL_RUN = subprocess.run
@@ -17,6 +19,8 @@ _ORIGINAL_POPEN = subprocess.Popen
 def test_kernel_isolation_denies_oracle_network_and_device(monkeypatch):
     if sys.platform != "darwin":
         pytest.skip("macOS kernel sandbox receipt required on Mac Host")
+    if env_channel.nested_sandbox_exec():
+        pytest.skip("nested sandbox-exec: inner sandbox_apply is EPERM")
     with monkeypatch.context() as scoped:
         scoped.setattr(subprocess, "run", _ORIGINAL_RUN)
         scoped.setattr(subprocess, "Popen", _ORIGINAL_POPEN)
