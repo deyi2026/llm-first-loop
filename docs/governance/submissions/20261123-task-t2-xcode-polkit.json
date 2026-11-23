@@ -27,23 +27,27 @@
       "component_id": "deepin-polkit-root-receipt-candidate",
       "control_machinery": true,
       "declaration_id": "deepin-existing-polkit-authority",
-      "disposition": "Add a candidate-only active-seat auth_admin action and a root-only fixed-challenge receipt helper. It cannot sign Task Leases, run arbitrary commands or restart services. Fail closed for missing root-owned receipt directory, symlinks, replay, invalid challenge, non-root caller or exhausted receipt quota.",
+      "disposition": "Reuse the existing org.freedesktop.policykit.exec via a fixed-program /etc/polkit-1/rules.d rule for Deepin25 immutable /usr. Exact root helper only: active local seat0 requires AUTH_ADMIN (never KEEP); remote/inactive/wrong seat/target-user DENY; other pkexec programs NOT_HANDLED. One-shot root-owned 0600 challenge receipt, replay and unprivileged DENY, and hash-pinned temporary helper/rule cleanup. Legacy XML candidate remains uninstalled and is not used on Deepin25. No Task Lease, arbitrary commands or service restart.",
       "evidence": [
         "2026-11-23 Deepin25 immutable /usr overlay is read-only: dedicated action cannot be installed at /usr/share/polkit-1/actions; do not remount or bypass policy.",
         "Deepin local graphical terminal real built-in org.freedesktop.policykit.exec pkexec auth_admin canary exit0; root 0600 receipt SHA256 987783d10f83304a717061c5f84287f8296a3a698857b2de32f749926f924fee, replay and direct-user DENY; temporary helper removed; Web HTTP200.",
         "Dedicated org.llmfirstloop.task-host-probe.attest is not installed and has no real active-seat policy PASS. Built-in generic Polkit proof must not be presented as a dedicated Task Host Grant.",
         "Deepin bwrap read-only root and isolated tmpfs negative tests PASS; installed 0.6.57 Linux desktop backend remains unsupported_platform, not Mac parity.",
-        "Draft PR #105 initial Ubuntu CI on b07caea found two rootless test fixture failures: pytest tmp_path lives below world-writable /tmp (1777), correctly rejected by the unchanged production root-chain guard. Test-only Linux fixture now uses a temporary 0700 directory under ignored .pytest_cache with a private cache ancestor; a separate Linux /tmp negative test confirms unsafe_receipt_directory DENY. Deepin25 user-only Linux pytest: 19 passed with cache pre-mode 0775 tightened to 0700, no root policy or helper installation; exact new SHA reviewer/R9/remote CI still required."
+        "Draft PR #105 initial Ubuntu CI on b07caea found two rootless test fixture failures: pytest tmp_path lives below world-writable /tmp (1777), correctly rejected by the unchanged production root-chain guard. Test-only Linux fixture now uses a temporary 0700 directory under ignored .pytest_cache with a private cache ancestor; a separate Linux /tmp negative test confirms unsafe_receipt_directory DENY. Deepin25 user-only Linux pytest: 19 passed with cache pre-mode 0775 tightened to 0700, no root policy or helper installation; prior PR head c5783d6 independent Reviewer, full R9 and remote CI PASS; the newly approved /etc compatibility changes require a fresh exact-SHA Reviewer/R9/CI.",
+        "2026-11-23 Owner explicitly approved /etc compatibility instead of requiring Deepin immutable /usr reboot; /etc/polkit-1/rules.d overlay rw, /usr/local/libexec ext4 rw, official polkit(8) supports exact program detail, local/active/seat and per-request AUTH_ADMIN.",
+        "New /etc JS rule static and dynamic authorization matrix (local active seat0 AUTH_ADMIN, SSH/remote/inactive/wrong-seat/wrong-target DENY, unrelated pkexec NOT_HANDLED); real Deepin installation/GUI and SSH negative test remain HOLD until physical run."
       ],
-      "model_evidence_veto_recovery_exit": "Only strict 128-bit lowercase hex challenge, root-only execution, fixed root-owned receipt directory, O_EXCL/O_NOFOLLOW and replay rejection. pkexec UID is an informational environment claim, never an authority for Task Lease. On failure, deny without side effects; leave immutable /usr unchanged.",
+      "model_evidence_veto_recovery_exit": "Only fixed helper path and root target can reach scoped AUTH_ADMIN. Nonlocal, inactive, wrong seat/target fail closed; unrelated pkexec actions are untouched. Strict 128-bit lowercase hex challenge, root-only helper, root-owned receipt directory, O_EXCL/O_NOFOLLOW and replay DENY. The one-shot script checks pinned hashes, local graphical session and exact targets, and removes only unchanged helper/rule on EXIT. It never remounts /usr, restarts services or signs a Task Lease. If physical verification fails, HOLD.",
       "owning_subsystem": "Existing Deepin Polkit pkexec OS administrator authority, separate from LFL Task Lease issuer.",
       "paths": [
+        "packaging/linux/00-lfl-task-host-probe.rules",
         "packaging/linux/org.llmfirstloop.task-host-probe.policy",
         "scripts/linux/lfl_task_host_probe.py",
+        "scripts/linux/lfl_task_host_probe_etc_one_shot.sh",
         "tests/unit/test_linux_polkit_probe.py"
       ],
-      "rollback_route": "Do not install the candidate action on immutable Deepin25. Revert the candidate helper and policy through protected PR if rejected; no live services or privileged OS files are changed by this code-only PR.",
-      "verification_level": "Candidate helper offline unit tests and Deepin generic Polkit physical canary PASS. Dedicated policy installation and true Task Lease on Deepin remain HOLD; this PR does not claim to deliver or enable them. Linux rootless 19/19 tests PASS on Deepin25 after the test-only fixture fix; CI retest pending."
+      "rollback_route": "On the approved one-shot Deepin graphical Host test, remove only the hash-pinned root-owned helper at /usr/local/libexec and /etc rule via EXIT trap; verify both absent. Root-only receipt remains audit evidence. No immutable /usr change, no daemon restart. Revert code via protected PR if needed; any cleanup mismatch is HOLD.",
+      "verification_level": "New /etc rule candidate must pass rootless static/dynamic policy tests, exact helper tests, Deepin GUI pkexec root receipt, remote SSH/nonactive DENY, replay/direct-user DENY, and verified cleanup. Existing generic pkexec PASS is historical only; new /etc policy physical PASS and real signed Task Lease are NOT YET VERIFIED."
     },
     {
       "component_id": "a5-governance-manifest",
@@ -92,32 +96,37 @@
     {
       "declaration_id": "deepin-existing-polkit-authority",
       "g1": {
-        "necessity": "Linux OS administrator authorization needs a real Polkit route; an offline mock or Mac signed Lease cannot prove Deepin root authority."
+        "necessity": "Deepin25 immutable /usr prevents a dedicated /usr/share/polkit-1/actions action without reboot; need an OS-supported, no-reboot, narrowly scoped administrator authorization route through writable /etc/polkit-1/rules.d."
       },
       "g2": {
-        "authority_owner": "Existing system Polkit/pkexec admin authentication; root receipt helper is canary-only, not a Task Lease issuer.",
-        "non_duplication": "No new credential store, service controller, generic privileged executor, or Task Lease issuer; dedicated action is candidate-only and not installed.",
+        "authority_owner": "Existing system Polkit/pkexec administrator authentication via its built-in action; no new action ID or independent authority. The fixed root receipt helper is canary-only, not a Task Lease issuer.",
+        "non_duplication": "Reuse the existing pkexec action; /etc rule only matches one exact root-owned executable and requires local active seat0 admin auth. No new credential store, generic privileged executor, service controller or Task Lease issuer. Unrelated pkexec requests remain NOT_HANDLED.",
         "relationship": "reuse"
       },
       "g3": {
         "model_evidence": [
           "Deepin25 local graphical built-in pkexec auth_admin real root receipt exit0 and replay/direct-user DENY.",
           "Immutable /usr prevents dedicated action installation; dedicated physical coverage explicitly HOLD.",
-          "Deepin bwrap isolation and installed backend unsupported_platform observed on real host."
+          "Deepin bwrap isolation and installed backend unsupported_platform observed on real host.",
+          "Deepin25 real /etc and /usr/local mounts are writable, /usr action directory is immutable, exact-program polkit(8) API available.",
+          "Candidate /etc rule static and dynamic authorization tests; real GUI physical install/SSH DENY and cleanup evidence still HOLD."
         ],
-        "recovery_or_reason": "On denied or missing dedicated policy, fail closed. Keep immutable /usr unchanged, remove temporary helper, and require separate approval for any supported OS extension path."
+        "recovery_or_reason": "On wrong program/seat/session/target, deny or leave unrelated pkexec untouched; never grant YES or KEEP. A one-shot Owner GUI admin approval installs only hash-pinned helper and /etc rule; EXIT removes unchanged targets and checks absence. Any failure/HOLD keeps production disabled and /usr untouched."
       },
       "g4": {
-        "rollback": "Candidate code can be reverted without OS rollback because no dedicated policy or helper is installed on the live host.",
+        "rollback": "Temporary /etc rule and /usr/local helper are removed by the one-shot EXIT trap with exact SHA checks, root receipt retained. A mismatch requires manual Owner recovery; no /usr remount/reboot or service restart. Candidate code can be reverted by protected PR.",
         "verification": [
           "Offline Polkit helper unit tests and root-only negative tests.",
           "Generic pkexec canary PASS is not dedicated policy PASS.",
-          "Dedicated active-seat action and real Task Lease require future physical Host approval."
+          "Dedicated active-seat action and real Task Lease require future physical Host approval.",
+          "Node dynamic 10-case Polkit authorization matrix and Bash syntax/rollback tests on new SHA.",
+          "Deepin25 local GUI physical admin prompt, root receipt, SSH/nonactive DENY, replay and direct-user DENY, and verified helper/rule cleanup required before calling /etc policy PASS.",
+          "Real signed Task Lease remains separately required; root canary does not establish it."
         ]
       }
     }
   ],
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261123-task-t2-xcode-polkit",
-  "summary": "Narrow signed Task Xcode File/Save to an OS-attested document with exact-window and disk-preimage checks; add a root-only Deepin Polkit attestation candidate. Dedicated Deepin policy is NOT installed on immutable /usr and remains a separate physical HOLD. No production deployment in this phase."
+  "summary": "Narrow signed Mac Xcode File/Save to exact OS-attested document; add a bounded Deepin25 /etc/polkit-1/rules.d compatibility rule for the existing pkexec action, scoped to a fixed root-owned canary helper and local active seat0. Immutable /usr unchanged. This is NOT a new Polkit action or a signed Task Lease. Real /etc GUI and remote-negative physical evidence remain HOLD until separately verified; no production deployment."
 }

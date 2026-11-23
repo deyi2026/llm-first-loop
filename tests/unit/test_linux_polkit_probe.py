@@ -211,3 +211,102 @@ def test_linux_world_writable_tmp_ancestor_stays_denied(tmp_path):
             "b" * 32, 1000, directory=directory, expected_owner=os.getuid(),
         )
     assert list(directory.iterdir()) == []
+
+# Deepin25 /usr is immutable. A root-owned /etc/polkit-1/rules.d rule scopes
+# the existing built-in pkexec action to the exact canary program instead.
+ETC_RULE = ROOT / "packaging/linux/00-lfl-task-host-probe.rules"
+ETC_RUNNER = ROOT / "scripts/linux/lfl_task_host_probe_etc_one_shot.sh"
+
+
+def test_deepin_etc_rule_is_exact_scoped_admin_not_keep():
+    source = ETC_RULE.read_text(encoding="utf-8")
+    assert 'action.id !== "org.freedesktop.policykit.exec"' in source
+    assert 'action.lookup("program") !== "/usr/local/libexec/lfl-task-host-probe"' in source
+    assert 'action.lookup("user") !== "root"' in source
+    assert 'subject.local !== true' in source
+    assert 'subject.active !== true' in source
+    assert 'subject.seat !== "seat0"' in source
+    assert "return polkit.Result.NO;" in source
+    assert "return polkit.Result.NOT_HANDLED;" in source
+    assert "return polkit.Result.AUTH_ADMIN;" in source
+    assert "polkit.Result.YES" not in source
+    assert "return polkit.Result.AUTH_ADMIN_KEEP;" not in source
+    assert "polkit.spawn" not in source
+
+
+def test_deepin_etc_rule_dynamic_authorization_matrix():
+    """Execute the real rule in a tiny polkit mock, never invoke OS pkexec."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node unavailable; static /etc Polkit rule guards still checked")
+    program = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+let rule;
+const polkit = {
+    Result: {NOT_HANDLED: null, NO: 'no', AUTH_ADMIN: 'auth_admin'},
+    addRule(fn) { if (rule) throw Error('duplicate rule'); rule = fn; }
+};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {polkit}, {timeout: 1000});
+if (typeof rule !== 'function') throw Error('missing rule');
+function action(program, user = 'root', id = 'org.freedesktop.policykit.exec') {
+    return {id, lookup(key) { return ({program, user})[key]; }};
+}
+function subject(local, active, seat) { return {local, active, seat}; }
+const helper = '/usr/local/libexec/lfl-task-host-probe';
+const tests = [
+    [action(helper), subject(true, true, 'seat0'), 'auth_admin'],
+    [action(helper), subject(false, true, ''), 'no'],
+    [action(helper), subject(true, false, 'seat0'), 'no'],
+    [action(helper), subject(true, true, 'seat1'), 'no'],
+    [action(helper), subject(true, true, undefined), 'no'],
+    [action(helper, 'other'), subject(true, true, 'seat0'), 'no'],
+    [action('/usr/bin/id'), subject(true, true, 'seat0'), null],
+    [action(undefined), subject(true, true, 'seat0'), null],
+    [action(helper, 'root', 'org.example.other'), subject(true, true, 'seat0'), null],
+    [action(helper), {}, 'no'],
+];
+for (const [a, s, expected] of tests) {
+    const result = rule(a, s);
+    if (result !== expected) throw Error('unexpected policy decision: ' + result + ' != ' + expected);
+}
+console.log('DEEPIN_ETC_POLKIT_DYNAMIC_MATRIX_PASS ' + tests.length);
+"""
+    completed = subprocess.run(
+        [node, "-e", program, str(ETC_RULE)],
+        capture_output=True, text=True, timeout=8, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "DYNAMIC_MATRIX_PASS 10" in completed.stdout
+
+
+def test_deepin_etc_runner_never_remounts_or_restarts_and_has_cleanup():
+    import hashlib
+    import shutil
+    import subprocess
+
+    script = ETC_RUNNER.read_text(encoding="utf-8")
+    assert "--check|--run|--cleanup" in script
+    assert "/etc/polkit-1/rules.d/00-lfl-task-host-probe.rules" in script
+    assert "/usr/local/libexec/lfl-task-host-probe" in script
+    assert "/usr/share/polkit-1/actions/org.llmfirstloop.task-host-probe.policy" in script
+    assert "sudo install" in script and "sudo rm -f" in script
+    assert "trap cleanup EXIT" in script
+    assert "DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS" in script
+    assert "unexpected content at $target, refusing removal" in script
+    assert "XDG_SESSION_ID" in script and "loginctl show-session" in script
+    assert "Seat=seat0" in script and "Remote=no" in script and "Active=yes" in script
+    assert "replay_rc" in script and "unprivileged_rc" in script
+    assert "signed_task_lease=false" in script
+    assert "remote_ssh=not_yet_verified" in script
+    for forbidden in ("deepin-immutable-writable", "mount -o", "systemctl restart", "service restart", "sudo bash", "sudo sh -c"):
+        assert forbidden not in script
+    assert "HELPER_SHA='" + hashlib.sha256(HELPER.read_bytes()).hexdigest() + "'" in script
+    assert "RULE_SHA='" + hashlib.sha256(ETC_RULE.read_bytes()).hexdigest() + "'" in script
+    bash = shutil.which("bash")
+    if bash:
+        checked = subprocess.run([bash, "-n", str(ETC_RUNNER)], capture_output=True, text=True, timeout=8)
+        assert checked.returncode == 0, checked.stderr
