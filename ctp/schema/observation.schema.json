@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctp.local/schema/observation.schema.json",
+  "title": "CTP C-5 readout observation",
+  "description": "SPEC-20261123-CTP-0.9.2 section 5 (C-5) readout contract. All nine fields are mandatory: a missing field is non-conforming. Four rules are not expressible here and are enforced by the Python validator only: unit quaternion norm, covariance symmetry, rejection of an all-zero uncertainty declaration, and rejection of non-finite numbers (NaN/Infinity are not JSON numbers).",
+  "type": "object",
+  "required": [
+    "target_index",
+    "logical_id",
+    "resolution",
+    "pose",
+    "uncertainty",
+    "degradation_flag",
+    "timestamp",
+    "reader_id",
+    "reader_version"
+  ],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-[A-Za-z0-9][A-Za-z0-9_.-]*$": {}
+  },
+  "properties": {
+    "schema_version": { "const": "ctp.c5/0.1" },
+    "target_index": { "type": "integer", "minimum": 0 },
+    "logical_id": { "type": ["string", "null"], "minLength": 1, "pattern": "\\S" },
+    "resolution": { "enum": ["code", "resolved", "unresolved"] },
+    "pose": {
+      "type": "object",
+      "required": ["position_m", "quaternion", "frame_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "position_m": { "$ref": "#/$defs/vector3" },
+        "quaternion": {
+          "type": "object",
+          "required": ["x", "y", "z", "w"],
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "z": { "type": "number" },
+            "w": { "type": "number" }
+          }
+        },
+        "frame_ref": { "type": "string", "minLength": 1, "pattern": "\\S" }
+      }
+    },
+    "uncertainty": {
+      "type": "object",
+      "required": ["k", "model", "translation_1sigma_m", "rotation_1sigma_deg"],
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-[A-Za-z0-9][A-Za-z0-9_.-]*$": {}
+      },
+      "properties": {
+        "k": { "type": "number", "exclusiveMinimum": 0 },
+        "model": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "translation_1sigma_m": { "$ref": "#/$defs/sigma3" },
+        "rotation_1sigma_deg": { "$ref": "#/$defs/sigma3" },
+        "covariance_6x6": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "items": { "type": "number" }
+          }
+        }
+      }
+    },
+    "degradation_flag": { "enum": ["none", "coarse", "quarantine"] },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "reader_id": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "reader_version": { "type": "string", "minLength": 1, "pattern": "\\S" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["resolution"],
+        "properties": { "resolution": { "enum": ["code", "resolved"] } }
+      },
+      "then": { "properties": { "logical_id": { "type": "string", "minLength": 1 } } }
+    },
+    {
+      "if": {
+        "required": ["resolution"],
+        "properties": { "resolution": { "const": "unresolved" } }
+      },
+      "then": { "properties": { "logical_id": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "vector3": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "sigma3": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 },
+        "z": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}
