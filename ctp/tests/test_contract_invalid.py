@@ -34,6 +34,8 @@ EXPECTED_CODES = {
     "i20_bad_extension_key": "unknown_field",
     "i21_timestamp_leading_space": "format_error",
     "i22_resolution_array": "type_error",
+    "i23_timestamp_calendar_invalid": "format_error",
+    "i24_target_index_float": "type_error",
 }
 
 
@@ -70,3 +72,16 @@ def test_parse_raises_and_reports_path(stem: str) -> None:
 
 def test_root_must_be_object():
     assert [error.code for error in collect_errors([1, 2, 3])] == ["type_error"]
+
+
+def test_nonfinite_numbers_are_rejected():
+    """分歧集合第 4 条：NaN/Inf 在 Python dict 里可出现，必须按 type_error 拒绝。"""
+    import math
+
+    raw = _load("i01_missing_target_index".replace("i01_missing_target_index", "i14_missing_reader_version"))
+    raw["reader_version"] = "0.1.0"
+    raw["target_index"] = 42
+    raw["pose"]["position_m"]["x"] = float("nan")
+    codes = {error.code for error in collect_errors(raw)}
+    assert "type_error" in codes, codes
+    assert math.isnan(raw["pose"]["position_m"]["x"])

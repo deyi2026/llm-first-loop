@@ -58,6 +58,21 @@ class UncertaintyTemplate:
                 raise ValueError("covariance_6x6 must be symmetric")
             if np.any(np.diag(matrix) < 0.0):
                 raise ValueError("covariance_6x6 diagonal must be >= 0")
+            if all(
+                value == 0.0
+                for value in (*self.translation_sigma_m, *self.rotation_sigma_deg)
+            ):
+                raise ValueError(
+                    "all 1σ values are zero: C-5 rejects the declaration even when a "
+                    "covariance is attached (degenerate_uncertainty)"
+                )
+            # PSD：模板层校验（契约层只查对称，见 schema 分歧集合声明）
+            eigenvalues = np.linalg.eigvalsh(matrix)
+            if eigenvalues.min() < -1e-12 * max(1.0, float(abs(eigenvalues).max())):
+                raise ValueError(
+                    "covariance_6x6 must be positive semi-definite "
+                    "(min eigenvalue negative)"
+                )
 
     def covariance(self) -> np.ndarray:
         """声明 → 6×6 协方差（m / rad）。"""
@@ -100,7 +115,10 @@ def relative_covariance(
 ) -> np.ndarray:
     """两个独立观测的相对位姿 T_ba = T_a⁻¹ T_b 的一阶协方差。
 
-    左扰动下残差为 Ad(T_b⁻¹)(ξ_b − ξ_a)，故 Σ = Ad (Σ_a + Σ_b) Adᵀ。
+    输出定义在 T_ba 的**右扰动**切空间（体/靶标系）：残差 r 满足
+    T_ba_pert = T_ba · exp(r)。两观测协方差按左扰动（世界系）声明时，
+    r ≈ Ad(T_b⁻¹)(ξ_b − ξ_a)，故 Σ_r = Ad(T_b⁻¹)(Σ_a + Σ_b)·Ad(T_b⁻¹)ᵀ；
+    monte_carlo_relative 的残差 log(nominal⁻¹·perturbed) 与本式同帧。
     """
     adjoint_b = se3.adjoint(se3.inverse(pose_b))
     return adjoint_b @ (np.asarray(covariance_a) + np.asarray(covariance_b)) @ adjoint_b.T
@@ -114,9 +132,22 @@ def monte_carlo_relative(
     samples: int = 20000,
     seed: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """对两个观测各做左扰动采样，返回相对位姿残差的经验协方差与残差样本。"""
+    """对两个观测各做左扰动采样，返回相对位姿残差的经验协方差与残差样本。
+
+    注意：声明旋转 σ 过大时，采样可能命中 θ→π 的对数映射奇异（log_se3 抛
+    ValueError）。直接调用方应自行缩小适用域；做有效性自检请用
+    check_first_order_validity——它把该奇异转换为 ok=False 的判定而非中断。
+    """
     if samples < 100:
         raise ValueError("samples must be >= 100 to estimate a covariance")
+    for name, covariance in (("covariance_a", covariance_a), ("covariance_b", covariance_b)):
+        matrix = np.asarray(covariance, dtype=float)
+        if matrix.shape != (6, 6):
+            raise ValueError(f"{name} must be 6x6")
+        if not np.allclose(matrix, matrix.T, atol=1e-9):
+            raise ValueError(f"{name} must be symmetric")
+        if np.linalg.eigvalsh(matrix).min() < -1e-12 * max(1.0, float(abs(matrix).max())):
+            raise ValueError(f"{name} must be positive semi-definite for Cholesky sampling")
     rng = np.random.default_rng(seed)
     chol_a = np.linalg.cholesky(np.asarray(covariance_a, dtype=float))
     chol_b = np.linalg.cholesky(np.asarray(covariance_b, dtype=float))
@@ -162,9 +193,19 @@ def check_first_order_validity(
 ) -> dict:
     """一阶近似是否成立；`ok=False` 表示必须改用 MC 或缩小适用域，不得照抄线性结果。"""
     linear = relative_covariance(covariance_a, covariance_b, pose_b)
-    empirical, residuals = monte_carlo_relative(
-        pose_a, pose_b, covariance_a, covariance_b, samples=samples, seed=seed
-    )
+    try:
+        empirical, residuals = monte_carlo_relative(
+            pose_a, pose_b, covariance_a, covariance_b, samples=samples, seed=seed
+        )
+    except ValueError as error:
+        # 采样命中 θ→π 奇异 ⇒ 声明的 σ 已在一阶适用域之外，本身就是 ok=False
+        return {
+            "ok": False,
+            "reason": "pi_singularity",
+            "detail": str(error),
+            "tolerance": tolerance,
+            "samples": samples,
+        }
     comparison = compare_covariance(linear, empirical)
     comparison["ok"] = comparison["max_axis_relative_error"] <= tolerance
     comparison["tolerance"] = tolerance

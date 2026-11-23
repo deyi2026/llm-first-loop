@@ -62,3 +62,18 @@ def test_uncertainty_carries_k_and_one_sigma():
     assert uncertainty.k > 0
     assert uncertainty.translation_1sigma_m.z > 0
     assert uncertainty.rotation_1sigma_deg.z > 0
+
+
+def test_v04_covariance_units_are_m2_rad2():
+    """P0-1 回归钉：协方差平移对角 = σ²(m²)，旋转对角 = radians(σ_deg)²(rad²)。"""
+    import math
+
+    raw = json.loads((FIXTURE_DIR / "v04_covariance.json").read_text(encoding="utf-8"))
+    uncertainty = raw["uncertainty"]
+    cov = uncertainty["covariance_6x6"]
+    for axis, index in (("x", 0), ("y", 1), ("z", 2)):
+        sigma_m = uncertainty["translation_1sigma_m"][axis]
+        assert math.isclose(cov[index][index], sigma_m**2, rel_tol=1e-9)
+    for axis, index in (("x", 3), ("y", 4), ("z", 5)):
+        sigma_deg = uncertainty["rotation_1sigma_deg"][axis]
+        assert math.isclose(cov[index][index], math.radians(sigma_deg) ** 2, rel_tol=1e-9)

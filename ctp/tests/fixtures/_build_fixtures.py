@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -60,7 +61,15 @@ def build_valid() -> dict[str, dict]:
 
     cov = base()
     rows = [[0.0] * 6 for _ in range(6)]
-    diag = [0.0004**2, 0.0004**2, 0.0009**2, 0.03**2, 0.03**2, 0.06**2]
+    # 旋转对角必须是 rad²（与 rotation_1sigma_deg 换算一致）；deg² 是 P0-1 的错误
+    diag = [
+        0.0004**2,
+        0.0004**2,
+        0.0009**2,
+        math.radians(0.03) ** 2,
+        math.radians(0.03) ** 2,
+        math.radians(0.06) ** 2,
+    ]
     for i, value in enumerate(diag):
         rows[i][i] = value
     rows[0][1] = rows[1][0] = 1e-9
@@ -208,6 +217,16 @@ def build_invalid() -> dict[str, dict]:
     list_resolution = base()
     list_resolution["resolution"] = []
     fixtures["i22_resolution_array"] = list_resolution
+
+    # 分歧规则 R5（日历/偏移语义）：pattern 只查形状，fromisoformat 查日历
+    calendar_ts = base()
+    calendar_ts["timestamp"] = "2026-13-45T25:00:00+08:60"
+    fixtures["i23_timestamp_calendar_invalid"] = calendar_ts
+
+    # 分歧规则 R6（整数值浮点）：2020-12 的 integer 接受 42.0，_is_int 拒绝 float
+    float_index = base()
+    float_index["target_index"] = 42.0
+    fixtures["i24_target_index_float"] = float_index
 
     return fixtures
 

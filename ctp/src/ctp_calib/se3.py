@@ -75,10 +75,16 @@ def exp_se3(xi: np.ndarray) -> np.ndarray:
 
 
 def log_se3(transform: np.ndarray) -> np.ndarray:
+    """SE(3) 对数映射；θ→π 时轴的符号不可定（公式奇异），显式拒绝而非返回垃圾值。"""
     rotation = np.asarray(transform, dtype=float)[:3, :3]
     translation = np.asarray(transform, dtype=float)[:3, 3]
     cos_theta = max(-1.0, min(1.0, (float(np.trace(rotation)) - 1.0) / 2.0))
     theta = math.acos(cos_theta)
+    if theta > math.pi - 1e-9:
+        raise ValueError(
+            "log_se3 is singular at rotation angle pi (axis sign ambiguous); "
+            "callers must keep rotations away from 180 degrees"
+        )
     if theta < _ANGLE_EPS:
         w = 0.5 * np.array(
             [

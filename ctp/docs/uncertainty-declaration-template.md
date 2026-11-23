@@ -11,11 +11,13 @@
 | `k` | 是 | 覆盖因子（与 1σ 一起给出，缺一不合规） | — |
 | `translation_1sigma_m` | 是 | 平移各轴 1σ | m |
 | `rotation_1sigma_deg` | 是 | 旋转各轴 1σ | **deg**（C-5 口径） |
-| `covariance_6x6` | 否 | 完整协方差；给出时以它为准 | m / **rad** |
+| `covariance_6x6` | 否 | 完整协方差；给出时以它为准 | **m² / rad²** |
 
 顺序约定（写死在 `ctp_calib` 里）：`[tx, ty, tz, rx, ry, rz]`；旋转协方差用 rad，1σ 用 deg，
 换算只在 `UncertaintyTemplate.covariance()` 一处发生。给出 `covariance_6x6` 时，1σ 仍必须填，
-两者不一致以协方差为准并在声明里注明。
+两者不一致以协方差为准并在声明里注明。派生量口径：`relative_covariance` 输出在相对位姿
+T_ba 的**右扰动**切空间（体/靶标系）——两个互对的实现必须用同一帧，否则 V6 的
+k·√(u₁²+u₂²) 逐轴不可比。
 
 ## 2. 填法（三步）
 
@@ -28,8 +30,8 @@
 ## 3. 自检
 
 ```bash
-# 在 ctp/ 目录下
-python -c "import sys; sys.path.insert(0,'src'); import ctp_calib as c, numpy as np, math; \
+# 在仓库根目录下
+./.venv/bin/python -c "import sys; sys.path.insert(0,'ctp/src'); import ctp_calib as c, numpy as np, math; \
 A=c.pose_matrix((0,0,1.2),(0,0,0,1)); B=c.pose_matrix((1,0.5,1.5),(0,0,0,1)); \
 cov=np.diag([1e-6]*3+[math.radians(0.17)**2]*3); \
 print(c.check_first_order_validity(A,B,cov,cov)['ok'])"

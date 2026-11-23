@@ -1,7 +1,10 @@
 """JSON Schema 与 Python 校验器的一致性：分歧集合必须被显式固定。
 
-schema 是规范性产物（可跨语言实现），validator 是 Python 侧等价实现，另加三条
-schema 表达不了的规则。两者分歧不允许静默增长：本测试把"schema 放行、validator
+schema 是规范性产物（可跨语言实现），validator 是 Python 侧等价实现，另加六条
+schema 表达不了的规则族（与 schema description、validate.py docstring 三处同一份清单）：
+R1 四元数模长；R2 协方差对称与非负对角；R3 全零不确定度；R4 非有限数；
+R5 时间戳日历/偏移语义；R6 target_index 整数值浮点。
+两者分歧不允许静默增长：本测试把"schema 放行、validator
 拒绝"的集合钉死为 VALIDATOR_ONLY。
 """
 
@@ -20,11 +23,14 @@ SCHEMA_PATH = ROOT / "schema" / "observation.schema.json"
 VALID_DIR = Path(__file__).resolve().parent / "fixtures" / "valid"
 INVALID_DIR = Path(__file__).resolve().parent / "fixtures" / "invalid"
 
+# 每条分歧规则族 ↔ 钉住它的 fixture（一一映射；改集合必须同步三处声明）
 VALIDATOR_ONLY = {
-    "i08_quaternion_not_unit",
-    "i12_covariance_asymmetric",
-    "i13_zero_sigma",
-    "i16_nan_position",
+    "i08_quaternion_not_unit",      # R1
+    "i12_covariance_asymmetric",    # R2
+    "i13_zero_sigma",               # R3
+    "i16_nan_position",             # R4
+    "i23_timestamp_calendar_invalid",  # R5
+    "i24_target_index_float",       # R6
 }
 # 反向分歧：validator 放行、schema 拒绝。修正时间戳严格性后应为空集。
 SCHEMA_ONLY: set[str] = set()

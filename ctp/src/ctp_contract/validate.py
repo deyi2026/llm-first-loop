@@ -7,8 +7,12 @@
     load_observation(path) -> Observation        从 JSON 文件读
 
 与 JSON Schema 的分工：`ctp/schema/observation.schema.json` 是规范性产物（可跨语言
-实现），本模块是 Python 侧等价实现，另加三条 schema 表达不了的规则——四元数模长、
-协方差对称性、全零不确定度。两者在 fixtures 上的分歧集合由
+实现），本模块是 Python 侧等价实现，另加六条 schema 表达不了的规则族——
+R1 四元数模长；R2 协方差对称与非负对角；R3 全零不确定度拒绝；R4 非有限数拒绝
+（NaN/Inf 可出现在 Python dict 中，JSON 文本层不可表达）；R5 时间戳日历/偏移
+语义（pattern 只查形状）；R6 target_index 拒绝整数值浮点（2020-12 的 integer
+接受 42.0）。六条与 schema description 声明的集合一一对应。两者在
+fixtures 上的分歧集合由
 `ctp/tests/test_schema_parity.py` 固定，不允许静默漂移。
 """
 

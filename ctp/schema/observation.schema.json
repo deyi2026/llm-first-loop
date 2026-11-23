@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ctp.local/schema/observation.schema.json",
   "title": "CTP C-5 readout observation",
-  "description": "SPEC-20261123-CTP-0.9.2 section 5 (C-5) readout contract. All nine fields are mandatory: a missing field is non-conforming. Four rules are not expressible here and are enforced by the Python validator only: unit quaternion norm, covariance symmetry, rejection of an all-zero uncertainty declaration, and rejection of non-finite numbers (NaN/Infinity are not JSON numbers).",
+  "description": "SPEC-20261123-CTP-0.9.2 section 5 (C-5) readout contract. All nine fields are mandatory: a missing field is non-conforming. Six rule families are not expressible here and are enforced by the Python validator only: R1 unit quaternion norm; R2 covariance symmetry and non-negative diagonal; R3 rejection of an all-zero uncertainty declaration; R4 rejection of non-finite numbers; R5 timestamp calendar/offset semantics beyond the shape pattern; R6 rejection of integral-valued floats for target_index (draft 2020-12 integer accepts 42.0, the reference validator does not). Cross-language implementers must reproduce all six families, not only the shape constraints.",
   "type": "object",
   "required": [
     "target_index",
@@ -57,6 +57,7 @@
         "translation_1sigma_m": { "$ref": "#/$defs/sigma3" },
         "rotation_1sigma_deg": { "$ref": "#/$defs/sigma3" },
         "covariance_6x6": {
+          "description": "Order [tx,ty,tz,rx,ry,rz]; units m^2 / rad^2. When present it takes precedence over the 1-sigma fields.",
           "type": "array",
           "minItems": 6,
           "maxItems": 6,

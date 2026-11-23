@@ -104,6 +104,8 @@ def test_detector_rejects_input_that_breaks_first_order():
         pose_a, pose_b, covariance, covariance, tolerance=TOL, samples=20000, seed=7
     )
     assert result["ok"] is False, result
+    if result.get("reason") == "pi_singularity":
+        return  # σ 过大命中 θ→π 奇异：同样判不通过（fail-closed）
     assert result["max_axis_relative_error"] > TOL
 
 
@@ -140,12 +142,15 @@ def test_adjoint_matches_pure_translation_form():
     assert np.allclose(calib.adjoint(transform), expected)
 
 
-def test_rotation_only_uncertainty_has_no_translation_variance():
-    """纯旋转不确定度在零力臂处不产生平移方差（防止 Adjoint 写错顺序）。"""
-    pose_a = np.eye(4)
-    pose_b = np.eye(4)
+def test_rotation_only_uncertainty_couples_only_through_force_arm():
+    """纯旋转不确定度：零力臂处不产生平移方差；非零力臂处必产生（钉住 Adjoint 结构）。"""
     covariance = _diag(0.0, 0.17)
-    assert np.allclose(calib.relative_covariance(covariance, covariance, pose_b)[:3, :3], 0.0)
+    zero_arm = calib.relative_covariance(covariance, covariance, np.eye(4))
+    assert np.allclose(zero_arm[:3, :3], 0.0)
+
+    pose_b = calib.pose_matrix((0.3, -0.2, 1.1), (0.0, 0.0, 0.0, 1.0))
+    nonzero_arm = calib.relative_covariance(covariance, covariance, pose_b)
+    assert np.any(np.abs(nonzero_arm[:3, :3]) > 1e-6)
 
 
 def _run_all() -> int:
@@ -164,3 +169,25 @@ def _run_all() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(1 if _run_all() else 0)
+
+
+def test_log_se3_rejects_pi_rotation():
+    """应拦输入：180° 旋转的对数映射奇异（轴符号不可定），必须显式报错而非返回垃圾。"""
+    half_pi_pose = calib.pose_matrix((0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 0.0))
+    try:
+        calib.log_se3(half_pi_pose)
+    except ValueError:
+        return
+    raise AssertionError("180° 旋转未被 log_se3 拒绝")
+
+
+def test_template_rejects_zero_sigma_even_with_covariance():
+    """应拦输入：1σ 全零即使附带协方差也要拒绝（与 C-5 validator 对齐）。"""
+    zeros = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    covariance = [[0.0] * 6 for _ in range(6)]
+    covariance[3][3] = 1e-4
+    try:
+        calib.UncertaintyTemplate("m", 2.0, *zeros, covariance_6x6=tuple(tuple(r) for r in covariance))
+    except ValueError:
+        return
+    raise AssertionError("全零 1σ + 非零协方差被接受")
