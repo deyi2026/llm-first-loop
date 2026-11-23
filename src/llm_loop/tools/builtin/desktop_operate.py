@@ -69,6 +69,7 @@ import json
 import os
 import platform as _platform
 import secrets as _secrets
+import stat
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -115,7 +116,7 @@ from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
 
-_DOS = ("click", "type", "press_key", "scroll", "scroll_into_view")
+_DOS = ("click", "type", "save_document", "press_key", "scroll", "scroll_into_view")
 _TASK_IDE_AX_BUNDLES = frozenset(
     {
         "com.microsoft.vscode",
@@ -217,7 +218,7 @@ class _ActFlow:
 class DesktopOperateTool:
     name = "desktop_operate"
     description = (
-        "桌面窄操作（macOS，M4/D5-D9）。do ∈ {click,type,press_key,scroll}；window_id 必填"
+        "桌面窄操作（macOS，M4/D5-D9）。do ∈ {click,type,save_document,press_key,scroll}；window_id 必填"
         "（来自 desktop_perceive windows 回执）；target={ax_ref}（snapshot 回执的索引路径）或"
         " {point:{x,y}}（单位=点；press_key 可省略 target=作用于绑定窗口焦点）。"
         "dry_run 默认 true（只回执不投递，并签发一次性 confirm_token）；apply 需 dry_run 后的"
@@ -241,6 +242,8 @@ class DesktopOperateTool:
         "loginwindow 等核心名单）拒绝操作；desktop.see_allowlist 非空时名单外 app 同样不可"
         " act（与 perceive 可见范围对齐）。press_key 只接受闭合命名键集"
         "（Enter/Escape/Tab/方向/F1-F12 等，可带 Ctrl/Alt/Shift），"
+        "save_document 仅对真实签名 Task + Xcode 的精确 AXDocument 开放，使用 File→Save 的 AXPress，"
+        "不发送全局 Cmd+S；必须有文件写权限和独立确认令牌。"
         "Meta 系与字母键一律拒绝（B3 黑名单族；字母 CGEvent 通道被输入法污染，文本输入走 do=type"
         " 的 AX set-value 并回读校验）。用户在场（HID idle<60s 或探针失败）默认拒绝 mutate"
         "（user_present）；force 必须携带一次性授权凭据（宿主 env 预置），缺失即拒，"
@@ -262,7 +265,7 @@ class DesktopOperateTool:
             "do": {
                 "type": "string",
                 "enum": list(_DOS),
-                "description": "click=点击（ax_ref 走 AXPress / point 走 CGEvent）；type=AX set-value 写入并回读校验；press_key=闭合命名键；scroll=滚轮（down/up 可带 :n 行数，默认 3）；scroll_into_view=滚动容器把目标滚入可视区（只接受 target={ax_ref}）",
+                "description": "click=点击；type=AX set-value；save_document=签名 Task Xcode 精确文档 File→Save（AXPress，磁盘回读，非全局 HID）；press_key=闭合命名键；scroll=滚轮；scroll_into_view=滚动容器滚入可视区",
             },
             "window_id": {
                 "type": "integer",
@@ -514,6 +517,11 @@ class DesktopOperateTool:
                     DesktopErrorCode.TYPE_ARGS_INVALID,
                 )
             options["text"] = str(text)
+        if do == "save_document":
+            if text is not None or keys is not None:
+                return bad("[desktop_operate:save_document] 不接受 text/keys。")
+            if not isinstance(kwargs.get("target"), dict) or set(kwargs["target"]) != {"ax_ref"}:
+                return bad("[desktop_operate:save_document] 仅接受精确 target={ax_ref}。")
         if do == "press_key":
             if keys is None or not str(keys).strip():
                 return bad("[desktop_operate:press_key] keys 必填。")
@@ -557,7 +565,7 @@ class DesktopOperateTool:
                         return bad(f"[desktop_operate] target.point.{axis} 必须是数字（单位=点）。")
                 # S1（R1）：type 的 AX set-value 通道只接受 ax_ref 寻址；point 会在投递层
                 # KeyError→backend_error，提前在校验层用 §5.5 预留码拒绝。
-                if do == "type":
+                if do in ("type", "save_document"):
                     return bad(
                         "[desktop_operate:type] fields_mismatch: type 只接受 target={ax_ref}"
                         "（AX set-value 通道；point 坐标不可用于键入）。",
@@ -568,7 +576,7 @@ class DesktopOperateTool:
                     "[desktop_operate] target 必须是 {ax_ref} 或 {point:{x,y}} 之一（键互斥）。"
                 )
             options["target"] = target
-        elif do in ("click", "type", "scroll", "scroll_into_view"):
+        elif do in ("click", "type", "save_document", "scroll", "scroll_into_view"):
             return bad(f"[desktop_operate:{do}] target 必填。")
         return do, options, None, None
 
@@ -721,6 +729,16 @@ class DesktopOperateTool:
     def _gate_app_allowance(self, flow: _ActFlow) -> ToolResult | None:
         """app 级三闸：D8 隐私核心名单 → D6/T3 act 白名单 → S10 see_allowlist 对齐。"""
         bundle = flow.window.bundle_id
+        if flow.do == "save_document" and not (
+            current_task_execution.get() is not None
+            and str(bundle or "").lower() == "com.apple.dt.xcode"
+            and isinstance(flow.options.get("target"), dict)
+            and set(flow.options["target"]) == {"ax_ref"}
+        ):
+            return self._refuse(
+                flow, DesktopErrorCode.APP_NOT_ALLOWED,
+                "save_document 仅对签名 Task Xcode 精确 AXDocument 开放。",
+            )
         # D8：核心隐私名单（优先级最高；不投递、不读树）
         if self._privacy.is_sensitive(bundle):
             return self._refuse(
@@ -734,7 +752,7 @@ class DesktopOperateTool:
         task_ide_ax = (
             current_task_execution.get() is not None
             and str(bundle or "").lower() in _TASK_IDE_AX_BUNDLES
-            and flow.do == "type"
+            and (flow.do == "type" or (str(bundle or "").lower() == "com.apple.dt.xcode" and flow.do == "save_document"))
             and isinstance(target, dict)
             and set(target) == {"ax_ref"}
         )
@@ -834,11 +852,25 @@ class DesktopOperateTool:
             digest = hashlib.sha256(json.dumps(
                 ancestry, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")).hexdigest()
-            return {
+            binding = {
                 "document_path": path, "window_id": window.window_id,
                 "pid": window.pid, "ax_ref": ax_ref, "ancestry_sha256": digest,
                 "editability_proof": "os_axvalue_settable" if os_attested else "ax_editable",
             }
+            if flow.do == "save_document":
+                # A Save is more privileged than AX type: require OS-attested
+                # focused Xcode AXDocument, not the generic editable fallback.
+                if not os_attested or not hasattr(os, "O_NOFOLLOW"):
+                    return None
+                with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as original:
+                    info = os.fstat(original.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+                        return None
+                    data = original.read(1_048_577)
+                if len(data) > 1_048_576:
+                    return None
+                binding["pre_save_sha256"] = hashlib.sha256(data).hexdigest()
+            return binding
         except Exception:  # noqa: BLE001 - missing Host document evidence is HOLD
             return None
 
@@ -861,14 +893,14 @@ class DesktopOperateTool:
         if bundle.lower() in _TASK_IDE_AX_BUNDLES:
             role = str(flow.target_identity.get("role") or "").lower()
             if (
-                flow.do != "type"
+                not (flow.do == "type" or (bundle.lower() == "com.apple.dt.xcode" and flow.do == "save_document"))
                 or flow.target_identity.get("kind") != "ax_ref"
                 or role not in {"axtextarea", "axtextfield", "axtextview"}
             ):
                 return self._refuse(
                     flow,
                     DesktopErrorCode.APP_NOT_ALLOWED,
-                    "Task IDE 仅允许精确 AX 文本控件的 type；终端和 HID 不开放。",
+                    "Task IDE 仅允许精确 AX 文本控件的 type 或 Xcode save_document；终端和 HID 不开放。",
                 )
         try:
             cast(TrustedTaskExecution, task).authorize_app(
@@ -916,7 +948,8 @@ class DesktopOperateTool:
         target = flow.options.get("target")
         if (
             current_task_execution.get() is not None
-            and flow.do == "type"
+            and flow.do in ("type", "save_document")
+            and (flow.do == "type" or str(flow.window.bundle_id or "").lower() == "com.apple.dt.xcode")
             and str(flow.window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES
             and isinstance(target, dict)
             and set(target) == {"ax_ref"}
@@ -993,7 +1026,8 @@ class DesktopOperateTool:
         # project-file gates. Other apps, HID and browser DOM remain denied.
         task_ide_editor = (
             current_task_execution.get() is not None
-            and flow.do == "type"
+            and flow.do in ("type", "save_document")
+            and (flow.do == "type" or str(flow.window.bundle_id or "").lower() == "com.apple.dt.xcode")
             and str(flow.window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES
             and (node.role or "").lower() in ("axtextarea", "axtextfield", "axtextview")
             and set(target) == {"ax_ref"}
@@ -1124,6 +1158,9 @@ class DesktopOperateTool:
             title=target_identity.get("title"),
             keys=keys,
         )
+        # Saving an IDE document is a disk mutation: every attempt needs a fresh token.
+        if do == "save_document":
+            risk_class = "irreversible"
         # M1：浏览器窗口内 point/press_key/scroll 通道不得落在普通 act（按不可逆处理）
         risk_class = channel_risk_override(
             risk_class, browser=flow.browser, do=do, target_kind=target_identity["kind"]
@@ -1157,6 +1194,19 @@ class DesktopOperateTool:
         action_fp = action_fingerprint(
             do, window.window_id, binding_address, options.get("text"), keys
         )
+        if do == "save_document":
+            # Bind exact Host document identity AND its on-disk preimage:
+            # two same-named files with identical bytes must not share a token.
+            binding = flow.task_editor_binding or {}
+            token_scope = {
+                key: binding.get(key)
+                for key in (
+                    "document_path", "pid", "window_id", "ax_ref",
+                    "ancestry_sha256", "editability_proof", "pre_save_sha256",
+                )
+            }
+            material = json.dumps(token_scope, sort_keys=True, separators=(",", ":"))
+            action_fp = hashlib.sha256(f"{action_fp}:{material}".encode()).hexdigest()
         # P2-1（R6）：会话免令牌的目标身份键——与令牌稳定寻址同源但不含
         # text/keys（type 换文本/press_key 换键仍算同目标，既定能力保持）；
         # 免令牌面从 (app, do) 收紧到 (app, do, 目标)，换目标即须新令牌。
@@ -1620,6 +1670,15 @@ class DesktopOperateTool:
                     flow, DesktopErrorCode.APP_NOT_ALLOWED,
                     f"Task IDE 投递前文档授权失效: {exc.reason_code}；未投递。",
                 )
+            if flow.do == "save_document":
+                if not isinstance(binding.get("pre_save_sha256"), str):
+                    return self._refuse(
+                        flow, DesktopErrorCode.APP_NOT_ALLOWED,
+                        "Task Xcode 保存缺少可信文件前像；未投递。",
+                    )
+                # Internal Host evidence only; never accept a model-authored path.
+                flow.options["_task_document_path"] = binding["document_path"]
+                flow.options["_task_pre_save_sha256"] = binding["pre_save_sha256"]
         return None
 
     def _deliver_and_receipt(self, flow: _ActFlow) -> ToolResult:
@@ -1792,6 +1851,16 @@ class DesktopOperateTool:
             return backend.act_click_point(float(point["x"]), float(point["y"]))
         if do == "type":
             return backend.act_set_value(window, str(target["ax_ref"]), str(options["text"]))
+        if do == "save_document":
+            path = str(options.get("_task_document_path") or "")
+            if not path or str(window.bundle_id or "").lower() != "com.apple.dt.xcode":
+                from llm_loop.desktop.models import ActOutcome
+                return ActOutcome(ok=False, error=DesktopErrorCode.APP_NOT_ALLOWED,
+                                  detail="缺少签名 Host 精确文档绑定", dispatch_state="not_dispatched")
+            return backend.act_save_document(
+                window, str(target["ax_ref"]), path,
+                str(options.get("_task_pre_save_sha256") or ""),
+            )
         if do == "press_key":
             status, canonical, flags = parse_keycombo(str(options.get("keys") or ""))
             if status != "ok":  # pragma: no cover - 入口已校验
