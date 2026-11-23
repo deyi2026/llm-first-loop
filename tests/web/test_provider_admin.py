@@ -257,7 +257,7 @@ def test_provider_test_is_explicit_bounded_request_and_never_returns_model_text(
     assert tested.json()["model"] == "m1"
     assert "TOP SECRET MODEL REPLY" not in tested.text
     assert seen["tools"] == []
-    assert seen["max_tokens"] == 8
+    assert seen["max_tokens"] == 256, "思考模型的连接探测须预留足够的正文预算"
 
 
 

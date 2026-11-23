@@ -75,6 +75,123 @@ afterEach(() => {
 });
 
 describe("provider manager", () => {
+  it("Deepin 缺密钥时在 GLM 卡片直接保存，不整包 PUT，不回显密钥", async () => {
+    const secret = "fixture-coding-plan-secret";
+    const calls: Array<{ url: string; method: string; body: Record<string, unknown> }> = [];
+    const missing = {
+      ...SNAPSHOT,
+      providers: [{ ...SNAPSHOT.providers[0]!, credential_configured: false, credential_source: "missing" }],
+    };
+    const configured = {
+      ...missing,
+      providers: [{ ...missing.providers[0]!, credential_configured: true, credential_source: "dotenv" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "PUT" || method === "POST") {
+        calls.push({ url, method, body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
+      }
+      if (url === "/api/v1/providers/glm/credential" && method === "PUT") {
+        return new Response(JSON.stringify(configured), { status: 200 });
+      }
+      if (url === "/api/v1/providers") return new Response(JSON.stringify(missing), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-glm");
+    fireEvent.click(within(card).getByRole("button", { name: "配置 API Key" }));
+    const form = within(card).getByRole("form", { name: "glm API Key 配置" });
+    fireEvent.change(within(form).getByLabelText("glm API Key"), { target: { value: secret } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({
+      url: "/api/v1/providers/glm/credential",
+      method: "PUT",
+      body: { api_key: secret },
+    });
+    await waitFor(() => expect(within(card).queryByRole("form", { name: "glm API Key 配置" })).toBeNull());
+    expect(screen.getByText(/API Key 已保存并生效/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(secret);
+    expect(screen.queryByDisplayValue(secret)).toBeNull();
+  });
+
+  it("密钥保存失败时保持原位编辑并显示错误，重试成功才关闭", async () => {
+    let attempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/providers/glm/credential" && init?.method === "PUT") {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Response(JSON.stringify({ error: "provider_config_conflict", detail: "保存失败，请刷新后重试" }), { status: 409 });
+        }
+        return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+      }
+      if (url === "/api/v1/providers") return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-glm");
+    fireEvent.click(within(card).getByRole("button", { name: "更换 API Key" }));
+    const form = within(card).getByRole("form", { name: "glm API Key 配置" });
+    fireEvent.change(within(form).getByLabelText("glm API Key"), { target: { value: "retry-fixture-secret" } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
+    await waitFor(() => expect(within(form).getByText("保存失败，请刷新后重试")).toBeInTheDocument());
+    expect(within(form).getByLabelText("glm API Key")).toHaveValue("retry-fixture-secret");
+    expect(within(screen.getAllByRole("alert")[0]!).getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
+    await waitFor(() => expect(attempts).toBe(2));
+    await waitFor(() => expect(within(card).queryByRole("form", { name: "glm API Key 配置" })).toBeNull());
+  });
+
+  it("写入成功但配置回读失败时不误报成功、不关闭密钥输入框", async () => {
+    let reads = 0;
+    let writes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/providers/glm/credential" && init?.method === "PUT") {
+        writes += 1;
+        return new Response(JSON.stringify({ detail: "accepted" }), { status: 200 });
+      }
+      if (url === "/api/v1/providers") {
+        reads += 1;
+        if (reads === 1) return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+        return new Response(JSON.stringify({ detail: "upstream timeout" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-glm");
+    fireEvent.click(within(card).getByRole("button", { name: "更换 API Key" }));
+    const form = within(card).getByRole("form", { name: "glm API Key 配置" });
+    fireEvent.change(within(form).getByLabelText("glm API Key"), { target: { value: "unconfirmed-fixture" } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存 API Key" }));
+    await waitFor(() => expect(screen.getAllByText(/服务器已接受操作，但无法确认最新配置/)).toHaveLength(2));
+    expect(writes).toBe(1);
+    expect(reads).toBe(2);
+    expect(within(card).getByRole("form", { name: "glm API Key 配置" })).toBeInTheDocument();
+    expect(within(form).getByLabelText("glm API Key")).toHaveValue("unconfirmed-fixture");
+    expect(screen.queryByText(/API Key 已保存并生效/)).toBeNull();
+  });
+
+  it("编辑 Provider 就地展开，密钥独立配置，不隐藏在远处的整包编辑器", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/providers") return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-glm");
+    fireEvent.click(within(card).getByRole("button", { name: "编辑" }));
+    const editor = within(card).getByTestId("provider-editor");
+    expect(within(editor).getByLabelText("Base URL")).toBeInTheDocument();
+    expect(within(editor).queryByLabelText("API Key（留空则保留现有）")).toBeNull();
+    expect(screen.getAllByTestId("provider-editor")).toHaveLength(1);
+  });
+
   it("只展示凭证状态，不渲染 API Key 明文", async () => {
     const secret = "provider-secret-should-never-render";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -171,7 +288,7 @@ describe("provider manager", () => {
     const putBodies: Record<string, unknown>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/v1/providers/glm" && init?.method === "PUT") {
+      if (url === "/api/v1/providers/glm/models/glm-5.3" && init?.method === "PUT") {
         putBodies.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
         return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
       }
@@ -180,17 +297,18 @@ describe("provider manager", () => {
     }));
 
     render(<ProviderManager />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    const editor = screen.getByTestId("provider-editor");
+    await waitFor(() => expect(screen.getByRole("button", { name: "编辑模型 glm-5.3" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "编辑模型 glm-5.3" }));
+    const editor = screen.getByRole("region", { name: "编辑" });
+    fireEvent.click(within(editor).getByText("高级模型参数（推理、协议与备注）"));
     expect(within(editor).getByLabelText("推理档位")).toHaveValue("low,high,max");
     expect(within(editor).getByLabelText("默认推理档位")).toHaveValue("max");
-    fireEvent.click(within(editor).getByRole("button", { name: "保存并热重载" }));
+    fireEvent.click(within(editor).getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(putBodies).toHaveLength(1));
-    const provider = putBodies[0]!.provider as { models: Array<Record<string, unknown>> };
-    expect(provider.models[0]!.reasoning_efforts).toEqual(["low", "high", "max"]);
-    expect(provider.models[0]!.reasoning_default_effort).toBe("max");
+    const model = putBodies[0]!.model as Record<string, unknown>;
+    expect(model.reasoning_efforts).toEqual(["low", "high", "max"]);
+    expect(model.reasoning_default_effort).toBe("max");
   });
 });
 

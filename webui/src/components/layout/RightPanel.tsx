@@ -210,6 +210,8 @@ function SettingsView({
   ];
   return (
     <div className="v2-settings-sections" data-testid="settings-sections">
+      <details className="v2-settings-other">
+        <summary>界面与输入</summary>
       <section>
         <h3>界面</h3>
         <div className="v2-choice-row">
@@ -234,8 +236,16 @@ function SettingsView({
           <span>附件进入模型前使用 workspace-scoped opaque ref 再校验</span>
         </div>
       </section>
+      </details>
       <section>
-        <h3>模型与推理</h3>
+        <h3>模型与连接</h3>
+        {providerAdminEnabled ? (
+          <ProviderManager onCatalogChanged={reload} />
+        ) : (
+          <div className="v2-provider-readonly-note">当前后端未提供 Provider 管理 API；保留只读模型目录。</div>
+        )}
+        <details className="v2-settings-catalog">
+          <summary>模型目录 · {catalog.models.length} 个 · 当前 {catalog.current ?? "默认"}</summary>
         <div className="v2-model-catalog" data-testid="model-catalog">
           {catalog.catalog.length > 0
             ? catalog.catalog.map((model) => (
@@ -263,11 +273,7 @@ function SettingsView({
           ) : null}
           {catalog.models.length === 0 ? <div className="v2-placeholder">模型目录暂不可用</div> : null}
         </div>
-        {providerAdminEnabled ? (
-          <ProviderManager onCatalogChanged={reload} />
-        ) : (
-          <div className="v2-provider-readonly-note">当前后端未提供 Provider 管理 API；保留只读模型目录。</div>
-        )}
+        </details>
       </section>
       <section>
         <h3>连接与安全</h3>
