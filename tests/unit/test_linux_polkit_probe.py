@@ -293,10 +293,26 @@ def test_deepin_etc_runner_never_remounts_or_restarts_and_has_cleanup():
     assert "/etc/polkit-1/rules.d/00-lfl-task-host-probe.rules" in script
     assert "/usr/local/libexec/lfl-task-host-probe" in script
     assert "/usr/share/polkit-1/actions/org.llmfirstloop.task-host-probe.policy" in script
-    assert "sudo install" in script and "sudo rm -f" in script
+    assert "sudo install" in script and "sudo -n rm -f" in script
     assert "trap cleanup EXIT" in script
-    assert "DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS" in script
+    assert "DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS_ROOT_VERIFIED" in script
     assert "unexpected content at $target, refusing removal" in script
+    assert 'sudo -n test -e "$1" || sudo -n test -L "$1"' in script
+    assert 'require_sudo_cached' in script
+    assert 'sudo -n test -d /etc/polkit-1/rules.d' in script
+    assert 'sudo -n test -d /usr/local/libexec' in script
+    assert 'root_target_present "$RULE_DST"' in script
+    assert 'root-only rule presence and caller kernel session NOT VERIFIED' in script
+    assert 'root-verified fixed target already exists' in script
+    assert 'DEEPIN_ETC_POLKIT_TEMP_HELPER_RULE_REMOVED_ROOT_VERIFIED' in script
+    assert 'helper_absent=unverified' in script and 'rule_absent=unverified' in script
+    assert 'completed=0' in script and 'completed=1' in script
+    assert 'if (( ! completed && rc == 0 ))' in script
+    assert 'HOLD: physical attestation did not complete; never report exit 0' in script
+    assert 'timeout --foreground 180 pkexec "$HELPER_DST" attest "$challenge"' in script
+    assert 'timeout 180 pkexec "$HELPER_DST" attest "$challenge"' not in script
+    assert script.index('root_target_present "$target"') < script.index('sudo install -d')
+    assert script.count('state=physical_local_pass') == 1
     assert "XDG_SESSION_ID" in script and "loginctl show-session self" in script
     assert 'session_info="$(loginctl show-session self' in script
     assert 'for required in "Id=$XDG_SESSION_ID"' in script

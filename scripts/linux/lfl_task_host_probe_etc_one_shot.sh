@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deepin25 /etc Polkit rules.d canary. Never modifies immutable /usr.
-# Must be started by the Owner in a local active seat0 graphical Terminal.
+# Must be started by the Owner in a kernel-bound active seat0 GUI or physical TTY.
 # Does not issue a Task Lease, change LFL services, or authorize general Shell.
 set -Eeuo pipefail
 umask 077
@@ -75,11 +75,21 @@ require_kernel_bound_local_session() {
     fi
   fi
 }
+# /etc/polkit-1/rules.d is root:750 on Deepin25. Ordinary test -e/-L
+# silently reports "absent" even for an existing file. All authoritative
+# presence and post-cleanup checks MUST run as root after local sudo -v.
+root_target_present() {
+  sudo -n test -e "$1" || sudo -n test -L "$1"
+}
+require_sudo_cached() {
+  sudo -n true >/dev/null 2>&1 &&
+    sudo -n test -d /etc/polkit-1/rules.d >/dev/null 2>&1 &&
+    sudo -n test -d /usr/local/libexec >/dev/null 2>&1 || {
+    echo 'HOLD: local sudo test capability unavailable for exact root-side checks' >&2
+    return 79
+  }
+}
 if [[ "$MODE" == --cleanup ]]; then
-  if [[ ! -e "$HELPER_DST" && ! -L "$HELPER_DST" &&
-        ! -e "$RULE_DST" && ! -L "$RULE_DST" ]]; then
-    echo 'DEEPIN_ETC_POLKIT_ALREADY_CLEAN'; exit 0
-  fi
   if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     require_kernel_bound_local_session gui
   else
@@ -87,27 +97,34 @@ if [[ "$MODE" == --cleanup ]]; then
   fi
   echo 'Recovery requires local administrator approval; never removes unknown content.'
   sudo -v
+  require_sudo_cached || exit 79
+  if ! root_target_present "$HELPER_DST" && ! root_target_present "$RULE_DST"; then
+    echo 'DEEPIN_ETC_POLKIT_ALREADY_CLEAN_ROOT_VERIFIED'; exit 0
+  fi
   for entry in "$RULE_DST:$RULE_SHA" "$HELPER_DST:$HELPER_SHA"; do
     target="${entry%%:*}"; expected="${entry##*:}"
-    if [[ -e "$target" || -L "$target" ]]; then
-      [[ "$(sudo sha256sum "$target" | cut -d' ' -f1)" == "$expected" ]] || {
+    if root_target_present "$target"; then
+      [[ "$(sudo -n sha256sum "$target" | cut -d' ' -f1)" == "$expected" ]] || {
         echo "HOLD: unexpected content at $target, refusing removal"; exit 79;
       }
-      sudo rm -f -- "$target"
+      sudo -n rm -f -- "$target"
     fi
   done
-  [[ ! -e "$HELPER_DST" && ! -L "$HELPER_DST" &&
-     ! -e "$RULE_DST" && ! -L "$RULE_DST" ]] || exit 79
-  echo 'DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS'; exit 0
+  if root_target_present "$HELPER_DST" || root_target_present "$RULE_DST"; then
+    echo 'HOLD: root-verified cleanup incomplete' >&2; exit 79
+  fi
+  echo 'DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS_ROOT_VERIFIED'; exit 0
 fi
-for target in "$HELPER_DST" "$RULE_DST" "$LEGACY_POLICY_DST"; do
+# Rootless --check can verify hashes, mount flags, parent metadata and public
+# targets only; it CANNOT assert absence inside protected /etc rules.d.
+for target in "$HELPER_DST" "$LEGACY_POLICY_DST"; do
   [[ ! -e "$target" && ! -L "$target" ]] || {
-    echo "HOLD: fixed target already exists: $target"; exit 78;
+    echo "HOLD: fixed public target already exists: $target"; exit 78;
   }
 done
-echo 'DEEPIN_ETC_POLKIT_PREFLIGHT_PASS: exact hashes, no existing targets, /etc and /usr/local writable, no /usr change'
+echo 'DEEPIN_ETC_POLKIT_PREFLIGHT_PASS: hashes, public targets, writable mounts; /etc rule presence requires local sudo'
 if [[ "$MODE" == --check ]]; then
-  echo 'CHECK_ONLY: no sudo, no pkexec, no install, no restart; caller kernel logind session is verified only in --run or --run-console'
+  echo 'CHECK_ONLY: no sudo, no pkexec, no install, no restart; root-only rule presence and caller kernel session NOT VERIFIED'
   exit 0
 fi
 if [[ "$MODE" == --run ]]; then
@@ -118,40 +135,62 @@ fi
 # User must authorize the two bounded system writes via the local sudo prompt.
 echo 'Owner local admin authentication required; do not enter passwords in chat.'
 sudo -v
+require_sudo_cached || exit 79
+# No clobber of an existing protected rule, including broken symlinks.
+for target in "$HELPER_DST" "$RULE_DST" "$LEGACY_POLICY_DST"; do
+  if root_target_present "$target"; then
+    echo "HOLD: root-verified fixed target already exists: $target"; exit 78
+  fi
+done
 mkdir -p -m 0700 "$STATE_DIR"
 chmod 0700 "$STATE_DIR"
 printf 'state=started\npolicy=etc_scoped_builtin_pkexec\nsigned_task_lease=false\n' > "$RESULT"
 chmod 0600 "$RESULT"
 installed_helper=0
 installed_rule=0
+completed=0
 cleanup() {
-  local rc=$?
+  local rc=$? helper_absent=no rule_absent=no
   trap - EXIT
-  if (( installed_rule )); then
-    if [[ "$(sudo sha256sum "$RULE_DST" 2>/dev/null | cut -d' ' -f1)" == "$RULE_SHA" ]]; then
-      sudo rm -f -- "$RULE_DST" || rc=79
+  if (( ! completed && rc == 0 )); then
+    echo 'HOLD: physical attestation did not complete; never report exit 0' >&2
+    rc=78
+  fi
+  if ! require_sudo_cached; then
+    rc=79
+    printf 'exit_code=%s\nhelper_absent=unverified\nrule_absent=unverified\n' "$rc" >> "$RESULT"
+    exit "$rc"
+  fi
+  if (( installed_rule )) && root_target_present "$RULE_DST"; then
+    if [[ "$(sudo -n sha256sum "$RULE_DST" 2>/dev/null | cut -d' ' -f1)" == "$RULE_SHA" ]]; then
+      sudo -n rm -f -- "$RULE_DST" || rc=79
     else
       echo 'HOLD: rule changed; refusing unsafe cleanup' >&2
       rc=79
     fi
   fi
-  if (( installed_helper )); then
-    if [[ "$(sudo sha256sum "$HELPER_DST" 2>/dev/null | cut -d' ' -f1)" == "$HELPER_SHA" ]]; then
-      sudo rm -f -- "$HELPER_DST" || rc=79
+  if (( installed_helper )) && root_target_present "$HELPER_DST"; then
+    if [[ "$(sudo -n sha256sum "$HELPER_DST" 2>/dev/null | cut -d' ' -f1)" == "$HELPER_SHA" ]]; then
+      sudo -n rm -f -- "$HELPER_DST" || rc=79
     else
       echo 'HOLD: helper changed; refusing unsafe cleanup' >&2
       rc=79
     fi
   fi
-  if [[ -e "$RULE_DST" || -L "$RULE_DST" || -e "$HELPER_DST" || -L "$HELPER_DST" ]]; then
-    echo 'HOLD: fixed helper or /etc rule remains; manual rollback required' >&2
+  if ! root_target_present "$HELPER_DST"; then helper_absent=yes; fi
+  if ! root_target_present "$RULE_DST"; then rule_absent=yes; fi
+  if [[ "$helper_absent" != yes || "$rule_absent" != yes ]]; then
+    echo 'HOLD: root-verified helper or /etc rule remains; manual rollback required' >&2
     rc=79
   else
-    echo 'DEEPIN_ETC_POLKIT_TEMP_HELPER_RULE_REMOVED'
+    echo 'DEEPIN_ETC_POLKIT_TEMP_HELPER_RULE_REMOVED_ROOT_VERIFIED'
+  fi
+  if (( completed && rc == 0 )); then
+    printf 'state=physical_local_pass\n' >> "$RESULT"
+    echo "DEEPIN_ETC_POLKIT_LOCAL_PHYSICAL_PASS receipt_sha=${receipt_sha:-unknown} replay=DENY unprivileged=DENY remote_ssh=NOT_VERIFIED"
   fi
   printf 'exit_code=%s\nhelper_absent=%s\nrule_absent=%s\n' \
-    "$rc" "$(test ! -e "$HELPER_DST" && echo yes || echo no)" \
-    "$(test ! -e "$RULE_DST" && echo yes || echo no)" >> "$RESULT"
+    "$rc" "$helper_absent" "$rule_absent" >> "$RESULT"
   chmod 0600 "$RESULT"
   exit "$rc"
 }
@@ -171,7 +210,7 @@ sleep 2
 challenge="$(/usr/bin/python3 -I -c 'import secrets;print(secrets.token_hex(16))')"
 if [[ "$MODE" == --run-console ]]; then
   echo 'POLKIT_ETC_LOCAL_TTY_ADMIN_AUTH_EXPECTED (builtin pkexec scoped by /etc rule; terminal authentication agent)'
-  response="$(timeout 180 pkexec "$HELPER_DST" attest "$challenge")"
+  response="$(timeout --foreground 180 pkexec "$HELPER_DST" attest "$challenge")"
 else
   echo 'POLKIT_ETC_GUI_ADMIN_AUTH_EXPECTED (builtin pkexec scoped by /etc rule)'
   response="$(timeout 180 pkexec --disable-internal-agent "$HELPER_DST" attest "$challenge")"
@@ -182,7 +221,7 @@ x=json.load(sys.stdin)
 assert x["result"]=="POLKIT_ROOT_RECEIPT_WRITTEN"
 assert x["signed_task_lease"] is False
 assert len(x["challenge"])==32
-print("DEEPIN_ETC_POLKIT_GUI_ROOT_RECEIPT_PASS",x["receipt_sha256"])
+print("DEEPIN_ETC_POLKIT_ROOT_RECEIPT_VERIFIED_PENDING_CLEANUP",x["receipt_sha256"])
 '
 receipt="$RECEIPT_DIR/$challenge.json"
 [[ "$(sudo stat -c '%U:%G %a' "$receipt")" == 'root:root 600' ]] || exit 78
@@ -197,6 +236,6 @@ set -e
 [[ "$replay_rc" == 78 && "$unprivileged_rc" == 77 ]] || {
   echo "HOLD: replay=$replay_rc or unprivileged=$unprivileged_rc not DENY"; exit 78;
 }
-printf 'state=physical_local_pass\nreceipt_sha256=%s\nreplay=deny\nunprivileged=deny\nremote_ssh=not_yet_verified\n' "$receipt_sha" >> "$RESULT"
-echo "DEEPIN_ETC_POLKIT_LOCAL_PHYSICAL_PASS receipt_sha=$receipt_sha replay=DENY unprivileged=DENY remote_ssh=NOT_VERIFIED"
-echo 'ONE_SHOT_COMPLETE: fixed helper and /etc rule are removed on EXIT; no service or OS restart.'
+printf 'attestation=verified_pending_cleanup\nreceipt_sha256=%s\nreplay=deny\nunprivileged=deny\nremote_ssh=not_yet_verified\n' "$receipt_sha" >> "$RESULT"
+completed=1
+echo 'ONE_SHOT_ATTESTATION_VERIFIED: EXIT trap must still verify exact root-side cleanup before PASS.'
