@@ -823,6 +823,7 @@ class DesktopOperateTool:
                 ancestry.append((ref, role, subrole, title))
             if (
                 ancestry[-1][1].lower() not in ("axtextarea", "axtextfield", "axtextview")
+                or (not os_attested and target_node.editable is not True)
                 or target_node.enabled is False
             ):
                 # AXRole/title alone cannot distinguish an editor from an
@@ -840,6 +841,17 @@ class DesktopOperateTool:
             }
         except Exception:  # noqa: BLE001 - missing Host document evidence is HOLD
             return None
+
+    @staticmethod
+    def _native_task_ide_ax_permission(backend: Any, window: WindowInfo) -> bool:
+        """Positive native AXWindows probe, never a model/TCC-string override."""
+        probe = getattr(backend, "task_ax_permission_granted", None)
+        if not callable(probe):
+            return False
+        try:
+            return probe(window.pid) is True
+        except Exception:  # noqa: BLE001 - unreadable OS proof must HOLD
+            return False
 
     def _gate_task_app(self, flow: _ActFlow) -> ToolResult | None:
         task = current_task_execution.get()
@@ -862,7 +874,13 @@ class DesktopOperateTool:
             cast(TrustedTaskExecution, task).authorize_app(
                 bundle,
                 verb="edit",
-                os_permission_granted=bool(flow.base["permissions"]["ax_trusted"]),
+                os_permission_granted=(
+                    bool(flow.base["permissions"]["ax_trusted"])
+                    or (
+                        bundle.lower() in _TASK_IDE_AX_BUNDLES
+                        and self._native_task_ide_ax_permission(flow.backend, flow.window)
+                    )
+                ),
                 backend_supported=callable(getattr(flow.backend, "ax_probe", None)),
             )
         except TaskExecutionError as exc:
@@ -892,6 +910,23 @@ class DesktopOperateTool:
             flow.task_editor_binding = binding
         return None
 
+    @staticmethod
+    def _task_ide_snapshot_depth(flow: _ActFlow) -> int:
+        """Read deep IDE editor refs only for a signed Task type action."""
+        target = flow.options.get("target")
+        if (
+            current_task_execution.get() is not None
+            and flow.do == "type"
+            and str(flow.window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES
+            and isinstance(target, dict)
+            and set(target) == {"ax_ref"}
+            and isinstance(target["ax_ref"], str)
+        ):
+            parts = target["ax_ref"].split(".")
+            if 2 <= len(parts) <= 36 and all(part.isdigit() for part in parts):
+                return max(MAX_AX_DEPTH, len(parts) + 1)
+        return MAX_AX_DEPTH
+
     def _scan_window_world(self, flow: _ActFlow) -> None:
         """只读世界扫描：前台 app（R5：lsappinfo 口径）、AX 快照、浏览器判定。
 
@@ -906,7 +941,7 @@ class DesktopOperateTool:
         # S9：快照节点上限与 desktop_perceive 对齐（AX_NODE_LIMIT_DEFAULT=1500），
         # 否则 perceive 回执里的深位 ax_ref 在本工具侧解析不到 → ax_ref_not_found
         # （R3：与窗口解绑 window_unbound 分口径，便于定位「节点不在」vs「窗口不在」）。
-        ax_view = backend.ax_snapshot(window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
+        ax_view = backend.ax_snapshot(window, self._task_ide_snapshot_depth(flow), AX_NODE_LIMIT_DEFAULT)
         nodes = ax_view.nodes if ax_view.available else ()
         browser = is_browser_bundle(window.bundle_id)
         flow.frontmost_before = frontmost_before
@@ -952,8 +987,18 @@ class DesktopOperateTool:
             "subrole": node.subrole,
             "title": node.title,
         }
-        # 路线 A 边界：目标自身或任何祖先命中 AXWebArea → 网页内容层
-        if is_web_subtree(ax_ref, nodes):
+        # Browser DOM remains forbidden. Electron IDEs also use AXWebArea
+        # for their native editor accessibility tree; only a signed Task IDE
+        # exact AX text target may proceed to the stronger Host document and
+        # project-file gates. Other apps, HID and browser DOM remain denied.
+        task_ide_editor = (
+            current_task_execution.get() is not None
+            and flow.do == "type"
+            and str(flow.window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES
+            and (node.role or "").lower() in ("axtextarea", "axtextfield", "axtextview")
+            and set(target) == {"ax_ref"}
+        )
+        if is_web_subtree(ax_ref, nodes) and not task_ide_editor:
             return self._refuse(
                 flow, DesktopErrorCode.WEB_TARGET_NOT_ALLOWED, GUIDANCE_WEB_TARGET,
             )
@@ -1429,7 +1474,7 @@ class DesktopOperateTool:
                          "window": jsonable(fresh_window) if fresh_window else None,
                          "foreground_before": frontmost_before},
             )
-        fresh_view = backend.ax_snapshot(fresh_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
+        fresh_view = backend.ax_snapshot(fresh_window, self._task_ide_snapshot_depth(flow), AX_NODE_LIMIT_DEFAULT)
         fresh_nodes = fresh_view.nodes if fresh_view.available else ()
         # R5：apply 时刻前台归属 = 上面前台门控的同一探测结果（app 口径）
         fresh_frontmost = frontmost_bundle
@@ -1546,7 +1591,13 @@ class DesktopOperateTool:
             cast(TrustedTaskExecution, task).authorize_app(
                 window.bundle_id,
                 verb="edit",
-                os_permission_granted=bool(flow.backend.permission_snapshot().ax_trusted),
+                os_permission_granted=(
+                    bool(flow.backend.permission_snapshot().ax_trusted)
+                    or (
+                        str(window.bundle_id or "").lower() in _TASK_IDE_AX_BUNDLES
+                        and self._native_task_ide_ax_permission(flow.backend, fresh_window)
+                    )
+                ),
                 backend_supported=callable(getattr(flow.backend, "ax_probe", None)),
             )
         except TaskExecutionError as exc:
@@ -1640,7 +1691,7 @@ class DesktopOperateTool:
                 post_target_node = None
                 post_observation = "window_gone"
             else:
-                post_view = backend.ax_snapshot(post_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
+                post_view = backend.ax_snapshot(post_window, self._task_ide_snapshot_depth(flow), AX_NODE_LIMIT_DEFAULT)
                 post_nodes = post_view.nodes if post_view.available else ()
                 post_target_node = next(
                     (n for n in post_nodes if n.ax_ref == target_identity.get("ax_ref")), None

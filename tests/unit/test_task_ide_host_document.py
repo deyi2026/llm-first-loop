@@ -70,6 +70,7 @@ def _native_editor_fake(monkeypatch, path, *, bundle, target_attrs=None, context
         "AXEnabled": True,
         "AXFocused": True,
         "AXDescription": "Source Editor" if bundle == "com.apple.dt.Xcode" else path.name,
+        "AXRoleDescription": "text entry area" if bundle == "com.apple.dt.Xcode" else "编辑器",
         **(target_attrs or {}),
     })
     mapping = {"0": root, "0.0": context, "0.0.1": target}
@@ -91,7 +92,9 @@ def test_native_os_attested_editor_window_document(monkeypatch, tmp_path, bundle
 @pytest.mark.parametrize("change", [
     "not_settable", "not_focused", "ax_editable_false", "not_textarea",
     "terminal_ancestor", "wrong_editor_description", "remote_document",
-    "symlink_document", "unsupported_bundle",
+    "symlink_document", "unsupported_bundle", "wrong_role_description",
+    "missing_window_document", "xcode_missing_editor_context",
+    "xcode_terminal_ancestor",
 ])
 def test_native_os_attested_editor_fail_closed(monkeypatch, tmp_path, change):
     path = tmp_path / "receipt.txt"
@@ -119,6 +122,17 @@ def test_native_os_attested_editor_fail_closed(monkeypatch, tmp_path, change):
         root_doc = link.as_uri()
     elif change == "unsupported_bundle":
         bundle = "com.apple.Terminal"
+    elif change == "wrong_role_description":
+        attrs["AXRoleDescription"] = "text area"
+    elif change == "missing_window_document":
+        root_doc = ""
+    elif change == "xcode_missing_editor_context":
+        bundle = "com.apple.dt.Xcode"
+        context["AXIdentifier"] = None
+    elif change == "xcode_terminal_ancestor":
+        bundle = "com.apple.dt.Xcode"
+        context["AXIdentifier"] = "editor context"
+        context["AXDescription"] = "integrated terminal"
     window, _ = _native_editor_fake(
         monkeypatch, path, bundle=bundle, target_attrs=attrs,
         context_attrs=context, root_doc=root_doc, settable=settable,
@@ -131,3 +145,26 @@ def test_ax_file_url_rejects_encoded_nul_and_query(tmp_path):
     path.write_text("safe\n")
     assert macos_actuate._validated_ax_file_url(path.as_uri() + "%00") is None
     assert macos_actuate._validated_ax_file_url(path.as_uri() + "?x=1") is None
+
+
+def test_ax_value_is_settable_native_ctypes_contract(monkeypatch):
+    """Real ABI shape: BOOL* output, CFString release, AX error is HOLD."""
+    import ctypes
+
+    released = []
+    monkeypatch.setattr(macos_actuate, "make_cfstr", lambda _name: 123)
+    monkeypatch.setattr(macos_actuate, "cf_release", released.append)
+    el = macos_actuate.MacAxElement(456)  # fake ref is never dereferenced/released
+
+    class FakeLib:
+        err = 0
+        def AXUIElementIsAttributeSettable(self, _ref, _attr, out):  # noqa: N802 - C ABI
+            ctypes.cast(out, ctypes.POINTER(ctypes.c_bool))[0] = True
+            return self.err
+
+    lib = FakeLib()
+    monkeypatch.setattr(macos_actuate, "_asf", lambda: lib)
+    assert macos_actuate._ax_value_is_settable(el) is True
+    lib.err = -25205
+    assert macos_actuate._ax_value_is_settable(el) is False
+    assert released == [123, 123]

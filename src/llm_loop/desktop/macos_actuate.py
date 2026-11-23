@@ -367,7 +367,11 @@ def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str 
             return None
         description = target.attr("AXDescription")
         if bundle == "com.microsoft.vscode":
-            if description != os.path.basename(path):
+            if (
+                description != os.path.basename(path)
+                or str(target.attr("AXRoleDescription") or "").strip().lower()
+                not in ("editor", "编辑器")
+            ):
                 return None
         elif description != "Source Editor":
             return None
