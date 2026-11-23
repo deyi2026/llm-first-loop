@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageItem, extractProducedPaths } from "./MessageItem";
-import { loadEarlierHistory, loadHistory, useConversation } from "../../core/conversation";
+import { conversationStore, loadEarlierHistory, loadHistory, useConversation } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
 import { projectToolActivityMessages } from "../../core/toolActivity";
 import { zh } from "../../i18n/zh";
@@ -12,6 +12,7 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
   const [atBottom, setAtBottom] = useState(true);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const earlierInFlight = useRef(false);
+  const scrollRevision = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 展示层机械聚合 assistant(tool_calls) ↔ tool(receipt)。原始历史数组保持不变。
@@ -32,6 +33,7 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
   const updateBottom = () => {
     const el = scrollRef.current;
     if (!el) return;
+    scrollRevision.current += 1;
     setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
   };
 
@@ -52,15 +54,26 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
     const node = scrollRef.current;
     const oldHeight = node?.scrollHeight ?? 0;
     const oldTop = node?.scrollTop ?? 0;
+    const startRevision = scrollRevision.current;
     setAtBottom(false);
     try {
       await loadEarlierHistory(sid);
+    } catch {
+      if (sessionStore.getState().currentSessionId === sid) {
+        conversationStore.setState({ lastError: "更早历史读取失败，请重试。" });
+      }
     } finally {
       // Preserve the visible message after rows are prepended.  A network
-      // failure leaves the height unchanged, so this never jumps the reader.
+      // failure leaves the height unchanged. Never override user scrolling
+      // while the request is in flight (or the browser's own scroll anchoring).
       window.requestAnimationFrame(() => {
         const current = scrollRef.current;
-        if (current && sessionStore.getState().currentSessionId === sid) {
+        if (
+          current &&
+          sessionStore.getState().currentSessionId === sid &&
+          scrollRevision.current === startRevision &&
+          Math.abs(current.scrollTop - oldTop) < 2
+        ) {
           current.scrollTop = oldTop + Math.max(0, current.scrollHeight - oldHeight);
         }
         earlierInFlight.current = false;

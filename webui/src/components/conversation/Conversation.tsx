@@ -1,6 +1,6 @@
 // Web V2：会话主区（消息列表 + 输入区；会话切换时加载历史）
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageList } from "./MessageList";
 import { ChatQueue } from "./ChatQueue";
 import { Composer } from "./Composer";
@@ -19,6 +19,7 @@ export function Conversation() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [retryingHistory, setRetryingHistory] = useState(false);
+  const historyRetryOwner = useRef<string | null>(null);
   const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(null);
   const currentId = useCurrentSessionId();
   const sessions = useSessions();
@@ -68,13 +69,17 @@ export function Conversation() {
   };
 
   const retryHistory = async () => {
-    if (!currentId || retryingHistory) return;
+    if (!currentId || historyRetryOwner.current === currentId) return;
+    historyRetryOwner.current = currentId;
     setRetryingHistory(true);
     try {
       // A read-only retry never sends a new user turn or starts another Run.
       await loadHistory(currentId);
     } finally {
-      setRetryingHistory(false);
+      if (historyRetryOwner.current === currentId) {
+        historyRetryOwner.current = null;
+        setRetryingHistory(false);
+      }
     }
   };
 
