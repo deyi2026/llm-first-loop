@@ -1,0 +1,42 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-web-stability-hotfix",
+  "summary": "Repair Web V2 history read cancellation storms, repeated unauthenticated polling and duplicate coordination board requests; preserve background Run identity, secure login and responsive mobile UI.",
+  "components": [
+    {
+      "component_id": "existing-web-v2-session-read-and-auth-recovery",
+      "paths": [
+        "docs/governance/submissions/20261123-web-stability-hotfix.json",
+        "webui/src/App.tsx",
+        "webui/src/auth-recovery.test.tsx",
+        "webui/src/components/InteropNotice.tsx",
+        "webui/src/components/layout/TopBar.tsx",
+        "webui/src/components/sidebar/CoordinationChannel.tsx",
+        "webui/src/components/sidebar/EscalationCenter.tsx",
+        "webui/src/components/sidebar/LaneBoard.tsx",
+        "webui/src/conversation-stream.test.ts",
+        "webui/src/core/api.ts",
+        "webui/src/core/authSession.test.ts",
+        "webui/src/core/authSession.ts",
+        "webui/src/core/chat.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/core/coordinationBoard.test.ts",
+        "webui/src/core/coordinationBoard.ts",
+        "webui/src/core/events.ts",
+        "webui/src/events-sync.test.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web V2 browser API/session/SSE/coordination read paths. Server WebSessionStore cookie validation, Run generation, Lane/CAS, Host authority, login password and CSRF remain unchanged.",
+      "disposition": "Coalesce concurrent history reads for the same session without cancelling each other; preserve one trailing read for final/sync changes; never treat unknown Run status as ended. Report exact HTTP 401 to a non-authoritative browser UI store, stop passive GET polling and SSE reconnects, and offer same-origin re-login without replaying user turns. Share one in-flight read of existing coordination board between two panels. Preserve three-state missing/error/normal UI, old data, permission/CSRF and mobile navigation.",
+      "evidence": [
+        "Production read-only web.log showed repeated 401 for messages, board, jobs, schedule, continuity, interop and escalation after browser cookie invalidation; server WebSessionStore is intentionally in-memory and revoked on Web process restart.",
+        "Read-only localhost GET for a 3.44MB session recent 100 messages returned HTTP200 in 0.419s; board 0.17-0.24s; sessions list 0.98s. This does not prove all timeout cases are resolved.",
+        "New focused regression coverage: HTTP 401 stop/relogin, shared board in-flight coalescing, same-session history singleflight, owner-switch stale guard, terminal trailing read, unknown Run status, SSE close, safe login banner."
+      ],
+      "verification_level": "WebUI targeted and full Vitest, TypeScript and build required; exact SHA independent Reviewer PASS P0/P1=0, original R9 exit0 and remote CI required before protected merge; production PC/mobile and service health to be verified only after managed deployment.",
+      "model_evidence_veto_recovery_exit": "Client-side auth-required flag never grants authorization or bypasses server login. Explicit writes are not auto-replayed; unknown Run status stays unknown. A failed history/board read cannot be interpreted as an empty session or completed Run. Only successful browser re-auth and page reload restore passive polling; no key/cookie material is persisted.",
+      "rollback_route": "Protected revert of the bounded WebUI-only patch followed by a single managed service update when no active Run remains; previous Generation 448/source bundle retained for rollback. Do not touch PR #105 or other Goals/Lanes."
+    }
+  ],
+  "declarations": []
+}

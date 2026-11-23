@@ -305,6 +305,50 @@ describe("conversation stream ownership", () => {
     expect(next.lastError).toBeNull();
   });
 
+  it("同会话并发历史刷新共享一个请求，不互相 abort 或重复读", async () => {
+    let resolveHistory!: (value: { ok: true; messages: Array<{ role: string; content: string }>; has_more: boolean }) => void;
+    h.fetchHistory.mockImplementationOnce(() => new Promise((resolve) => { resolveHistory = resolve; }));
+    const first = loadHistory("s1");
+    const second = loadHistory("s1");
+    expect(h.fetchHistory).toHaveBeenCalledTimes(1);
+    const signal = h.fetchHistory.mock.calls[0][3] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    resolveHistory({ ok: true, messages: [{ role: "assistant", content: "唯一结果" }], has_more: false });
+    await Promise.all([first, second]);
+    expect(conversationStore.getState().messages[0].content).toBe("唯一结果");
+    expect(signal.aborted).toBe(false);
+  });
+
+  it("终态消息到达时已有历史读取，保留一次后续回读而不丢最终结果", async () => {
+    const resolvers: Array<(value: { ok: true; messages: Array<{ role: string; content: string }>; has_more: boolean }) => void> = [];
+    h.fetchHistory.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    const first = loadHistory("s1");
+    const terminal = loadHistory("s1", true);
+    expect(h.fetchHistory).toHaveBeenCalledTimes(1);
+    resolvers[0]({ ok: true, messages: [{ role: "assistant", content: "旧快照" }], has_more: false });
+    await first;
+    await nextTurn();
+    expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+    resolvers[1]({ ok: true, messages: [{ role: "assistant", content: "终态结果" }], has_more: false });
+    await terminal;
+    expect(conversationStore.getState().messages[0].content).toBe("终态结果");
+  });
+
+  it("切换会话时只取消旧 owner，迟到结果不能覆盖新会话", async () => {
+    const resolvers: Array<(value: { ok: true; messages: Array<{ role: string; content: string }>; has_more: boolean }) => void> = [];
+    h.fetchHistory.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    const old = loadHistory("s1");
+    const oldSignal = h.fetchHistory.mock.calls[0][3] as AbortSignal;
+    sessionStore.setCurrentSession("s2");
+    const current = loadHistory("s2");
+    expect(oldSignal.aborted).toBe(true);
+    expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+    resolvers[0]({ ok: true, messages: [{ role: "assistant", content: "旧消息" }], has_more: false });
+    resolvers[1]({ ok: true, messages: [{ role: "assistant", content: "新消息" }], has_more: false });
+    await Promise.all([old, current]);
+    expect(conversationStore.getState().messages[0].content).toBe("新消息");
+  });
+
   it("history 读取失败保留当前已知消息并显示错误，不伪装成空会话", async () => {
     conversationStore.setState({
       messages: [{ role: "assistant", content: "已知回答" }],
@@ -334,6 +378,26 @@ describe("conversation stream ownership", () => {
     await loadHistory("s1");
     await nextTurn();
     expect(conversationStore.getState().lastError).toContain("读取超时");
+  });
+
+  it("后台 Run 状态读取失败是未知状态，不能伪判任务结束或重发", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchStreamStatus.mockResolvedValueOnce({ running: true });
+      await checkBackgroundRun("s1");
+      expect(conversationStore.getState().backgroundRunning).toBe(true);
+      h.fetchStreamStatus.mockResolvedValueOnce(null);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(conversationStore.getState().backgroundRunning).toBe(true);
+      expect(h.fetchHistory).not.toHaveBeenCalled();
+      h.fetchStreamStatus.mockResolvedValueOnce({ running: false });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(conversationStore.getState().backgroundRunning).toBe(false);
+      expect(h.fetchHistory).toHaveBeenCalledTimes(1); // read only, no new Run
+      expect(h.streamChatRequest).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("加载更早的旧会话迟到响应不得污染已经切换的新会话", async () => {
