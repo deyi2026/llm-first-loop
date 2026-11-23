@@ -1,0 +1,537 @@
+═══ [1/5] Ruff 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══
+ratchet root=~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119
+ratchet HEAD=e550ac7730e4 ledger_sha256=b7ed6806d661 (frozen b7ed6806d661)
+ratchet origin_head=500ee8f3eff0 ancestry_enforced=True
+ratchet analyzer ruff: actual=ruff 0.16.5 frozen=ruff 0.16.5
+ratchet delivery_base source=refs/remotes/origin/main base=07fd45f0de4eb62d7f2094014af6d3e3bdb5b867 head=e550ac7730e46ae1bb666baf0d63dc96fb62def4
+ratchet changed[committed]=2
+ratchet changed[committed]: src/llm_loop/core/lane_main_write_guard.py
+ratchet changed[committed]: tests/unit/test_lane_main_write_guard.py
+ratchet changed[uncommitted]=0
+ratchet changed[untracked]=0
+R9 ruff: historical=67, current=27, new=0, resolved=40, changed_file_diagnostics=0, changed_python_files=2
+R9 ruff: PASS (historical debt visible; no new errors; touched files clean)
+R9 ruff status=complete
+═══ [2/5] 测试环境声明门禁（精确压缩预算断言必须声明 COMPACT_RATIO）═══
+PASS test env-pin gate: scanned 1257 test files, 0 undeclared COMPACT_RATIO dependents
+═══ [3/5] Pyright 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══
+ratchet root=~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119
+ratchet HEAD=e550ac7730e4 ledger_sha256=b7ed6806d661 (frozen b7ed6806d661)
+ratchet origin_head=500ee8f3eff0 ancestry_enforced=True
+ratchet analyzer pyright: actual=pyright 1.1.411 frozen=pyright 1.1.411
+ratchet delivery_base source=refs/remotes/origin/main base=07fd45f0de4eb62d7f2094014af6d3e3bdb5b867 head=e550ac7730e46ae1bb666baf0d63dc96fb62def4
+ratchet changed[committed]=2
+ratchet changed[committed]: src/llm_loop/core/lane_main_write_guard.py
+ratchet changed[committed]: tests/unit/test_lane_main_write_guard.py
+ratchet changed[uncommitted]=0
+ratchet changed[untracked]=0
+R9 pyright: historical=45, current=8, new=0, resolved=37, changed_file_diagnostics=0, changed_python_files=2
+R9 pyright: PASS (historical debt visible; no new errors; touched files clean)
+R9 pyright status=complete
+═══ [4/5] 测试运行前置：隔离 HOME + 从候选源码构建 WebUI ═══
+git: error: couldn't create cache file '/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/xcrun_db-GvSL95bk' (errno=Operation not permitted)
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+git: error: couldn't create cache file '/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/xcrun_db-trPyHUhH' (errno=Operation not permitted)
+═══ WebUI Vitest behavior tests ═══
+
+> llm-first-loop-web-v2@2.0.0 test
+> vitest run --maxWorkers=2 --minWorkers=1
+
+
+ RUN  v2.1.9 ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui
+
+ ✓ src/core/realtime/useRealtimeVoice.test.ts (47 tests) 46ms
+ ✓ src/file-preview.test.tsx (34 tests) 388ms
+ ✓ src/composer-product.test.tsx (22 tests) 190ms
+ ✓ src/provider-admin.test.tsx (17 tests) 254ms
+ ✓ src/stage2.test.tsx (40 tests) 1132ms
+   ✓ MessageItem > 点击复制 → 写入剪贴板 + 显示已复制（1s 恢复） 1006ms
+ ✓ src/core/realtime/domWiring.test.ts (29 tests) 10ms
+ ✓ src/core/realtime/m3Wiring.test.ts (35 tests) 9ms
+ ✓ src/conversation-stream.test.ts (18 tests) 9ms
+ ✓ src/components/sidebar/EscalationCenter.test.tsx (20 tests) 148ms
+ ✓ src/core/realtime/sessionController.test.ts (29 tests) 7ms
+ ✓ src/evolution-panel.test.tsx (17 tests) 225ms
+ ✓ src/core/realtime/wiring.test.ts (25 tests) 9ms
+ ✓ src/sendflow.test.tsx (12 tests) 156ms
+ ✓ src/stage3.test.tsx (14 tests) 189ms
+stderr | src/App.test.tsx > App 布局壳
+knowledge scores unavailable: Error: 网络请求失败
+    at Module.fetchKnowledgeScores (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/core/api.ts:306:9)
+
+ ✓ src/App.test.tsx (15 tests) 235ms
+ ✓ src/components/conversation/realtime/RealtimeVoiceBar.test.tsx (27 tests) 67ms
+ ✓ src/fs-delete.test.ts (17 tests) 54ms
+ ✓ src/product-panel.test.tsx (8 tests) 108ms
+ ✓ src/App.knowledge-page.test.tsx (8 tests) 183ms
+ ✓ src/session-switch.test.tsx (4 tests) 274ms
+ ✓ src/interject-metrics-panel.test.tsx (6 tests) 80ms
+ ✓ src/schedule-catalog.test.tsx (12 tests) 82ms
+ ✓ src/file-tree-actions.test.tsx (6 tests) 81ms
+ ✓ src/liveParity.test.tsx (7 tests) 58ms
+ ✓ src/sidebar-actions.test.tsx (5 tests) 74ms
+ ✓ src/video-panel.test.tsx (8 tests) 129ms
+ ✓ src/local-runtime-panel.test.tsx (4 tests) 63ms
+ ✓ src/file-collab.test.tsx (3 tests) 69ms
+ ✓ src/capabilities-gating.test.tsx (5 tests) 56ms
+ ✓ src/stage4.test.tsx (5 tests) 169ms
+ ✓ src/queue-interject-product.test.tsx (6 tests) 79ms
+ ✓ src/withdraw-race.test.ts (2 tests) 55ms
+ ✓ src/components/services/ServicesPanel.test.tsx (6 tests) 54ms
+ ✓ src/subagent-lineage.test.tsx (4 tests) 64ms
+ ✓ src/core/clipboard.test.ts (7 tests) 12ms
+ ✓ src/jobs-catalog.test.tsx (4 tests) 34ms
+ ✓ src/edit-fork.test.tsx (3 tests) 72ms
+ ✓ src/App.learning-fix.test.tsx (4 tests) 108ms
+stderr | src/steer-all.test.tsx > Cmd/Ctrl+Enter 全部插话 > 空草稿 + 运行中 → FIFO 逐条 interject 并提示条数
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+
+stderr | src/steer-all.test.tsx > Cmd/Ctrl+Enter 全部插话 > 中途 409 即停：只发已确认条数并显示后端 detail
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+Warning: An update to Composer inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Composer (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/Composer.tsx:53:38)
+
+ ✓ src/steer-all.test.tsx (3 tests) 34ms
+ ✓ src/events-sync.test.ts (4 tests) 3ms
+ ✓ src/core-failopen.test.ts (8 tests) 6ms
+ ✓ src/core/realtime/realtime.test.ts (16 tests) 3ms
+ ✓ src/core/realtime/relayVisualFacts.test.ts (2 tests) 5ms
+ ✓ src/idle-poll.test.ts (3 tests) 4ms
+stderr | src/provider-retry.test.tsx > provider retry progress > shows retry facts for fresh/resumed run (resume=false) without polluting output
+Warning: An update to MessageList inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at MessageList (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/MessageList.tsx:15:24)
+
+ ✓ src/sidebar-scale.test.tsx (3 tests) 175ms
+stderr | src/provider-retry.test.tsx > provider retry progress > shows retry facts for fresh/resumed run (resume=false) without polluting output
+Warning: An update to MessageList inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at MessageList (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/MessageList.tsx:15:24)
+
+ ✓ src/components/conversation/Composer.realtime.test.tsx (1 test) 20ms
+stderr | src/provider-retry.test.tsx > provider retry progress > shows retry facts for fresh/resumed run (resume=true) without polluting output
+Warning: An update to MessageList inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at MessageList (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/MessageList.tsx:15:24)
+Warning: An update to MessageList inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at MessageList (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/MessageList.tsx:15:24)
+Warning: An update to MessageList inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at MessageList (~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/webui/src/components/conversation/MessageList.tsx:15:24)
+
+ ✓ src/provider-retry.test.tsx (2 tests) 710ms
+   ✓ provider retry progress > shows retry facts for fresh/resumed run (resume=false) without polluting output 374ms
+   ✓ provider retry progress > shows retry facts for fresh/resumed run (resume=true) without polluting output 336ms
+ ✓ src/markdown-stream.test.ts (11 tests) 50ms
+ ✓ src/sidebar-loading.test.tsx (2 tests) 60ms
+ ✓ src/message-loading.test.tsx (2 tests) 68ms
+ ✓ src/build-identity.test.tsx (2 tests) 21ms
+ ✓ src/auth.test.tsx (3 tests) 43ms
+ ✓ src/interaction-regression.test.ts (2 tests) 2ms
+ ✓ src/session-stats.test.tsx (3 tests) 20ms
+ ✓ src/chat-completion-facts.test.ts (4 tests) 1ms
+ ✓ src/components/sidebar/poll-visibility.test.tsx (2 tests) 18ms
+ ✓ src/queue-handoff.test.ts (1 test) 2ms
+ ✓ src/markdown-lazy.test.ts (1 test) 36ms
+ ✓ src/run-aware-poll.test.ts (2 tests) 1ms
+
+ Test Files  59 passed (59)
+      Tests  612 passed (612)
+   Start at  14:22:57
+   Duration  12.60s (transform 573ms, setup 1.75s, collect 1.84s, tests 6.31s, environment 8.01s, prepare 1.23s)
+
+═══ [4/5] pytest tier0 预检（分钟级快反馈，非提交门禁）═══
+[audit_test_side_effects] ⚠️ 61 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:99 真实provider base_url（低风险-隔离不触网则忽略）: test_client = TestClient(app, base_url="https://testserver")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:114 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://testserver",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/peer/test_peer_client.py:179 真实provider base_url（低风险-隔离不触网则忽略）: PeerEndpoint(node_id=PEER_NODE, base_url="https://testserver", secret=b"\x08" * 
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_coordination_running_wiring.py:151 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:200 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:327 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_factory.py:402 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:239 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:274 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m1_fx05_budgeted_run.py:334 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://open.bigmodel.cn/api/paas/v4",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_m50_three_end.py:908 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:106 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.cn/anthropic",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_check_provider_prefix.py:120 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://generativelanguage.googleapis.com",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_default_live.py:23 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://aux.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  … 共 61 处
+
+==================================== ERRORS ====================================
+____________ ERROR collecting tests/embodied_m1/test_attestation.py ____________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_attestation.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_attestation.py:16: in <module>
+    from llm_loop.embodied_sim import attestation, oracle_daemon
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+____________ ERROR collecting tests/embodied_m1/test_calibration.py ____________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_calibration.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_calibration.py:43: in <module>
+    _spec.loader.exec_module(m1_calibrate)
+scripts/embodied/m1_calibrate.py:28: in <module>
+    import mujoco as _mujoco_impl  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   ModuleNotFoundError: No module named 'mujoco'
+_____________ ERROR collecting tests/embodied_m1/test_contract.py ______________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_contract.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_contract.py:9: in <module>
+    from llm_loop.embodied_sim import MuJoCoScene
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+____________ ERROR collecting tests/embodied_m1/test_gate_b_e2e.py _____________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_gate_b_e2e.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_gate_b_e2e.py:16: in <module>
+    from llm_loop.embodied_sim import MuJoCoScene
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+________ ERROR collecting tests/embodied_m1/test_gate_c_host_episode.py ________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_gate_c_host_episode.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_gate_c_host_episode.py:25: in <module>
+    import m1_gate_c_host_episode as host_episode  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/embodied/m1_gate_c_host_episode.py:45: in <module>
+    from llm_loop.embodied_sim.attestation import (  # noqa: E402
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+__________ ERROR collecting tests/embodied_m1/test_gate_c_negative.py __________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_gate_c_negative.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_gate_c_negative.py:14: in <module>
+    from llm_loop.embodied_sim import MuJoCoScene
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+____________ ERROR collecting tests/embodied_m1/test_host_bridge.py ____________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_host_bridge.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_host_bridge.py:12: in <module>
+    from llm_loop.embodied_sim import attestation, host_bridge, oracle_daemon
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+________ ERROR collecting tests/embodied_m1/test_host_trial_binding.py _________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_host_trial_binding.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_host_trial_binding.py:7: in <module>
+    from llm_loop.embodied_sim.trial import (
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+_________ ERROR collecting tests/embodied_m1/test_host_upgrade_plan.py _________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_host_upgrade_plan.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_host_upgrade_plan.py:17: in <module>
+    from llm_loop.embodied_sim.paired_budget import (
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+___________ ERROR collecting tests/embodied_m1/test_l3_host_probe.py ___________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_l3_host_probe.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_l3_host_probe.py:14: in <module>
+    from m1_gate_c_host_episode import HostLinkError  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/embodied/m1_gate_c_host_episode.py:45: in <module>
+    from llm_loop.embodied_sim.attestation import (  # noqa: E402
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+_________ ERROR collecting tests/embodied_m1/test_paired_cost_gate.py __________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_paired_cost_gate.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_paired_cost_gate.py:12: in <module>
+    from llm_loop.embodied_sim.paired_budget import (
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+______ ERROR collecting tests/embodied_m1/test_provider_usage_metering.py ______
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_provider_usage_metering.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_provider_usage_metering.py:16: in <module>
+    import m1_gate_c_episode as gate_c  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/embodied/m1_gate_c_episode.py:30: in <module>
+    from llm_loop.embodied_sim import MuJoCoScene  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/llm_loop/embodied_sim/__init__.py:8: in <module>
+    from llm_loop.embodied_sim.sim import MuJoCoScene, solve_ik_site
+src/llm_loop/embodied_sim/sim.py:14: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+___________ ERROR collecting tests/embodied_m1/test_scene_physics.py ___________
+ImportError while importing test module '~/Project/llm-first-loop-mirror/.worktrees/evo-main-write-guard-20261119/tests/embodied_m1/test_scene_physics.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/embodied_m1/test_scene_physics.py:9: in <module>
+    import mujoco as _mujoco_impl
+E   ModuleNotFoundError: No module named 'mujoco'
+=============================== warnings summary ===============================
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/__init__.py:2: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb.google')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    __import__('pkg_resources').declare_namespace(__name__)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws.pb')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi.ws')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/pkg_resources/__init__.py:2560: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('lark_oapi')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/pb/google/protobuf/internal/well_known_types.py:91: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+    _EPOCH_DATETIME_NAIVE = datetime.datetime.utcfromtimestamp(0)
+
+../../.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32
+  ~/Project/llm-first-loop-mirror/.venv/lib/python3.13/site-packages/lark_oapi/ws/client.py:32: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/embodied_m1/test_attestation.py
+ERROR tests/embodied_m1/test_calibration.py
+ERROR tests/embodied_m1/test_contract.py
+ERROR tests/embodied_m1/test_gate_b_e2e.py
+ERROR tests/embodied_m1/test_gate_c_host_episode.py
+ERROR tests/embodied_m1/test_gate_c_negative.py
+ERROR tests/embodied_m1/test_host_bridge.py
+ERROR tests/embodied_m1/test_host_trial_binding.py
+ERROR tests/embodied_m1/test_host_upgrade_plan.py
+ERROR tests/embodied_m1/test_l3_host_probe.py
+ERROR tests/embodied_m1/test_paired_cost_gate.py
+ERROR tests/embodied_m1/test_provider_usage_metering.py
+ERROR tests/embodied_m1/test_scene_physics.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 13 errors during collection !!!!!!!!!!!!!!!!!!!
+2 skipped, 15784 deselected, 7 warnings, 13 errors in 4.21s
+# 脱敏声明: 本日志中的本地绝对路径前缀 ~/ 已统一替换为 ~/ (内容语义不变；安全闸禁止本地绝对路径入仓)
