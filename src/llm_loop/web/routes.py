@@ -4731,17 +4731,23 @@ def get_session_messages(
     # UI text is durably stored in EventStore; hydrate only this Web response by the seq
     # recorded in provider-invisible Message.metadata.
     _program_final_text_by_seq: dict[int, str] = {}
+    def _program_final_seq(message) -> int:
+        metadata = getattr(message, "metadata", {}) or {}
+        if metadata.get("program_final_placeholder") is not True:
+            return 0
+        try:
+            return max(0, int(metadata.get("program_final_event_seq") or 0))
+        except (TypeError, ValueError):
+            return 0
+
     _wanted_program_final_seqs = {
-        int((getattr(m, "metadata", {}) or {}).get("program_final_event_seq") or 0)
-        for m in source_messages
-        if (getattr(m, "metadata", {}) or {}).get("program_final_placeholder") is True
+        seq for m in source_messages if (seq := _program_final_seq(m)) > 0
     }
-    _wanted_program_final_seqs.discard(0)
     if _wanted_program_final_seqs:
         try:
             _event_store = getattr(engine, "_event_store", None)
             _events = (
-                _event_store.read_cached(session_id)
+                _event_store.read_seqs(session_id, _wanted_program_final_seqs).values()
                 if _event_store is not None and getattr(_event_store, "enabled", False)
                 else []
             )
@@ -4762,7 +4768,7 @@ def get_session_messages(
     def _history_content(message) -> str:
         _md = getattr(message, "metadata", {}) or {}
         if _md.get("program_final_placeholder") is True:
-            _seq = int(_md.get("program_final_event_seq") or 0)
+            _seq = _program_final_seq(message)
             if _seq > 0 and _seq in _program_final_text_by_seq:
                 return _program_final_text_by_seq[_seq]
         return str(getattr(message, "content", "") or "")
