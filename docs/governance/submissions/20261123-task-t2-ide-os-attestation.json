@@ -1,0 +1,61 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-task-t2-ide-os-attestation",
+  "summary": "Minimal native macOS AX document proof for VS Code and Xcode when real editors omit AXEditable and expose file:// AXDocument only on AXWindow; no terminal or unsigned editing bypass.",
+  "components": [
+    {
+      "component_id": "task-ide-macos-os-settable-attestation",
+      "paths": [
+        "src/llm_loop/desktop/backend_macos.py",
+        "src/llm_loop/desktop/macos_actuate.py",
+        "src/llm_loop/tools/builtin/desktop_operate.py",
+        "tests/unit/test_desktop_task_capability.py",
+        "tests/unit/test_task_ide_host_document.py",
+        "docs/governance/submissions/20261123-task-t2-ide-os-attestation.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "task-host-bound-effect-lease",
+      "owning_subsystem": "macOS native AX document identity and Task file capability enforcement",
+      "disposition": "Reuse signed Task app+project-file Lease, exact Host PID/window/AX target, and two-phase pre-delivery revalidation. For VS Code/Xcode only, when AXEditable is absent, require OS AXUIElementIsAttributeSettable(AXValue)=true, AXFocused=true, a canonical local file:// AXDocument from the exact native AXWindow, and IDE-specific editor ancestry/description. Explicit AXEditable=false, integrated terminals, symlinks, remote URLs, missing Host evidence, revoked Lease and out-of-scope paths still HOLD. Original AXEditable=true target-document path remains unchanged.",
+      "evidence": [
+        "Mac native read-only probes verified both Xcode and VS Code live AXTextArea have AXEditable=None, focused=true, OS AXValue settable=true and matching AXWindow file:// document; new native attestation returned exact isolated receipt path for both.",
+        "34 focused IDE tests and 238 cross-subsystem tests passed; includes native Host ancestry, missing OS settable, terminal, remote URL, symlink, explicit readonly, missing focus and out-of-scope negatives; Ruff/Pyright both 0."
+      ],
+      "verification_level": "Local Mac native read-only positive probes, focused/broad pytest, Ruff and Pyright PASS. Independent Reviewer, original full R9, remote CI, and physical signed IDE AXSetValue+revocation E2E remain pending.",
+      "model_evidence_veto_recovery_exit": "No model-provided file path, role-only editable inference or window-title path. Any missing OS-settable proof, focus, exact AXWindow file:// document, editor ancestry, signed project write scope, TCC, Lane/CAS or fresh Lease yields HOLD. Reverify the same native Host document and ancestry immediately before AXSetValue; deny terminal and non-IDE targets.",
+      "rollback_route": "Revert this exact small PR to restore strict AXEditable+target AXDocument Task IDE HOLD while retaining PR99 browser/service Host safeguards and all other desktop behavior."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "task-host-bound-effect-lease",
+      "g1": {
+        "necessity": "Task Lease v1 already authenticates project, app and service resources, but browser mutation, IDE document writes and detached service workers lacked a complete Host-effect binding. The browser path always held; IDE document identity was not verified; service mutations were held because detached workers did not revalidate the Lease."
+      },
+      "g2": {
+        "authority_owner": "Existing root-owned Mac/Deepin Host Task Issuer, Ed25519 Task Lease domain, current Goal/Task ledger, parent write scope, Lane/CAS and OS-native browser/AX/service adapters.",
+        "relationship": "reuse",
+        "non_duplication": "No new signer, key domain, issuer, approval UI, sandbox backend, lifecycle controller or permission root. Reuse the existing Host Lease verifier, browser channel attestation, macOS AX backend and managed service-control worker. The GitHub premerge signing key is never used as a Task Lease."
+      },
+      "g3": {
+        "model_evidence": [
+          "Browser/IDE/service targeted tests passed locally; Ruff and Pyright passed for the three implementation stages.",
+          "The Host worker now persists the exact Task Lease identity and re-resolves the installed Host authority before physical service restart; negative tests prove revoke denial before effects.",
+          "Mac T1/T3 real Host E2E independently passed: real UID462 Host Lease signed, Seatbelt file/Git broker/CAS actions succeeded, exact app-scope denial returned capability_scope_missing, Lane version advanced under CAS, Host revoke published, held-context follow-up denied authority_lease_revoked, fresh activation denied no_active_lease, final exit 0. No push, merge or service restart was performed by that test.",
+          "CI architecture guard initially exposed runtime->tools and function-size ratchet drift; worker verification was moved to a fixed tools-plane subprocess, the reverse import edge was removed, and official function-size baselines were regenerated without adding a kernel import edge."
+        ],
+        "recovery_or_reason": "If Host trust/UID, process/window/document identity, Lease signature/expiry/revocation, parent scope, Goal/Task lifecycle, Lane/CAS, OS permissions, sandbox, idle state or service generation cannot be verified, preserve deterministic HOLD and zero physical effects. Real Mac IDE and detached service-worker E2E, Deepin platform support and full cross-process recovery remain pending."
+      },
+      "g4": {
+        "rollback": "Revert the exact protected PR; browser/IDE/service Task effects return to their prior fail-closed HOLD. Preserve existing operator-only service control, Host issuer, Lease/revoke ledgers, generation CAS and old known-good deployment.",
+        "verification": [
+          "Independent Reviewer PASS with P0/P1=0 on the exact final PR SHA.",
+          "Original full R9 exits 0 and remote required pytest/Ruff/Pyright, security, privacy, A.5, D4 and platform checks pass.",
+          "Repeat real Mac browser and IDE Host-signed positive/negative tests with TCC; perform real detached service worker signed Lease/revocation test before subprocess; confirm no effect on revoke.",
+          "Deepin real environment probe and supported/unsupported capability report; multi-Lane concurrent mutation, interruption, process restart and no-duplicate-effect recovery tests.",
+          "Protected main merge, CI, one approved managed deployment, live SHA/PID/health/rollback verification and only then close the original Goal."
+        ]
+      }
+    }
+  ]
+}

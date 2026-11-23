@@ -244,6 +244,10 @@ class MacOSDesktopBackend:
         """Host-only AXDocument file identity for a single exact editable target."""
         return macos_actuate.ax_editor_document_path(window, ax_ref)
 
+    def editor_os_attested_document_path(self, window: WindowInfo, ax_ref: str) -> str | None:
+        """Native OS-settable AX editor with exact Host window file binding."""
+        return macos_actuate.ax_editor_os_attested_document_path(window, ax_ref)
+
     def capture_window(self, window: WindowInfo) -> CaptureOutcome:
         scale = macos_windows.display_scale_for_bounds(
             self.list_displays(), window.bounds_pt

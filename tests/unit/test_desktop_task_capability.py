@@ -362,3 +362,56 @@ def test_signed_ide_rejects_terminal_structural_subrole_even_with_file_url(tmp_p
     assert denied["error_code"] == "app_not_allowed"
     assert "task_ide_editor_identity_unverified" in denied["guidance"]
     assert backend.act_calls == [] and task.file_calls == []
+
+
+def test_signed_ide_os_attested_document_allows_dry_run(tmp_path):
+    """Missing AXEditable requires a separate native Host attestation."""
+    from typing import Any
+    path = tmp_path / "approved.py"
+    path.write_text("safe\n")
+    backend = FakeOperateBackend(
+        windows=[_window(app="Visual Studio Code", bundle_id="com.microsoft.VSCode")],
+        ax_views={101: _view(
+            _node("0", "AXWindow", "approved.py"),
+            replace(_node("0.1", "AXTextArea", "approved.py", value="safe"), editable=None),
+        )},
+    )
+    host: Any = backend
+    host.editor_os_attested_document_path = lambda _window, _ref: str(path)
+    task = _DocumentScopedTask(allowed_path=str(path))
+    token = current_task_execution.set(task)
+    try:
+        dry = _type(_tool(backend), dry_run=True)
+    finally:
+        current_task_execution.reset(token)
+    assert dry["ok"] is True and dry["needs_confirmation"] is True
+    assert task.file_calls == [(str(path), "write")]
+    assert backend.act_calls == []
+
+
+@pytest.mark.parametrize("target_title,editable", [
+    ("Terminal", None), ("approved.py", False),
+])
+def test_signed_ide_os_attested_still_denies_terminal_or_axeditable_false(
+    tmp_path, target_title, editable,
+):
+    from typing import Any
+    path = tmp_path / "approved.py"
+    path.write_text("safe\n")
+    backend = FakeOperateBackend(
+        windows=[_window(app="Visual Studio Code", bundle_id="com.microsoft.VSCode")],
+        ax_views={101: _view(
+            _node("0", "AXWindow", "approved.py"),
+            replace(_node("0.1", "AXTextArea", target_title, value=""), editable=editable),
+        )},
+    )
+    host: Any = backend
+    host.editor_os_attested_document_path = lambda _window, _ref: str(path)
+    task = _DocumentScopedTask(allowed_path=str(path))
+    token = current_task_execution.set(task)
+    try:
+        denied = _type(_tool(backend), dry_run=True)
+    finally:
+        current_task_execution.reset(token)
+    assert denied["error_code"] == "app_not_allowed"
+    assert task.file_calls == [] and backend.act_calls == []

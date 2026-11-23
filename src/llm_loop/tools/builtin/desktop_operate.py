@@ -781,7 +781,19 @@ class DesktopOperateTool:
         parts = ax_ref.split(".")
         if len(parts) < 2 or any(not part.isdigit() for part in parts):
             return None
-        probe = getattr(flow.backend, "editor_document_path", None)
+        by_ref = {node.ax_ref: node for node in nodes}
+        target_node = by_ref.get(ax_ref)
+        if target_node is None or target_node.editable is False:
+            return None
+        # AXEditable=True keeps the original strict Host AXDocument path.
+        # AXEditable missing may use only the native OS-settable editor
+        # attestation; no fake role-based "editable" inference is permitted.
+        os_attested = target_node.editable is None
+        method = (
+            "editor_os_attested_document_path" if os_attested
+            else "editor_document_path"
+        )
+        probe = getattr(flow.backend, method, None)
         if not callable(probe):
             return None
         try:
@@ -793,7 +805,6 @@ class DesktopOperateTool:
                 or not os.path.isfile(path)
             ):
                 return None
-            by_ref = {node.ax_ref: node for node in nodes}
             ancestry: list[tuple[str, str, str, str]] = []
             for depth in range(1, len(parts) + 1):
                 ref = ".".join(parts[:depth])
@@ -810,15 +821,14 @@ class DesktopOperateTool:
                 ):
                     return None
                 ancestry.append((ref, role, subrole, title))
-            target_node = by_ref[ax_ref]
             if (
                 ancestry[-1][1].lower() not in ("axtextarea", "axtextfield", "axtextview")
-                or target_node.editable is not True
                 or target_node.enabled is False
             ):
-                # The AXRole/title alone cannot distinguish an editor from an
-                # integrated terminal. Require positive Host AXEditable plus
-                # the native backend's exact file:// AXDocument evidence.
+                # AXRole/title alone cannot distinguish an editor from an
+                # integrated terminal. The native backend must attest either
+                # AXEditable=True or a focused OS-settable editor bound to
+                # the exact Host file:// AXWindow document.
                 return None
             digest = hashlib.sha256(json.dumps(
                 ancestry, ensure_ascii=False, separators=(",", ":")
@@ -826,6 +836,7 @@ class DesktopOperateTool:
             return {
                 "document_path": path, "window_id": window.window_id,
                 "pid": window.pid, "ax_ref": ax_ref, "ancestry_sha256": digest,
+                "editability_proof": "os_axvalue_settable" if os_attested else "ax_editable",
             }
         except Exception:  # noqa: BLE001 - missing Host document evidence is HOLD
             return None
