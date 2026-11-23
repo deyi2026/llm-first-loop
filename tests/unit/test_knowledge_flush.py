@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
-import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-import pytest
 
 from scripts.knowledge_flush import _lane_is_stale, main
 
@@ -212,39 +208,24 @@ def test_missing_worktree_lane_is_stale(tmp_path: Path) -> None:
     assert _lane_is_stale(row, repo, datetime.now(UTC)) is True
 
 
-def _dir_outside_any_repo() -> Path:
-    """造一个不在任何 git 仓库内的一次性目录。
-
-    「不是 git 工作树」这一支必须在仓库之外测：仓库子目录里 ``git rev-parse``
-    会一路向上找到外层工作树。候选目录不写死（``/tmp`` 可能不可写，也可能本身
-    就在某个仓库里），逐个探测，全不行则 skip。
-    """
-    for base in (tempfile.gettempdir(), "/tmp"):
-        try:
-            made = Path(tempfile.mkdtemp(prefix="lfl-gate-", dir=base))
-        except OSError:
-            continue
-        probe = subprocess.run(
-            ["git", "-C", str(made), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-        )
-        if probe.returncode != 0:
-            return made
-        shutil.rmtree(made, ignore_errors=True)
-    pytest.skip("找不到任何仓库之外的可写临时目录")
-
-
-def test_non_git_worktree_lane_is_stale(tmp_path: Path) -> None:
+def test_non_git_worktree_lane_is_stale(
+    tmp_path: Path, dir_outside_any_repo: Path
+) -> None:
     """路径还在但已不是 git 工作树（被清空/复用）→ 同样无可写者。
     """
     repo = _repo(tmp_path)
-    hollow = _dir_outside_any_repo()
-    try:
-        row = _bare_row(str(hollow))
-        assert _lane_is_stale(row, repo, datetime.now(UTC)) is True
-    finally:
-        shutil.rmtree(hollow, ignore_errors=True)
+    row = _bare_row(str(dir_outside_any_repo))
+    assert _lane_is_stale(row, repo, datetime.now(UTC)) is True
+
+
+def test_broken_git_link_lane_stays_live(tmp_path: Path) -> None:
+    """应拦输入仍拦：有 .git 但 git 读不出（worktree link 断了/损坏）→ 不回收。"""
+    repo = _repo(tmp_path)
+    broken = tmp_path / "broken-wt"
+    broken.mkdir()
+    (broken / ".git").write_text("gitdir: /nonexistent/gitdir\n", encoding="utf-8")
+    row = _bare_row(str(broken))
+    assert _lane_is_stale(row, repo, datetime.now(UTC)) is False
 
 
 def test_worktree_path_that_is_a_file_stays_live(tmp_path: Path) -> None:

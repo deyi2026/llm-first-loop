@@ -214,7 +214,9 @@ def _worktree_state(path: Path) -> str:
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     if probe.returncode != 0:
-        return "gone"
+        # rev-parse 失败有两种：真的不再是工作树，或 git 拒绝/读不懂（safe.directory
+        # 争议、.git 损坏）。有 .git 却读不出 → 不回收（fail-closed）。
+        return "unknown" if (path / ".git").exists() else "gone"
     return "git" if probe.stdout.strip() == "true" else "gone"
 
 
