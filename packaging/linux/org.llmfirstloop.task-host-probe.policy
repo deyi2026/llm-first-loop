@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+  "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <!-- CANDIDATE ONLY: no system install without separate Owner authorization.
+       Approved install must place the helper at the exact exec.path below,
+       root:root mode 0555; policy root:root 0644; receipt dir root:root 0700.
+       This action records a canary only; it cannot issue a Task Lease. -->
+
+  <vendor>LLM First Loop</vendor>
+  <vendor_url>https://llmfirstloop.com</vendor_url>
+  <action id="org.llmfirstloop.task-host-probe.attest">
+    <description>Attest one LFL isolated Host test challenge</description>
+    <message>Administrator authentication is required to record a single LFL Host test receipt.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/lfl-task-host-probe</annotate>
+  </action>
+</policyconfig>
