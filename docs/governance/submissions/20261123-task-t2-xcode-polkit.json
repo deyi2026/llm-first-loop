@@ -1,0 +1,122 @@
+{
+  "components": [
+    {
+      "component_id": "mac-task-xcode-document-save",
+      "control_machinery": true,
+      "declaration_id": "task-xcode-existing-authority",
+      "disposition": "Reuse the existing Task authority and app/file/goal/lane fencing; only Xcode save_document for a focused OS-attested AXDocument. Bind dry-run token to exact PID/window/AXRef/document/preimage, reauthorize immediately before dispatch, AXPress only File/Save with pre/post foreground recheck, verify exact disk SHA, and classify post-dispatch uncertainty as HOLD.",
+      "evidence": [
+        "2026-11-23 Mac Xcode v4 signed UID462 300-second Lease: actual AXSetValue, exact File/Save disk write, original content restoration, cross-scope DENY, held/fresh revoke DENY; exit0 and isolated file original SHA restored.",
+        "2026-11-23 Mac dedicated Chrome CDP signed 300-second Lease: one physical isolated test-page click, other-app/service/project DENY, held context revoked and no second effect; exit0.",
+        "2026-11-23 detached service Worker: signed isolated web PASS, other-service DENY; root-signed Lease revoked, terminal Action denied without restart, generation unchanged.",
+        "Independent code Reviewer on pre-race-fix SHA 22f6e0b returned REVISE P0=0/P1=2; source inspection established AXUIElementCopyAttributeValue returns owned +1 and binding equality preserves dry-run preimage. Final File/Save foreground race patch requires new exact-SHA independent review.",
+        "Focused Mac Xcode and Deepin Polkit unit tests after foreground-race patch: 50 passed; full R9 and remote CI must be rerun on final SHA."
+      ],
+      "model_evidence_veto_recovery_exit": "Model cannot supply file path, arbitrary menu command, or broaden app rights. OS AXDocument, focus, app/file signed Lease, preimage and Lane/CAS are rechecked; a post-press focus switch or unverified disk SHA is dispatched/unknown HOLD, never false success. Revoke invalidates held/fresh context.",
+      "owning_subsystem": "Existing TrustedTaskExecution signed Host Lease, native macOS AX/TCC desktop backend, D4 window and CAS-gated DesktopOperateTool.",
+      "paths": [
+        "src/llm_loop/desktop/backend_macos.py",
+        "src/llm_loop/desktop/macos_actuate.py",
+        "src/llm_loop/tools/builtin/desktop_operate.py",
+        "tests/unit/test_task_ide_save_document.py"
+      ],
+      "rollback_route": "Revert the bounded Xcode save_document change via a protected PR. Existing Task-only type and non-Xcode app denial remain intact. No global keyboard, root shell or production service restart is granted.",
+      "verification_level": "Signed isolated Mac Host physical E2E on unchanged original save path, plus new deterministic before-press and after-press focus-switch tests. Post-fix exact SHA independent reviewer, complete original R9 and remote PR CI remain mandatory; no production approval or deploy implied."
+    },
+    {
+      "component_id": "deepin-polkit-root-receipt-candidate",
+      "control_machinery": true,
+      "declaration_id": "deepin-existing-polkit-authority",
+      "disposition": "Add a candidate-only active-seat auth_admin action and a root-only fixed-challenge receipt helper. It cannot sign Task Leases, run arbitrary commands or restart services. Fail closed for missing root-owned receipt directory, symlinks, replay, invalid challenge, non-root caller or exhausted receipt quota.",
+      "evidence": [
+        "2026-11-23 Deepin25 immutable /usr overlay is read-only: dedicated action cannot be installed at /usr/share/polkit-1/actions; do not remount or bypass policy.",
+        "Deepin local graphical terminal real built-in org.freedesktop.policykit.exec pkexec auth_admin canary exit0; root 0600 receipt SHA256 987783d10f83304a717061c5f84287f8296a3a698857b2de32f749926f924fee, replay and direct-user DENY; temporary helper removed; Web HTTP200.",
+        "Dedicated org.llmfirstloop.task-host-probe.attest is not installed and has no real active-seat policy PASS. Built-in generic Polkit proof must not be presented as a dedicated Task Host Grant.",
+        "Deepin bwrap read-only root and isolated tmpfs negative tests PASS; installed 0.6.57 Linux desktop backend remains unsupported_platform, not Mac parity."
+      ],
+      "model_evidence_veto_recovery_exit": "Only strict 128-bit lowercase hex challenge, root-only execution, fixed root-owned receipt directory, O_EXCL/O_NOFOLLOW and replay rejection. pkexec UID is an informational environment claim, never an authority for Task Lease. On failure, deny without side effects; leave immutable /usr unchanged.",
+      "owning_subsystem": "Existing Deepin Polkit pkexec OS administrator authority, separate from LFL Task Lease issuer.",
+      "paths": [
+        "packaging/linux/org.llmfirstloop.task-host-probe.policy",
+        "scripts/linux/lfl_task_host_probe.py",
+        "tests/unit/test_linux_polkit_probe.py"
+      ],
+      "rollback_route": "Do not install the candidate action on immutable Deepin25. Revert the candidate helper and policy through protected PR if rejected; no live services or privileged OS files are changed by this code-only PR.",
+      "verification_level": "Candidate helper offline unit tests and Deepin generic Polkit physical canary PASS. Dedicated policy installation and true Task Lease on Deepin remain HOLD; this PR does not claim to deliver or enable them."
+    },
+    {
+      "component_id": "a5-governance-manifest",
+      "control_machinery": false,
+      "disposition": "Declare exact changed-file ownership and existing authority reuse; retain explicit Deepin dedicated policy HOLD and no-deploy status.",
+      "evidence": [
+        "Manifest covers every changed path including itself and is validated by scripts/check_architecture_submission.py."
+      ],
+      "model_evidence_veto_recovery_exit": "No runtime model or authority change is introduced by this manifest.",
+      "owning_subsystem": "Existing A.5 architecture submission review gate.",
+      "paths": [
+        "docs/governance/submissions/20261123-task-t2-xcode-polkit.json"
+      ],
+      "rollback_route": "Revert this manifest with the associated PR if the code is withdrawn.",
+      "verification_level": "Mechanical path-coverage and schema gate only; semantic architecture quality requires independent review."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "task-xcode-existing-authority",
+      "g1": {
+        "necessity": "Real Xcode AXDocument editing was available but a safe, signed, exact File/Save action was missing; a single app-level Save could otherwise target the wrong focused document."
+      },
+      "g2": {
+        "authority_owner": "Existing TrustedTaskExecution signed Lease and macOS TCC/AX native Host; no new Task issuer.",
+        "non_duplication": "DesktopOperateTool reuses existing app/file/Lane/CAS and confirmation token gates; no generic Shell, HID or independent signing authority is created.",
+        "relationship": "reuse"
+      },
+      "g3": {
+        "model_evidence": [
+          "Real isolated Mac UID462 signed Xcode v4 Host File/Save write/restore/revoke receipt.",
+          "Independent DeepSeek diff-only Reviewer REVISE identified foreground-switch risk; deterministic negative tests added.",
+          "Signed dedicated CDP and detached service Worker negative-scope evidence retained."
+        ],
+        "recovery_or_reason": "Only native AX File/Save on exact focused Xcode window; pre-press focus loss is not dispatched, post-press loss is effect-unknown HOLD. Missing OS proof/Lease/CAS denies."
+      },
+      "g4": {
+        "rollback": "Revert bounded DesktopOperateTool/native Xcode changes by protected PR, preserve existing Task-only type path.",
+        "verification": [
+          "Exact-SHA independent code Reviewer PASS P0/P1=0 required.",
+          "Original full R9 exit0 on final SHA required.",
+          "PR remote CI and physical Host evidence audited separately."
+        ]
+      }
+    },
+    {
+      "declaration_id": "deepin-existing-polkit-authority",
+      "g1": {
+        "necessity": "Linux OS administrator authorization needs a real Polkit route; an offline mock or Mac signed Lease cannot prove Deepin root authority."
+      },
+      "g2": {
+        "authority_owner": "Existing system Polkit/pkexec admin authentication; root receipt helper is canary-only, not a Task Lease issuer.",
+        "non_duplication": "No new credential store, service controller, generic privileged executor, or Task Lease issuer; dedicated action is candidate-only and not installed.",
+        "relationship": "reuse"
+      },
+      "g3": {
+        "model_evidence": [
+          "Deepin25 local graphical built-in pkexec auth_admin real root receipt exit0 and replay/direct-user DENY.",
+          "Immutable /usr prevents dedicated action installation; dedicated physical coverage explicitly HOLD.",
+          "Deepin bwrap isolation and installed backend unsupported_platform observed on real host."
+        ],
+        "recovery_or_reason": "On denied or missing dedicated policy, fail closed. Keep immutable /usr unchanged, remove temporary helper, and require separate approval for any supported OS extension path."
+      },
+      "g4": {
+        "rollback": "Candidate code can be reverted without OS rollback because no dedicated policy or helper is installed on the live host.",
+        "verification": [
+          "Offline Polkit helper unit tests and root-only negative tests.",
+          "Generic pkexec canary PASS is not dedicated policy PASS.",
+          "Dedicated active-seat action and real Task Lease require future physical Host approval."
+        ]
+      }
+    }
+  ],
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-task-t2-xcode-polkit",
+  "summary": "Narrow signed Task Xcode File/Save to an OS-attested document with exact-window and disk-preimage checks; add a root-only Deepin Polkit attestation candidate. Dedicated Deepin policy is NOT installed on immutable /usr and remains a separate physical HOLD. No production deployment in this phase."
+}

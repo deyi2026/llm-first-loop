@@ -454,7 +454,7 @@ def _xcode_focused_window_matches(window: WindowInfo) -> bool:
         return False
     finally:
         if focused:
-            cf_release(focused)
+            cf_release(focused)  # AXUIElementCopyAttributeValue returns owned +1
         if bound is not None:
             bound.release()
         app.release()
@@ -484,7 +484,9 @@ def _xcode_press_exact_save_menu(window: WindowInfo) -> tuple[int | None, str]:
         err, bar_ref = ax_read_attr(app.ref, "AXMenuBar")
         if err != 0 or not bar_ref:
             return None, "xcode_menu_bar_unavailable"
-        bar = MacAxElement(bar_ref)  # takes ownership of returned +1
+        # AXUIElementCopyAttributeValue follows CoreFoundation Copy (+1);
+        # MacAxElement owns that copy, so an extra CFRetain would leak it.
+        bar = MacAxElement(bar_ref)
         if bar.attr("AXRole") != "AXMenuBar":
             return None, "xcode_menu_bar_invalid"
         bar_items = bar.attr("AXChildren") or []
@@ -501,6 +503,10 @@ def _xcode_press_exact_save_menu(window: WindowInfo) -> tuple[int | None, str]:
         saves = [item for item in entries if _is_exact_xcode_save_item(item)]
         if len(saves) != 1:
             return None, "xcode_save_item_unavailable"
+        # AXPress on the app menu acts on the *currently focused* document.
+        # Rebind after menu discovery, immediately before the irreversible press.
+        if not _xcode_focused_window_matches(window):
+            return None, "xcode_focus_changed_before_press"
         try:
             return ax_press(saves[0]), ""
         except Exception:  # noqa: BLE001 - AXPress may already have dispatched
@@ -604,6 +610,13 @@ def ax_save_xcode_document(
         return _xcode_save_hold(reason)
     if err != 0:
         return act_outcome_from_ax_err(err, "Xcode File/Save AXPress")
+    # After a successful AXPress, a focus/document switch makes the effect
+    # uncertain even if the originally bound file later has matching bytes.
+    if (
+        not _xcode_focused_window_matches(window)
+        or _xcode_live_document_path(window, ax_ref) != expected_path
+    ):
+        return _xcode_save_hold("xcode_focus_or_document_changed_after_press", dispatched=True)
     expected_sha = hashlib.sha256(value.encode("utf-8")).digest()
     deadline = time.monotonic() + 8
     while True:

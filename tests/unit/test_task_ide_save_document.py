@@ -199,6 +199,7 @@ def test_native_menu_only_exact_xcode_file_save(monkeypatch, change):
     monkeypatch.setattr(macos_actuate, "app_element", lambda _pid: app)
     monkeypatch.setattr(macos_actuate, "ax_read_attr", lambda _ref, _name: (0, 77))
     monkeypatch.setattr(macos_actuate, "MacAxElement", lambda _ref: bar)
+    monkeypatch.setattr(macos_actuate, "_xcode_focused_window_matches", lambda _w: True)
     monkeypatch.setattr(macos_actuate, "ax_press", lambda el: pressed.append(el) or 0)
     window = _window(bundle_id="com.apple.dt.Xcode")
     err, reason = macos_actuate._xcode_press_exact_save_menu(window)
@@ -343,10 +344,70 @@ def test_native_menu_press_exception_is_not_false_not_dispatched(monkeypatch):
     monkeypatch.setattr(macos_actuate, "app_element", lambda _pid: app)
     monkeypatch.setattr(macos_actuate, "ax_read_attr", lambda _ref, _name: (0, 77))
     monkeypatch.setattr(macos_actuate, "MacAxElement", lambda _ref: bar)
+    monkeypatch.setattr(macos_actuate, "_xcode_focused_window_matches", lambda _w: True)
     monkeypatch.setattr(macos_actuate, "ax_press", lambda _el: (_ for _ in ()).throw(OSError("uncertain")))
     err, reason = macos_actuate._xcode_press_exact_save_menu(_window(bundle_id="com.apple.dt.Xcode"))
     assert err == -1 and reason == "xcode_save_press_uncertain"
     assert app.released and bar.released and entry.released
+
+
+def test_native_xcode_menu_rechecks_focus_after_discovering_save_item(monkeypatch):
+    """An app-level File/Save must not dispatch after the bound window loses focus."""
+    entry = FakeAx({"AXRole": "AXMenuItem", "AXIdentifier": "ide_saveDocument:",
+                    "AXMenuItemCmdChar": "S", "AXMenuItemCmdModifiers": 0,
+                    "AXEnabled": True})
+    menu = FakeAx({"AXRole": "AXMenu"}, [entry])
+    file_item = FakeAx({"AXRole": "AXMenuBarItem", "AXTitle": "File"}, [menu])
+    bar = FakeAx({"AXRole": "AXMenuBar"}, [file_item])
+    app = FakeAx()
+    pressed = []
+    monkeypatch.setattr(macos_actuate, "app_element", lambda _pid: app)
+    monkeypatch.setattr(macos_actuate, "ax_read_attr", lambda _ref, _name: (0, 77))
+    monkeypatch.setattr(macos_actuate, "MacAxElement", lambda _ref: bar)
+    monkeypatch.setattr(macos_actuate, "_xcode_focused_window_matches", lambda _w: False)
+    monkeypatch.setattr(macos_actuate, "ax_press", lambda el: pressed.append(el) or 0)
+
+    err, reason = macos_actuate._xcode_press_exact_save_menu(
+        _window(bundle_id="com.apple.dt.Xcode"),
+    )
+    assert err is None and reason == "xcode_focus_changed_before_press"
+    assert pressed == []
+    assert app.released and bar.released and file_item.released
+    assert menu.released and entry.released
+
+
+def test_native_xcode_save_focus_changed_after_press_is_uncertain(monkeypatch, tmp_path):
+    """A dispatched Save with changed foreground cannot be reported as verified."""
+    import hashlib
+
+    path = tmp_path / "receipt.txt"
+    path.write_text("seed\n")
+    window = _window(bundle_id="com.apple.dt.Xcode")
+    focus_checks = []
+    def focused(_w):
+        focus_checks.append(True)
+        return len(focus_checks) <= 2
+
+    monkeypatch.setattr(macos_actuate, "_xcode_focused_window_matches", focused)
+    monkeypatch.setattr(macos_actuate, "ax_editor_os_attested_document_path", lambda _w, _r: str(path))
+    monkeypatch.setattr(macos_actuate, "resolve_element_by_axref",
+                        lambda _w, _r: (FakeAx({"AXFocused": True}), None))
+    monkeypatch.setattr(macos_actuate, "ax_read_value_string", lambda _el: "after\n")
+    pressed = []
+    def press(_w):
+        pressed.append(True)
+        path.write_text("after\n")
+        return 0, ""
+    monkeypatch.setattr(macos_actuate, "_xcode_press_exact_save_menu", press)
+
+    outcome = macos_actuate.ax_save_xcode_document(
+        window, "0.1", str(path), hashlib.sha256(b"seed\n").hexdigest(),
+    )
+    assert pressed == [True] and len(focus_checks) == 3
+    assert not outcome.ok and outcome.dispatch_state == "dispatched"
+    assert outcome.effect_state == "unknown"
+    assert outcome.verification_state == "failed"
+    assert outcome.verification_reason == "xcode_focus_or_document_changed_after_press"
 
 
 def test_xcode_save_rejects_same_content_different_document_within_broad_lease(tmp_path):
