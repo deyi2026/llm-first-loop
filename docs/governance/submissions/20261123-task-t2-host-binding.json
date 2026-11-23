@@ -7,7 +7,8 @@
       "component_id": "task-browser-host-cdp-binding",
       "paths": [
         "src/llm_loop/browser/action.py",
-        "tests/unit/test_browser_task_capability.py"
+        "tests/unit/test_browser_task_capability.py",
+        "tests/unit/test_task_runtime.py"
       ],
       "control_machinery": true,
       "declaration_id": "task-host-bound-effect-lease",
@@ -51,7 +52,8 @@
         "tests/unit/test_task_service_worker_fence.py",
         "docs/governance/submissions/20261123-task-t2-host-binding.json",
         "src/llm_loop/tools/task_service_worker.py",
-        "tests/guards/function_size_baseline.json"
+        "tests/guards/function_size_baseline.json",
+        "tests/unit/test_task_authority.py"
       ],
       "control_machinery": true,
       "declaration_id": "task-host-bound-effect-lease",
