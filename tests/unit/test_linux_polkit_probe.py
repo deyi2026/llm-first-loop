@@ -289,7 +289,7 @@ def test_deepin_etc_runner_never_remounts_or_restarts_and_has_cleanup():
     import subprocess
 
     script = ETC_RUNNER.read_text(encoding="utf-8")
-    assert "--check|--run|--cleanup" in script
+    assert "--check|--run|--run-console|--cleanup" in script
     assert "/etc/polkit-1/rules.d/00-lfl-task-host-probe.rules" in script
     assert "/usr/local/libexec/lfl-task-host-probe" in script
     assert "/usr/share/polkit-1/actions/org.llmfirstloop.task-host-probe.policy" in script
@@ -297,8 +297,15 @@ def test_deepin_etc_runner_never_remounts_or_restarts_and_has_cleanup():
     assert "trap cleanup EXIT" in script
     assert "DEEPIN_ETC_POLKIT_EXACT_CLEANUP_PASS" in script
     assert "unexpected content at $target, refusing removal" in script
-    assert "XDG_SESSION_ID" in script and "loginctl show-session" in script
-    assert "Seat=seat0" in script and "Remote=no" in script and "Active=yes" in script
+    assert "XDG_SESSION_ID" in script and "loginctl show-session self" in script
+    assert 'session_info="$(loginctl show-session self' in script
+    assert 'for required in "Id=$XDG_SESSION_ID"' in script
+    assert 'loginctl show-session "$XDG_SESSION_ID" alone' in script
+    assert 'Seat=seat0' in script and 'Remote=no' in script and 'Active=yes' in script
+    assert 'Type=tty' in script and 'Type=(x11|wayland)' in script
+    assert 'SSH_CONNECTION' in script and 'SSH_TTY' in script
+    assert 'pkexec "$HELPER_DST" attest "$challenge"' in script
+    assert 'pkexec --disable-internal-agent "$HELPER_DST" attest "$challenge"' in script
     assert "replay_rc" in script and "unprivileged_rc" in script
     assert "signed_task_lease=false" in script
     assert "remote_ssh=not_yet_verified" in script

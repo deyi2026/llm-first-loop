@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 MODE="${1:---check}"
-case "$MODE" in --check|--run|--cleanup) ;; *) echo 'Usage: script --check|--run|--cleanup' >&2; exit 64;; esac
+case "$MODE" in --check|--run|--run-console|--cleanup) ;; *) echo 'Usage: script --check|--run|--run-console|--cleanup' >&2; exit 64;; esac
 BASE="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 HELPER_SRC="$BASE/lfl_task_host_probe.py"
 RULE_SRC="$BASE/../../packaging/linux/00-lfl-task-host-probe.rules"
@@ -42,26 +42,49 @@ pkaction --action-id org.freedesktop.policykit.exec >/dev/null
 [[ "$(stat -c '%U %a' /etc/polkit-1/rules.d)" == 'root 750' ]] || {
   echo 'HOLD: rule parent ownership or mode unexpected'; exit 78;
 }
-require_local_gui() {
-  [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" && -n "${XDG_SESSION_ID:-}" ]] || {
-    echo 'HOLD: launch in Deepin local graphical Terminal with a real XDG_SESSION_ID'; exit 78;
+# Deepin25 DDE may set XDG_SESSION_ID=14615 in an app.slice GUI Terminal
+# even though the *process* has no kernel logind session. Polkit evaluates the
+# process, not the spoofable environment. Never infer local authorization from
+# loginctl show-session "$XDG_SESSION_ID" alone.
+require_kernel_bound_local_session() {
+  local kind="$1" session_info
+  [[ -n "${XDG_SESSION_ID:-}" ]] || {
+    echo 'HOLD: no caller logind session; use a physical local console'; exit 78;
   }
-  local session_info
-  session_info="$(loginctl show-session "$XDG_SESSION_ID" -p Seat -p Remote -p Active -p Type)"
-  [[ "$session_info" == *'Seat=seat0'* && "$session_info" == *'Remote=no'* &&
-     "$session_info" == *'Active=yes'* ]] || {
-    echo 'HOLD: local active seat0 session not established'; exit 78;
+  session_info="$(loginctl show-session self -p Id -p Seat -p Remote -p Active -p Type 2>/dev/null)" || {
+    echo 'HOLD: caller is not kernel-bound to a logind session; DDE app.slice GUI Terminal cannot satisfy Polkit local/active. Use --run-console on physical tty3'; exit 78;
   }
-  [[ "$session_info" == *'Type=x11'* || "$session_info" == *'Type=wayland'* ]] || {
-    echo 'HOLD: graphical session type not established'; exit 78;
-  }
+  for required in "Id=$XDG_SESSION_ID" 'Seat=seat0' 'Remote=no' 'Active=yes'; do
+    if ! printf '%s\n' "$session_info" | grep -Fxq -- "$required"; then
+      echo 'HOLD: caller session identity, seat, remote or active state does not match kernel logind'; exit 78;
+    fi
+  done
+  if [[ "$kind" == gui ]]; then
+    [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] || {
+      echo 'HOLD: no local graphical display'; exit 78;
+    }
+    if ! printf '%s\n' "$session_info" | grep -Eq '^Type=(x11|wayland)$'; then
+      echo 'HOLD: caller is not in a kernel-bound graphical session'; exit 78;
+    fi
+  else
+    [[ -t 0 && -t 1 && -z "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] || {
+      echo 'HOLD: console authorization requires an interactive physical TTY, not SSH'; exit 78;
+    }
+    if ! printf '%s\n' "$session_info" | grep -Fxq 'Type=tty'; then
+      echo 'HOLD: caller is not in a kernel-bound local TTY session'; exit 78;
+    fi
+  fi
 }
 if [[ "$MODE" == --cleanup ]]; then
   if [[ ! -e "$HELPER_DST" && ! -L "$HELPER_DST" &&
         ! -e "$RULE_DST" && ! -L "$RULE_DST" ]]; then
     echo 'DEEPIN_ETC_POLKIT_ALREADY_CLEAN'; exit 0
   fi
-  require_local_gui
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    require_kernel_bound_local_session gui
+  else
+    require_kernel_bound_local_session console
+  fi
   echo 'Recovery requires local administrator approval; never removes unknown content.'
   sudo -v
   for entry in "$RULE_DST:$RULE_SHA" "$HELPER_DST:$HELPER_SHA"; do
@@ -84,10 +107,14 @@ for target in "$HELPER_DST" "$RULE_DST" "$LEGACY_POLICY_DST"; do
 done
 echo 'DEEPIN_ETC_POLKIT_PREFLIGHT_PASS: exact hashes, no existing targets, /etc and /usr/local writable, no /usr change'
 if [[ "$MODE" == --check ]]; then
-  echo 'CHECK_ONLY: no sudo, no pkexec, no install, no restart'
+  echo 'CHECK_ONLY: no sudo, no pkexec, no install, no restart; caller kernel logind session is verified only in --run or --run-console'
   exit 0
 fi
-require_local_gui
+if [[ "$MODE" == --run ]]; then
+  require_kernel_bound_local_session gui
+else
+  require_kernel_bound_local_session console
+fi
 # User must authorize the two bounded system writes via the local sudo prompt.
 echo 'Owner local admin authentication required; do not enter passwords in chat.'
 sudo -v
@@ -142,8 +169,13 @@ sudo install -o root -g root -m 0644 -T "$RULE_SRC" "$RULE_DST"
 # Polkit automatically reloads /etc rules. No daemon or OS restart.
 sleep 2
 challenge="$(/usr/bin/python3 -I -c 'import secrets;print(secrets.token_hex(16))')"
-echo 'POLKIT_ETC_GUI_ADMIN_AUTH_EXPECTED (builtin pkexec scoped by /etc rule)'
-response="$(timeout 180 pkexec --disable-internal-agent "$HELPER_DST" attest "$challenge")"
+if [[ "$MODE" == --run-console ]]; then
+  echo 'POLKIT_ETC_LOCAL_TTY_ADMIN_AUTH_EXPECTED (builtin pkexec scoped by /etc rule; terminal authentication agent)'
+  response="$(timeout 180 pkexec "$HELPER_DST" attest "$challenge")"
+else
+  echo 'POLKIT_ETC_GUI_ADMIN_AUTH_EXPECTED (builtin pkexec scoped by /etc rule)'
+  response="$(timeout 180 pkexec --disable-internal-agent "$HELPER_DST" attest "$challenge")"
+fi
 printf '%s\n' "$response" | /usr/bin/python3 -I -c '
 import json,sys
 x=json.load(sys.stdin)
