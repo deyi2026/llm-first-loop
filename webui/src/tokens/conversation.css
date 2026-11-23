@@ -22,6 +22,20 @@
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
+.v2-conversation-header-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--dsw-space-3);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.v2-header-actions-spacer {
+  flex: 1 0 8px;
+}
+
 .v2-conversation-title {
   font-size: 13px;
   font-weight: 500;
@@ -42,25 +56,48 @@
   overflow-wrap: anywhere;
 }
 
+.v2-history-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.v2-conv-error-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.v2-history-retry {
+  flex: 0 0 auto;
+  min-height: 36px;
+  touch-action: manipulation;
+}
+
 @media (max-width: 640px) {
   .v2-conversation-header {
-    overflow-x: auto;
-    min-height: var(--v2-mobile-touch-target);
-    height: var(--v2-mobile-touch-target);
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 0;
+    height: auto;
+    padding-top: 5px;
+    padding-bottom: 3px;
     padding-right: max(6px, env(safe-area-inset-right));
     padding-left: max(6px, env(safe-area-inset-left));
     gap: 4px;
-    scrollbar-width: none;
-    overscroll-behavior-x: contain;
   }
 
-  .v2-conversation-header::-webkit-scrollbar {
-    display: none;
+  .v2-conversation-header-actions {
+    flex: 0 0 auto;
+    width: 100%;
+    gap: 5px;
+    overscroll-behavior-x: contain;
+    padding-bottom: 2px;
   }
 
   .v2-conversation-title {
     flex: 0 0 auto;
-    max-width: 120px;
+    max-width: 100%;
+    line-height: 18px;
   }
 
   .v2-session-stats {
@@ -68,13 +105,24 @@
   }
 
   .v2-catalog-trigger,
-  .v2-conversation-header > .v2-btn {
+  .v2-conversation-header-actions > .v2-btn {
     min-height: var(--v2-mobile-touch-target);
   }
 
   .v2-conv-error {
     padding-right: max(8px, env(safe-area-inset-right));
     padding-left: max(8px, env(safe-area-inset-left));
+  }
+
+  .v2-history-error {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .v2-history-retry {
+    min-height: var(--v2-mobile-touch-target);
+    margin-left: auto;
   }
 }
 
@@ -1228,6 +1276,20 @@
 .v2-load-earlier:hover,
 .v2-scroll-bottom:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-load-earlier:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .v2-load-earlier,
+  .v2-scroll-bottom {
+    min-height: var(--v2-mobile-touch-target);
+    padding-inline: 14px;
+    touch-action: manipulation;
+  }
 }
 
 .v2-scroll-bottom {
