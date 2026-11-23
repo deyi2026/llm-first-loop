@@ -1,23 +1,30 @@
 # CTP 参考实现（C-5 契约面）
 
 本目录是 CTP 协议的参考实现，**不并入 `llm_loop` 包**，按"可整目录迁出为独立 repo"组织
-（计划 §13.1 D-01 暂定 B）。当前只完成 B1：C-5 读取输出契约。
+（计划 §13.1 D-01 暂定 B）。当前完成 B1（C-5 读取输出契约）与 B2（不确定度声明与协方差传播）。
 
-- 规范锚点：`docs/SPEC-20261123-cooperative-target-protocol-v0.9.md` v0.9.2 §5 C-5、§11.2 V2/V4
-- 计划锚点：`docs/PLAN-20261123-ctp-implementation.md` v0.2 §4.2 B1、§15 执行编排
-- 性质：契约 + 校验器 + 样本；**不含**检测算法（B3）、不确定度传播（B2）、阈值抑制（B4）
+- 规范锚点：`docs/SPEC-20261123-cooperative-target-protocol-v0.9.md` v0.9.2 §5 C-5、§11.1-c、§11.2 V2/V4
+- 计划锚点：`docs/PLAN-20261123-ctp-implementation.md` v0.2 §4.2 B1/B2、§15 执行编排
+- 性质：契约 + 校验器 + 样本 + 不确定度数学；**不含**检测算法（B3）、阈值抑制（B4）
 
 ## 目录
 
 ```
 ctp/
 ├── schema/observation.schema.json   # 规范性产物（JSON Schema 2020-12）
-├── src/ctp_contract/                # Python 侧等价实现（src 布局：只暴露包名）
+├── src/ctp_contract/                # 契约（零第三方依赖）
 │   ├── model.py                     # Observation / Pose / Uncertainty / 枚举
 │   ├── validate.py                  # collect_errors / parse_observation
 │   └── errors.py                    # 稳定错误码
-└── tests/                           # 10 合法 + 20 非法样本 + schema 一致性
+├── src/ctp_calib/                   # B2 不确定度数学（依赖 numpy）
+│   ├── se3.py                       # 四元数 / exp-log / Adjoint（左扰动，[v,ω] 顺序）
+│   └── uncertainty.py               # 声明模板、一阶传播、蒙特卡洛自检
+├── docs/uncertainty-declaration-template.md  # 11.1-c 填写模板
+└── tests/                           # 10 合法 + 22 非法样本 + schema 一致性 + B2 数学
 ```
+
+`ctp_contract` 保持零第三方依赖（契约要能跨语言重写）；`ctp_calib` 只为参考实现与自检服务，
+依赖 `numpy`（仓库 `.venv` 已具备）。
 
 ## 跑测试
 
