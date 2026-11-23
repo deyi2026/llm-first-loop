@@ -840,7 +840,7 @@ wheels = [
 
 [[package]]
 name = "llm-first-loop"
-version = "0.6.57"
+version = "0.6.58"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
