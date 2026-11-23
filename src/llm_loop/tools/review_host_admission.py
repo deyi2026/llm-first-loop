@@ -1066,6 +1066,25 @@ def _is_delete_only_push(command: str) -> bool:
     return all(item.startswith(":") and _REFSPEC_NAME_RE.match(item[1:]) for item in refspecs)
 
 
+def _consume_knowledge_gate(workdir: str, command: str) -> tuple[str, str] | None:
+    """消费口的知识闸：审查窗口内新落卡 → 非消费性拒绝（返回 reason, hint）。
+
+    投递本就也会被 .githooks/pre-push 拦，资格却已被消费、白烧一个审查周期，
+    故把同一口径的只读判定前置到消费口。纯删 ref 的推送与 start 前置同口径
+    豁免（EVO-20261123-d43138fc）。
+    """
+    if _is_delete_only_push(command):
+        return None
+    receipt = _knowledge_gate_receipt(workdir)
+    if receipt is None:
+        return None
+    return (
+        "工作区存在未入库知识资产（方法卡/经验卡），推送会被 pre-push 知识闸拒绝；"
+        "资格未被消费。",
+        str(receipt.get("fix") or ""),
+    )
+
+
 def _knowledge_gate_receipt(workdir: str) -> dict[str, Any] | None:
     """git_push 准入前置：有未入库知识资产 → 拒绝回执；干净 → None。
 
@@ -5594,20 +5613,10 @@ class HostReviewAdmission:
             lane_denial = self._lane_push_precheck(parent, command, workdir)
             if lane_denial is not None:
                 return lane_denial
-            # 收口治理③（2026-11-10）：知识闸前置到消费口——审查窗口内新落卡
-            # 时，投递本会被 .githooks/pre-push 拦（exit 1），资格已被消费、
-            # 白烧一个审查周期。这里先做同一口径的只读判定（与 start 的
-            # _knowledge_gate_receipt 一致），命中则非消费性拒绝。注意树已变
-            # 必然重审（candidate sha 不再匹配），本闸省的是投递与兜底噪音。
-            # 纯删 ref 的 push 与 start 前置同口径豁免（EVO-20261123-d43138fc）。
-            if not _is_delete_only_push(command):
-                knowledge_gate = _knowledge_gate_receipt(workdir)
-                if knowledge_gate is not None:
-                    return self._deny(
-                        "工作区存在未入库知识资产（方法卡/经验卡），推送会被 pre-push "
-                        "知识闸拒绝；资格未被消费。",
-                        hint=str(knowledge_gate.get("fix") or ""),
-                    )
+            # 收口治理③（2026-11-10）：知识闸前置到消费口（含纯删 ref 豁免）。
+            consume_gate = _consume_knowledge_gate(workdir, command)
+            if consume_gate is not None:
+                return self._deny(consume_gate[0], hint=consume_gate[1])
         for scope_paths, recorded_digest, tier, review_base, review_ref in scopes:
             try:
                 # full_test runs on the local worktree; recompute with the
