@@ -28,6 +28,7 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMHTTPError,
+    LLMNetworkError,
     LLMStreamInterruptedError,
     LLMTimeoutError,
     is_quota_error,
@@ -154,6 +155,15 @@ def llm_error_text(error: Exception) -> str:
             f"原因: {type(error).__name__}: {error}\n"
             "边界: 超时不等于 Key 或模型名配置错误；可能与网络等待、服务端排队或处理耗时有关。\n"
             "建议: 可在当前会话重试或继续；已有工具执行结果需先核对，避免重复执行。"
+        )
+    if isinstance(error, LLMNetworkError) and "UNEXPECTED_EOF_WHILE_READING" in str(error):
+        return (
+            "[LLM 调用异常] 事实: TLS 连接异常关闭，模型调用未完整完成。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            "边界: 尚不能确定是本机代理、网络链路还是远端网关；"
+            "此错误本身不是 Key 或模型名错误的证据。\n"
+            "建议: 检查系统代理/TUN 与 TLS 路由，恢复后在原会话继续；"
+            "先核对已有工具执行结果，避免重复执行。"
         )
     return (
         f"[LLM 调用异常] 事实: LLM 调用失败。\n"

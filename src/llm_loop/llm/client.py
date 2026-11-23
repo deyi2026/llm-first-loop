@@ -1042,12 +1042,33 @@ class LLMClient:
         base = (self.base_url or "").lower()
         _is_local_base = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0"))
         self._is_local_base = _is_local_base  # 2026-08-24: 供 _stream_openai 判本地关 thinking
-        if _is_local_base:
-            headers: dict[str, str] = {}
-        else:
-            headers = {"Connection": "close"}
-        trust_env = bool(self.trust_env) if self.trust_env is not None else not _is_local_base
-        self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+        self._client = self._new_http_client()
+
+    def _new_http_client(self) -> httpx.Client:
+        """Build transport from the current proxy snapshot without changing routing policy."""
+        headers = {} if self._is_local_base else {"Connection": "close"}
+        trust_env = (
+            bool(self.trust_env)
+            if self.trust_env is not None
+            else not self._is_local_base
+        )
+        return httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+
+    @contextmanager
+    def _retry_transport_client(self, retry_index: int) -> Iterator[httpx.Client]:
+        """Retry with fresh proxy routing, without closing a concurrent caller's client.
+
+        The pool retires the original client for the next call. Only the retry
+        transport is attempt-local and closed after the retry completes.
+        """
+        if retry_index == 0:
+            yield self._client
+            return
+        retry_client = self._new_http_client()
+        try:
+            yield retry_client
+        finally:
+            retry_client.close()
 
     def count_tool_schema_tokens(self, tools: list[dict]) -> int | None:
         """Return exact provider-template token cost for ``tools`` when mechanically known.
@@ -2193,7 +2214,7 @@ class LLMClient:
             acc = _StreamAcc()
             agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
-            with self._transport_attempt_scope(
+            with self._retry_transport_client(transport_retry_index) as transport_client, self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
                 target_url=url,
@@ -2204,7 +2225,7 @@ class LLMClient:
                     knowledge_probe=(guard_context.knowledge_reference_probe if guard_context else None),
                 ),
             ), _task_budget_provider_stream(
-                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+                transport_client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
