@@ -1,5 +1,7 @@
 // Web V2 核心：API 客户端（对齐后端 /api/v1/* 契约，POST/GET/流式分离）
 
+import { isAuthRequired, reportUnauthorized } from "./authSession";
+
 export interface ApiResult<T = unknown> {
   status: number;
   data: T;
@@ -9,8 +11,15 @@ export async function api<T = unknown>(
   url: string,
   options?: RequestInit
 ): Promise<ApiResult<T>> {
+  // Passive polling must not keep hammering the server after the browser cookie
+  // was rejected. Explicit writes are still handled by their own normal error path.
+  const method = (options?.method ?? "GET").toUpperCase();
+  if (method === "GET" && url.startsWith("/api/v1/") && isAuthRequired()) {
+    return { status: 401, data: {} as T };
+  }
   try {
     const resp = await fetch(url, options);
+    reportUnauthorized(resp.status);
     const data = (await resp.json().catch(() => ({}))) as T;
     return { status: resp.status, data };
   } catch {

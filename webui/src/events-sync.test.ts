@@ -18,6 +18,7 @@ vi.mock("./core/sessionUrl", () => ({ readSessionIdFromLocation: () => null }));
 
 import { initEventStream, stopEventStream } from "./core/events";
 import { sessionStore } from "./core/stores";
+import { clearAuthRequired, reportUnauthorized } from "./core/authSession";
 
 const s1 = {
   session_id: "s1", title: "当前", created_at: "t0", updated_at: "t1",
@@ -26,13 +27,14 @@ const s1 = {
 };
 const s2 = { ...s1, session_id: "s2", title: "其他" };
 let source: EventTarget;
+let closedSources = 0;
 
 class FakeEventSource {
   constructor(_url: string) {}
   addEventListener(type: string, cb: EventListenerOrEventListenerObject): void {
     source.addEventListener(type, cb);
   }
-  close(): void {}
+  close(): void { closedSources += 1; }
 }
 
 async function settle(): Promise<void> {
@@ -41,8 +43,10 @@ async function settle(): Promise<void> {
 
 describe("SSE 会话更新去重", () => {
   beforeEach(() => {
+    clearAuthRequired();
     vi.useFakeTimers();
     source = new EventTarget();
+    closedSources = 0;
     vi.stubGlobal("EventSource", FakeEventSource);
     h.fetchSessionsResult.mockReset();
     h.refreshCurrentSessionMessages.mockReset().mockResolvedValue(undefined);
@@ -52,12 +56,24 @@ describe("SSE 会话更新去重", () => {
 
   afterEach(() => {
     stopEventStream();
+    clearAuthRequired();
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     sessionStore.setCurrentSession("");
     sessionStore.setSessions([]);
+  });
+
+  it("401 登录失效后关闭 SSE，停止看门狗和历史同步，不重复订阅", async () => {
+    initEventStream();
+    reportUnauthorized(401);
+    expect(closedSources).toBe(1);
+    source.dispatchEvent(new Event("sessions_updated"));
+    await settle();
+    expect(h.fetchSessionsResult).not.toHaveBeenCalled();
+    initEventStream(); // login is still expired
+    expect(closedSources).toBe(1);
   });
 
   it("其他会话变化只更新列表，不全量重载当前会话；当前变化仍立即刷新", async () => {

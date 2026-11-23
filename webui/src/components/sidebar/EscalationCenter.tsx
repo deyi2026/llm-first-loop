@@ -5,6 +5,7 @@
 //           POST /api/v1/escalation/review
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
+import { isAuthRequired, reportUnauthorized } from "../../core/authSession";
 
 export interface EscalationRequest {
   id: string;
@@ -66,6 +67,9 @@ async function fetchEscalations(): Promise<ListResp> {
 }
 
 async function fetchEscalationsUncached(): Promise<ListResp> {
+  if (isAuthRequired()) {
+    return { requests: [], pendingRequests: [], pending_count: 0, error: "登录已失效，请重新登录。" };
+  }
   try {
     // ESC-07（FR-07）: 待审队列用 pending 专用查询穿透历史窗口；
     // 历史视图保持"最新 50 条"。两请求并行，任一失败按整次加载失败处理。
@@ -73,6 +77,8 @@ async function fetchEscalationsUncached(): Promise<ListResp> {
       fetch("/api/v1/escalation/list?limit=50"),
       fetch("/api/v1/escalation/list?status=pending&limit=50"),
     ]);
+    reportUnauthorized(allR.status);
+    reportUnauthorized(pendingR.status);
     if (!allR.ok || !pendingR.ok) {
       // ESC-08: 503 等失败态不得折叠成"空列表"——否则审批者会误读为
       // "没有待审"，恰是后端 503 改造要消除的歧义。读出 error 字段如实上抛。
@@ -187,7 +193,7 @@ function useEscalations(enabled = true) {
     if (!enabled) return;
     const poll = () => {
       // 隐藏标签页不消耗双端点轮询；恢复可见时立即补读审批事实。
-      if (!document.hidden) load();
+      if (!document.hidden && !isAuthRequired()) load();
     };
     poll();
     const t = window.setInterval(poll, POLL_MS);
