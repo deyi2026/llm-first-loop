@@ -595,8 +595,12 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
 
   const saveEditor = async () => {
     if (!snapshot || !editor) return;
-    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(editor.draft.id)) {
+    if (editor.mode === "create" && !/^[a-z][a-z0-9_-]{0,31}$/.test(editor.draft.id)) {
       setError({ message: "Provider ID 只能使用小写字母、数字、下划线和连字符，且必须以字母开头。" });
+      return;
+    }
+    if (editor.mode === "edit" && editor.draft.id !== editor.providerId) {
+      setError({ message: "不能修改现有服务商的 Provider ID。" });
       return;
     }
     if (editor.mode === "create" && snapshot.providers.some((provider) => provider.id === editor.draft.id)) {
@@ -717,7 +721,9 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
   const addSelected = async () => {
     if (!snapshot || !discovery || !modelForm || discovery.needsRefresh || busy) return;
     const providerId = discovery.providerId;
-    const pending = discovery.selected.filter((id) => !configuredModelIds(snapshot, providerId).has(id));
+    const pending = discovery.selected.filter((id) =>
+      !configuredModelIds(snapshot, providerId).has(id)
+      && !pendingWrites[`model:${providerId}/${id}:add`]);
     if (!pending.length) return;
     let verifiedSnapshot = snapshot;
     let version = snapshot.config_version;
@@ -782,11 +788,19 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         setSnapshot(latest);
         const known = configuredModelIds(latest, providerId);
         const needsRefresh = unverifiedId !== null && !known.has(unverifiedId);
+        if (needsRefresh && unverifiedId) {
+          const key = `model:${providerId}/${unverifiedId}:add`;
+          setPendingWrites((prev) => ({ ...prev, [key]: { key, kind: "model-add", providerId, modelId: unverifiedId } }));
+        }
         setDiscovery((prev) => prev?.providerId === providerId
           ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)), needsRefresh,
               uncertainId: needsRefresh ? unverifiedId ?? undefined : undefined }
           : prev);
       } else {
+        if (unverifiedId) {
+          const key = `model:${providerId}/${unverifiedId}:add`;
+          setPendingWrites((prev) => ({ ...prev, [key]: { key, kind: "model-add", providerId, modelId: unverifiedId } }));
+        }
         setDiscovery((prev) => prev?.providerId === providerId
           ? { ...prev, needsRefresh: true, uncertainId: unverifiedId ?? undefined } : prev);
       }
@@ -812,6 +826,9 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       }
       setSnapshot(latest);
       const known = configuredModelIds(latest, providerId);
+      setPendingWrites((prev) => Object.fromEntries(
+        Object.entries(prev).filter(([, item]) => !writeConfirmed(latest, item))
+      ));
       const unresolved = discovery.uncertainId && !known.has(discovery.uncertainId);
       setDiscovery((prev) => prev?.providerId === providerId
         ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)),
@@ -1124,12 +1141,13 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                   .map((candidate) => {
                     const exists = snapshot?.providers.find((item) => item.id === modelForm.providerId)?.models
                       .some((model) => model.id === candidate.id) ?? false;
+                    const pending = Boolean(pendingWrites[`model:${modelForm.providerId}/${candidate.id}:add`]);
                     return (
                       <label key={candidate.id} className="v2-provider-discovery-option">
                         <input
                           type="checkbox"
-                          disabled={exists || busy !== ""}
-                          checked={!exists && discovery.selected.includes(candidate.id)}
+                          disabled={exists || pending || busy !== ""}
+                          checked={!exists && !pending && discovery.selected.includes(candidate.id)}
                           onChange={(event) => setDiscovery((prev) => prev?.providerId === modelForm.providerId
                             ? {
                                 ...prev,
@@ -1141,6 +1159,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                         />
                         <span><strong>{candidate.name || candidate.id}</strong><small>{candidate.id}</small></span>
                         {exists ? <span className="v2-provider-pill">已添加</span> : null}
+                        {pending && !exists ? <span className="v2-provider-pill is-warning">待核验</span> : null}
                       </label>
                     );
                   })}
@@ -1150,9 +1169,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
               ).length > 60 ? <p className="v2-provider-footnote">仅显示前 60 项，请缩小搜索范围。</p> : null}
               <button type="button" className="v2-provider-primary" onClick={() => void addSelected()}
                 disabled={Boolean(discovery.needsRefresh) || discovery.selected.filter((id) =>
-                  !configuredModelIds(snapshot, discovery.providerId).has(id)).length === 0 || busy !== ""}>
+                  !configuredModelIds(snapshot, discovery.providerId).has(id)
+                  && !pendingWrites[`model:${discovery.providerId}/${id}:add`]).length === 0 || busy !== ""}>
                 {busy === "discover-add" ? T.saving : `添加所选（${discovery.selected.filter((id) =>
-                  !configuredModelIds(snapshot, discovery.providerId).has(id)).length}）`}
+                  !configuredModelIds(snapshot, discovery.providerId).has(id)
+                  && !pendingWrites[`model:${discovery.providerId}/${id}:add`]).length}）`}
               </button>
             </>
           )}

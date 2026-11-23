@@ -951,6 +951,51 @@ describe("provider admin contract（§9.3）", () => {
     expect(puts).toBe(1);
   });
 
+  it("批量发现未知写入关闭重开后仍阻止重复 POST，且刷新显示待核验", async () => {
+    let posts = 0;
+    const calls = stubFetch((call) => {
+      if (call.url === "/api/v1/providers/discover-models" && call.method === "POST") {
+        return json({ candidates: [{ id: "m3", name: "M Three" }] });
+      }
+      if (call.url === "/api/v1/providers/alpha/models" && call.method === "POST") {
+        posts += 1;
+        return json({ error: "provider_unavailable" }, 503);
+      }
+      return undefined;
+    });
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-alpha");
+    fireEvent.click(within(card).getByRole("button", { name: "+ 添加模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "发现模型" }));
+    fireEvent.click(await screen.findByLabelText(/M Three/));
+    fireEvent.click(screen.getByRole("button", { name: "添加所选（1）" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新核验未知写入" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型编辑" }));
+    fireEvent.click(within(card).getByRole("button", { name: "+ 添加模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "发现模型" }));
+    const option = await screen.findByLabelText(/M Three/);
+    expect(option).toBeDisabled();
+    expect(screen.getByText("待核验")).toBeInTheDocument();
+    expect(posts).toBe(1);
+    expect(calls.filter((call) => call.url === "/api/v1/providers/alpha/models" && call.method === "POST")).toHaveLength(1);
+  });
+
+  it("旧版 Provider ID 不符合新建命名规则时，仍允许编辑既有 Provider", async () => {
+    const legacy = provider("Acme", [model("m1")], "m1");
+    const calls = stubFetch((call) => {
+      if (call.url === "/api/v1/providers/Acme" && call.method === "PUT") return json(snapshot());
+      return undefined;
+    }, snapshot({ providers: [legacy, provider("beta", [model("b1")], "b1")] }));
+    render(<ProviderManager />);
+    const card = await screen.findByTestId("provider-Acme");
+    fireEvent.click(within(card).getByRole("button", { name: "编辑" }));
+    const form = within(card).getByTestId("provider-editor");
+    fireEvent.change(within(form).getByLabelText("Base URL"), { target: { value: "https://legacy.example/v2" } });
+    fireEvent.click(within(form).getByRole("button", { name: "保存并热重载" }));
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/v1/providers/Acme" && call.method === "PUT")).toBe(true));
+    expect((calls.find((call) => call.url === "/api/v1/providers/Acme" && call.method === "PUT")!.body.provider as Record<string, unknown>).id).toBe("Acme");
+  });
+
   it("批量添加部分成功后只重试剩余模型，不重复提交已成功项", async () => {
     const withM3 = snapshot({
       config_version: "version-10",
@@ -1021,10 +1066,10 @@ describe("provider admin contract（§9.3）", () => {
       fireEvent.click(await screen.findByLabelText(/M Three/));
       fireEvent.click(screen.getByRole("button", { name: "添加所选（1）" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "刷新并核对" })).toBeInTheDocument());
-      expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "添加所选（0）" })).toBeDisabled();
       fireEvent.click(screen.getByRole("button", { name: "刷新并核对" }));
       await waitFor(() => expect(screen.getAllByText(/上次提交仍未确认/).length).toBeGreaterThan(0));
-      expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "添加所选（0）" })).toBeDisabled();
       expect(posts).toBe(1);
       expect(calls.filter((call) => call.url === "/api/v1/providers/alpha/models" && call.method === "POST")).toHaveLength(1);
     }
@@ -1059,7 +1104,7 @@ describe("provider admin contract（§9.3）", () => {
     fireEvent.click(await screen.findByLabelText(/M Three/));
     fireEvent.click(screen.getByRole("button", { name: "添加所选（1）" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "刷新并核对" })).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "添加所选（0）" })).toBeDisabled();
     expect(posts).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "刷新并核对" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "添加所选（0）" })).toBeDisabled());
