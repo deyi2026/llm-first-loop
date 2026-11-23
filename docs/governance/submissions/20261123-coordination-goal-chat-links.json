@@ -1,0 +1,30 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-coordination-goal-chat-links",
+  "summary": "Use existing read-only coordination channel lane+Goal owner session binding for direct SPA chat navigation from the coordination sidebar and board; never start a new Run.",
+  "components": [
+    {
+      "component_id": "existing-web-coordination-navigation",
+      "paths": [
+        "docs/governance/submissions/20261123-coordination-goal-chat-links.json",
+        "webui/src/components/sidebar/CoordinationChannel.test.tsx",
+        "webui/src/components/sidebar/CoordinationChannel.tsx",
+        "webui/src/components/sidebar/LaneBoard.test.tsx",
+        "webui/src/components/sidebar/LaneBoard.tsx",
+        "webui/src/components/sidebar/Sidebar.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Web V2 CoordinationChannel/LaneBoard and existing sessionStore/mainViewStore/Sidebar mobile navigation; backend coordination board and session authorization remain unchanged.",
+      "disposition": "Render per-lane Goal session buttons only when channel.sessions contains an exact lane_id plus goal_id match and nonempty session_id. Reuse existing chat navigation without message submission. Unbound or mismatched owners remain inert and explicit; first tap on coordination header reveals list. On mobile call existing onNavigate to close drawer.",
+      "evidence": [
+        "User confirmed domain re-login and mobile physical acceptance on 2026-11-23 and requested direct Goal-to-in-progress-chat navigation.",
+        "Focused Vitest 8/8 PASS; complete WebUI Vitest 628/628 PASS; TypeScript tsc --noEmit PASS; Vite build PASS in isolated Lane lane-afb13b48.",
+        "Independent GLM-5.3-flash review of initial SHA 27a4f8b reported PASS P0=0 P1=0 P2=2. Both P2 hardening points are fixed before final freeze: duplicate lane_id bindings now fail closed; missing goal_id with session_id is inert. Focused negative regressions 8/8 PASS, TypeScript typecheck PASS. Exact final SHA review and full R9 remain required."
+      ],
+      "verification_level": "Local UI/type/build tests passed. Final exact SHA requires independent reviewer, original R9, remote CI and protected merge before any managed production deployment.",
+      "model_evidence_veto_recovery_exit": "No new authorization or execution capability: clicking a Goal only sets existing session UI state; missing/mismatched binding never guesses or creates a session, and cannot start a Run. If history fails, existing conversation recovery UI applies.",
+      "rollback_route": "Revert this small UI-only PR using protected main and a single managed Web deployment; preserve all session/Goal/Lane data and ongoing Runs."
+    }
+  ],
+  "declarations": []
+}
