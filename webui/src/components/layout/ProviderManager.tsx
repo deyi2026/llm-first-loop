@@ -90,6 +90,10 @@ function num(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function configuredModelIds(snapshot: ProviderAdminSnapshot | null, providerId: string): Set<string> {
+  return new Set(snapshot?.providers.find((provider) => provider.id === providerId)?.models.map((model) => model.id) ?? []);
+}
+
 function text(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -304,6 +308,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     candidates: DiscoveredModel[];
     selected: string[];
     error?: string;
+    needsRefresh?: boolean;
   } | null>(null);
 
   const load = useCallback(async (clearError = false): Promise<boolean> => {
@@ -635,15 +640,22 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
   };
 
   const addSelected = async () => {
-    if (!snapshot || !discovery || !modelForm) return;
+    if (!snapshot || !discovery || !modelForm || discovery.needsRefresh || busy) return;
+    const providerId = discovery.providerId;
+    const pending = discovery.selected.filter((id) => !configuredModelIds(snapshot, providerId).has(id));
+    if (!pending.length) return;
+    let verifiedSnapshot = snapshot;
     let version = snapshot.config_version;
     let added = 0;
     let failure = "";
+    let unverifiedId: string | null = null;
     setBusy("discover-add");
+    setError(null);
     try {
-      for (const id of discovery.selected) {
+      for (const id of pending) {
+        if (configuredModelIds(verifiedSnapshot, providerId).has(id)) continue;
         const candidate = discovery.candidates.find((item) => item.id === id);
-        const result = await addProviderModel(discovery.providerId, version, {
+        const result = await addProviderModel(providerId, version, {
           ...blankModel(),
           id,
           name: candidate?.name || id,
@@ -657,31 +669,75 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
           break;
         }
         const verified = result.snapshot ?? await fetchProviderAdmin();
-        if (!verified) {
-          failure = "服务端已接受添加，但最新配置尚未确认；请先刷新核对，避免重复提交。";
+        if (!verified || !configuredModelIds(verified, providerId).has(id)) {
+          unverifiedId = id;
+          failure = "服务端已接受添加，但最新配置尚未确认；请刷新核对，避免重复提交。";
           break;
         }
+        verifiedSnapshot = verified;
         setSnapshot(verified);
         version = verified.config_version;
         added += 1;
+        const known = configuredModelIds(verified, providerId);
+        setDiscovery((prev) => prev?.providerId === providerId
+          ? { ...prev, selected: prev.selected.filter((item) => !known.has(item)) }
+          : prev);
       }
     } catch {
       failure = "模型添加未完成，请刷新配置核对已添加项。";
-    } finally {
-      setBusy("");
     }
     if (added > 0) {
       notifyModelCatalogChanged();
       void onCatalogChanged?.();
     }
     if (failure) {
+      let latest: ProviderAdminSnapshot | null = null;
+      try {
+        latest = await fetchProviderAdmin();
+      } catch {
+        // A failed readback must never make an accepted write safe to replay.
+      }
+      if (latest) {
+        setSnapshot(latest);
+        const known = configuredModelIds(latest, providerId);
+        const needsRefresh = unverifiedId !== null && !known.has(unverifiedId);
+        setDiscovery((prev) => prev?.providerId === providerId
+          ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)), needsRefresh }
+          : prev);
+      } else {
+        setDiscovery((prev) => prev?.providerId === providerId ? { ...prev, needsRefresh: true } : prev);
+      }
       setError({ message: added > 0 ? `已添加 ${added} 个模型，其余未完成：${failure}` : failure });
-      await load();
+      setBusy("");
       return;
     }
+    setBusy("");
     setFlash(`已添加 ${added} 个模型`);
     setDiscovery(null);
     setModelForm(null);
+  };
+
+  const refreshDiscovery = async () => {
+    if (!discovery || busy) return;
+    const providerId = discovery.providerId;
+    setBusy("discover-refresh");
+    try {
+      const latest = await fetchProviderAdmin();
+      if (!latest) {
+        setError({ message: "配置读取失败，暂不能安全重试添加；请稍后刷新核对。" });
+        return;
+      }
+      setSnapshot(latest);
+      const known = configuredModelIds(latest, providerId);
+      setDiscovery((prev) => prev?.providerId === providerId
+        ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)), needsRefresh: false }
+        : prev);
+      setError(null);
+    } catch {
+      setError({ message: "配置读取失败，暂不能安全重试添加；请稍后刷新核对。" });
+    } finally {
+      setBusy("");
+    }
   };
 
   const providerEditor = editor ? (
@@ -941,7 +997,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       {modelForm.mode === "add" ? (
         <div className="v2-provider-discovery-bar">
           <span>不确定模型 ID？先从服务商获取列表。</span>
-          <button type="button" onClick={() => void discover()} disabled={busy !== ""}>
+          <button type="button" onClick={() => void discover()} disabled={busy !== "" || Boolean(discovery?.needsRefresh)}>
             {busy === "discover" ? T.discovering : T.discover}
           </button>
         </div>
@@ -965,6 +1021,14 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
               <p className="v2-provider-footnote">
                 发现 {discovery.candidates.length} 个候选；已有模型不可重复添加。勾选后批量保存。
               </p>
+              {discovery.needsRefresh ? (
+                <div className="v2-provider-warning" role="status">
+                  上次写入结果尚未确认，请先刷新核对，避免重复提交。
+                  <button type="button" onClick={() => void refreshDiscovery()} disabled={busy !== ""}>
+                    {busy === "discover-refresh" ? T.loading : "刷新并核对"}
+                  </button>
+                </div>
+              ) : null}
               <div className="v2-provider-discovery-list">
                 {discovery.candidates
                   .filter((candidate) =>
@@ -978,14 +1042,16 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                       <label key={candidate.id} className="v2-provider-discovery-option">
                         <input
                           type="checkbox"
-                          disabled={exists}
-                          checked={discovery.selected.includes(candidate.id)}
-                          onChange={(event) => setDiscovery({
-                            ...discovery,
-                            selected: event.target.checked
-                              ? [...discovery.selected, candidate.id]
-                              : discovery.selected.filter((id) => id !== candidate.id),
-                          })}
+                          disabled={exists || busy !== ""}
+                          checked={!exists && discovery.selected.includes(candidate.id)}
+                          onChange={(event) => setDiscovery((prev) => prev?.providerId === modelForm.providerId
+                            ? {
+                                ...prev,
+                                selected: event.target.checked
+                                  ? [...new Set([...prev.selected, candidate.id])]
+                                  : prev.selected.filter((id) => id !== candidate.id),
+                              }
+                            : prev)}
                         />
                         <span><strong>{candidate.name || candidate.id}</strong><small>{candidate.id}</small></span>
                         {exists ? <span className="v2-provider-pill">已添加</span> : null}
@@ -997,8 +1063,10 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                 [candidate.id, candidate.name].some((value) => (value ?? "").toLocaleLowerCase().includes(discoverySearch.trim().toLocaleLowerCase()))
               ).length > 60 ? <p className="v2-provider-footnote">仅显示前 60 项，请缩小搜索范围。</p> : null}
               <button type="button" className="v2-provider-primary" onClick={() => void addSelected()}
-                disabled={discovery.selected.length === 0 || busy !== ""}>
-                {busy === "discover-add" ? T.saving : `添加所选（${discovery.selected.length}）`}
+                disabled={Boolean(discovery.needsRefresh) || discovery.selected.filter((id) =>
+                  !configuredModelIds(snapshot, discovery.providerId).has(id)).length === 0 || busy !== ""}>
+                {busy === "discover-add" ? T.saving : `添加所选（${discovery.selected.filter((id) =>
+                  !configuredModelIds(snapshot, discovery.providerId).has(id)).length}）`}
               </button>
             </>
           )}
@@ -1011,7 +1079,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       />
       {error ? <p className="v2-provider-warning" role="alert">{error.message}</p> : null}
       <div className="v2-provider-editor-actions">
-        <button type="button" className="v2-provider-primary" onClick={() => void saveModel()} disabled={busy !== ""}>
+        <button type="button" className="v2-provider-primary" onClick={() => void saveModel()}
+          disabled={busy !== "" || Boolean(discovery?.needsRefresh && discovery.providerId === modelForm.providerId)}>
           {busy === "model-form" ? T.saving : T.save}
         </button>
         <button type="button" onClick={() => {

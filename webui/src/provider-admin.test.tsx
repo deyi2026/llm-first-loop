@@ -865,13 +865,103 @@ describe("provider admin contract（§9.3）", () => {
     expect(within(card).queryByRole("button", { name: "配置 API Key" })).toBeNull();
   });
 
+  it("批量添加部分成功后只重试剩余模型，不重复提交已成功项", async () => {
+    const withM3 = snapshot({
+      config_version: "version-10",
+      providers: [provider("alpha", [model("m1"), model("m2"), model("m3")], "m1"),
+        provider("beta", [model("b1")], "b1")],
+    });
+    const withBoth = snapshot({
+      config_version: "version-11",
+      providers: [provider("alpha", [model("m1"), model("m2"), model("m3"), model("m4")], "m1"),
+        provider("beta", [model("b1")], "b1")],
+    });
+    let current = snapshot();
+    let m4Attempts = 0;
+    const calls = stubFetch((call) => {
+      if (call.url === "/api/v1/providers" && call.method === "GET") return json(current);
+      if (call.url === "/api/v1/providers/discover-models" && call.method === "POST") {
+        return json({ candidates: [{ id: "m3", name: "M Three" }, { id: "m4", name: "M Four" }] });
+      }
+      if (call.url === "/api/v1/providers/alpha/models" && call.method === "POST") {
+        const id = (call.body.model as Record<string, unknown>).id;
+        if (id === "m3") { current = withM3; return json(current); }
+        if (id === "m4" && ++m4Attempts === 1) {
+          return json({ error: "provider_config_conflict", detail: "版本冲突，请刷新" }, 409);
+        }
+        if (id === "m4") { current = withBoth; return json(current); }
+      }
+      return undefined;
+    });
+    render(<ProviderManager />);
+    await screen.findByTestId("provider-alpha");
+    fireEvent.click(within(screen.getByTestId("provider-alpha")).getByRole("button", { name: "+ 添加模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "发现模型" }));
+    fireEvent.click(await screen.findByLabelText(/M Three/));
+    fireEvent.click(screen.getByLabelText(/M Four/));
+    fireEvent.click(screen.getByRole("button", { name: "添加所选（2）" }));
+    await waitFor(() => expect(m4Attempts).toBe(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeEnabled());
+    expect(screen.getByLabelText(/M Three/)).toBeDisabled();
+    expect(screen.getByLabelText(/M Three/)).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "添加所选（1）" }));
+    await waitFor(() => expect(m4Attempts).toBe(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /添加所选/ })).toBeNull());
+    const posts = calls.filter((call) => call.url === "/api/v1/providers/alpha/models" && call.method === "POST");
+    expect(posts.map((call) => (call.body.model as Record<string, unknown>).id)).toEqual(["m3", "m4", "m4"]);
+    expect(posts.map((call) => call.body.expected_version)).toEqual(["version-9", "version-10", "version-10"]);
+  });
+
+  it("写入已接受但回读失败时阻止重复添加，刷新核对后清除已存在项", async () => {
+    const withM3 = snapshot({
+      config_version: "version-10",
+      providers: [provider("alpha", [model("m1"), model("m2"), model("m3")], "m1"),
+        provider("beta", [model("b1")], "b1")],
+    });
+    let reads = 0;
+    let posts = 0;
+    const calls = stubFetch((call) => {
+      if (call.url === "/api/v1/providers" && call.method === "GET") {
+        reads += 1;
+        return reads === 1 ? json(snapshot()) : reads <= 3 ? json({ detail: "unavailable" }, 503) : json(withM3);
+      }
+      if (call.url === "/api/v1/providers/discover-models" && call.method === "POST") {
+        return json({ candidates: [{ id: "m3", name: "M Three" }] });
+      }
+      if (call.url === "/api/v1/providers/alpha/models" && call.method === "POST") {
+        posts += 1;
+        return json({ detail: "accepted" });
+      }
+      return undefined;
+    });
+    render(<ProviderManager />);
+    await screen.findByTestId("provider-alpha");
+    fireEvent.click(within(screen.getByTestId("provider-alpha")).getByRole("button", { name: "+ 添加模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "发现模型" }));
+    fireEvent.click(await screen.findByLabelText(/M Three/));
+    fireEvent.click(screen.getByRole("button", { name: "添加所选（1）" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新并核对" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeDisabled();
+    expect(posts).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "刷新并核对" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "添加所选（0）" })).toBeDisabled());
+    expect(screen.getByLabelText(/M Three/)).toBeDisabled();
+    expect(screen.getByLabelText(/M Three/)).not.toBeChecked();
+    expect(posts).toBe(1);
+    expect(calls.filter((call) => call.url === "/api/v1/providers/alpha/models" && call.method === "POST")).toHaveLength(1);
+  });
+
   it("发现模型后勾选添加：只写被选中的模型，不自动保存其它字段", async () => {
     const calls = stubFetch((call) => {
       if (call.url === "/api/v1/providers/discover-models" && call.method === "POST") {
         return json({ candidates: [{ id: "m3", name: "M Three", context_window: 65536 }], latency_ms: 12 });
       }
       if (call.url === "/api/v1/providers/alpha/models" && call.method === "POST") {
-        return json(snapshot());
+        return json(snapshot({
+          config_version: "version-10",
+          providers: [provider("alpha", [model("m1"), model("m2"), model("m3")], "m1"),
+            provider("beta", [model("b1")], "b1")],
+        }));
       }
       return undefined;
     });
