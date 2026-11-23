@@ -912,6 +912,38 @@ describe("provider admin contract（§9.3）", () => {
     expect(posts.map((call) => call.body.expected_version)).toEqual(["version-9", "version-10", "version-10"]);
   });
 
+  it.each(["network-exception", "http-503"] as const)(
+    "批量添加 %s 结果不确定时，回读未出现该模型也不能自动重复 POST",
+    async (failureMode) => {
+      let posts = 0;
+      const calls = stubFetch((call) => {
+        if (call.url === "/api/v1/providers" && call.method === "GET") return json(snapshot());
+        if (call.url === "/api/v1/providers/discover-models" && call.method === "POST") {
+          return json({ candidates: [{ id: "m3", name: "M Three" }] });
+        }
+        if (call.url === "/api/v1/providers/alpha/models" && call.method === "POST") {
+          posts += 1;
+          if (failureMode === "network-exception") throw new TypeError("network closed after server accepted");
+          return json({ error: "provider_unavailable", detail: "upstream unavailable" }, 503);
+        }
+        return undefined;
+      });
+      render(<ProviderManager />);
+      await screen.findByTestId("provider-alpha");
+      fireEvent.click(within(screen.getByTestId("provider-alpha")).getByRole("button", { name: "+ 添加模型" }));
+      fireEvent.click(screen.getByRole("button", { name: "发现模型" }));
+      fireEvent.click(await screen.findByLabelText(/M Three/));
+      fireEvent.click(screen.getByRole("button", { name: "添加所选（1）" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "刷新并核对" })).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "刷新并核对" }));
+      await waitFor(() => expect(screen.getAllByText(/上次提交仍未确认/).length).toBeGreaterThan(0));
+      expect(screen.getByRole("button", { name: "添加所选（1）" })).toBeDisabled();
+      expect(posts).toBe(1);
+      expect(calls.filter((call) => call.url === "/api/v1/providers/alpha/models" && call.method === "POST")).toHaveLength(1);
+    }
+  );
+
   it("写入已接受但回读失败时阻止重复添加，刷新核对后清除已存在项", async () => {
     const withM3 = snapshot({
       config_version: "version-10",

@@ -309,6 +309,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     selected: string[];
     error?: string;
     needsRefresh?: boolean;
+    uncertainId?: string;
   } | null>(null);
 
   const load = useCallback(async (clearError = false): Promise<boolean> => {
@@ -649,12 +650,14 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     let added = 0;
     let failure = "";
     let unverifiedId: string | null = null;
+    let attemptedId: string | null = null;
     setBusy("discover-add");
     setError(null);
     try {
       for (const id of pending) {
         if (configuredModelIds(verifiedSnapshot, providerId).has(id)) continue;
         const candidate = discovery.candidates.find((item) => item.id === id);
+        attemptedId = id;
         const result = await addProviderModel(providerId, version, {
           ...blankModel(),
           id,
@@ -665,6 +668,9 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
           note: "",
         });
         if (!result.ok) {
+          // A definite 4xx rejection is safe to reconcile and retry; 5xx/unknown
+          // may have committed before the response was lost.
+          if (result.status < 400 || result.status >= 500) unverifiedId = id;
           failure = errorLabel(result.error, result.detail);
           break;
         }
@@ -684,7 +690,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
           : prev);
       }
     } catch {
-      failure = "模型添加未完成，请刷新配置核对已添加项。";
+      unverifiedId = attemptedId;
+      failure = "模型添加结果未确认，请刷新核对，避免重复提交。";
     }
     if (added > 0) {
       notifyModelCatalogChanged();
@@ -702,10 +709,12 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         const known = configuredModelIds(latest, providerId);
         const needsRefresh = unverifiedId !== null && !known.has(unverifiedId);
         setDiscovery((prev) => prev?.providerId === providerId
-          ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)), needsRefresh }
+          ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)), needsRefresh,
+              uncertainId: needsRefresh ? unverifiedId ?? undefined : undefined }
           : prev);
       } else {
-        setDiscovery((prev) => prev?.providerId === providerId ? { ...prev, needsRefresh: true } : prev);
+        setDiscovery((prev) => prev?.providerId === providerId
+          ? { ...prev, needsRefresh: true, uncertainId: unverifiedId ?? undefined } : prev);
       }
       setError({ message: added > 0 ? `已添加 ${added} 个模型，其余未完成：${failure}` : failure });
       setBusy("");
@@ -729,10 +738,12 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       }
       setSnapshot(latest);
       const known = configuredModelIds(latest, providerId);
+      const unresolved = discovery.uncertainId && !known.has(discovery.uncertainId);
       setDiscovery((prev) => prev?.providerId === providerId
-        ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)), needsRefresh: false }
+        ? { ...prev, selected: prev.selected.filter((id) => !known.has(id)),
+            needsRefresh: Boolean(unresolved), uncertainId: unresolved ? discovery.uncertainId : undefined }
         : prev);
-      setError(null);
+      setError(unresolved ? { message: "上次提交仍未确认；暂不自动重试该模型，避免重复写入。" } : null);
     } catch {
       setError({ message: "配置读取失败，暂不能安全重试添加；请稍后刷新核对。" });
     } finally {
