@@ -4673,9 +4673,16 @@ def _task_service_worker_fence(
         worker_script = Path(deployment.code_root) / "src" / "llm_loop" / "tools" / "task_service_worker.py"
         if not worker_script.is_file():
             return "task_service_worker_fence_unavailable:script_missing"
-        clean_env = os.environ.copy()
-        for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT"):
-            clean_env.pop(key, None)
+        # Never forward the Web/controller's ambient environment (including
+        # provider credentials) into the Host Lease verifier. Build the same
+        # deterministic lifecycle environment as other control children, then
+        # remove even its trusted PYTHONPATH: this worker bootstraps the exact
+        # immutable release source itself, and -I ignores external Python paths.
+        clean_env = _control_subprocess_env(
+            code_root=deployment.code_root,
+            runtime_root=deployment.runtime_root,
+        )
+        clean_env.pop("PYTHONPATH", None)
         # -I ignores untrusted PYTHONPATH/user-site and cwd while preserving
         # the trusted interpreter's installed cryptography dependencies.
         # -S would also remove the venv site-packages and break signed Lease

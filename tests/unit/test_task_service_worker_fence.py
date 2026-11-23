@@ -269,3 +269,47 @@ def test_detached_worker_real_isolated_subprocess_denies_without_action(tmp_path
     assert sc._task_service_worker_fence(
         cast(Any, store), cast(Any, action), cast(Any, deployment),
     ) == "task_service_action_missing"
+
+
+def test_detached_worker_never_inherits_ambient_provider_or_python_environment(
+    tmp_path, monkeypatch,
+):
+    """A service Host verifier must receive a minimal, non-secret environment."""
+    import subprocess
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    for key, value in (
+        ("LLM_API_KEY", "do-not-forward-secret"),
+        ("PYTHONHOME", str(tmp_path / "poison-home")),
+        ("PYTHONPATH", str(tmp_path / "poison-src")),
+        ("PYTHONINSPECT", "1"),
+        ("PYTHONSTARTUP", str(tmp_path / "poison-startup")),
+    ):
+        monkeypatch.setenv(key, value)
+    code_root = Path(__file__).resolve().parents[2]
+    action = SimpleNamespace(
+        action_id="nonexistent", task_lease_id="signed-lease",
+        origin="task-restart", target="web",
+    )
+    deployment = SimpleNamespace(
+        code_root=str(code_root), runtime_root=str(tmp_path), generation=1,
+    )
+    store = SimpleNamespace(data_dir=tmp_path / "data")
+    real_run = subprocess.run
+    observed: list[dict[str, str]] = []
+
+    def recording_run(*args, **kwargs):
+        observed.append(dict(kwargs["env"]))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(sc.subprocess, "run", recording_run)
+    assert sc._task_service_worker_fence(
+        cast(Any, store), cast(Any, action), cast(Any, deployment),
+    ) == "task_service_action_missing"
+    assert len(observed) == 1
+    assert not set(observed[0]).intersection({
+        "LLM_API_KEY", "PYTHONHOME", "PYTHONPATH", "PYTHONINSPECT", "PYTHONSTARTUP",
+    })
+    assert observed[0]["LFL_RUNTIME_ROOT"] == str(tmp_path)
+    assert observed[0]["LFL_WORKSPACE_ROOT"] == str(code_root)
