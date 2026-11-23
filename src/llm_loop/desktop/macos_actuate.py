@@ -356,6 +356,7 @@ def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str 
     target, _ = resolve_element_by_axref(window, ax_ref)
     if target is None:
         return None
+    saw_target_document = False
     try:
         if (
             target.attr("AXRole") not in ("AXTextArea", "AXTextField", "AXTextView")
@@ -375,6 +376,14 @@ def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str 
                 return None
         elif description != "Source Editor":
             return None
+        # A target's explicit document identity must never disagree with the
+        # signed window document, even if the filenames are identical.
+        for name in ("AXDocument", "AXURL"):
+            raw = target.attr(name)
+            if raw not in (None, ""):
+                if _validated_ax_file_url(raw) != path:
+                    return None
+                saw_target_document = True
     finally:
         target.release()
 
@@ -390,8 +399,17 @@ def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str 
             fields = tuple(str(ancestor.attr(name) or "") for name in (
                 "AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXIdentifier",
             ))
+            ancestor_documents = tuple(
+                ancestor.attr(name) for name in ("AXDocument", "AXURL")
+            )
         finally:
             ancestor.release()
+        for raw in ancestor_documents:
+            if raw not in (None, ""):
+                if _validated_ax_file_url(raw) != path:
+                    return None
+                if depth > 1:  # AXWindow alone does not bind a VS Code tab.
+                    saw_target_document = True
         if any(
             marker in field.lower()
             for field in fields
@@ -402,6 +420,10 @@ def ax_editor_os_attested_document_path(window: WindowInfo, ax_ref: str) -> str 
             saw_editor |= fields[3] == os.path.basename(path)
         else:
             saw_editor |= fields[4] == "editor context"
+    # VS Code's Electron AXWindow path alone cannot distinguish two tabs with
+    # the same filename. Missing full-path target/ancestor evidence stays HOLD.
+    if bundle == "com.microsoft.vscode" and not saw_target_document:
+        return None
     return path if saw_editor else None
 
 

@@ -71,6 +71,9 @@ def _native_editor_fake(monkeypatch, path, *, bundle, target_attrs=None, context
         "AXFocused": True,
         "AXDescription": "Source Editor" if bundle == "com.apple.dt.Xcode" else path.name,
         "AXRoleDescription": "text entry area" if bundle == "com.apple.dt.Xcode" else "编辑器",
+        # Hypothetical VS Code build exposing target full-path identity;
+        # the real current build lacks this and must remain HOLD.
+        "AXDocument": path.as_uri() if bundle == "com.microsoft.VSCode" else None,
         **(target_attrs or {}),
     })
     mapping = {"0": root, "0.0": context, "0.0.1": target}
@@ -94,7 +97,9 @@ def test_native_os_attested_editor_window_document(monkeypatch, tmp_path, bundle
     "terminal_ancestor", "wrong_editor_description", "remote_document",
     "symlink_document", "unsupported_bundle", "wrong_role_description",
     "missing_window_document", "xcode_missing_editor_context",
-    "xcode_terminal_ancestor",
+    "xcode_terminal_ancestor", "vscode_missing_target_document",
+    "vscode_same_basename_conflict", "xcode_conflicting_target_document",
+    "xcode_conflicting_ancestor_document", "xcode_conflicting_target_url",
 ])
 def test_native_os_attested_editor_fail_closed(monkeypatch, tmp_path, change):
     path = tmp_path / "receipt.txt"
@@ -133,6 +138,27 @@ def test_native_os_attested_editor_fail_closed(monkeypatch, tmp_path, change):
         bundle = "com.apple.dt.Xcode"
         context["AXIdentifier"] = "editor context"
         context["AXDescription"] = "integrated terminal"
+    elif change == "vscode_missing_target_document":
+        attrs["AXDocument"] = None
+    elif change == "vscode_same_basename_conflict":
+        other = tmp_path / "unapproved" / path.name
+        other.parent.mkdir()
+        other.write_text("outside\n")
+        attrs["AXDocument"] = other.as_uri()
+    elif change == "xcode_conflicting_target_document":
+        bundle = "com.apple.dt.Xcode"
+        other = tmp_path / "outside.txt"
+        other.write_text("outside\n")
+        attrs["AXDocument"] = other.as_uri()
+    elif change == "xcode_conflicting_ancestor_document":
+        bundle = "com.apple.dt.Xcode"
+        context["AXIdentifier"] = "editor context"
+        other = tmp_path / "outside.txt"
+        other.write_text("outside\n")
+        context["AXDocument"] = other.as_uri()
+    elif change == "xcode_conflicting_target_url":
+        bundle = "com.apple.dt.Xcode"
+        attrs["AXURL"] = "https://example.invalid/receipt.txt"
     window, _ = _native_editor_fake(
         monkeypatch, path, bundle=bundle, target_attrs=attrs,
         context_attrs=context, root_doc=root_doc, settable=settable,
