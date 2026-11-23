@@ -2,6 +2,17 @@
 
 > 此处记录源码与发行候选的变更，**不等于 GitHub 已正式发布版本列表**；实际稳定版以 [GitHub releases/latest](https://github.com/deyi2026/llm-first-loop/releases/latest) 为准。
 
+## 具身 M2：移动目标重规划 + 鲜观测目标绑定（issue #79，未发版）
+
+- 新增 `embodied_sim/goal_binding.py`：在四个观测点（决策前、动作后、重复意图、验证前）重新观测托盘位姿，digest 变化即作废旧证据、重新绑定目标并重规划；`max_goal_rebinds` 默认 4，耗尽后以 `hold_unknown` 终止，绝不报成功。
+- 每次成功判定都携带 `GoalBinding` 契约，收据记录"针对哪个目标"完成验证；目标在 verify 前移动不再抛异常，而是走 `GOAL_CHANGED_BEFORE_VERIFICATION` 重规划。
+- 不确定执行（settle 超时 / 状态非 `done`）一律 `hold_unknown_pending_reconciliation`，且优先级高于并发目标移动——不用 replan 掩盖未对账动作。
+- 被作废的动作保留在 trace/history，但标注其执行时目标（`stale_goal` + 旧 digest）；同一 `intent_key` 重放会以 `DUPLICATE_INTENT_STALE_GOAL` 暴露，而非被幂等路径静默吞掉；重复键同时记录执行时的 `scene_epoch`，同姿态的场景重置因此也不会让重放被吞掉。
+- 收据的 `goal` 块即使调用方未传期望 digest 也校验自洽性（篡改无法借"没传期望"绕过）；`run_episode` 在把 claim 置为 `pending_oracle` 前用绑定目标自检收据，自检失败即退回 `hold_unknown`。
+- `max_provider_attempts` 语义明确为每次 `provider.decide` 调用计数（M1 只计异常），使无效决策循环也受预算约束。
+- 覆盖：`tests/embodied_m2/`（goal binding 单测、scripted runner 12 个场景、MuJoCo 集成）；M1 物理基线以 `M1-baseline-v1.8.json`（首个 M2 通过）与 `M1-baseline-v1.9.json`（第二轮审查修复后的代码）重跑（10/10、确定性、负例 fail-closed），v1.7 保留冻结供追溯。
+- 未发版：本条不递增 `pyproject.toml` 版本、不打 tag；按本文件纪律视为未发布，正式发行由发布流程统一 bump 版本并打 tag。
+
 ## v0.6.57 — Linux Chrome/CDP 感知通道 + 视觉坐标契约候选（2026-11-22，待受管发布）
 
 - 新增 `cdp_probe` 只读探针：发现并探测本机 CDP 端点（配置项 / 常见端口 / `DevToolsActivePort`），只取版本与目标计数等元信息，不回传页面内容，不改配置、不启动浏览器、不放宽既有 `browser_*` 显式 opt-in 门禁。

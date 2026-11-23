@@ -24,6 +24,7 @@ from llm_loop.introspection.lane import LaneStore
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.task_authority import TaskAuthorityError
 from llm_loop.tools.task_execution import TrustedTaskExecution
+from tests import env_channel
 
 
 class FakeAuthority:
@@ -104,7 +105,10 @@ def task_context(tmp_path):
         current_session_id.reset(token_session)
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS real Seatbelt test")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or env_channel.nested_sandbox_exec(),
+    reason="macOS real Seatbelt test (nested sandbox-exec cannot apply profiles)",
+)
 def test_foreground_two_roots_allowed_third_denied(task_context):
     a, b, c, audit, authority, _lanes, _ctx = task_context
     good, bad = b / "approved.txt", c / "blocked.txt"
@@ -118,7 +122,10 @@ def test_foreground_two_roots_allowed_third_denied(task_context):
     assert authority.calls >= 2
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS real Seatbelt test")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or env_channel.nested_sandbox_exec(),
+    reason="macOS real Seatbelt test (nested sandbox-exec cannot apply profiles)",
+)
 def test_foreground_create_and_rename_in_b_with_c_denied(task_context):
     """A signed Task sandbox allows normal B create/mv without opening C."""
     a, b, c, audit, _authority, _lanes, _ctx = task_context
@@ -137,7 +144,10 @@ def test_foreground_create_and_rename_in_b_with_c_denied(task_context):
     assert not forbidden.exists()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS real Seatbelt test")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or env_channel.nested_sandbox_exec(),
+    reason="macOS real Seatbelt test (nested sandbox-exec cannot apply profiles)",
+)
 def test_background_uses_same_task_sandbox(task_context):
     a, b, c, audit, authority, _lanes, _ctx = task_context
     good, bad = b / "background.txt", c / "blocked-bg.txt"
@@ -157,7 +167,10 @@ def test_background_uses_same_task_sandbox(task_context):
     assert authority.calls >= 2
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS real Seatbelt test")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or env_channel.nested_sandbox_exec(),
+    reason="macOS real Seatbelt test (nested sandbox-exec cannot apply profiles)",
+)
 def test_revocation_at_spawn_fence_denies_all_effects(task_context):
     a, b, _c, audit, authority, _lanes, _ctx = task_context
     authority.revoke_on_call = 2
