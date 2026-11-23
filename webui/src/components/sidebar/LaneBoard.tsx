@@ -6,6 +6,7 @@
 // 以 head_sha@base_main_sha 短 sha 呈现基线关系，不伪造计数。
 
 import { useCallback, useEffect, useState } from "react";
+import { mainViewStore, sessionStore } from "../../core/stores";
 
 interface LaneRow {
   lane_id: string;
@@ -42,6 +43,9 @@ interface BoardResp {
   lanes: LaneRow[];
   overlaps: OverlapRow[];
   degraded: string[];
+  channel?: {
+    sessions?: Array<{ lane_id: string; goal_id: string; session_id: string }>;
+  } | null;
 }
 
 const POLL_MS = 10000;
@@ -71,7 +75,7 @@ function SyncBadge({ deployment }: { deployment: BoardResp["deployment"] }) {
   return <span style={{ opacity: 0.6, fontSize: 11 }}>— 无部署记录</span>;
 }
 
-export function LaneBoard() {
+export function LaneBoard({ onNavigate }: { onNavigate?: () => void } = {}) {
   const [data, setData] = useState<BoardResp | null>(null);
   const [loadErr, setLoadErr] = useState(false);
   const load = useCallback(() => {
@@ -97,6 +101,27 @@ export function LaneBoard() {
       document.removeEventListener("visibilitychange", poll);
     };
   }, [load]);
+
+  // 按 lane_id + goal_id 精确绑定会话，绝不猜测同 Goal 下其它 Lane 的 owner。
+  const sessionByLane = new Map<string, { goal_id: string; session_id: string }>();
+  const duplicateLanes = new Set<string>();
+  if (Array.isArray(data?.channel?.sessions)) {
+    for (const session of data.channel.sessions) {
+      if (!session || typeof session.lane_id !== "string") continue;
+      if (sessionByLane.has(session.lane_id)) {
+        sessionByLane.delete(session.lane_id);
+        duplicateLanes.add(session.lane_id); // 冲突绑定拒绝导航，绝不采用最后一条。
+      } else if (!duplicateLanes.has(session.lane_id)) {
+        sessionByLane.set(session.lane_id, session);
+      }
+    }
+  }
+  const openSession = (sessionId: string) => {
+    mainViewStore.setView("chat");
+    sessionStore.setNewSessionPending(false);
+    sessionStore.setCurrentSession(sessionId);
+    onNavigate?.();
+  };
 
   return (
     <div className="v2-evo" data-testid="lane-board">
@@ -194,10 +219,28 @@ export function LaneBoard() {
                 const laneOverlaps = data.overlaps.filter(
                   (o) => o.a === lane.lane_id || o.b === lane.lane_id
                 );
+                const linked = sessionByLane.get(lane.lane_id);
+                const sessionId = lane.goal_id && linked?.goal_id === lane.goal_id &&
+                  typeof linked.session_id === "string" ? linked.session_id.trim() : "";
                 return (
                   <tr key={lane.lane_id} data-testid="lane-row" style={{ borderTop: "1px solid rgba(128,128,128,0.25)" }}>
                     <td style={{ padding: "4px 6px" }} title={lane.goal_id}>
-                      {lane.goal_id || "—"}
+                      {sessionId ? (
+                        <button
+                          type="button"
+                          data-testid="lane-goal-open-session"
+                          aria-label={"打开 Goal " + lane.goal_id + " 的会话"}
+                          title={"打开进行中的会话 " + sessionId}
+                          onClick={() => openSession(sessionId)}
+                          style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", textAlign: "left", textDecoration: "underline", textUnderlineOffset: 3, padding: "8px 4px", minHeight: 44 }}
+                        >
+                          {lane.goal_id}
+                        </button>
+                      ) : (
+                        <span data-testid="lane-goal-unbound" title="未绑定可打开的会话" style={{ opacity: 0.65 }}>
+                          {lane.goal_id || "—"}
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: "4px 6px" }}>
                       <code>{lane.branch}</code>
