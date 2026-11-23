@@ -2675,6 +2675,31 @@ select.v2-control-pill {
   color: var(--dsw-alias-label-primary);
 }
 
+.v2-settings-other,
+.v2-settings-catalog {
+  min-width: 0;
+}
+
+.v2-settings-other > summary,
+.v2-settings-catalog > summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.v2-settings-other[open],
+.v2-settings-catalog[open] {
+  display: grid;
+  gap: 12px;
+}
+
+.v2-settings-sections > section {
+  min-width: 0;
+}
+
 .v2-settings-facts {
   display: flex;
   flex-direction: column;
@@ -2946,6 +2971,89 @@ select.v2-control-pill {
   flex-direction: column;
   gap: 7px;
   padding: 10px;
+  min-width: 0;
+}
+
+.v2-provider-card > .v2-provider-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.v2-provider-card > .v2-provider-head > div:first-child {
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.v2-provider-card > .v2-provider-head .v2-provider-card-actions {
+  flex: 1 1 180px;
+  justify-content: flex-end;
+}
+
+.v2-provider-primary-action {
+  border-color: var(--dsw-alias-state-business-primary, var(--dsw-alias-border-l2));
+  font-weight: 600;
+}
+
+.v2-provider-credential-form {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.v2-provider-credential-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.v2-provider-credential-form input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.v2-provider-details,
+.v2-provider-runtime-details {
+  min-width: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding-top: 8px;
+}
+
+.v2-provider-details > summary,
+.v2-provider-runtime-details > summary,
+.v2-provider-advanced > summary {
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 0;
+}
+
+.v2-provider-details[open],
+.v2-provider-runtime-details[open],
+.v2-provider-advanced[open] {
+  display: grid;
+  gap: 8px;
+}
+
+.v2-provider-model-grid > .v2-provider-advanced {
+  min-width: 0;
+}
+
+.v2-provider-details .v2-provider-model-grid {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .v2-provider-card > code,

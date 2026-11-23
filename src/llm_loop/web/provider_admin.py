@@ -824,7 +824,10 @@ def test_provider(engine: Any, provider_id: str, model_id: str = "") -> dict[str
         base_url=params["base_url"],
         model=params["model"],
         timeout_s=min(float(params.get("timeout_s", 30.0) or 30.0), 30.0),
-        max_tokens=8,
+        # Reasoning-capable Coding Plan models may spend >8 tokens on their
+        # mandatory reasoning before producing the requested short answer.
+        # Keep the explicit probe bounded without reporting a false empty reply.
+        max_tokens=256,
         wire_protocol=params.get("wire_protocol", "openai"),
         thinking_mode=False,
         reasoning_effort="low",
