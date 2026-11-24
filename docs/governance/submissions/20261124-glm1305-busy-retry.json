@@ -1,0 +1,52 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-glm1305-busy-retry",
+  "summary": "User-approved minimal stability fix GLM1305-20261124: classify GLM-family HTTP 429 + business code 1305 (model busy) as a distinct transient provider_busy semantic and recover it with a bounded same-model same-payload in-place retry reusing the existing transport-retry skeleton (cross-attempt monotonic deadline, Retry-After honored but never waited past the 10s cap or remaining budget, malformed values fail-closed, stop/budget precedence, shared total attempt cap for mixed failures, retry-budget-counted busy progress facts); keep provider_admin.test_provider on its one-bounded-request contract (explicitly disables both retry kinds) and make the probe's reasoning-effort request actually reach the wire with the resolved level reported; webui renders busy as model-busy rather than disconnect. No silent model switching, no tool/Run replay, no fallback-semantics change, no key/permission/quota handling change.",
+  "components": [
+    {
+      "component_id": "llm-transport-busy-retry-and-classification",
+      "paths": [
+        "docs/governance/submissions/20261124-glm1305-busy-retry.json",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/llm/errors.py",
+        "tests/unit/test_glm_busy_1305_retry.py",
+        "tests/unit/test_provider_probe_wire_effort.py",
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing llm_loop.llm transport layer: errors.py owns error semantics/classification (GLM family code tables, classify_llm_error); client.py owns transport attempts, the existing timeout/disconnect retry skeleton, cancellation carriers, task budget hooks and transport observation/settlement. This change adds no new authority: the busy path reuses _raise_for_status facts, the retry loop's stop/deadline machinery and the ProviderRetryInfo display channel.",
+      "disposition": "Reuse the existing LLMHTTPError facts (status/provider_code/body) plus a new Retry-After field extracted at the same raise site. Register GLM 1305 in the family code table (1305 in _GLM_BUSY_CODES, kind provider_busy with fallback dims identical to the existing 429 semantics) and gate an in-place retry on the public predicate is_glm_busy_http_rejection, which explicitly excludes in-stream LLMStreamProviderError so partially delivered output is never replayed. Bounded: default two extra attempts (overload_retry_max field, 0 disables for single-shot probes), backoff 1s->2s plus jitter, cross-attempt monotonic deadline established at the first retry decision (the per-attempt stream deadline does not cover the _raise_for_status raise point), Retry-After honored but never waited past the 10s cap or remaining budget, malformed values (inf/nan/negative) fail closed preserving the real 429, stop/cancel checked during backoff polls, and the next attempt's transport timeout and stream deadline tightened to the remaining budget. Mixed failure sequences share the total attempt cap 1+max(retry_disconnect, overload_retry_max). Function-size baseline re-registered by the guard's own caliber (client.py::_stream_openai 433->538, one incidental tightening run_episode 138->137); no other baseline section touched.",
+      "evidence": [
+        "tests/unit/test_glm_busy_1305_retry.py (20 cases): success-on-retry with byte-identical payload, exhaustion preserving the real 429/body, retry-budget counting 1/2->2/2, stop during backoff (run and child carriers), Retry-After honored exactly, Retry-After beyond 10s cap or remaining budget gives up without early send, inf fails closed, nan canonicalized to absent by the shared parser, busy->disconnect and timeout->busy->success and busy->busy->disconnect mixed sequences bounded at the shared cap, in-stream 1305 with partial output never retried, non-GLM same code and GLM non-1305 codes not hijacked, overload_retry_max 0/1 honored, predicate and classify exactness.",
+        "tests/unit/test_provider_probe_wire_effort.py (4 cases): probe payload carries low when the model supports it (registry default max no longer overrides the probe intent) and equals reasoning_effort_resolved under the always_on_effort contract; default retained when low unsupported (no fabricated level); 429/1305 probe failure stays a single physical request; disconnect failure stays single-request.",
+        "Targeted suite 30 passed plus adjacent regressions 141 passed (quota_feedback, assess_wp1, glm_1310, oracle_1210, fallback, timeout, overflow, wire_p5, p19) and 133 passed (llm_client, model_pool, truncated_backfill, settlement, reasoning_disconnect) on the pinned toolchain Python 3.13.13 / ruff 0.16.5 / mujoco 4.0.1; webui vitest provider-retry 3 passed including the busy copy case; tsc --noEmit clean; tests/unit/test_arch_guards.py 52 passed after re-registration.",
+        "Original complete local R9 gate bash scripts/ci_gate.sh real exit 1 with exactly two red tests, both attributed NOT to this candidate: on pristine main@5fdd21080 in a detached worktree with the same interpreter the same two polkit tests fail identically (2 failed / 19 passed); they belong to the 2026-11-23 Deepin Polkit lane workstream (macOS vs Linux directory-semantics), documented in the PR body; no known-reds ledger edit was made from this lane.",
+        "Independent managed review chain: full_test reviewer (glm-5.3-flash, tree scope) PASS on the pre-baseline tree and PASS on the final tree; git_push whole-tree review PASS (frozen src=0289cd90c -> remote base=5fdd21080) before the managed push; pre-push security scan passed."
+      ],
+      "verification_level": "Local: targeted and adjacent regression suites green on the pinned toolchain; arch guards green after guard-protocol re-registration. Independent reviewer PASS twice on frozen trees plus whole-tree push review PASS. Local full R9 real exit 1 with the only two failures proven pre-existing on pristine main@5fdd21080 with the same interpreter (attribution recorded in the PR body); remote CI (Linux) is the authority for the full-suite verdict on this PR; no production deployment claim — the unified deployment window is owned by the coordinator goal GOAL-20261124-b30ca19b.",
+      "model_evidence_veto_recovery_exit": "The busy path never rewrites credentials, authorization, quota/permission semantics, fallback candidacy, or tool/run replay rules; the operator's Stop authority and the task budget remain the cancel carriers, checked during every backoff poll; the retry budget is independently disableable (overload_retry_max=0) and the final failure preserves the provider's real error body and status for honest feedback. Model/user retains full retry-or-switch decision power after failure; no automatic model switch occurs. If this recovery path misbehaves in production, revert via protected main revert of these two commits and the registry/feedback paths are untouched.",
+      "rollback_route": "Revert commits d07511625 (fix) and 0289cd90c (guard registration) through the protected GitHub main flow; the retry path is additive and isolated to the GLM 429+1305 predicate, so the revert restores the exact pre-PR behavior (single raise, no in-place busy retry) without touching transport, fallback, credentials or the Web deployment pipeline; deployment rollback remains under the coordinator's unified service-control restart."
+    },
+    {
+      "component_id": "provider-admin-probe-contract",
+      "paths": [
+        "src/llm_loop/web/provider_admin.py",
+        "webui/src/components/conversation/MessageItem.tsx",
+        "webui/src/core/types.ts",
+        "webui/src/provider-retry.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing web provider_admin.test_provider (explicit user-triggered one-bounded-request connectivity probe) and the existing webui provider_retry progress projection (ProviderRetryEvent -> MessageItem progress copy). No new endpoints, permissions, or state stores.",
+      "disposition": "Keep the probe contract by passing retry_disconnect=0 and overload_retry_max=0 explicitly (both retry kinds independently disableable), request low reasoning effort only when the model's declared efforts support it (clearing the registry default so the canonical resolution actually reaches the wire instead of being overridden by reasoning_default_effort), keep the registry default when low is unsupported (no fabricated level, no fake reasoning-off claim), and report the mechanical fact reasoning_effort_resolved (equal to the serialized wire value under the always_on_effort contract, asserted by test). Frontend: busy reason gets its own truthful copy and the ProviderRetryEvent union gains busy; no progress-projection ownership changes.",
+      "evidence": [
+        "webui vitest provider-retry.test.tsx 3 passed including the new busy case asserting the model-busy copy (1/2) and that the disconnect label never appears for busy; tsc --noEmit clean.",
+        "tests/unit/test_provider_probe_wire_effort.py asserts payload-level equality between the resolved effort and the serialized reasoning_effort field, single physical request on 429/1305 and on disconnect, and registry-default retention when low is unsupported."
+      ],
+      "verification_level": "Frontend vitest + tsc green; probe contract covered by the new unit suite; independent reviewers PASS on frozen trees; the probe change makes no production config claim and registry files are untouched by this PR.",
+      "model_evidence_veto_recovery_exit": "The probe remains an explicit operator-triggered diagnostic returning mechanical facts only (no response text, no credentials reflected); reasoning_effort_resolved is named as the canonical resolved level, not overstated as the serialized value for protocols where mapping applies; the UI copy change is display-only and the provider retry facts remain non-persisted display data.",
+      "rollback_route": "Revert the provider_admin.py hunk and the three webui files through the same protected PR; webui rebuild is part of the standard managed deployment artifact build, no separate rollback machinery needed."
+    }
+  ],
+  "declarations": []
+}
+

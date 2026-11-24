@@ -352,7 +352,13 @@ function progressSnapshot(msg: ChatMessage, now: number): {
   let next = "收到运行回执后继续显示模型与工具阶段。";
   if (msg.progressStage === "retrying" && msg.providerRetry) {
     const retry = msg.providerRetry;
-    const reason = retry.reason === "timeout" ? "模型请求超时" : "模型连接中断";
+    // GLM1305-20261124: busy=模型繁忙（HTTP 429/业务码 1305）独立事实，
+    // 不得误显示为「连接中断」；最终失败仍如实保留 provider 真实错误。
+    const reason = retry.reason === "timeout"
+      ? "模型请求超时"
+      : retry.reason === "busy"
+        ? "模型繁忙，等待重试"
+        : "模型连接中断";
     summary = `${reason}，正在重试（${retry.retry_index}/${retry.max_retries}）。`;
     next = "收到响应后继续当前任务。";
   } else if (msg.progressStage === "recovering") {
