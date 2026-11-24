@@ -15,7 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
+import random
 import re
 import shutil
 import threading
@@ -54,8 +56,13 @@ from llm_loop.llm.errors import (
     LLMStreamInterruptedError,
     LLMStreamProviderError,
     LLMTimeoutError,
+    is_glm_busy_http_rejection,
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
+
+# GLM1305-20261124: Retry-After 头解析复用同一实现（与传输观测事实同源，
+# 避免两处解析漂移；私有符号跨模块复用沿本仓库内部先例）。
+from llm_loop.resources.transport_observation import _retry_after_seconds
 from llm_loop.runtime.causality import effective_generation_contract
 from llm_loop.timekeeping import system_local_now
 
@@ -177,6 +184,18 @@ def _task_budget_provider_stream(
 # 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
 # 陈旧连接无效（实测两次尝试相隔 2.8ms 同因 ECONNREFUSED）；仅作用于 ConnectError。
 _TRANSPORT_RETRY_BACKOFF_S = 0.5
+
+# GLM1305-20261124: GLM 族 HTTP 429 + 业务码 1305「模型繁忙」有界原地重试。
+# 近 24h 实测（GLM5.4）: 188 次 transport settled 中 8 次首传即 429/1305
+# （195–581ms 返回、无 Retry-After、均未重试）——显式 HTTP 拒绝且零输出时，
+# 同模型同 payload 有限重试可吸收瞬时负载压力。复用既有超时/断连重试骨架
+# （取消检查/总截止/task budget/传输观测），不重放工具、不静默切模型；
+# 与既有重试共享总尝试上限——混合失败也有界。判定谓词见
+# errors.is_glm_busy_http_rejection；码语义见 errors._GLM_BUSY_CODES。
+_HTTP_OVERLOAD_RETRY_MAX = 2           # 额外重试次数上限（不含首次尝试）
+_HTTP_OVERLOAD_BACKOFF_BASE_S = 1.0    # 退避: 1s → 2s（+jitter ≤0.5s）
+_HTTP_OVERLOAD_BACKOFF_MAX_S = 10.0
+_HTTP_OVERLOAD_RETRY_POLL_S = 0.25     # 退避轮询粒度（可中断/可截止）
 
 _SAFE_PROVIDER_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
@@ -979,6 +998,10 @@ class LLMClient:
     # P1-C1 startup-owned business policy. None preserves provider-aware defaults.
     trust_env: bool | None = None
     retry_disconnect: int = 1
+    # GLM1305-20261124: 模型繁忙（HTTP 429/GLM 1305）有界原地重试上限。
+    # None=模块默认（_HTTP_OVERLOAD_RETRY_MAX）；0=显式禁用——provider_admin
+    # 单次探测合同（one bounded request）由此保持。独立于 retry_disconnect。
+    overload_retry_max: int | None = None
     anthropic_cache_control: bool | None = None
     guard_hit_telemetry: bool | None = None
 
@@ -1207,6 +1230,17 @@ class LLMClient:
         if not supported or legacy_default in supported:
             return legacy_default or None
         return None
+
+    def effective_reasoning_effort(self) -> str | None:
+        """当前配置下 canonical 解析的 reasoning 档位（GLM1305-20261124）.
+
+        与 wire 控制同一事实源（contextvar > reasoning_default_effort >
+        reasoning_effort）。语义边界：always_on_effort 契约（GLM）下该值
+        即 wire 序列化值（payload["reasoning_effort"] 直接取本解析）；
+        chat_template+effort_map 等其他控制协议下为映射/开关前的解析档，
+        不必然等于序列化值。供 provider_admin 探测如实记录解析档位。
+        """
+        return self._effective_reasoning_effort()
 
     def _openai_chat_template_kwargs(self) -> dict[str, Any] | None:
         """Return the exact local OpenAI chat-template kwargs for the current request."""
@@ -2191,6 +2225,20 @@ class LLMClient:
         _response_started = False
         _attempt_started = time.monotonic()
         _deadline: float | None = None
+        # GLM1305-20261124: 模型繁忙（HTTP 429/GLM 1305）重试状态。
+        # 重试预算独立于 retry_disconnect（探测可显式禁用）；总尝试上限
+        # 覆盖混合失败（繁忙/超时/断连任意组合）。跨尝试总截止在首次
+        # 重试决定时建立——per-attempt 流 deadline 不覆盖 _raise_for_status
+        # 抛出点（彼时尚未进入流循环，_deadline 仍为 None）。
+        _overload_retry_max = (
+            _HTTP_OVERLOAD_RETRY_MAX if self.overload_retry_max is None
+            else max(0, int(self.overload_retry_max))
+        )
+        _overload_retries = 0
+        _overload_deadline: float | None = None
+        _overload_total_attempts_cap = 1 + max(
+            int(self.retry_disconnect), _overload_retry_max
+        )
 
         def _retry_cancelled() -> bool:
             # Reuse lifecycle's exact run/generation cancellation authority and
@@ -2408,6 +2456,30 @@ class LLMClient:
                     tool_calls=agg.finish(),
                     provider_observed_model=_observed_model,
                 )
+
+        def _overload_backoff_wait(wait_s: float, deadline: float) -> bool:
+            """模型繁忙退避等待：尊重 Retry-After（过长不早发）、停止与总截止.
+
+            GLM1305-20261124。deadline 为跨尝试 monotonic 总截止（必传——
+            per-attempt 流 deadline 在 _raise_for_status 抛出时尚未建立）。
+            返回 True=等待完成，可发起下一次尝试；False=停止/取消，或
+            等待会越过总截止（放弃重试，保留真实 HTTP 拒绝错误与既有
+            执行进度，绝不提前发送）。
+            """
+            if time.monotonic() + wait_s > deadline:
+                return False
+            end = time.monotonic() + wait_s
+            while True:
+                now = time.monotonic()
+                if now >= deadline:
+                    return False
+                remaining = end - now
+                if remaining <= 0.0:
+                    return True
+                time.sleep(min(_HTTP_OVERLOAD_RETRY_POLL_S, remaining))
+                if _retry_cancelled():
+                    return False
+
         _attempt = 0
         _last_retry_exc: BaseException | None = None
         while True:
@@ -2499,7 +2571,76 @@ class LLMClient:
                         tool_delta_seen=_tc_seen, retries=_attempt - 1,
                     ) from exc
                 raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
-            except LLMHTTPError:
+            except LLMHTTPError as exc:
+                # GLM1305-20261124: 仅 GLM 族 HTTP 429 + 业务码 1305（模型繁忙）
+                # 显式拒绝进入有界原地重试——该异常由 _raise_for_status 在响应头
+                # 检查时抛出，必然发生在任何输出/工具之前，也发生在 per-attempt
+                # 流 deadline 建立之前，因此使用独立的跨尝试 monotonic 总截止
+                # （_overload_deadline，首次重试决定时建立）。同模型同 payload，
+                # 最多 _overload_retry_max 次；退避+jitter，尊重 Retry-After
+                # （等待将越过 10s 上限或剩余总预算时不早发，直接保留真实拒绝）；
+                # 停止/task budget 优先。既有超时/断连语义与流内错误
+                # （LLMStreamProviderError，部分输出不可重试）路径不变；
+                # 不静默切模型、不重放工具、不重放整个 Run。
+                if (
+                    is_glm_busy_http_rejection(exc)
+                    and _overload_retries < _overload_retry_max
+                    and _attempt < _overload_total_attempts_cap
+                    and not _output_seen()
+                    and not _response_started
+                    and not _retry_cancelled()
+                ):
+                    retry_after = getattr(exc, "retry_after_seconds", None)
+                    if retry_after is not None and not (
+                        isinstance(retry_after, (int, float))
+                        and math.isfinite(float(retry_after))
+                        and retry_after >= 0
+                    ):
+                        # 畸形 Retry-After（inf/nan/负）不可作为等待依据：
+                        # fail-closed 放弃重试，保留真实 429，绝不盲发。
+                        raise exc
+                    if _overload_deadline is None:
+                        _overload_deadline = (
+                            time.monotonic()
+                            + effective_timeout * _STREAM_TOTAL_BUDGET_FACTOR
+                        )
+                    retry_after_wait = (
+                        retry_after if retry_after is not None and retry_after > 0
+                        else 0.0
+                    )
+                    wait_cap = min(
+                        _HTTP_OVERLOAD_BACKOFF_MAX_S,
+                        _overload_deadline - time.monotonic(),
+                    )
+                    _overload_retries += 1
+                    backoff_s = min(
+                        _HTTP_OVERLOAD_BACKOFF_BASE_S * (2 ** (_overload_retries - 1)),
+                        _HTTP_OVERLOAD_BACKOFF_MAX_S,
+                    ) + random.uniform(0.0, 0.5)
+                    if retry_after_wait > backoff_s:
+                        # 服务端显式等待窗口优先：宁可多等，不早发。
+                        backoff_s = retry_after_wait
+                    if backoff_s > wait_cap:
+                        # 等待将越过 10s 上限或剩余总预算：不早发，如实上抛。
+                        raise exc
+                    logger.warning(
+                        "LLM 模型繁忙（HTTP 429/GLM 1305，Retry-After=%s s），"
+                        "退避 %.2fs 后重试 %d/%d",
+                        retry_after, backoff_s, _overload_retries, _overload_retry_max,
+                    )
+                    yield StreamDelta(provider_retry=ProviderRetryInfo(
+                        "busy", _overload_retries, _overload_retry_max,
+                    ))
+                    if _overload_backoff_wait(backoff_s, _overload_deadline) and not _retry_cancelled():
+                        # 下一次 attempt 的 transport timeout 与流 deadline
+                        # 受剩余总预算约束——重试不扩张等待窗口。
+                        effective_timeout = min(
+                            effective_timeout,
+                            max(0.001, _overload_deadline - time.monotonic()),
+                        )
+                        _last_retry_exc = exc
+                        continue
+                    # 停止/取消，或等待越过总截止：不早发，如实上抛真实拒绝。
                 raise
             except httpx.HTTPError as exc:
                 raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
@@ -3136,12 +3277,25 @@ class LLMClient:
                 provider_code=provider_code,
                 headers=getattr(resp, "headers", None),
             )
+            # GLM1305-20261124: 同步提取服务端 Retry-After（秒值或 HTTP-date
+            # 均折算为秒；缺失/解析失败=None）。重试决策据此尊重等待窗口，
+            # 绝不早发；头部异常不影响真实 HTTP 错误如实上抛。
+            retry_after_s: float | None = None
+            _headers = getattr(resp, "headers", None)
+            if _headers is not None:
+                try:
+                    retry_after_s = _retry_after_seconds(
+                        _headers.get("Retry-After"), now=time.time()
+                    )
+                except Exception:  # noqa: BLE001 — 头部解析失败不影响真实错误上抛
+                    retry_after_s = None
             raise LLMHTTPError(
                 f"HTTP {resp.status_code}: {resp.reason_phrase} | {body}",
                 status_code=resp.status_code,
                 body=body,
                 provider=self.provider,
                 provider_code=provider_code,
+                retry_after_seconds=retry_after_s,
             )
 
     def _check_sse_error(
