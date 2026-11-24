@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261125-web-resource-perf-sse",
-  "summary": "P0-B2 first slice: share session and provider notification probes per Web app without changing authoritative Run/session state.",
+  "summary": "P0-B2: coalesce existing Web SSE probes and session Jobs/Schedule list polling without changing authoritative Run/session state.",
   "components": [
     {
       "component_id": "existing-web-sse-probe-sharing",
@@ -21,6 +21,30 @@
       "verification_level": "Local focused tests and synthetic microbenchmark; independent review, full R9, remote CI, production and load acceptance pending.",
       "model_evidence_veto_recovery_exit": "SSE notifications are hints only; existing authoritative status/history and reconnect remain available. Errors/timeouts do not imply successful reads or task completion; no automatic task retry.",
       "rollback_route": "Protected revert and coordinated Web deployment. No data migration or authoritative state changes."
+    },
+    {
+      "component_id": "existing-web-session-list-poll-sharing",
+      "paths": [
+        "webui/src/components/conversation/JobsCatalog.tsx",
+        "webui/src/components/conversation/ScheduleCatalog.tsx",
+        "webui/src/components/layout/RightPanel.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/core/sessionListPoll.ts",
+        "webui/src/core/sessionListPoll.test.ts",
+        "webui/src/jobs-catalog.test.tsx",
+        "webui/src/schedule-catalog.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web V2 Jobs/Schedule presentation and read-only API client. No new service, scheduler, durable state or execution authority.",
+      "disposition": "Share one mounted polling lifecycle and snapshot per exact session/list type; fastest mounted subscriber sets cadence, 5s/20s run-aware header and 2s open Jobs panel. Skip hidden tabs, abort at 10s, retain last known result on transient failure, discard late/invalidated reads and clear on auth/session boundaries. Existing explicit cancel/kill endpoints remain unchanged; force fresh read after mutation. Optional AbortSignal on existing GET wrappers; no new endpoint.",
+      "evidence": [
+        "TypeScript tsc --noEmit PASS; full WebUI vitest 70 files / 700 tests PASS (3.56s).",
+        "New unit regressions: one timer, fastest cadence, hidden/unmounted stop, slow request abort/recovery, pre-mutation response rejection, auth/session isolation. Component integration verifies header+open panel issue one initial GET and both update on one visibility refresh; schedule switch to failed new-session read does not show old reminders.",
+        "No real model call or production restart. Shared polling counts are local test evidence, not end-to-end production CPU or latency acceptance."
+      ],
+      "verification_level": "Full frontend tests and typecheck locally; independent review, full R9, remote CI and real browser/load acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Snapshots are read-only presentation facts. Explicit user mutations retain existing server authority; errors never imply empty success, and no automatic replay of writes. Auth/session changes invalidate old responses.",
+      "rollback_route": "Protected revert of this frontend slice and coordinated Web deployment; no persistent state or data migration."
     }
   ],
   "declarations": []

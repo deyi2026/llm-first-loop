@@ -802,10 +802,10 @@ export interface ReadListResult<T> {
   status: number;
 }
 
-export async function fetchSessionJobsResult(sessionId: string): Promise<ReadListResult<JobFact>> {
+export async function fetchSessionJobsResult(sessionId: string, signal?: AbortSignal): Promise<ReadListResult<JobFact>> {
   if (!sessionId) return { ok: true, items: [], status: 200 };
   const { status, data } = await api<{ jobs?: JobFact[] }>(
-    `/api/v1/sessions/${encodeURIComponent(sessionId)}/jobs`
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/jobs`, { signal }
   );
   const items = Array.isArray(data.jobs) ? data.jobs : [];
   const ok = status === 200 && Array.isArray(data.jobs);
@@ -846,11 +846,11 @@ export interface ScheduleItem {
 }
 
 export async function fetchSessionScheduleResult(
-  sessionId: string
+  sessionId: string, signal?: AbortSignal
 ): Promise<ReadListResult<ScheduleItem>> {
   if (!sessionId) return { ok: true, items: [], status: 200 };
   const { status, data } = await api<{ schedule?: ScheduleItem[] }>(
-    `/api/v1/sessions/${encodeURIComponent(sessionId)}/schedule`
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/schedule`, { signal }
   );
   const items = Array.isArray(data.schedule) ? data.schedule : [];
   const ok = status === 200 && Array.isArray(data.schedule);

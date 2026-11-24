@@ -4,7 +4,7 @@
 // - 取消是显式用户动作，成功后刷新列表
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScheduleCatalog } from "./components/conversation/ScheduleCatalog";
 import { sessionStore } from "./core/stores";
 import type { ScheduleItem } from "./core/api";
@@ -215,4 +215,20 @@ describe("schedule catalog (DSH ScheduleCatalogAction parity)", () => {
       expect(screen.queryByTestId("schedule-catalog-menu")).not.toBeInTheDocument()
     );
   });
+});
+
+
+it("does not display another session's reminders while the new read is pending or fails", async () => {
+  installFetch(url => {
+    if (url.endsWith("/api/v1/sessions/s2/schedule")) {
+      return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+    }
+    return undefined;
+  });
+  render(<ScheduleCatalog />);
+  expect(await screen.findByTestId("schedule-catalog-trigger")).toHaveTextContent("2 个提醒");
+  fireEvent.click(screen.getByTestId("schedule-catalog-trigger"));
+  await act(async () => { sessionStore.setCurrentSession("s2"); });
+  expect(screen.queryByTestId("schedule-catalog-trigger")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("schedule-catalog-menu")).not.toBeInTheDocument();
 });
