@@ -74,6 +74,25 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
     void fetchAgentsTree().then(setParentMap);
   }, []);
 
+  // Deep-linked or newly selected child sessions must not disappear inside a
+  // collapsed parent when the async agent tree finishes loading.
+  useEffect(() => {
+    if (!currentId) return;
+    const ancestors = new Set<string>();
+    const visited = new Set([currentId]);
+    let parent = parentMap.get(currentId);
+    while (parent && !visited.has(parent)) {
+      ancestors.add(parent);
+      visited.add(parent);
+      parent = parentMap.get(parent);
+    }
+    if (ancestors.size === 0) return;
+    setExpandedSessions((prev) => {
+      if ([...ancestors].every((id) => prev.has(id))) return prev;
+      return new Set([...prev, ...ancestors]);
+    });
+  }, [currentId, parentMap]);
+
   const reloadSessionIndex = () => {
     const epoch = ++sessionListLoadEpoch.current;
     setSessionListStatus("loading");
@@ -95,7 +114,8 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
     const q = query.toLowerCase();
     return (
       (s.title || "").toLowerCase().includes(q) ||
-      (s.last_message_preview || "").toLowerCase().includes(q)
+      (s.last_message_preview || "").toLowerCase().includes(q) ||
+      s.session_id.toLowerCase().includes(q)
     );
   });
 
@@ -436,7 +456,9 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
             const childrenMap = new Map<string, SessionMeta[]>();
             const roots: SessionMeta[] = [];
             for (const s of filtered) {
-              const p = parentMap.get(s.session_id);
+              // Search results are flat: a matching child must remain visible
+              // even when its parent also matches and is collapsed.
+              const p = query ? undefined : parentMap.get(s.session_id);
               if (p && p !== s.session_id && ids.has(p)) {
                 const arr = childrenMap.get(p) ?? [];
                 arr.push(s);
