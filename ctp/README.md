@@ -1,18 +1,18 @@
 # CTP 参考实现（C-5 契约面）
 
 本目录是 CTP 协议的参考实现，**不并入 `llm_loop` 包**，按"可整目录迁出为独立 repo"组织
-（计划 §13.1 D-01 暂定 B）。当前完成 B1（C-5 读取输出契约）与 B2（不确定度声明与协方差传播）。
+（计划 §13.1 D-01 暂定 B）。当前完成 B1（C-5 契约）、B2（不确定度数学）、B5（注册表原型 R-1–R-6）、B6（36h11 图案生成工具链）。
 
 - 规范锚点：`docs/SPEC-20261123-cooperative-target-protocol-v0.9.md` v0.9.2 §5 C-5、§11.1-c、§11.2 V2/V4
 - 计划锚点：`docs/PLAN-20261123-ctp-implementation.md` v0.3b §4.2 B1/B2、§15 执行编排
-- 性质：契约 + 校验器 + 样本 + 不确定度数学；**不含**检测算法（B3）、阈值抑制（B4）
+- 性质：契约 + 校验器 + 样本 + 不确定度数学 + 注册表原型 + 图案生成；**不含**检测算法（B3）、阈值抑制（B4）、一致性 runner（B7）
 
 ## 目录
 
 ```
 ctp/
-├── schema/observation.schema.json   # 规范性产物（JSON Schema 2020-12）
-├── src/ctp_contract/                # 契约（零第三方依赖）
+├── schema/observation.schema.json   # B1 规范性产物（JSON Schema 2020-12）
+├── src/ctp_contract/                # B1 契约（零第三方依赖）
 │   ├── model.py                     # Observation / Pose / Uncertainty / 枚举
 │   ├── validate.py                  # collect_errors / parse_observation
 │   └── errors.py                    # 稳定错误码
@@ -20,12 +20,17 @@ ctp/
 │   ├── se3.py                       # 四元数 / exp-log / Adjoint（左扰动，[v,ω] 顺序）
 │   ├── uncertainty.py               # 声明模板、一阶传播、蒙特卡洛自检
 │   └── pixel.py                     # 角点像素噪声 → 6DoF 协方差（雅可比 + 真解算 MC）
-├── docs/uncertainty-declaration-template.md  # 11.1-c 填写模板
-└── tests/                           # 10 合法 + 24 非法样本 + schema 一致性 + B2 数学（含退化位形边界）
+├── src/ctp_gen/                     # B6 图案生成（codes/layout/manifest/render；PDF 依赖 reportlab）
+├── src/ctp_registry/                # B5 注册表原型 R-1–R-6（Ed25519 依赖 cryptography）
+├── docs/uncertainty-declaration-template.md  # 11.1-c 填写模板（B2）
+├── docs/registry-notes.md           # B5 设计边界与 TODO-G2
+├── docs/upstream/apriltag-tag36h11.c  # vendored：36h11 码表数据（来源/许可注明于文件头）
+└── tests/                           # 契约 / 数学 / 生成器 / 注册表（10 合法 + 24 非法样本等）
 ```
 
-`ctp_contract` 保持零第三方依赖（契约要能跨语言重写）；`ctp_calib` 只为参考实现与自检服务，
-依赖 `numpy`（仓库 `.venv` 已具备）。
+`ctp_contract` 保持零第三方依赖（契约要能跨语言重写）；`ctp_calib` 依赖 `numpy`；
+`ctp_gen` 的 PDF 渲染依赖 `reportlab`（测试另需 `pypdf`）；`ctp_registry` 的 Ed25519
+签名依赖 `cryptography`。以上均为仓库 `.venv` 已具备的常规依赖。
 
 ## 跑测试
 
@@ -64,4 +69,7 @@ SPEC C-5 规定了九个必填字段，但以下实现细节在规范里没有�
 
 - 不判断"读数是否正确"——观测是测量值 + 不确定度，不是真值（C-5 附加要求 a）；
 - 不给任何性能数字——精度、时延阈值均为 `[TBD-*]`，实测前禁止宣称（SPEC §0.2）；
-- 不 vendor 第三方源码（K4 指不复制源码入库）；运行依赖 numpy、测试依赖 jsonschema，均为常规依赖声明而非复制源码。
+- vendor 边界（K4）：除一处显式例外不复制第三方源码——`ctp/docs/upstream/apriltag-tag36h11.c`
+  是 AprilRobotics/apriltag（BSD-2-Clause）官方图库的码表数据，作为 B6 参考数据入库并在文件头
+  注明来源与许可；是否保留 vendor 形式或改为纯生成，待 G2 裁决。运行依赖 numpy / reportlab /
+  cryptography，测试依赖 jsonschema / pypdf——均为依赖声明，非复制源码。

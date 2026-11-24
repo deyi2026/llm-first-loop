@@ -74,12 +74,12 @@ C-5b,unit,test_relative_covariance_agrees_with_monte_carlo,ctp/tests/test_uncert
 C-5b,unit,test_monte_carlo_is_reproducible,ctp/tests/test_uncertainty.py:112,partial,MC可复现（V6判据的统计基础）
 C-5b,unit,test_rotation_only_uncertainty_couples_only_through_force_arm,ctp/tests/test_uncertainty.py:145,partial,伴射结构钉（旋转→平移耦合仅经力臂）
 C-5b,conformance,V6,docs/conformance/V6-cross-vendor.md,pending,双合规读码器位姿差判据；N≥[TBD-V6a]通过率≥95%
-R-1,pending,-,-,pending,注册表未实现；C-5 resolution字段为其接口预留
-R-2,pending,-,-,pending,append-only注册表未实现
-R-3,pending,-,-,pending,墓碑状态未实现
-R-4,pending,-,-,pending,带版本与签名的离线快照未实现
-R-5,pending,-,-,pending,注册记录签名校验未实现
-R-6,unit,test_valid_fixture_parses[v09_quarantine],ctp/tests/test_contract_valid.py:26,partial,quarantine降级标记契约通道已测；注册表复验周期驱动与超期判定未实现（强制等级[TBD-G]）
+R-1,unit,test_roundtrip_deterministic_json 等,ctp/tests/test_registry.py:82,covered,B5 记录：字段集+签名+确定性 JSON roundtrip 与非法字段拒绝
+R-2,unit,test_append_then_replay_chain_consistent 等4例,ctp/tests/test_registry.py:132,covered,append-only：链一致/改写检测/删行检测/无删除改写 API
+R-3,unit,test_retire_creates_terminal_tombstone 等4例,ctp/tests/test_registry.py:215,covered,墓碑终态/复用拒绝/未知ID拒绝/绑定拒绝；权威签名钩子=TODO-G2 首位
+R-4,unit,test_offline_verification_succeeds 等4例,ctp/tests/test_registry.py:282,covered,两级签名快照：离线校验/篡改快照/篡改记录/坏链与无签名
+R-5,unit,test_bind_signed_record_succeeds 等6例,ctp/tests/test_registry.py:330,covered,语义绑定验签：篡改/无签名/未知ID/错权威/链完整性
+R-6,unit,test_two_level_classification 等,ctp/tests/test_registry.py:398,covered,两级时效（待复验/2×周期隔离）按 PROP G5 提案实现待追认；quarantine 契约通道另测；强制等级[TBD-G]
 M-1,unit,test_noise_free_solve_returns_nominal_pose,ctp/tests/test_pixel_uncertainty.py:105,partial,单靶6DoF解算可达（无噪声解算回名义位姿）；"不作唯一安全证据"为部署规则（T-3）无单测对象
 M-2a,pending,-,-,pending,成对几何关系登记与公差[TBD-M2]未实现（布局仅隐式网格几何）
 M-2b,pending,-,-,pending,几何互证→F-3回退报警逻辑未实现

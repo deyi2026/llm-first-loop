@@ -61,6 +61,15 @@ def _render_pdf(layouts: list[Layout], path: Path) -> None:
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
 
+    distinct_pages = {
+        (layout.page.width_mm, layout.page.height_mm) for layout in layouts
+    }
+    if len(distinct_pages) > 1:
+        # P2-3（wave-2 审查）：混页会被第一页尺寸裁剪——fail-closed 拒绝，不静默渲染
+        raise ValueError(
+            "mixed page sizes in one document are not supported (later boards would "
+            "be clipped to the first page); render one document per page size"
+        )
     page_w_pt = layouts[0].page.width_mm * mm
     page_h_pt = layouts[0].page.height_mm * mm
     canvas_writer = canvas.Canvas(str(path), pagesize=(page_w_pt, page_h_pt))

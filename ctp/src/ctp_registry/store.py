@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,8 +114,15 @@ class StoreEvent:
 class RegistryStore:
     """单文件 JSONL 注册表存储。只允许追加与重放；无删除 / 改写接口（R-2）。"""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(
+        self, path: Path | str, *, retire_verifier: Callable[[dict[str, Any]], None] | None = None
+    ) -> None:
         self._path = Path(path)
+        # P2-1（wave-2 审查）：SPEC R-3 未要求墓碑权威签名，本层不发明规范要求；
+        # 但任何能写 JSONL 的写者都可追加 retire（哈希链不拦合法追加），是对语义
+        # 绑定可用性的 DoS 面。retire_verifier 钩子供有权威方的部署强制校验 retire
+        # 载荷（如 Ed25519 签名）；默认 None = SPEC 最小语义（TODO-G2 #1）。
+        self._retire_verifier = retire_verifier
 
     @property
     def path(self) -> Path:
@@ -160,6 +168,8 @@ class RegistryStore:
                 raise RegistryError(
                     UNKNOWN_ID, "target_id", f"cannot retire unknown id {tombstone.target_id!r}"
                 )
+            if self._retire_verifier is not None:
+                self._retire_verifier(payload)
 
         event = StoreEvent(kind, payload, head, compute_entry_hash(head, kind, payload))
         self._path.parent.mkdir(parents=True, exist_ok=True)

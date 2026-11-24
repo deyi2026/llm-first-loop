@@ -113,3 +113,16 @@
 - **P1-4 首次修复形态是 git 死行**：`/artifacts/`（带尾斜杠）排除目录本身，git 不再下钻，`!/artifacts/ctp-review-20261123/` 永不求值——`git check-ignore` 实证仍命中 `:46:/artifacts/`。本表 §6 对 P1-4 的"已修"声明在当时形态下不成立，特此勘误。
 - **终修**：`.gitignore` `/artifacts/` → `/artifacts/*`（例外行原样保留），与本仓 `data/*` + `!data/methods/` 既有惯例同构。核验：`git check-ignore artifacts/ctp-review-20261123/NEW-RECEIPT.md` 退出码 1（未被忽略，例外生效）。
 - 同轮排查确认不成立的其他候选：testpaths 扩容打红 CI（uv.lock 含 numpy/jsonschema）、pyright/ruff 门禁范围声明矛盾（§6 未作该声明）、回执与 git 事实一致性、StrEnum 版本兼容——均逐一排除，依据见复核记录。
+
+## 8. Wave-2 全量测试准入审查（subagent_84e2886b6b17，2026-11-24）
+
+对象：lane-4bbd8c8e 分支 ctp-wave2-20261124（head cdbd4d95c：B6 生成器 + B5 注册表 + A2 规程 + A3 矩阵，scope=[ctp, docs/conformance, docs/trace]）。回执 REVISE / P0=0 / P1=1 / P2=4（报告 `data/review_admission/subagent_84e2886b6b17-full_test.md`，候选指纹 5c8d3756…）。发现与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| 同一提交内"文档↔代码"矛盾：A3 交付基于陈旧树盘点（B5/A2 未入其快照），coverage-summary 声称"注册表未实现/R-1..R-5 pending/6 测试文件/45 函数/143 例/conformance 空目录"与实际提交树相反；ctp/README 状态行停在 B1+B2、目录树缺 ctp_gen/ctp_registry/upstream/receipts、K4"不 vendor"与 apriltag-tag36h11.c vendored 事实矛盾、依赖段缺 reportlab/pypdf/cryptography | P1 | 已修：README 重写状态/性质/目录树/依赖/K4 vendor 例外（注明待 G2 裁决）；trace.csv/trace.md/coverage-summary 重定基——R-1..R-6 → covered（证据 test_registry.py 行号）、计数 7 文件/69 函数/185 例、条目 9 covered/9 partial/41 pending、行级 47/15/51、第 6 章 6 covered、缺口 §2/§3 重写为现状 |
+| 墓碑 retire 事件无权威校验（任何能写 JSONL 的写者可追加 retire 封死绑定 = DoS 面；已文档化但优先级低） | P2 | 已修：`RegistryStore(retire_verifier=...)` 钩子（默认 None=SPEC 最小语义，不发明规范要求）；registry-notes TODO-G2 将该项升为首位并写明 DoS 机理；新增应拦用例 test_retire_verifier_vetoes_retire |
+| `monte_carlo_pose_from_pixels` 的残差 `log_se3` 在 try 外，θ→π 奇异会穿透 `check_first_order_pixel` | P2 | 已修：残差并入 try，命中奇异=样本出域，排除并计数（excluded>0 → ok=False，不静默丢样本）；docstring 同步 |
+| `_render_pdf` 对所有页用 layouts[0].page，混页静默裁剪 | P2 | 已修：入口对混页尺寸 fail-closed `ValueError`；新增应拦用例 test_render_rejects_mixed_page_sizes |
+| test_uncertainty.py 两个测试定义在 `__main__` 卫语之后，脚本模式执行不到 | P2 | 已修：卫语移到文件末尾，两个测试回归收集序 |
+| （附带）i16 NaN fixture 与"JSON 文本层不可表达"措辞张力 | P2 | 说明：i16 依赖 Python json 的扩展字面量 NaN 解析，非标准 JSON 文本；R4 规则族的声明口径不变 |

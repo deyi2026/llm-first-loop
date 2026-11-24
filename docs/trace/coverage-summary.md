@@ -1,6 +1,6 @@
 # CTP 追溯矩阵覆盖总结（A3 交付）
 
-依据：SPEC-20261123-cooperative-target-protocol-v0.9.md（v0.9.2）第 4–10 章；ctp/tests/ 六文件只读盘点（2026-11-24）。
+依据：SPEC-20261123-cooperative-target-protocol-v0.9.md（v0.9.2）第 4–10 章；ctp/tests/ 七文件只读盘点（2026-11-24，含 test_registry.py；docs/conformance/ 9 份规程已建、实测回执未产生）。
 
 ## 一、总体覆盖统计
 
@@ -10,22 +10,22 @@
 |---|---|---|---|---|---|
 | 4 | 物理层 P-* | 11 | 0 | 2 | 9 |
 | 5 | 编码层 C-* | 16 | 3 | 3 | 10 |
-| 6 | 语义层 R-* | 6 | 0 | 1 | 5 |
+| 6 | 语义层 R-* | 6 | 6 | 0 | 0 |
 | 7 | 组合层 M-* | 7 | 0 | 3 | 4 |
 | 8 | 威胁模型 T-* | 9 | 0 | 0 | 9 |
 | 9 | 回退状态机 F-* | 7 | 0 | 1 | 6 |
 | 10 | 版本兼容 VC-* | 3 | 0 | 0 | 3 |
-| 合计 | | 59 | 3（5.1%） | 10（16.9%） | 46（78.0%） |
+| 合计 | | 59 | 9（15.3%） | 9（15.3%） | 41（69.5%） |
 
-covered 条目（3）：C-2a（36h11 码族与码空间）、C-5（读取输出契约，最大证据簇 35 行 unit）、C-5a（观测=测量+不确定度）。
+covered 条目（9）：C-2a（36h11 码族与码空间）、C-5（读取输出契约，最大证据簇 35 行 unit）、C-5a（观测=测量+不确定度）；R-1–R-6（B5 注册表原型，test_registry.py 24 函数 / 42 例）。
 
-partial 条目（10）：P-3b、P-5b、C-1b、C-1d、C-5b、R-6、M-1、M-3、M-5b、F-3（逐条理由见第三节末与 trace.md 各章小结）。
+partial 条目（9）：P-3b、P-5b、C-1b、C-1d、C-5b、M-1、M-3、M-5b、F-3（逐条理由见第三节末与 trace.md 各章小结）。
 
-测试资产：45 个测试函数 / 143 个参数化用例（contract_valid 24 例、contract_invalid 52 例、schema_parity 37 例、uncertainty 12 例、pixel_uncertainty 7 例、generator 11 例）；conformance 规程 0 份（docs/conformance/ 为空目录），V1–V8 以 12 行 pending 占位。
+测试资产：69 个测试函数 / 185 个参数化用例（contract_valid 24 例、contract_invalid 52 例、schema_parity 37 例、uncertainty 14 例、pixel_uncertainty 7 例、generator 12 例、registry 42 例，含 wave-2 审查修复新增的 4 个应拦用例）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
 
-矩阵规模：113 数据行 = unit 57 + pending 占位 44 + conformance 12；行级状态 covered 41 / partial 16 / pending 56。
+矩阵规模：113 数据行 = unit 63 + pending 占位 38 + conformance 12；行级状态 covered 47 / partial 15 / pending 51。
 
-## 二、pending 清单（46 条，按依赖分组）
+## 二、pending 清单（41 条，按依赖分组）
 
 A. 待计量/实测（14 条）——数值空缺须 P2 计量或门槛实测填充：
 - P-1a：对比度 [TBD-P1] 计量；P-1b：镜面高光物理测量
@@ -43,9 +43,8 @@ B. 待工作组裁决（6 条）——[TBD-G] 类，需决策不需实测：
 - P-3a：T0=20°C 工作组形式确认
 - VC-2：规范/族版本解耦机制待码族裁决
 
-C. 待实现（17 条）——载体（读码器/注册表/状态机）未落地：
+C. 待实现（12 条）——载体（读码器/状态机）未落地：
 - C-3b：读码器 unknown version 行为
-- R-1 / R-2 / R-3 / R-4 / R-5：注册表记录、append-only 审计、墓碑、离线快照、签名校验
 - M-2a / M-2b：阵列成对几何登记 [TBD-M2] 与互证回退
 - M-5a：投影模态
 - T-4a（依赖 R-5）、T-4b（依赖 M-2b）、T-4d（依赖 a+b）、T-5（可校验通道）
@@ -56,23 +55,23 @@ D. 无测试义务/资料性（9 条）——规范明示非强制或属治理/�
 
 另：8 个门槛 V1–V8 全部 pending（规程未建、docs/conformance/ 为空）；其中 V4 / V7 / V8 可纯软件先行，V2 / V3 / V6 需计量与认证样本。
 
-## 三、partial 判定清单与理由（10 条）
+## 三、partial 判定清单与理由（9 条）
 
 1. P-3b：热形变须纳入不确定度预算——预算通道（k+1σ 声明+传播）已实现并测试（test_uncertainty_carries_k_and_one_sigma 等），但无热形变专项分量用例，[TBD-P3a] 待计量。
 2. P-5b：可核查依据——确定性再生成（test_generate_is_deterministic）与清单防篡改（test_manifest_detects_tampering）构成机制侧证据；规范要求的批次抽检报告/认证样本谱系未实现。
 3. C-1b：本地段唯一性——板内索引查重已实现（layout 重复索引拒收）；持有前缀机构的域级分配机制未实现。
 4. C-1d：码内容量分层映射——logical_mapping（resolution=code）与 unresolved 状态（v03）在契约/生成器侧已测；R-1 注册表解析路径（resolved 的产生端）未实现。
 5. C-5b：双读码器一致性——k·√(u1²+u2²) 的 RSS 传播与 MC 验证已测（≤5% 一致）；两个合规读码器实体对比与 V6 实测未做。
-6. R-6：复验周期——degradation_flag=quarantine 契约通道已测（v09）；「上次验证时间+复验周期」的注册表驱动与超期判定未实现，强制等级 [TBD-G]。
-7. M-1：单靶 6DoF——解算可达已测（无噪声解算回名义位姿）；「不应作唯一安全证据」为部署规则（T-3），无单测对象。
-8. M-3：板/笼组合——板级结构校验与多板分页载体已测；「按 M-2 递归互证」未实现。
-9. M-5b：投影模态降级——coarse 标记契约通道（v02 合法+i05 枚举严格）已测；投影前提自检与 V5 判据未实现。
-10. F-3：带错硬接禁令——k×RSS 阈值的数学基础（相对协方差传播+MC）已验证；阈值判定回路、回退动作与禁令执行未实现（依赖状态机）。
+（R-6 经 B5 落地后移入 covered；两级时效按 PROP G5 提案实现，强制等级 [TBD-G] 待裁。）
+6. M-1：单靶 6DoF——解算可达已测（无噪声解算回名义位姿）；「不应作唯一安全证据」为部署规则（T-3），无单测对象。
+7. M-3：板/笼组合——板级结构校验与多板分页载体已测；「按 M-2 递归互证」未实现。
+8. M-5b：投影模态降级——coarse 标记契约通道（v02 合法+i05 枚举严格）已测；投影前提自检与 V5 判据未实现。
+9. F-3：带错硬接禁令——k×RSS 阈值的数学基础（相对协方差传播+MC）已验证；阈值判定回路、回退动作与禁令执行未实现（依赖状态机）。
 
 ## 已知缺口与建议（5 条）
 
 1. 读码器侧零覆盖：C-2b（纠错内解码）、C-3b（unknown version→不可读）、C-4（输出抑制）均无载体；现有实现是「生成器+契约校验器」。建议下一波次先立契约级 reader stub——unknown version 与低于阈值不输出可纯软件测。
-2. 语义层 R-1–R-5 整层缺失：注册表/签名/快照未启动，导致 C-1d 的 resolved 路径与 T-4a 只有契约枚举支撑；建议随 C-1a 裁决一并排期最小注册表（含 append-only 与墓碑，可直接复用契约测试模式）。
-3. 一致性规程空转：docs/conformance/ 为空，V1–V8 共 12 行挂 pending。建议先写 V4/V7/V8 三份规程（注入样本可程序生成，无计量依赖），把 T-2/T-3 的测试载体立起来；V2/V3/V6 等 P2 计量到位后再补。
+2. 语义层已由 B5 落地（R-1–R-6 covered，test_registry.py 42 例）；残余治理项：墓碑权威签名（DoS 面——任何能写 JSONL 的写者可追加 retire 封死绑定；retire_verifier 钩子已备，TODO-G2 首位）与 R-6 强制等级终裁。
+3. 规程已建、实测未跑：docs/conformance/ 9 份规程落地，V1–V8 仍 12 行 pending（判据执行依赖 B7 runner 与外部计量）。建议下一波先做 B7 的 V4/V7/V8 runner（注入样本可程序生成、无计量依赖），把 T-2/T-3 的测试载体立起来。
 4. 状态机 F-1–F-5 未实现而 F-3 数学已备：建议实现最小回退判定回路（两级位姿差 vs k×RSS）以承接 V8；这是当前「数学已验证但行为零覆盖」的最大断层。
 5. P-* 全 pending 属预期（数值未冻结、禁止经验值填充），但 P-3b 的热形变入预算可先落软件侧用例（uncertainty model 增加热分量声明并测试非负/单位），不必等 [TBD-P3a] 计量。

@@ -134,3 +134,27 @@ def test_manifest_detects_tampering(tmp_path):
     verdict = verify_manifest(out)
     assert verdict["ok"] is False
     assert any("board-matrices.json" in error for error in verdict["errors"])
+
+
+def test_render_rejects_mixed_page_sizes(tmp_path):
+    """P2-3（wave-2 审查）：同一文档混页尺寸必须显式拒绝，不得静默按第一页裁剪。"""
+    from ctp_gen.layout import Layout, PageSpec, TagSpec
+    from ctp_gen.render import _render_pdf
+
+    def _layout(page: PageSpec, board: int) -> Layout:
+        return Layout(
+            board_index=board,
+            rows=1,
+            cols=2,
+            target_indices=(board * 2, board * 2 + 1),
+            page=page,
+            tag=TagSpec(size_mm=20.0, gap_mm=10.0),
+        )
+
+    a4 = PageSpec(width_mm=210.0, height_mm=297.0, margin_mm=10.0)
+    a5 = PageSpec(width_mm=148.0, height_mm=210.0, margin_mm=10.0)
+    try:
+        _render_pdf([_layout(a4, 0), _layout(a5, 1)], tmp_path / "mixed.pdf")
+    except ValueError:
+        return
+    raise AssertionError("混页尺寸未被 _render_pdf 拒绝")

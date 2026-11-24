@@ -438,3 +438,26 @@ class TestR6Expiry:
         with pytest.raises(RegistryError) as excinfo:
             classify_expiry(signed_record(), datetime(2026, 7, 1, 10, 0))
         assert excinfo.value.code == "timestamp_missing_timezone"
+
+
+def test_retire_verifier_vetoes_retire(store: RegistryStore):
+    """P2-1（wave-2 审查）：配置 retire_verifier 时，未过权威校验的 retire 被拒；未配置=SPEC 最小语义。"""
+    from ctp_registry.tombstone import Tombstone
+
+    record = signed_record()
+    store.append("register", record.to_dict())
+    tombstone = Tombstone(
+        target_id=record.target_id,
+        retired_at="2026-11-24T12:00:00+08:00",
+        reason="end of life",
+    )
+
+    def _reject(payload: dict) -> None:
+        raise RegistryError("signature_invalid", "signature", "retire requires authority signature")
+
+    guarded = RegistryStore(store.path, retire_verifier=_reject)
+    with pytest.raises(RegistryError) as excinfo:
+        guarded.append("retire", tombstone.to_dict())
+    assert excinfo.value.code == "signature_invalid"
+    # 默认（无钩子）仍是 SPEC 最小语义：retire 可入链（终态语义由 R-3 既有用例覆盖）
+    store.append("retire", tombstone.to_dict())

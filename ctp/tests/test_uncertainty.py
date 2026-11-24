@@ -167,10 +167,6 @@ def _run_all() -> int:
     return failures
 
 
-if __name__ == "__main__":
-    raise SystemExit(1 if _run_all() else 0)
-
-
 def test_log_se3_rejects_pi_rotation():
     """应拦输入：180° 旋转的对数映射奇异（轴符号不可定），必须显式报错而非返回垃圾。"""
     half_pi_pose = calib.pose_matrix((0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 0.0))
@@ -191,3 +187,7 @@ def test_template_rejects_zero_sigma_even_with_covariance():
     except ValueError:
         return
     raise AssertionError("全零 1σ + 非零协方差被接受")
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _run_all() else 0)
