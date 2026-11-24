@@ -117,19 +117,3 @@ def compare_startup_artifact(
         "desired_version": desired.version if desired is not None else None,
         "admission_verified": False,
     }
-
-
-def cli_deployment_identity_view(
-    data_dir: str | Path, startup: StartupArtifactIdentity | None = None,
-) -> dict[str, Any]:
-    """Read the existing deployment Store; never create a lock or state file."""
-    from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
-
-    startup = startup if startup is not None else capture_startup_artifact()
-    try:
-        desired = ManagedServiceDeploymentStore(data_dir).read()
-    except (OSError, ValueError, TypeError):
-        result = compare_startup_artifact(startup, None)
-        result["reason"] = "deployment_record_unreadable"
-        return result
-    return compare_startup_artifact(startup, desired)

@@ -14,13 +14,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from llm_loop.runtime.cli_admission import CliAdmissionBinding
 from llm_loop.runtime.cli_deployment_identity import (
     StartupArtifactIdentity,
     compare_startup_artifact,
 )
 
 if TYPE_CHECKING:
+    from llm_loop.runtime.cli_admission import CliAdmissionBinding
     from llm_loop.runtime.service_control import ManagedServiceDeployment
 
 

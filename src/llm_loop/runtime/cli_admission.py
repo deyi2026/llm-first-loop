@@ -47,6 +47,28 @@ def bind_cli_startup(data_dir: str | Path, startup: StartupArtifactIdentity) -> 
                                desired.generation if desired else None)
 
 
+def cli_deployment_identity_view(
+    data_dir: str | Path, startup: StartupArtifactIdentity | None = None,
+) -> dict[str, Any]:
+    """Read the existing deployment Store; never create a lock or state file.
+
+    Lives beside bind_cli_startup (the other Store reader) so that
+    cli_deployment_identity stays a leaf module: R9-P2-06a forbids a runtime
+    import cycle between service_control, cli_processes and cli_deployment_identity.
+    """
+    from llm_loop.runtime.cli_deployment_identity import capture_startup_artifact
+    from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
+
+    startup = startup if startup is not None else capture_startup_artifact()
+    try:
+        desired = ManagedServiceDeploymentStore(data_dir).read()
+    except (OSError, ValueError, TypeError):
+        result = compare_startup_artifact(startup, None)
+        result["reason"] = "deployment_record_unreadable"
+        return result
+    return compare_startup_artifact(startup, desired)
+
+
 @contextmanager
 def cli_state_admission(binding: CliAdmissionBinding | None) -> Iterator[None]:
     """Check under the same lock as publish/restart acceptance.

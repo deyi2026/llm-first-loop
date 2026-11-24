@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from llm_loop.runtime.cli_admission import cli_deployment_identity_view
 from llm_loop.runtime.cli_deployment_identity import (
     StartupArtifactIdentity,
     capture_startup_artifact,
-    cli_deployment_identity_view,
     compare_startup_artifact,
 )
 from llm_loop.runtime.service_control import ManagedServiceDeployment

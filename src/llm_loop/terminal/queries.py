@@ -482,7 +482,7 @@ def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict,
             actual_model = _last_actual_model(raw_session)
         config_sources = _config_source_report(options, values)
         runtime_identity = _runtime_identity_report(workspace)
-        from llm_loop.runtime.cli_deployment_identity import cli_deployment_identity_view
+        from llm_loop.runtime.cli_admission import cli_deployment_identity_view
 
         cli_deployment_identity = cli_deployment_identity_view(data)
         report = {
