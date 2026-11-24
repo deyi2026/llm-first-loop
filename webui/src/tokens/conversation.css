@@ -12,6 +12,21 @@
   position: relative;
 }
 
+/* Native viewport rendering for long, already-loaded history. Keep the DOM
+   and local state; measured block sizes are remembered by the browser.
+   Live/edit/expanded originals stay on the normal rendering path. */
+@supports (content-visibility: auto) and (contain-intrinsic-block-size: auto 120px) {
+  .v2-long-history > .v2-msg {
+    flex: none;
+  }
+  /* Keep the tail measured so back-to-bottom and streaming follow do not
+     land on estimated heights as the newest rows become visible. */
+  .v2-long-history > .v2-msg[data-history-row="true"]:not(:focus-within):not(:nth-last-child(-n+12)) {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 120px;
+  }
+}
+
 .v2-conversation-header {
   flex: none;
   display: flex;

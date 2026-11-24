@@ -129,7 +129,7 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
 
   return (
     <div
-      className="v2-message-list"
+      className={`v2-message-list${projectedMessages.length > 200 ? " v2-long-history" : ""}`}
       ref={scrollRef}
       onScroll={updateBottom}
       data-testid="message-list"

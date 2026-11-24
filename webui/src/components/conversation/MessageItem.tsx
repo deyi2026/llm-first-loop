@@ -649,7 +649,7 @@ function HistoryPreview({ msg, sessionId }: {
     </div>
   );
   return (
-    <div className={`v2-msg ${msg.role}`} data-testid="history-preview">
+    <div className={`v2-msg ${msg.role}`} data-history-row="true" data-testid="history-preview">
       <div className="v2-msg-body">
         <div className="v2-msg-note">长消息预览 · {Math.ceil(ref.bytes / 1024)} KB · {msg.role === "tool" ? "工具回执" : msg.role === "user" ? "用户消息" : "历史消息"}</div>
         <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{msg.content}</div>
@@ -715,7 +715,7 @@ function MessageItemImpl({
 
   if (msg.role === "user") {
     return (
-      <div className="v2-msg user" data-testid="msg-user">
+      <div className="v2-msg user" data-history-row={msg.sourceIndex !== undefined && !msg.streaming && !editing ? "true" : undefined} data-testid="msg-user">
         <div className="v2-msg-bubble user">
           {/* EVO-20260818: 用户输入消息与 assistant 同格式渲染（markdown/代码块/表格/
               公式/路径点击）——输入端（Composer）直接输入 markdown 语法即可 */}
@@ -777,7 +777,7 @@ function MessageItemImpl({
       ...(typeof msg.toolDurationMs === "number" ? { durationMs: msg.toolDurationMs } : {}),
     };
     return (
-      <div className="v2-msg tool" data-testid="msg-tool">
+      <div className="v2-msg tool" data-history-row={msg.sourceIndex !== undefined && !msg.streaming ? "true" : undefined} data-testid="msg-tool">
         <div className="v2-msg-body">
           <ToolActivityPanel activities={[fallbackActivity]} />
           <MessageTime ts={msg.ts} />
@@ -787,7 +787,7 @@ function MessageItemImpl({
   }
   // assistant
   return (
-    <div className="v2-msg assistant" data-testid="msg-assistant">
+    <div className="v2-msg assistant" data-history-row={msg.sourceIndex !== undefined && !msg.streaming ? "true" : undefined} data-testid="msg-assistant">
       <div className="v2-msg-body">
         {msg.streaming ? <ProgressCard msg={msg} /> : null}
         {msg.reasoningContent ? (
