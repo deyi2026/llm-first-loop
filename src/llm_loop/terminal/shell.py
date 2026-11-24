@@ -12,8 +12,20 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.introspection.goal import GoalStore
-from llm_loop.introspection.model_command import handle_model_command
+from llm_loop.introspection.model_command import handle_model_command, parse_model_command
 from llm_loop.introspection.task_store import TaskStore
+from llm_loop.runtime.cli_admission import (
+    CliDeploymentAdmissionError,
+    cli_mutation_lease,
+    cli_state_admission,
+    engine_cli_binding,
+)
+from llm_loop.runtime.cli_reentry import (
+    load_cli_draft,
+    prepare_cli_reentry,
+    retire_cli_draft,
+    save_cli_draft,
+)
 from llm_loop.terminal.approval import ApprovalBridge
 from llm_loop.terminal.editor import KEY_HELP, Composer, palette_text
 from llm_loop.terminal.execution import run_turn
@@ -60,6 +72,11 @@ def _preinput_signal_guard(composer: Composer):
         signal.signal(signal.SIGTERM, previous_term)
 
 
+def _queued_or_draft(queued_text: str | None, draft: str) -> str:
+    """A queued refused message wins over the editor draft; only a missing queue falls back."""
+    return draft if queued_text is None else queued_text
+
+
 def interactive_session(engine: Any, sid: str) -> int:
     try:
         ui = load_ui()
@@ -71,6 +88,16 @@ def interactive_session(engine: Any, sid: str) -> int:
         ui.theme = engine._cli_theme
     composer = Composer(ui, Path(getattr(engine, "_cli_workspace", Path.cwd())))
     composer.record_source = lambda session_id: engine.session.load(session_id).to_dict()
+    binding = engine_cli_binding(engine)
+    resume_path = getattr(engine, "_cli_resume_draft_path", None)
+    recovered_sid = sid
+    if binding is not None and isinstance(resume_path, str) and resume_path:
+        try:
+            composer.draft, composer.stashed = load_cli_draft(binding.data_dir, resume_path, sid)
+        except (OSError, ValueError, TypeError) as exc:
+            print(safe_text(f"[draft recovery] {type(exc).__name__}: {exc}"), file=sys.stderr)
+            return 75
+        print("[draft restored] Edit or explicitly submit; the previous Run is not replayed.")
     approval = getattr(engine, "_cli_approval_bridge", None)
     if approval is None:
         approval = ApprovalBridge()
@@ -80,9 +107,50 @@ def interactive_session(engine: Any, sid: str) -> int:
     if detector is not None:
         detector.popup_pending_review = True
     queued_text: str | None = None
+    def retire_recovered() -> None:
+        nonlocal resume_path
+        if binding is None or not isinstance(resume_path, str) or sid != recovered_sid:
+            return
+        try:
+            retire_cli_draft(binding.data_dir, resume_path, recovered_sid)
+            resume_path = None
+        except (OSError, ValueError, TypeError) as exc:
+            print(safe_text(f"[draft cleanup deferred] {type(exc).__name__}: {exc}"), file=sys.stderr)
+
+    def request_reentry(text: str) -> bool:
+        try:
+            # A refused message, current editor draft and stashed draft may all
+            # be different. Keep the third slot separately, never silently drop it.
+            if binding is not None and composer.draft and composer.stashed and composer.draft not in (text, composer.stashed):
+                extra = save_cli_draft(binding.data_dir, sid, composer.draft, "")
+                print(f"[additional draft retained] {extra}", file=sys.stderr)
+            saved = prepare_cli_reentry(engine, sid, text, composer.stashed or (composer.draft if composer.draft != text else ""))
+            if saved:
+                retire_recovered()
+            return saved
+        except (OSError, ValueError, TypeError) as exc:
+            composer.draft = text
+            print(safe_text(f"[draft retained in this shell] {type(exc).__name__}: {exc}"), file=sys.stderr)
+            return False
+
     try:
         while True:
-            _pending_review(engine, detector)
+            try:
+                with cli_state_admission(binding):
+                    pass
+            except CliDeploymentAdmissionError:
+                if request_reentry(_queued_or_draft(queued_text, composer.draft)):
+                    return 75
+                # Save failure: remain in composer, never auto-submit a queued draft.
+                queued_text = None
+            else:
+                try:
+                    with cli_mutation_lease(binding):
+                        _pending_review(engine, detector)
+                except CliDeploymentAdmissionError:
+                    if request_reentry(_queued_or_draft(queued_text, composer.draft)):
+                        return 75
+                    queued_text = None
             session = engine.session.load(sid)
             if queued_text is None:
                 try:
@@ -101,7 +169,13 @@ def interactive_session(engine: Any, sid: str) -> int:
             if control.lower() in {"exit", "quit", "退出", "/exit"}:
                 return 0
             if control.lower() in {"/new", "/clear"}:
-                sid = engine.session.create(model_override=session.model_override)
+                try:
+                    with cli_state_admission(binding):
+                        sid = engine.session.create(model_override=session.model_override)
+                except CliDeploymentAdmissionError:
+                    if request_reentry(text):
+                        return 75
+                    continue
                 print(f"[new session] {sid}; previous history retained")
                 continue
             if control.startswith("/resume "):
@@ -115,7 +189,14 @@ def interactive_session(engine: Any, sid: str) -> int:
                 continue
             context = getattr(engine, "correction_ctx", None)
             if context is not None:
-                reply = handle_model_command(text, context, session, engine.session, audit=None)
+                is_model, model_arg = parse_model_command(text)
+                try:
+                    with cli_state_admission(binding if is_model and model_arg else None):
+                        reply = handle_model_command(text, context, session, engine.session, audit=None)
+                except CliDeploymentAdmissionError:
+                    if request_reentry(text):
+                        return 75
+                    continue
                 if reply is not None:
                     print(safe_text(reply.reply))
                     continue
@@ -136,6 +217,16 @@ def interactive_session(engine: Any, sid: str) -> int:
                     )
                     if run_exit == 143:
                         return run_exit
+                    if run_exit == 75:
+                        if not composer.abort_preinput():
+                            if request_reentry(text):
+                                print(f"[upgrade deferred] Draft retained: {engine._cli_reentry.draft_path}", file=sys.stderr)
+                                engine._cli_reentry = None
+                            print("[upgrade deferred] Draft input has not closed; no automatic reentry.", file=sys.stderr)
+                            return 75
+                        if request_reentry(text):
+                            return 75
+                        continue
                     composer.mark_preinput_run_settled()
                     draft_eof = False
                     try:
@@ -159,6 +250,12 @@ def interactive_session(engine: Any, sid: str) -> int:
                         queued_text = None
             if run_exit == 143:
                 return run_exit
+            if run_exit == 75:
+                if request_reentry(text):
+                    return 75
+                continue
+            if run_exit == 0 and not composer.draft and not composer.stashed:
+                retire_recovered()
     finally:
         approval.close()
 

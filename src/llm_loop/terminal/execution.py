@@ -9,6 +9,7 @@ from contextlib import suppress
 from typing import Any
 
 from llm_loop.core.trace_leak.ingress_token import issue_ingress
+from llm_loop.runtime.cli_admission import CliDeploymentAdmissionError
 from llm_loop.terminal.presentation import Presenter
 
 
@@ -136,7 +137,9 @@ def _pump(runner: Any, handle: Any, events: Any, view: Presenter,
                     "Run was interrupted by SIGINT before a normal terminal result; external settlement is unknown.",
                     "interrupted", 1 if interactive else 130,
                 )
-            return view.error(item.get("error", "Run failed"), item.get("error_code", "run_error"))
+            code = item.get("error_code", "run_error")
+            return view.error(item.get("error", "Run failed"), code,
+                              75 if code == "cli_deployment_admission_refused" else 1)
 
 
 def _synchronous_turn(engine: Any, sid: str, text: str, view: Presenter) -> int:
@@ -156,6 +159,8 @@ def _synchronous_turn(engine: Any, sid: str, text: str, view: Presenter) -> int:
                     result = stop.value
                     break
         return view.finish(result)
+    except CliDeploymentAdmissionError as exc:
+        return view.error(str(exc), "cli_deployment_admission_refused", 75)
     except KeyboardInterrupt:
         return view.error("Interrupted; external resource closure is unconfirmed.", "interrupted", 130)
     except Exception as exc:  # noqa: BLE001 - report actual failure, never pretend completion

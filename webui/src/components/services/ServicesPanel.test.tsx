@@ -99,3 +99,19 @@ describe("ServicesPanel distinguishes live identity from stable receipt", () => 
     }
   });
 });
+
+it("shows registered CLI generation drift without claiming legacy process coverage", async () => {
+  const status = fakeStatus();
+  status.cli_processes = {
+    state: "update_required", uncertain: 0, coverage: "registered_cli_processes_only",
+    processes: [{ pid: 123, generation: 318, artifact_kind: "source_checkout", git_head: HEAD,
+      version: "", wheel_sha256: "", state: "update_required", reason: "deployment_generation_changed" }],
+  };
+  vi.mocked(fetchServicesStatus).mockResolvedValue(status);
+  render(<ServicesPanel />);
+  const card = await screen.findByTestId("service-card-cli");
+  expect(within(card).getByText(/存在待升级进程/)).toBeTruthy();
+  expect(within(card).getByText(/pid 123 · gen 318/)).toBeTruthy();
+  expect(within(card).getByText(/未登记的旧进程不视为已收敛/)).toBeTruthy();
+  cleanup();
+});

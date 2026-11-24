@@ -82,6 +82,16 @@ def coordination_board(request: Request) -> JSONResponse:
                 "detail": "Board 聚合失败：" + type(exc).__name__,
             },
         )
+    from llm_loop.runtime.service_control import (
+        ManagedServiceDeploymentStore,
+        compose_runtime_convergence_strip,
+    )
+
+    try:
+        runtime_convergence = compose_runtime_convergence_strip(ManagedServiceDeploymentStore(_audit_dir(engine).parent))
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning("runtime convergence unavailable: %s", type(exc).__name__)
+        runtime_convergence = None
     summary_raw = board.get("summary")
     summary = summary_raw if isinstance(summary_raw, dict) else {}
     overlaps_raw = summary.get("overlaps")
@@ -91,6 +101,7 @@ def coordination_board(request: Request) -> JSONResponse:
             "generated_at": board.get("generated_at", ""),
             "main_head": board.get("main_head", ""),
             "versions": board.get("versions", {}),
+            "runtime_convergence": runtime_convergence,
             "deployment": board.get("deployment", {}),
             "channel": board.get("channel"),
             "lanes": board.get("lanes", []),

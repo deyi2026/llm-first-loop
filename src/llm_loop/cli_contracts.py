@@ -30,6 +30,7 @@ def build_chat_parser(prog: str = "llm_loop") -> argparse.ArgumentParser:
     parser.add_argument("message", nargs="?", help="单条消息（不填则进入交互模式）")
     parser.add_argument("--interactive", action="store_true", help="交互模式")
     parser.add_argument("--session", help="复用指定会话（单条/交互）")
+    parser.add_argument("--resume-draft", help="恢复升级时保留的私有草稿（仅交互，不自动提交）")
     parser.add_argument("--stdin", action="store_true", help="标准输入全文作为一个用户消息")
     parser.add_argument("--message-file", help="UTF-8 文件全文作为一个用户消息")
     parser.add_argument("--output", choices=("text", "json", "jsonl"), default="text", help="stdout protocol")

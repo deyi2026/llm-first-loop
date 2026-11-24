@@ -380,3 +380,36 @@ def test_main_router_mount_is_pinned_with_api_key() -> None:
     )
     # 反向保险：不得出现裸挂载主 router（带了依赖就不会命中这条）
     assert "app.include_router(router)" not in src
+
+
+def test_board_runtime_strip_readonly_and_no_port_probe(tmp_path, monkeypatch):
+    import os
+
+    from llm_loop.runtime.service_control import (
+        ManagedServiceDeployment,
+        ManagedServiceDeploymentStore,
+    )
+
+    client, data = _make_client(tmp_path)
+    desired = ManagedServiceDeployment(
+        schema="lfl.managed-service-deployment/v2", deployment_id="board-runtime", generation=1,
+        git_head="a" * 40, code_root=str(tmp_path / "release"), runtime_root=str(tmp_path),
+        data_dir=str(data), artifact_kind="source_checkout", webui_artifact_sha256="c" * 64,
+    )
+    store = ManagedServiceDeploymentStore(data)
+    store.compare_and_swap(desired, expected_generation=0)
+    for service, pid, head in [("web", 99999999, desired.git_head), ("feishu", os.getpid(), "b" * 40),
+                               ("learning", os.getpid(), desired.git_head)]:
+        (store.runtime_dir / f"runtime_manifest.{service}.json").write_text(json.dumps({"pid": pid, "git_head": head}))
+    monkeypatch.setattr("llm_loop.runtime.service_control._web_port_listener_pid", lambda: (_ for _ in ()).throw(AssertionError("no port probe")))
+    before = _tree_digests(data)
+    response = client.get(BOARD_PATH)
+    assert response.status_code == 200
+    strip = response.json()["runtime_convergence"]
+    assert strip["desired_generation"] == 1
+    assert strip["services"]["web"]["state"] == "not_running"
+    assert strip["services"]["feishu"]["state"] == "update_required"
+    assert strip["services"]["learning"]["state"] == "artifact_matches"
+    assert strip["services"]["wecom"]["state"] == "unverified"
+    assert strip["cli"]["coverage"] == "registered_cli_processes_only"
+    assert _tree_digests(data) == before
