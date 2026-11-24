@@ -35,13 +35,15 @@
 | 独立盲审 | P0×4 / P1×10 / P2×6 / 存疑×7；锚点抽查 23 处无编造。**审查对象是 SPEC v0.9 / PROP 0.2 / DESIGN v1.2.2 旧版**，现行版未复盲审 | `artifacts/ctp-review-20261123/deepseek-v4-flash-review.md` |
 | 交叉考问 | 6 问；3 处自纠、1 处升级、2 条补漏 | `artifacts/ctp-review-20261123/cross-examination.md` |
 | 修订落账 | 54 处定点替换（唯一命中才写盘）；基线 md5 与修订前一致 | `artifacts/ctp-review-20261123/adjudication-and-revision-log.md`、`baseline/` |
+| Wave-1 参考实现 | B1 C-5 读取输出契约（schema + 校验器；10 合法 + 24 非法样本）与 B2 不确定度传播（SE(3) 数学、一阶 vs 蒙特卡洛自检、像素噪声 → 6DoF）；经 PR #115 合入 main | `ctp/src/ctp_contract`、`ctp/src/ctp_calib`、`ctp/receipts/20261124-b1b2-pytest.md`（132 passed） |
+| Wave-2 交付（随本版入库） | B5 注册表原型（R-1–R-6）；B6 图案生成（布局 JSON 含必填 `frame_ref`、逐码物理坐标、P-2 公差标注占位）；A2 V1–V8 规程（每份含一条最小冒烟步骤）；A3 追溯矩阵（59 个条目，83 个规范覆盖测试函数逐个具名）及机检元测试。全量测试 **196 passed** | `ctp/receipts/20261124-wave2-pytest.md`（第二次运行）、`docs/conformance/`、`docs/trace/` |
 
-### 1.2 未完成（空置事实；as-of 2026-11-23 20:20 +08:00，此后每次开工先复核本表）
+### 1.2 未完成（空置事实；as-of 2026-11-24 19:00 +08:00，此后每次开工先复核本表）
 
 | 项 | 现状 | 复核方式 |
 |---|---|---|
-| 版本控制 | 三份文档仍为未跟踪文件（`git status` 显示 `??`） | 本 run `git status --porcelain` |
-| 代码实现 | **已被本轮事实推翻**：`ctp/` 已落地 B1（收口见 §16 v0.3a 行）；`pyproject.toml` 无 CTP 依赖不构成缺口——CTP 是独立子项目（D-01），依赖不进本仓打包 | `git diff --cached --name-only`、`pytest ctp/tests` 回执 |
+| 版本控制 | **已入库（2026-11-24 复核）**：Wave-1（四份文档 + 决议单 + B1/B2 代码）经 PR #115 合入 main（`3809e95ed`），远端 9 项检查通过；Wave-2（B5 / B6 / A2 / A3）在 lane-4bbd8c8e，随本版所在 PR 入库 | `git log origin/main`、PR #115 |
+| 代码实现 | **部分推翻（2026-11-24 复核）**：`ctp/` 已落地 B1 契约、B2 不确定度、B5 注册表、B6 图案生成；**未落地**：B3 读码器、B4 阈值抑制、B7 一致性 runner、B8 端到端探针（B8 依赖 D-03 硬件答复）。`pyproject.toml` 无 CTP 依赖不构成缺口——CTP 是独立子项目（D-01），依赖不进本仓打包 | `git log main -- ctp/`、`ctp/receipts/` 回执 |
 | 工作组 | 未组建；0 项 `[TBD-G]` 取得决议编号 | SPEC §14 全表仍为 TBD |
 | 计量资源 | 无台架、无实验室档期 | 无记录 |
 | 第二实现 | 无（V6 无互操作对象） | 无记录 |
@@ -471,3 +473,4 @@ RULE-AI-28 的适配：全量测试与 push 前必须由独立审查者出 PASS 
 | 0.3 | 2026-11-23 | 按独立复审（P0×3 / P1×7 / P2×6）修订：① 新增沙盒 lane 口径（§15.4）并与 G0 行联动；② §13.1 标注 D-01/D-08 为偏离建议、D-09 拆两问；③ 登记 A1b（§14 未覆盖裁决项）；④ §15.2 写区按实际目录重写并补"共享面谁写"；⑤ §15.3 改为"B6/B3 并行"的准确表述；⑥ §15.5 审查者改为独立子代理（我只签发/归档）；⑦ §1.1 标注盲审对象版本、§1.2 加 as-of 并标注已被推翻的行、§5.3 更正 SPEC/DESIGN 引用、§11 表头与样本数更正、§9 补门与 PROP 编号的术语约定 |
 | 0.3a | 2026-11-23 | 执行回执：A1 已交付 8 份（docs/decisions/）；B1 已交付（ctp/，10 合法 + 22 非法样本，`pytest ctp/tests` → 105 passed） |
 | 0.3b | 2026-11-24 | 合并收口回执：① 三轮独立审查全落账（合并审查 REVISE→明细归档；测试准入 r1 REVISE 1P1+5P2；r2 REVISE 1P1+2P2 且上轮 6 项处置全 ACCEPTED），发现与处置 verbatim 见 `artifacts/ctp-review-20261123/code-review-20261123-findings.md` §1–§4；② 关键修复：v04 旋转协方差 deg²→rad²（P0 级，差 3283 倍）、分歧集合声明补全为六条规则族并加 fixture i23/i24 钉住、`log_se3` θ→π 显式拒绝、PSD 在模板与 MC 入口落地、`relative_covariance` 帧口径改右扰动并落模板；③ 测试准入 r3 **PASS**（subagent_a848428989db，候选指纹 87e5cf20）；④ `pytest ctp/tests` → **132 passed in 2.11s**，回执 `ctp/receipts/20261124-b1b2-pytest.md`；⑤ **更正 v0.3a 的"105 passed"**——该数为 B1-only 时点收集数且当时无回执文件（审查 P1-1 指出），一律以 132 + 落盘回执为准 |
+| 0.3c | 2026-11-24 | Wave-2 执行回执（B5 / B6 / A2 / A3 随本版入库）：全量测试 **196 passed**，回执 `ctp/receipts/20261124-wave2-pytest.md` 第二次运行。① B6 补齐验收项：布局 JSON 增必填 `frame_ref`、逐码物理坐标、P-2 公差标注（TBD 占位，不填经验值）；验收第 3 条「打印后能被 B3 读通」未满足，B6 保持未完成。② A2：8 份规程各补一条最小冒烟步骤（只跑通流程，回执标 simulated，不产生门槛证据）。③ **自查更正**：追溯矩阵此前声明「无孤儿」不成立——31 个测试函数未具名（r1 重定基时以「某测试 等」概括同族成员），现逐个具名并新增机检测试钉住孤儿 / 计数 / 证据行号三条不变量。④ §1.2 更正两条陈旧基线行（文档已随 PR #115 入库；代码落地范围），§1.1 增 Wave-1 / Wave-2 两行。⑤ 测试准入审查链 r1–r6 及合并前一轮的发现与处置见归档 §8–§14，含 r5 审查者两次超时（无结论）与 r6 起审查切片收窄的如实声明 |

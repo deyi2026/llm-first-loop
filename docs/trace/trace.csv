@@ -1,0 +1,147 @@
+spec_entry,test_kind,test_id,evidence_path,status,notes
+P-1a,pending,-,-,pending,哑光与≥[TBD-P1]对比度属印刷材质计量；待实测定值
+P-1b,pending,-,-,pending,镜面高光抑制属物理测量；无软件测试对象
+P-2a,pending,-,-,pending,角点边长公差[TBD-P2a]待G6定带；生成器仅按名义尺寸出图不涉公差
+P-2a,conformance,V3,docs/conformance/V3-tolerance-band.md,pending,公差带定带（P2.5/P97.5+25%裕度）与独立留出批次落带验证
+P-2b,pending,-,-,pending,靶标平面度计量待P2批次数据
+P-2c,pending,-,-,pending,安装平面度与贴合要求待施工侧计量
+P-3a,pending,-,-,pending,T0=20°C（ISO 1）待工作组形式确认（[TBD-G]）
+P-3b,unit,test_uncertainty_carries_k_and_one_sigma,ctp/tests/test_contract_valid.py:58,partial,热形变须纳入读出不确定度预算——预算通道（k+1σ声明）已实现并测试；热形变专项分量与[TBD-P3a]未落地
+P-3c,pending,-,-,pending,认证样本低膨胀材质选择；无软件测试对象
+P-4,pending,-,-,pending,认证样本计量标定+证书属实验室流程；V6物理基准未建
+P-5a,pending,-,-,pending,带外制造禁引精度声明属流程管控；依赖V3定带
+P-5b,unit,test_generate_is_deterministic,ctp/tests/test_generator.py:106,partial,确定性再生成+清单校验构成可核查依据的机制侧；批次抽检报告/认证样本谱系未实现
+P-5b,unit,test_manifest_detects_tampering,ctp/tests/test_generator.py:128,partial,清单篡改必被检出（sha校验）；尚非完整谱系
+P-5b,unit,test_layout_json_carries_frame_ref_tag_coordinates_and_tolerance,ctp/tests/test_generator.py:165,partial,公差标注（P-2a/b/c 键 + TBD 占位）与 grade 申报随布局落盘；数值与抽检依据未实现
+C-1a,pending,-,-,pending,前缀公共注册/等价互斥机制未实现；段长[TBD-G]
+C-1b,unit,test_layout_validation_rejects_bad_payloads,ctp/tests/test_generator.py:87,partial,板内索引查重（重复索引拒收）已实现；域级唯一性分配机制未实现
+C-1c,pending,-,-,pending,Q9裁决条款（跨机构只需前缀唯一）；随C-1a落地后可测
+C-1d,unit,test_layout_roundtrip_through_json,ctp/tests/test_generator.py:100,partial,布局logical_mapping（resolution=code）承载分层映射结构；R-1注册表解析路径未实现
+C-1d,unit,test_valid_fixture_parses[v03_unresolved_null],ctp/tests/test_contract_valid.py:26,partial,unresolved（离线且无快照）状态在契约层可表达且合法
+C-1d,unit,test_layout_json_carries_frame_ref_tag_coordinates_and_tolerance,ctp/tests/test_generator.py:165,partial,布局 JSON 逐码物理坐标 + frame_ref（参考系引用）；R-1 解析属 B5
+C-1d,unit,test_layout_rejects_missing_or_blank_frame_ref,ctp/tests/test_generator.py:195,partial,frame_ref 缺失/空白拒收（应拦）
+C-1d,unit,test_layout_from_dict_rejects_tampered_tag_coordinates,ctp/tests/test_generator.py:205,partial,tags 块与几何不一致即拒收（应拦）
+C-2a,unit,test_table_regenerates_from_upstream_source,ctp/tests/test_generator.py:47,covered,码表与BSD-2上游源逐字一致（587码字；K4溯源）
+C-2a,unit,test_family_invariants_hold,ctp/tests/test_generator.py:58,covered,587码字+最小汉明距离≥11（可纠≤5位错误）
+C-2a,unit,test_bit_matrix_structure_matches_convention,ctp/tests/test_generator.py:65,covered,quiet zone白/核外圈黑边/数据位MSB-first映射
+C-2a,unit,test_code_at_rejects_out_of_range,ctp/tests/test_generator.py:82,covered,码空间边界拒收（3个参数化例）
+C-2a,unit,test_layout_validation_rejects_bad_payloads,ctp/tests/test_generator.py:87,covered,family=42h7拒收——v0仅支持36h11
+C-2b,pending,-,-,pending,解码与纠错行为未实现（现有为生成器+契约校验器）；超出纠错按C-4处理无载体
+C-3a,pending,-,-,pending,36h11位图不含版本位；图案版本字段待码族裁决后设计
+C-3b,pending,-,-,pending,读码器未实现；unknown version输出行为无载体
+C-3c,conformance,V7,docs/conformance/V7-version-compat.md,pending,新族版本发布须过混合版本墙（旧版读码器误读=0）
+C-4a,pending,-,-,pending,可见角点数/数据位可见比例阈值[TBD-V4a/V4b]未定；无软件侧判定逻辑
+C-4a,conformance,V4,docs/conformance/V4-degradation.md,pending,双向判据①：低于阈值样本误读率=0
+C-4b,pending,-,-,pending,低于阈值不输出（宁可漏检不可错读）——读码器输出抑制行为未实现
+C-4b,conformance,V4,docs/conformance/V4-degradation.md,pending,低于阈值不输出的实测判据（门槛V4）
+C-4b-2,pending,-,-,pending,达标侧漏检率≤[TBD-V4c]（N≥[TBD-V4d]）须实测样本统计
+C-4b-2,conformance,V4,docs/conformance/V4-degradation.md,pending,双向判据②：防"永不输出"平凡通过
+C-4c,pending,-,-,pending,规范明示劣化预警非本层强制（属健康监测）；无测试义务
+C-5,unit,test_fixture_set_is_not_vacuous,ctp/tests/test_contract_valid.py:21,covered,合法样本集非空泛（≥8；实际10例）
+C-5,unit,test_valid_fixture_parses,ctp/tests/test_contract_valid.py:26,covered,v01–v10全样本解析为契约对象（10参数化例）
+C-5,unit,test_valid_fixture_parses[v05_extension],ctp/tests/test_contract_valid.py:26,covered,x-vendor.*扩展键合法（坏扩展键i20另测拒收）
+C-5,unit,test_valid_fixture_parses[v10_schema_version],ctp/tests/test_contract_valid.py:26,covered,观测自带schema_version字段（ctp.c5/0.1）
+C-5,unit,test_roundtrip_is_lossless,ctp/tests/test_contract_valid.py:34,covered,解析→序列化round-trip无损（10参数化例）
+C-5,unit,test_all_c5_fields_present_in_model,ctp/tests/test_contract_valid.py:40,covered,九字段齐备（缺一即不合规）
+C-5,unit,test_uncertainty_carries_k_and_one_sigma,ctp/tests/test_contract_valid.py:58,covered,k>0且1σ>0——覆盖因子与1σ同时给出
+C-5,unit,test_v04_covariance_units_are_m2_rad2,ctp/tests/test_contract_valid.py:66,covered,协方差单位钉：平移σ²(m²)/旋转rad(σ_deg)²(rad²)
+C-5,unit,test_fixture_set_is_not_vacuous,ctp/tests/test_contract_invalid.py:45,covered,非法样本集非空泛（≥8；实际24例）
+C-5,unit,test_no_orphan_fixture,ctp/tests/test_contract_invalid.py:49,covered,fixtures与期望错误码表一一对应
+C-5,unit,test_invalid_fixture_rejected_with_expected_code,ctp/tests/test_contract_invalid.py:55,covered,24例非法样本稳定拒收且错误码可复核
+C-5,unit,test_invalid_fixture_rejected_with_expected_code[i06_logical_null_with_code],ctp/tests/test_contract_invalid.py:55,covered,linkage：code态logical_id为空拒收（resolution行）
+C-5,unit,test_invalid_fixture_rejected_with_expected_code[i07_logical_set_with_unresolved],ctp/tests/test_contract_invalid.py:55,covered,linkage：unresolved态logical_id非空拒收（resolution行）
+C-5,unit,test_parse_raises_and_reports_path,ctp/tests/test_contract_invalid.py:63,covered,异常带字段路径+错误码（24参数化例）
+C-5,unit,test_root_must_be_object,ctp/tests/test_contract_invalid.py:72,covered,根必须为对象
+C-5,unit,test_nonfinite_numbers_are_rejected,ctp/tests/test_contract_invalid.py:76,covered,NaN/Inf按type_error拒绝
+C-5,unit,test_schema_is_valid_against_metaschema,ctp/tests/test_schema_parity.py:50,covered,schema自身合规（Draft2020-12元模式）
+C-5,unit,test_schema_accepts_all_valid_fixtures,ctp/tests/test_schema_parity.py:55,covered,schema层放行全部合法样本（10参数化例）
+C-5,unit,test_every_invalid_fixture_is_rejected_by_at_least_one_layer,ctp/tests/test_schema_parity.py:61,covered,双层至少一层拒收每例非法样本（24参数化例）
+C-5,unit,test_schema_misses_exactly_the_declared_validator_only_set,ctp/tests/test_schema_parity.py:68,covered,schema/validator分歧集合钉死为六条规则族（防静默漂移）
+C-5,unit,test_validator_never_accepts_what_schema_rejects,ctp/tests/test_schema_parity.py:80,covered,反向分歧为空集
+C-5,unit,test_rotation_sigma_is_converted_from_degrees,ctp/tests/test_uncertainty.py:64,covered,1σ度→弧度换算钉
+C-5,unit,test_template_rejects_degenerate_or_invalid_declarations,ctp/tests/test_uncertainty.py:72,covered,非法不确定度声明拒收（空model/k=0/负σ/全零/形状错）
+C-5,unit,test_detector_rejects_input_that_breaks_first_order,ctp/tests/test_uncertainty.py:99,covered,应拦输入：60°位姿1σ超一阶适用域判不通过（fail-closed）
+C-5,unit,test_propagate_rejects_wrong_shapes,ctp/tests/test_uncertainty.py:120,covered,协方差传播形状校验
+C-5,unit,test_se3_exp_log_roundtrip,ctp/tests/test_uncertainty.py:129,covered,SE(3)指数/对数映射round-trip
+C-5,unit,test_adjoint_matches_pure_translation_form,ctp/tests/test_uncertainty.py:138,covered,纯平移伴射解析式钉
+C-5,unit,test_log_se3_rejects_pi_rotation,ctp/tests/test_uncertainty.py:170,covered,180°对数奇异显式报错（fail-closed）
+C-5,unit,test_template_rejects_zero_sigma_even_with_covariance,ctp/tests/test_uncertainty.py:180,covered,全零1σ附协方差仍拒收（与validator对齐）
+C-5,unit,test_jacobian_matches_numeric_differentiation,ctp/tests/test_pixel_uncertainty.py:44,covered,像素→位姿雅可比vs数值微分
+C-5,unit,test_well_conditioned_geometry_agrees_with_monte_carlo,ctp/tests/test_pixel_uncertainty.py:59,covered,良态位形一阶vs MC逐轴误差≤5%
+C-5,unit,test_fronto_parallel_geometry_is_flagged_degenerate,ctp/tests/test_pixel_uncertainty.py:68,covered,正对平面退化位形如实判失败（tx 1σ厘米级）
+C-5,unit,test_extreme_noise_exceeds_model_domain,ctp/tests/test_pixel_uncertainty.py:83,covered,极端噪声超模型域判失败
+C-5,unit,test_covariance_scales_with_sigma_squared,ctp/tests/test_pixel_uncertainty.py:97,covered,协方差随σ²缩放
+C-5,unit,test_camera_rejects_points_behind,ctp/tests/test_pixel_uncertainty.py:113,covered,相机背后的点拒收
+C-5,conformance,V2,docs/conformance/V2-accuracy.md,pending,精度—条件曲线3σ判据实测（k与1σ声明一致）
+C-5a,unit,test_template_declaration_is_accepted_by_c5,ctp/tests/test_uncertainty.py:37,covered,观测=测量+不确定度：声明可直接填C-5并通过解析；"不裁决谁对"为范围条款（融合交上层）
+C-5b,unit,test_relative_covariance_agrees_with_monte_carlo,ctp/tests/test_uncertainty.py:88,partial,k·√(u1²+u2²)比较的RSS传播基础已验证（≤5%MC一致）；双读码器实测V6未做
+C-5b,unit,test_monte_carlo_is_reproducible,ctp/tests/test_uncertainty.py:112,partial,MC可复现（V6判据的统计基础）
+C-5b,unit,test_rotation_only_uncertainty_couples_only_through_force_arm,ctp/tests/test_uncertainty.py:145,partial,伴射结构钉（旋转→平移耦合仅经力臂）
+C-5b,conformance,V6,docs/conformance/V6-cross-vendor.md,pending,双合规读码器位姿差判据；N≥[TBD-V6a]通过率≥95%
+C-5b,unit,test_singular_covariance_is_typed_failure,ctp/tests/test_uncertainty.py:192,partial,奇异协方差类型化失败（应拦）；k·√ 判据可计算性的边界
+R-1,unit,test_roundtrip_deterministic_json,ctp/tests/test_registry.py:82,covered,B5 记录：字段集+签名+确定性 JSON roundtrip 与非法字段拒绝
+R-1,unit,test_rejects_invalid_fields,ctp/tests/test_registry.py:108,covered,非法字段显式拒收（9 个参数化应拦例：周期/版本/时区/日期/ID/签名格式）
+R-1,unit,test_rejects_unknown_and_missing_dict_keys,ctp/tests/test_registry.py:115,covered,from_dict 缺键/多键均拒收
+R-2,unit,test_append_then_replay_chain_consistent,ctp/tests/test_registry.py:132,covered,append-only：链一致/改写检测/删行检测/无删除改写 API
+R-2,unit,test_no_delete_or_rewrite_api,ctp/tests/test_registry.py:149,covered,无删除/改写接口（append-only 的结构保证）
+R-2,unit,test_rewritten_line_detected_as_tampered,ctp/tests/test_registry.py:163,covered,改写行被检出（payload_tampered）
+R-2,unit,test_deleted_line_breaks_chain,ctp/tests/test_registry.py:177,covered,删行断链（chain_broken）
+R-2,unit,test_unsigned_register_refused_at_append,ctp/tests/test_registry.py:189,covered,无签名记录拒入链
+R-2,unit,test_version_regression_refused,ctp/tests/test_registry.py:195,covered,record_version 不递增即拒
+R-2,unit,test_supersede_appends_new_version,ctp/tests/test_registry.py:202,covered,更新=追加新版本事件
+R-3,unit,test_retire_creates_terminal_tombstone,ctp/tests/test_registry.py:215,covered,墓碑终态/复用拒绝/未知ID拒绝/绑定拒绝；权威签名钩子=TODO-G2 首位
+R-3,unit,test_tombstoned_id_reuse_refused,ctp/tests/test_registry.py:232,covered,墓碑 ID 复用拒收（tombstone_reuse）
+R-3,unit,test_retire_unknown_id_refused,ctp/tests/test_registry.py:244,covered,报废未知 ID 拒收
+R-3,unit,test_bind_tombstoned_id_refused,ctp/tests/test_registry.py:253,covered,墓碑 ID 语义绑定拒收
+R-3,unit,test_retire_verifier_vetoes_retire,ctp/tests/test_registry.py:474,covered,retire_verifier 钩子拒未授权报废（DoS 面缓解）
+R-4,unit,test_offline_verification_succeeds,ctp/tests/test_registry.py:282,covered,两级签名快照：离线校验/篡改快照/篡改记录/坏链与无签名
+R-4,unit,test_tampered_snapshot_rejected,ctp/tests/test_registry.py:290,covered,篡改快照→快照级验签失败
+R-4,unit,test_tampered_record_inside_snapshot_rejected,ctp/tests/test_registry.py:300,covered,篡改单条记录→记录级验签失败
+R-4,unit,test_broken_and_unsigned_snapshots_rejected,ctp/tests/test_registry.py:310,covered,结构损坏/未签名快照拒收
+R-4,unit,test_snapshot_created_at_requires_iso8601_with_timezone,ctp/tests/test_registry.py:325,covered,created_at 非带时区 ISO 8601 即拒（应拦）
+R-4,unit,test_snapshot_excludes_tombstoned_id_even_if_reregistered,ctp/tests/test_registry.py:336,covered,手写链重登记的墓碑 ID 不回快照（应拦）
+R-5,unit,test_bind_signed_record_succeeds,ctp/tests/test_registry.py:361,covered,语义绑定验签：篡改/无签名/未知ID/错权威/链完整性
+R-5,unit,test_tampered_record_fails_signature,ctp/tests/test_registry.py:368,covered,篡改记录验签失败
+R-5,unit,test_unsigned_record_binding_refused,ctp/tests/test_registry.py:376,covered,无签名记录拒绝语义绑定
+R-5,unit,test_unknown_id_binding_refused,ctp/tests/test_registry.py:389,covered,未知 ID 拒绝绑定
+R-5,unit,test_wrong_authority_key_rejected,ctp/tests/test_registry.py:395,covered,错权威公钥拒收
+R-5,unit,test_binding_requires_chain_integrity,ctp/tests/test_registry.py:402,covered,链不完整拒绝绑定
+R-6,unit,test_two_level_classification,ctp/tests/test_registry.py:429,covered,两级时效（待复验/2×周期隔离）按 PROP G5 提案实现待追认；quarantine 契约通道另测；强制等级[TBD-G]
+R-6,unit,test_period_comes_from_record_not_constant,ctp/tests/test_registry.py:434,covered,复验周期取自记录而非常量
+R-6,unit,test_no_hardcoded_period_defaults,ctp/tests/test_registry.py:440,covered,反射断言无硬编码周期默认值
+R-6,unit,test_quarantine_blocks_binding_with_g5_note,ctp/tests/test_registry.py:451,covered,2× 周期超期隔离并带 G5 待追认标注
+R-6,unit,test_pending_revalidation_does_not_block_binding,ctp/tests/test_registry.py:460,covered,一级待复验不拦绑定（G5 提案）
+R-6,unit,test_naive_now_rejected,ctp/tests/test_registry.py:467,covered,无时区 now 拒收
+M-1,unit,test_noise_free_solve_returns_nominal_pose,ctp/tests/test_pixel_uncertainty.py:105,partial,单靶6DoF解算可达（无噪声解算回名义位姿）；"不作唯一安全证据"为部署规则（T-3）无单测对象
+M-2a,pending,-,-,pending,成对几何关系登记与公差[TBD-M2]未实现（布局仅隐式网格几何）
+M-2b,pending,-,-,pending,几何互证→F-3回退报警逻辑未实现
+M-3,unit,test_layout_validation_rejects_bad_payloads,ctp/tests/test_generator.py:87,partial,板级组合结构校验（重复/越界/数量/物理放不下）；递归几何互证未实现
+M-3,unit,test_generate_pdf_is_valid_and_paged,ctp/tests/test_generator.py:117,partial,多板分页物理载体（A4横放≈842pt钉）
+M-3,unit,test_render_rejects_mixed_page_sizes,ctp/tests/test_generator.py:140,partial,混页尺寸显式拒绝（防静默裁剪；应拦）
+M-4,pending,-,-,pending,标定室为可选设施；规范明示可不作协议合规要求
+M-5a,pending,-,-,pending,投影模态未实现
+M-5b,unit,test_valid_fixture_parses[v02_resolved_coarse],ctp/tests/test_contract_valid.py:26,partial,coarse降级标记契约通道已测；投影前提自检与V5判据未实现
+M-5b,unit,test_invalid_fixture_rejected_with_expected_code[i05_degradation_trailing_space],ctp/tests/test_contract_invalid.py:55,partial,降级枚举严格性（尾随空格拒收）
+M-5b,conformance,V5,docs/conformance/V5-projection.md,pending,前提不满足须判粗对齐+coarse标记；无标记即不通过
+T-1,pending,-,-,pending,保护资产定义条目；由R-*/T-4间接承载
+T-2,pending,-,-,pending,对手模型D1–D3；测试载体为V8注入故障集（未建）
+T-3,pending,-,-,pending,部署侧安全边界；V8伪造类期望行为为其测试载体
+T-4a,pending,-,-,pending,语义层签名（依赖R-5）未实现
+T-4b,pending,-,-,pending,几何互证（依赖M-2b）未实现
+T-4c,pending,-,-,pending,物理访问控制属场景设施；无软件测试对象
+T-4d,pending,-,-,pending,开放环境a+b+风险评估记录未实现
+T-5,pending,-,-,pending,可校验通道/离线快照通道未实现
+T-6,pending,-,-,pending,资料性条目；属治理文档无测试义务
+F-1,pending,-,-,pending,回退状态机未实现
+F-2,pending,-,-,pending,交接条件判定未实现；[TBD-F2]角点残差阈值待计量
+F-3,unit,test_relative_covariance_agrees_with_monte_carlo,ctp/tests/test_uncertainty.py:88,partial,k×RSS阈值数学基础（相对协方差传播）已验证；阈值判定/回退动作/带错硬接禁令的执行未实现
+F-3,conformance,V8,docs/conformance/V8-fail-closed.md,pending,注入1000故障样本验证带错硬接=0（只验不校准）
+F-4a,pending,-,-,pending,FAR重试N≤3→STOP未实现
+F-4a,conformance,V1,docs/conformance/V1-latency.md,pending,时延分布（超时预算声明输入；非合规判据）
+F-4b,pending,-,-,pending,MID/NEAR逐级回退未实现
+F-4c,pending,-,-,pending,STOP=停止+报警+人工介入（无默认通过出口）未实现
+F-4c,conformance,V8,docs/conformance/V8-fail-closed.md,pending,伪造/层级矛盾类故障→STOP+报警
+F-5,pending,-,-,pending,资料性状态图；随F-1–F-4实现
+VC-1,pending,-,-,pending,规范版本治理流程；无代码载体
+VC-2,pending,-,-,pending,规范/族版本解耦待码族裁决（C-2 [TBD-G]）；观测schema_version（v10）仅为数据格式版本非本条证据
+VC-3,conformance,V7,docs/conformance/V7-version-compat.md,pending,发布门禁：混合版本墙误读=0无豁免通道
