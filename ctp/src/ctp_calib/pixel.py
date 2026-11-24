@@ -125,7 +125,8 @@ def monte_carlo_pose_from_pixels(
 ) -> dict:
     """对像素加噪后逐个做真解算，返回残差经验协方差与被排除的样本数。
 
-    噪声大到解算跑飞（角点跑到相机背后）时，该样本被排除并计数——排除率非零即说明
+    噪声大到解算跑飞（角点跑到相机背后）、或残差命中 θ→π 对数奇异（log_se3 显式拒绝）时，
+    该样本被排除并计数——排除率非零即说明
     一阶模型已出域，`check_first_order_pixel` 会据此判 ok=False，不会静默丢样本。
     """
     if samples < 100:
@@ -137,14 +138,16 @@ def monte_carlo_pose_from_pixels(
     excluded = 0
     for _ in range(samples):
         observed = nominal_uv + rng.normal(0.0, sigma_px, nominal_uv.shape)
+        # 左扰动约定：solved = exp(ξ) pose ⇒ ξ = log(solved · pose⁻¹)。
+        # 写成 log(pose⁻¹ · solved) 会落到靶标系，与 J 的相机系相差一个 Ad，平移/旋转会串味。
+        # 解算跑飞或残差命中 θ→π 奇异都算模型出域：排除并计数（P2-2，wave-2 审查），
+        # excluded>0 → check_first_order_pixel 判 ok=False，不静默丢样本。
         try:
             solved = solve_pose_gauss_newton(camera, corners_target, observed, pose)
+            residuals.append(se3.log_se3(solved @ inverse_nominal))
         except ValueError:
             excluded += 1
             continue
-        # 左扰动约定：solved = exp(ξ) pose ⇒ ξ = log(solved · pose⁻¹)。
-        # 写成 log(pose⁻¹ · solved) 会落到靶标系，与 J 的相机系相差一个 Ad，平移/旋转会串味。
-        residuals.append(se3.log_se3(solved @ inverse_nominal))
     if len(residuals) < 100:
         raise ValueError(f"too many diverged samples: excluded={excluded}/{samples}")
     matrix = np.array(residuals)

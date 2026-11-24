@@ -1,0 +1,171 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-ctp-wave2",
+  "summary": "CTP（合作目标校准协议）第二波交付入库：注册表原型（SPEC 第 6 章 R-1 至 R-6：Ed25519 记录签名、append-only 哈希链、墓碑、离线签名快照、语义绑定验签、两级时效）；36h11 图案生成工具链（布局、PDF、清单，含一份 vendored 的上游码表数据文件）；V1–V8 一致性测试规程（每份含一条最小冒烟步骤）；规范条目—测试用例追溯矩阵及其机检测试；B2 不确定度与像素蒙特卡洛的边界加固。不改动 llm_loop 运行时，不新增权限、否决或恢复出口，不冻结任何门槛数值。读码器 B3、阈值抑制 B4、一致性 runner B7、端到端探针 B8 不在本次范围。",
+  "components": [
+    {
+      "component_id": "ctp-wave2-plan-and-review-record",
+      "paths": [
+        "docs/PLAN-20261123-ctp-implementation.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md"
+      ],
+      "owning_subsystem": "既有文档面：CTP 实施计划（基线表与变更历史）与独立审查发现/处置归档。不进入运行时。",
+      "disposition": "计划第 1.2 节更正两条已失实的基线行（文档已随 PR #115 入库；代码落地范围扩至 B1/B2/B5/B6），第 1.1 节与变更历史追加 Wave-2 执行回执。归档第 8 至 14 节逐轮记录测试准入与合并前审查的发现、处置、审查切片收窄，以及一次自查发现的追溯矩阵缺陷。",
+      "evidence": [
+        "docs/PLAN-20261123-ctp-implementation.md 第 1.1、1.2 节与第 16 章",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 8 至 14 节"
+      ],
+      "verification_level": "测试准入经六轮独立审查。第五轮审查者两次超时、未产出结论；自第六轮起，为缩短审查材料，把 vendored 码表与 V1–V8 规程移出测试准入切片，依据与残余风险写在归档第 12 节。推送前审查按完整 diff 复核，以本 PR 的审查结果为准。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-registry-prototype",
+      "paths": [
+        "ctp/src/ctp_registry/__init__.py",
+        "ctp/src/ctp_registry/record.py",
+        "ctp/src/ctp_registry/store.py",
+        "ctp/src/ctp_registry/tombstone.py",
+        "ctp/src/ctp_registry/snapshot.py",
+        "ctp/src/ctp_registry/verify.py",
+        "ctp/src/ctp_registry/expiry.py",
+        "ctp/docs/registry-notes.md",
+        "ctp/tests/test_registry.py"
+      ],
+      "owning_subsystem": "ctp/src/ctp_registry：CTP 语义层原型库（计划任务 B5），仅被 ctp/tests 引用。",
+      "disposition": "R-1 记录字段集与确定性 JSON 签名（执行期暂定 Ed25519 加确定性 JSON，待 G2 追认）；R-2 只追加的事件日志加 sha256 哈希链，无删除/改写接口；R-3 墓碑终态与复用拒收；R-4 快照级加记录级两级签名的离线快照；R-5 语义绑定前必验签；R-6 两级时效（待复验、二倍周期隔离），按裁决建议稿 G5 的提案实现，标注待工作组追认。fail-closed：非法输入显式报稳定错误码。已知边界如实登记：哈希链不防能重写全链的特权攻击者；retire 事件默认不要求权威签名（SPEC 未要求），提供可选校验钩子，并把该拒绝服务面列为工作组待裁决首位。",
+      "evidence": [
+        "ctp/docs/registry-notes.md",
+        "ctp/src/ctp_registry/store.py",
+        "ctp/src/ctp_registry/snapshot.py",
+        "ctp/receipts/20261124-wave2-pytest.md"
+      ],
+      "verification_level": "注册表测试随 ctp 全量回归执行并计入本机 196 passed 的总数；33 个测试函数在追溯矩阵中逐个具名，正例与应拦负例对应 R-1 至 R-6。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：库形态原型，未被 llm_loop 运行时或任何服务加载；签名密钥治理、公钥分发与在线服务化均未实现，列为工作组待决事项。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-pattern-generator",
+      "paths": [
+        "ctp/src/ctp_gen/__init__.py",
+        "ctp/src/ctp_gen/codes.py",
+        "ctp/src/ctp_gen/layout.py",
+        "ctp/src/ctp_gen/manifest.py",
+        "ctp/src/ctp_gen/render.py",
+        "ctp/src/ctp_gen/tag36h11_table.py",
+        "ctp/docs/generator-notes.md",
+        "ctp/tests/test_generator.py"
+      ],
+      "owning_subsystem": "ctp/src/ctp_gen：36h11 靶标图案生成工具链 v0（计划任务 B6），仅被 ctp/tests 引用。",
+      "disposition": "输入板规格输出布局 JSON、可打印 PDF、位图真值与带哈希的清单。布局 JSON 逐码给出 target_index、物理坐标与必填的参考系定义引用 frame_ref；公差标注的键对应 SPEC P-2a/b/c，值恒为 TBD 占位编号，不填经验值。参考系缺失、坐标块被手改、混合页尺寸均显式拒绝。打印后能否被读码器读通尚未验证（读码器 B3 未实现）。",
+      "evidence": [
+        "ctp/docs/generator-notes.md",
+        "ctp/src/ctp_gen/layout.py",
+        "ctp/receipts/20261124-wave2-pytest.md"
+      ],
+      "verification_level": "生成器测试随 ctp 全量回归执行并计入本机 196 passed 的总数；13 个测试函数在追溯矩阵中逐个具名，含输出确定性与清单防篡改用例。B6 验收第 3 条（被 B3 读通）未满足，任务保持未完成。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-vendored-apriltag-table",
+      "paths": [
+        "ctp/docs/upstream/apriltag-tag36h11.c"
+      ],
+      "owning_subsystem": "ctp/docs/upstream：第三方数据文件，仅作为码表来源参考，不被 import 或执行。",
+      "disposition": "AprilTag 36h11 码表数据，取自 AprilRobotics/apriltag 官方图库（BSD-2-Clause），文件头保留完整许可声明。这是 K4「不复制第三方源码」的唯一显式例外；是否保留该形式或改为纯生成，待契约闸 G2 裁决。",
+      "evidence": [
+        "ctp/docs/upstream/apriltag-tag36h11.c 文件头许可声明",
+        "ctp/docs/generator-notes.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 4 节"
+      ],
+      "verification_level": "独立审查抽查：许可头完整，ctp_gen 的码表与上游逐字一致（首尾码字及全部 36 对位坐标）。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "revert 该文件；ctp_gen 的码表再生测试将失去上游对照，需一并处理。"
+    },
+    {
+      "component_id": "ctp-calib-hardening-and-test-receipt",
+      "paths": [
+        "ctp/src/ctp_calib/pixel.py",
+        "ctp/src/ctp_calib/uncertainty.py",
+        "ctp/tests/test_uncertainty.py",
+        "ctp/README.md",
+        "ctp/receipts/20261124-wave2-pytest.md"
+      ],
+      "owning_subsystem": "既有 ctp/src/ctp_calib（B2 不确定度数学）及其测试、ctp 目录说明与测试回执。",
+      "disposition": "边界加固：对数映射在旋转角趋近 180 度时显式拒绝；相对位姿协方差的切空间口径写明为右扰动；过半正定容差但奇异的协方差在蒙特卡洛入口转为类型化失败；像素蒙特卡洛把该奇异计入排除样本。README 更新为当前交付范围、依赖与 vendored 例外。",
+      "evidence": [
+        "ctp/receipts/20261124-wave2-pytest.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 8、11 节"
+      ],
+      "verification_level": "本机 ctp 全量测试 196 passed，命令与输出见回执；Linux 上的全量门禁以本 PR 的远端 CI 结果为准。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-conformance-procedures",
+      "paths": [
+        "docs/conformance/README.md",
+        "docs/conformance/V1-latency.md",
+        "docs/conformance/V2-accuracy.md",
+        "docs/conformance/V3-tolerance-band.md",
+        "docs/conformance/V4-degradation.md",
+        "docs/conformance/V5-projection.md",
+        "docs/conformance/V6-cross-vendor.md",
+        "docs/conformance/V7-version-compat.md",
+        "docs/conformance/V8-fail-closed.md"
+      ],
+      "owning_subsystem": "新增文档面 docs/conformance：V1–V8 一致性测试规程（计划任务 A2）。不进入运行时。",
+      "disposition": "八份规程按固定六节编写，判据逐字引用 SPEC 第 11.2 节；每份第 4 节末尾有一条最小冒烟步骤，用于在全量资源到位前跑通样本链路与回执。全部状态为待实测：规程不是测试结果，不冻结任何门槛数值，[TBD-*] 编号原样保留。",
+      "evidence": [
+        "docs/conformance/README.md",
+        "docs/PLAN-20261123-ctp-implementation.md 第 3.1 节"
+      ],
+      "verification_level": "冒烟板命令与 V5、V6 两条冒烟命令于 2026-11-24 在 lane 工作树用仓库 .venv 解释器实测通过。冒烟回执必须标 simulated，不构成门槛证据。规程文档不在第六轮起的测试准入切片内，由推送前审查按完整 diff 复核。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-trace-matrix-and-machine-check",
+      "paths": [
+        "docs/trace/trace.csv",
+        "docs/trace/trace.md",
+        "docs/trace/coverage-summary.md",
+        "ctp/tests/test_trace_matrix.py"
+      ],
+      "owning_subsystem": "新增文档面 docs/trace（计划任务 A3）与一个约束该文档面自身一致性的测试。",
+      "disposition": "规范第 4 至 10 章 59 个条目的追溯矩阵，83 个规范覆盖测试函数逐个具名。条目级覆盖为 covered 9、partial 9、pending 41，其余待实测、待裁决或待实现，均如实标注。此前矩阵曾以「某测试 等」概括同族成员，导致 31 个函数未具名而文档仍声明无孤儿；本次补全并新增机检测试：出现未具名测试、文档计数与 AST 实测不符、或证据行号偏离函数定义行时，该测试失败。",
+      "evidence": [
+        "docs/trace/coverage-summary.md",
+        "ctp/tests/test_trace_matrix.py",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 14 节"
+      ],
+      "verification_level": "机检测试随 ctp 全量回归执行并通过；它进入全量回归（pyproject 的 testpaths 已含 ctp/tests），只约束 CTP 文档自身的一致性，不拦截仓库其他变更。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不新增否决或恢复出口：机检测试失败与仓库其他测试失败走同一条门禁路径。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "a5-manifest-self",
+      "paths": [
+        "docs/governance/submissions/20261124-ctp-wave2.json"
+      ],
+      "owning_subsystem": "治理提交清单，A.5 架构提交审查的机械覆盖对象。",
+      "disposition": "本清单自身，随 PR 入库。",
+      "evidence": [
+        "docs/governance/architecture-submission-v0.1.schema.json"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py 本地预检通过。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    }
+  ],
+  "declarations": []
+}

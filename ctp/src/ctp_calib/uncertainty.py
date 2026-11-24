@@ -149,8 +149,16 @@ def monte_carlo_relative(
         if np.linalg.eigvalsh(matrix).min() < -1e-12 * max(1.0, float(abs(matrix).max())):
             raise ValueError(f"{name} must be positive semi-definite for Cholesky sampling")
     rng = np.random.default_rng(seed)
-    chol_a = np.linalg.cholesky(np.asarray(covariance_a, dtype=float))
-    chol_b = np.linalg.cholesky(np.asarray(covariance_b, dtype=float))
+    try:
+        chol_a = np.linalg.cholesky(np.asarray(covariance_a, dtype=float))
+        chol_b = np.linalg.cholesky(np.asarray(covariance_b, dtype=float))
+    except np.linalg.LinAlgError as error:
+        # P2-3（wave-2 r4）：过了 PSD 容差但奇异（如某轴 1σ=0）时 Cholesky 不可用；
+        # 给类型化失败，不让 numpy 的 LinAlgError 裸穿到调用方
+        raise ValueError(
+            "covariance is singular (e.g. a zero-variance axis): Cholesky sampling needs a "
+            "positive definite covariance; declare strictly positive 1-sigma on every sampled axis"
+        ) from error
     nominal = se3.inverse(pose_a) @ pose_b
     nominal_inverse = se3.inverse(nominal)
     residuals = np.empty((samples, 6))
@@ -202,6 +210,15 @@ def check_first_order_validity(
         return {
             "ok": False,
             "reason": "pi_singularity",
+            "detail": str(error),
+            "tolerance": tolerance,
+            "samples": samples,
+        }
+    except ValueError as error:
+        # P2-3（wave-2 r4）：形状/对称/PSD/奇异的入口校验失败同样落为判定，不中断自检
+        return {
+            "ok": False,
+            "reason": "invalid_covariance",
             "detail": str(error),
             "tolerance": tolerance,
             "samples": samples,

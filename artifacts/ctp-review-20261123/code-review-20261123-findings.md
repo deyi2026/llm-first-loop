@@ -113,3 +113,79 @@
 - **P1-4 首次修复形态是 git 死行**：`/artifacts/`（带尾斜杠）排除目录本身，git 不再下钻，`!/artifacts/ctp-review-20261123/` 永不求值——`git check-ignore` 实证仍命中 `:46:/artifacts/`。本表 §6 对 P1-4 的"已修"声明在当时形态下不成立，特此勘误。
 - **终修**：`.gitignore` `/artifacts/` → `/artifacts/*`（例外行原样保留），与本仓 `data/*` + `!data/methods/` 既有惯例同构。核验：`git check-ignore artifacts/ctp-review-20261123/NEW-RECEIPT.md` 退出码 1（未被忽略，例外生效）。
 - 同轮排查确认不成立的其他候选：testpaths 扩容打红 CI（uv.lock 含 numpy/jsonschema）、pyright/ruff 门禁范围声明矛盾（§6 未作该声明）、回执与 git 事实一致性、StrEnum 版本兼容——均逐一排除，依据见复核记录。
+
+## 8. Wave-2 全量测试准入审查（subagent_84e2886b6b17，2026-11-24）
+
+对象：lane-4bbd8c8e 分支 ctp-wave2-20261124（head cdbd4d95c：B6 生成器 + B5 注册表 + A2 规程 + A3 矩阵，scope=[ctp, docs/conformance, docs/trace]）。回执 REVISE / P0=0 / P1=1 / P2=4（报告 `data/review_admission/subagent_84e2886b6b17-full_test.md`，候选指纹 5c8d3756…）。发现与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| 同一提交内"文档↔代码"矛盾：A3 交付基于陈旧树盘点（B5/A2 未入其快照），coverage-summary 声称"注册表未实现/R-1..R-5 pending/6 测试文件/45 函数/143 例/conformance 空目录"与实际提交树相反；ctp/README 状态行停在 B1+B2、目录树缺 ctp_gen/ctp_registry/upstream/receipts、K4"不 vendor"与 apriltag-tag36h11.c vendored 事实矛盾、依赖段缺 reportlab/pypdf/cryptography | P1 | 已修：README 重写状态/性质/目录树/依赖/K4 vendor 例外（注明待 G2 裁决）；trace.csv/trace.md/coverage-summary 重定基——R-1..R-6 → covered（证据 test_registry.py 行号）、计数 7 文件/69 函数/185 例、条目 9 covered/9 partial/41 pending、行级 47/15/51、第 6 章 6 covered、缺口 §2/§3 重写为现状 |
+| 墓碑 retire 事件无权威校验（任何能写 JSONL 的写者可追加 retire 封死绑定 = DoS 面；已文档化但优先级低） | P2 | 已修：`RegistryStore(retire_verifier=...)` 钩子（默认 None=SPEC 最小语义，不发明规范要求）；registry-notes TODO-G2 将该项升为首位并写明 DoS 机理；新增应拦用例 test_retire_verifier_vetoes_retire |
+| `monte_carlo_pose_from_pixels` 的残差 `log_se3` 在 try 外，θ→π 奇异会穿透 `check_first_order_pixel` | P2 | 已修：残差并入 try，命中奇异=样本出域，排除并计数（excluded>0 → ok=False，不静默丢样本）；docstring 同步 |
+| `_render_pdf` 对所有页用 layouts[0].page，混页静默裁剪 | P2 | 已修：入口对混页尺寸 fail-closed `ValueError`；新增应拦用例 test_render_rejects_mixed_page_sizes |
+| test_uncertainty.py 两个测试定义在 `__main__` 卫语之后，脚本模式执行不到 | P2 | 已修：卫语移到文件末尾，两个测试回归收集序 |
+| （附带）i16 NaN fixture 与"JSON 文本层不可表达"措辞张力 | P2 | 说明：i16 依赖 Python json 的扩展字面量 NaN 解析，非标准 JSON 文本；R4 规则族的声明口径不变 |
+
+## 9. Wave-2 测试准入 r2（subagent_5a5be205c44e，2026-11-24）
+
+回执 REVISE / P0=0 / P1=1 / P2=3（报告 `data/review_admission/subagent_5a5be205c44e-full_test.md`，指纹 eb626558…）。r1 的 5 项处置经复核全部生效。残留与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| conformance README §4 仍基于陈旧树：声称"未落地：B5 注册表"、find 复核只列三包——与本提交同树的 ctp_registry 矛盾（r1 P1 的同类新实例） | P1 | 已修：README 已落地清单改为 B1/B2/B5/B6 四包 + find ctp/src 复核口径；未落地收敛为 B3/B4/B7/B8 |
+| coverage-summary §二 结尾残留"规程未建、docs/conformance/ 为空"旧句 | P2 | 已修：改为"规程已建、实测回执未产生；V4/V7/V8 依赖 B7 runner" |
+| 计数漂移：185 与自身明细求和不一致（uncertainty 实为 12）；trace.md 孤儿检查 generator 9 函数（实为 10） | P2 | 已修：改为引用制——AST 静态函数数（7 文件/77 函数，逐文件列出）可直接机检；参数化用例总数不再多处手抄，单一真值=ctp/receipts/ 最新回执 |
+| 墓碑 retire 默认仍无权威校验（已文档化+钩子+测试+TODO-G2 首位） | P2 | 维持：reviewer 自评"accepted risk for a prototype pending WG ruling"；工作组裁决前不发明规范要求 |
+
+## 10. Wave-2 测试准入 r3 PASS 后的执行发现（2026-11-24）
+
+r3（subagent_6014966192ff）回执 PASS 后首次真实执行测试即暴露**收集期 ImportError**——`ctp_gen` 包根未导出 `layout_from_dict`（layout.py:89 已定义，`__init__.py` 导入清单与 `__all__` 均缺失），test_generator.py:24 从包根导入失败，整个收集中断。这是 B6 提交（4e2a8e5de）自带的缺陷，三轮只读审查均未执行测试故未暴露；同时首次前台执行消耗了 r3 资格且 60s 墙钟超时丢失输出（执行侧教训：受闸命令一律 run_in_background）。
+
+处置：`ctp_gen/__init__.py` 补导出 `layout_from_dict`（导入行 + `__all__`）；补模块级导入自检（7 个测试文件 import 全通过，exit=0）；本项随 r4 审查重走准入后以后台方式重跑全量测试落回执。
+
+## 11. Wave-2 测试准入 r4（subagent_5fe38d0fec27，2026-11-24）
+
+回执 REVISE / P0=0 / P1=1 / P2=4（报告 `data/review_admission/subagent_5fe38d0fec27-full_test.md`，指纹 cd52f0b9…）。发现与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| coverage-summary.md 记账数字自相矛盾且与 CSV 矛盾：§1 称 test_registry "24 函数 / 42 例"而孤儿节为 31；kind 拆分 "unit 63 + pending 38" 而 CSV 实为 62 / 39；§2A 称 V7 "规程未建"而 V7-version-compat.md 已随补丁入库；trace.csv R-2 行称"等 4 例"而该族有 7 个测试方法——且所引回执只覆盖 B1+B2，不含任何 registry 计数 | P1 | 已修：删除全部手抄"等N例 / 24 函数 42 例"，用例数一律指向最新回执（引用制）；kind 拆分改 62 / 39 / 12；V7 行改"规程已建、实测待跑"；R-5/R-6 证据行号随新增测试同步为 361 / 429；静态函数数同步为 80（uncertainty 13、registry 33） |
+| snapshot.py `created_at` 只查非空字符串，任意值可被铸造并签名 | P2 | 已修：改用 R-1 同口径 `_parse_tz_datetime`（ISO 8601 + 时区）；新增应拦用例 test_snapshot_created_at_requires_iso8601_with_timezone |
+| `build_snapshot` 未做墓碑终态过滤，手写 register→retire→register 链可让墓碑 ID 回到快照 records | P2 | 已修：records 过滤 `tid not in tombstones`（与 `_latest_records` 同口径）；新增应拦用例 test_snapshot_excludes_tombstoned_id_even_if_reregistered |
+| 过 PSD 容差但奇异的协方差（某轴 1σ=0）使 Cholesky 裸抛 LinAlgError | P2 | 已修：Monte Carlo 入口转类型化 ValueError；`check_first_order_validity` 增 `except ValueError → ok=False, reason=invalid_covariance`；新增应拦用例 test_singular_covariance_is_typed_failure |
+| lint：TagSpec 注释"默认 10 mm"与 generator-notes（gap 6 / margin 10）矛盾；render.py 未用 `_sha256_bytes`；store.py `import hashlib` 位置与无占位 f-string | P2 | 已修：注释改为"必填，取值见 generator-notes"；删除未用函数及其 hashlib 导入（全仓无其他引用）；hashlib 归位 stdlib 块；f-string 补上底层异常 |
+
+## 12. Wave-2 测试准入 r5 审查者超时与 r6 审查切片收窄（2026-11-24，如实声明）
+
+r5（subagent_4b59fb2dc085，候选 4238b9b8…，切片 = `ctp` + `docs/conformance` + `docs/trace` 全量，材料 30.4 万字符）首轮与其自动重试**均以 reviewer_timeout 失败**——宿主回执原文："LLM 流式总时长超限（>600s）；各 read 间隔均未超时——provider 持续滴流不收敛，已机械截断"。两次都未产出任何审查结论（review_answer_chars=148），**不构成 PASS 也不构成 REVISE**，r4 处置在本轮未获独立复核。
+
+处置：同条件第三次重试预期仍会超时，故 r6（subagent_33409f675de7，候选 d4d8cff2…）**收窄审查切片**以缩短材料（30.4 万 → 24.6 万字符）。移出本轮切片的两块及其依据：
+
+| 移出内容 | 体量 | 依据 | 残余风险 |
+|---|---|---|---|
+| `ctp/docs/upstream/apriltag-tag36h11.c` | 714 行 | vendored 第三方码表数据，不参与测试逻辑；r4 已核"保留完整 BSD-2 许可头、tag36h11_table.py 抽查与上游一致" | 低：数据文件，自 r4 起未改动 |
+| `docs/conformance/`（README + V1–V8） | 846 行 | 书面规程，不参与测试执行；r1/r2 两次 P1 均针对其陈旧表述并已修复，r3/r4 对其内容无新发现 | 低-中：本轮修订未碰这些文件（r4 修复只动 docs/trace），但其最新表述在本轮无独立复核 |
+
+仍在切片内全审：`ctp/src`、`ctp/tests`、`ctp/schema`、`ctp/README.md`、`ctp/docs/{registry-notes,generator-notes,uncertainty-declaration-template}.md`、`ctp/receipts`、`docs/trace`（含 r4 P1 的计数修复）。
+
+兜底：这两块仍属 lane-4bbd8c8e 的合并范围，合并审查（merge_review_start）按 lane 全量 diff 复核；若合并审查同样超时，不得据此视为已审。
+
+**r6 结果**：PASS（候选 `d4d8cff2…`，head `e085e3bd3`，运行时工作树干净）。随后以后台任务执行与 target 逐字一致的命令：`190 passed in 2.30s`，退出码 0——这是 Wave-2 自 B6 提交以来**第一次真实全量通过**。完整回执见 `ctp/receipts/20261124-wave2-pytest.md`（用例总数 190 为单一真值）。
+
+过程勘误（如实记录）：r6 受理后我曾误改 worktree 内一个切片外的已跟踪文件（本文件），会让"切片外内容摘要"在消费时失配；发现后立即 `git checkout` 恢复到提交态、文本暂存主仓 scratch，测试通过后才补回——未影响 r6 资格的有效性。
+
+## 14. Wave-2 合并前验收补齐与自查发现（2026-11-24，推送前）
+
+对照 durable task 的验收条目逐项核对 B6 / A2，并自查 A3。三项补齐、一项**自查发现的实质缺陷**：
+
+| 项 | 事实 | 处置 |
+|---|---|---|
+| B6 验收第 2 条（布局 JSON 含每个码的 target_index、物理坐标、参考系定义引用） | `Layout` 无参考系字段；逐码坐标只是可推导、未显式写出 | `frame_ref` 设为**必填**（缺失/空白即拒，无默认值）；`layout.json` 新增 `tags`（逐码左上角 + 中心坐标）、`coordinate_frame`（原点页面左上角 / x 右 / y 下 / mm）；`layout_from_dict` 对手改的 `tags` 块拒收；清单 `boards[]` 记 `frame_ref`。新增 3 个测试（1 正例 + 2 应拦） |
+| B6 验收第 1/4 条（输入含公差等级；公差标注对应 P-2、数值留 TBD） | 输出无任何公差标注 | `tolerance_grade` 可选申报（未申报如实写 `unspecified`，不代填）；`tolerance` 块键对应 `P-2a/P-2b/P-2c`，值恒为 SPEC 现行 TBD 占位编号，**不是数值** |
+| B6 验收第 3 条（打印后能被 B3 读通） | **仍未满足**——B3 未落地 | 不标 done；随 B3 一并闭合 |
+| A2 验收第 4 条（每份含一条最小冒烟步骤） | 8 份规程均无 | 各补「S1 冒烟一次」：共用冒烟板命令（README §2）+ 本门槛特有一步 + 明确止步点；V5 / V6 两条命令与冒烟板命令均在本机以仓库 `.venv` 实测（输出 `manifest_ok True` / `coarse` / `first_order_ok True`）。冒烟只证明流程能跑通，回执 `simulated: true`，**不产生门槛证据** |
+| **A3 自查：矩阵「无孤儿」声明为假** | 用脚本把 83 个测试函数逐名对照 `trace.csv`，**31 个函数未出现在矩阵中**——r1 重定基时 R-1–R-6 行写成「某测试 等」，把同族其余成员藏起来了；此前孤儿检查采信了人读结论，r1–r6 六轮审查均未发现 | 补 33 行（27 条 R-* 成员、C-1d ×3、P-5b、M-3、C-5b），每个函数单独具名；去掉概括性的「等」；生成器既有引用行号因辅助函数增行整体 +1；行级计数更正为 146 行 / covered 74 / partial 21 / pending 51；脚本复查孤儿 0 |
+| 计划 §1.2 两条陈旧行 | 仍写「三份文档未入库」「仅 B1 落地」，与 Wave-1 已合入 main 的事实相反 | 更正并标 as-of 2026-11-24 19:00 |
+
+教训（写给后续执行者，非审查发现）：**概括性的「等」与「无孤儿」声明不相容**；孤儿检查必须用脚本逐名对照并保留可复跑的检查，不采信人读汇总。
