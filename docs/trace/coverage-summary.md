@@ -17,13 +17,13 @@
 | 10 | 版本兼容 VC-* | 3 | 0 | 0 | 3 |
 | 合计 | | 59 | 9（15.3%） | 9（15.3%） | 41（69.5%） |
 
-covered 条目（9）：C-2a（36h11 码族与码空间）、C-5（读取输出契约，最大证据簇 35 行 unit）、C-5a（观测=测量+不确定度）；R-1–R-6（B5 注册表原型，test_registry.py 24 函数 / 42 例）。
+covered 条目（9）：C-2a（36h11 码族与码空间）、C-5（读取输出契约，最大证据簇 35 行 unit）、C-5a（观测=测量+不确定度）；R-1–R-6（B5 注册表原型，test_registry.py；函数数见下方静态计数，用例数以最新回执为准）。
 
 partial 条目（9）：P-3b、P-5b、C-1b、C-1d、C-5b、M-1、M-3、M-5b、F-3（逐条理由见第三节末与 trace.md 各章小结）。
 
-测试资产：7 个测试文件 / 77 个测试函数（AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 12、pixel_uncertainty 7、generator 10、registry 31）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
+测试资产：7 个测试文件 / 80 个测试函数（AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 13、pixel_uncertainty 7、generator 10、registry 33）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
 
-矩阵规模：113 数据行 = unit 63 + pending 占位 38 + conformance 12；行级状态 covered 47 / partial 15 / pending 51。
+矩阵规模：113 数据行 = unit 62 + pending 占位 39 + conformance 12；行级状态 covered 47 / partial 15 / pending 51。
 
 ## 二、pending 清单（41 条，按依赖分组）
 
@@ -34,7 +34,7 @@ A. 待计量/实测（14 条）——数值空缺须 P2 计量或门槛实测填
 - P-5a：带外禁引精度声明，依赖 V3 定带后的流程管控
 - C-4a / C-4b / C-4b-2：最小可读条件 [TBD-V4a–d] 实测（双向判据，门槛 V4）
 - F-2：MID→NEAR 角点残差阈值 [TBD-F2] 计量
-- C-3c / VC-3：V7 混合版本墙实测（规程未建）
+- C-3c / VC-3：V7 混合版本墙实测（规程 docs/conformance/V7-version-compat.md 已建，实测待跑）
 
 B. 待工作组裁决（6 条）——[TBD-G] 类，需决策不需实测：
 - C-1a / C-1c：前缀/本地段位长与分配机制（治理章程）

@@ -143,3 +143,15 @@
 r3（subagent_6014966192ff）回执 PASS 后首次真实执行测试即暴露**收集期 ImportError**——`ctp_gen` 包根未导出 `layout_from_dict`（layout.py:89 已定义，`__init__.py` 导入清单与 `__all__` 均缺失），test_generator.py:24 从包根导入失败，整个收集中断。这是 B6 提交（4e2a8e5de）自带的缺陷，三轮只读审查均未执行测试故未暴露；同时首次前台执行消耗了 r3 资格且 60s 墙钟超时丢失输出（执行侧教训：受闸命令一律 run_in_background）。
 
 处置：`ctp_gen/__init__.py` 补导出 `layout_from_dict`（导入行 + `__all__`）；补模块级导入自检（7 个测试文件 import 全通过，exit=0）；本项随 r4 审查重走准入后以后台方式重跑全量测试落回执。
+
+## 11. Wave-2 测试准入 r4（subagent_5fe38d0fec27，2026-11-24）
+
+回执 REVISE / P0=0 / P1=1 / P2=4（报告 `data/review_admission/subagent_5fe38d0fec27-full_test.md`，指纹 cd52f0b9…）。发现与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| coverage-summary.md 记账数字自相矛盾且与 CSV 矛盾：§1 称 test_registry "24 函数 / 42 例"而孤儿节为 31；kind 拆分 "unit 63 + pending 38" 而 CSV 实为 62 / 39；§2A 称 V7 "规程未建"而 V7-version-compat.md 已随补丁入库；trace.csv R-2 行称"等 4 例"而该族有 7 个测试方法——且所引回执只覆盖 B1+B2，不含任何 registry 计数 | P1 | 已修：删除全部手抄"等N例 / 24 函数 42 例"，用例数一律指向最新回执（引用制）；kind 拆分改 62 / 39 / 12；V7 行改"规程已建、实测待跑"；R-5/R-6 证据行号随新增测试同步为 361 / 429；静态函数数同步为 80（uncertainty 13、registry 33） |
+| snapshot.py `created_at` 只查非空字符串，任意值可被铸造并签名 | P2 | 已修：改用 R-1 同口径 `_parse_tz_datetime`（ISO 8601 + 时区）；新增应拦用例 test_snapshot_created_at_requires_iso8601_with_timezone |
+| `build_snapshot` 未做墓碑终态过滤，手写 register→retire→register 链可让墓碑 ID 回到快照 records | P2 | 已修：records 过滤 `tid not in tombstones`（与 `_latest_records` 同口径）；新增应拦用例 test_snapshot_excludes_tombstoned_id_even_if_reregistered |
+| 过 PSD 容差但奇异的协方差（某轴 1σ=0）使 Cholesky 裸抛 LinAlgError | P2 | 已修：Monte Carlo 入口转类型化 ValueError；`check_first_order_validity` 增 `except ValueError → ok=False, reason=invalid_covariance`；新增应拦用例 test_singular_covariance_is_typed_failure |
+| lint：TagSpec 注释"默认 10 mm"与 generator-notes（gap 6 / margin 10）矛盾；render.py 未用 `_sha256_bytes`；store.py `import hashlib` 位置与无占位 f-string | P2 | 已修：注释改为"必填，取值见 generator-notes"；删除未用函数及其 hashlib 导入（全仓无其他引用）；hashlib 归位 stdlib 块；f-string 补上底层异常 |

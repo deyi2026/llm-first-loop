@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,7 +40,6 @@ from .record import (
     canonical_json,
 )
 from .tombstone import Tombstone
-import hashlib
 
 GENESIS_HASH = "0" * 64  # 链锚：全零占位（结构常量，非门槛数值）
 KIND_REGISTER = "register"
@@ -193,7 +193,7 @@ class RegistryStore:
                 try:
                     obj = json.loads(line)
                 except (json.JSONDecodeError, ValueError) as exc:
-                    raise RegistryError(FORMAT_ERROR, where, f"line is not valid JSON") from exc
+                    raise RegistryError(FORMAT_ERROR, where, f"line is not valid JSON: {exc}") from exc
                 event = StoreEvent.from_dict(obj, path=where)
                 recomputed = compute_entry_hash(event.prev_hash, event.kind, event.payload)
                 if recomputed != event.entry_hash:

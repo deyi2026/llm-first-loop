@@ -189,5 +189,21 @@ def test_template_rejects_zero_sigma_even_with_covariance():
     raise AssertionError("全零 1σ + 非零协方差被接受")
 
 
+def test_singular_covariance_is_typed_failure():
+    """应拦输入（wave-2 r4 P2-3）：某轴方差为 0 的奇异协方差过 PSD 容差，MC 必须类型化失败而非裸 LinAlgError。"""
+    pose_a, pose_b = _scenario()
+    singular = _diag(0.0007, 0.17)
+    singular[5, 5] = 0.0  # 半正定但不可 Cholesky
+    try:
+        calib.monte_carlo_relative(pose_a, pose_b, singular, singular, samples=200, seed=1)
+    except ValueError as error:
+        assert "singular" in str(error)
+    else:
+        raise AssertionError("奇异协方差未被 monte_carlo_relative 拒绝")
+    result = calib.check_first_order_validity(pose_a, pose_b, singular, singular, samples=200, seed=1)
+    assert result["ok"] is False, result
+    assert result["reason"] == "invalid_covariance"
+
+
 if __name__ == "__main__":
     raise SystemExit(1 if _run_all() else 0)

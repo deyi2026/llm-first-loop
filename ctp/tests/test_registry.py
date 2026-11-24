@@ -322,6 +322,37 @@ class TestR4Snapshot:
             verify_snapshot(snapshot, PUB)
         assert excinfo.value.code == "missing_signature"
 
+    def test_snapshot_created_at_requires_iso8601_with_timezone(self):
+        """应拦输入（wave-2 r4 P2-1）：created_at 不是带时区的 ISO 8601 即拒绝，不给任意字符串签名机会。"""
+        with pytest.raises(RegistryError) as excinfo:
+            build_snapshot([], snapshot_version=1, created_at="2026-07-02T00:00:00")
+        assert excinfo.value.code == "timestamp_missing_timezone"
+        with pytest.raises(RegistryError) as excinfo:
+            build_snapshot([], snapshot_version=1, created_at="not-a-date")
+        assert excinfo.value.code == "format_error"
+        with pytest.raises(RegistryError):  # 空白串同样拒绝（码属 record 层口径，不在此钉死）
+            build_snapshot([], snapshot_version=1, created_at="   ")
+
+    def test_snapshot_excludes_tombstoned_id_even_if_reregistered(self, store: RegistryStore):
+        """应拦输入（wave-2 r4 P2-2）：手写链 register→retire→register 的 ID 不得回到快照 records（终态语义）。"""
+        store.append(KIND_REGISTER, signed_record().to_dict())
+        store.append(
+            KIND_RETIRE,
+            Tombstone(BASE["target_id"], "2026-07-01T00:00:00+08:00", "physical damage").to_dict(),
+        )
+        # 绕过 append 语义闸的直接文件写入（T-2 D2 场景）：链合法但违反 R-3 终态
+        _, head = store.replay()
+        reregistered = signed_record(record_version=2).to_dict()
+        event = StoreEvent(
+            KIND_REGISTER, reregistered, head, compute_entry_hash(head, KIND_REGISTER, reregistered)
+        )
+        with open(store.path, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(event.to_json_line() + "\n")
+        events, _ = store.replay()  # 哈希链完整，重放不报错
+        snapshot = build_snapshot(events, snapshot_version=1, created_at="2026-07-02T00:00:00+08:00")
+        assert [rec.target_id for rec in snapshot.records] == []
+        assert [ts.target_id for ts in snapshot.tombstones] == [BASE["target_id"]]
+
 
 # ===================== R-5 语义绑定验签 =====================
 

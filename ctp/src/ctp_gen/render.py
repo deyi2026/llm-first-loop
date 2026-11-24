@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -120,7 +119,3 @@ def generate(layouts: list[Layout], outdir: str | Path) -> dict[str, Any]:
         encoding="utf-8",
     )
     return manifest
-
-
-def _sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()

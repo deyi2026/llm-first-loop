@@ -22,7 +22,7 @@ class PageSpec:
 @dataclass(frozen=True)
 class TagSpec:
     size_mm: float
-    gap_mm: float  # 靶间留白（工程默认 10 mm，可调；不是规范数值）
+    gap_mm: float  # 靶间留白（必填；工程取值见 ctp/docs/generator-notes.md，不是规范数值）
 
 
 @dataclass(frozen=True)

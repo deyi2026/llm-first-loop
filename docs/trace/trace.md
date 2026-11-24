@@ -1,7 +1,7 @@
 # CTP 规范条目—测试用例追溯矩阵（人读版）
 
 - 规范：docs/SPEC-20261123-cooperative-target-protocol-v0.9.md（v0.9.2）第 4–10 章
-- 测试资产：ctp/tests/ 7 个测试文件、77 个测试函数（AST 静态计数，明细见孤儿检查节；conftest.py 为路径配置非用例；fixtures：合法 10 + 非法 24）；参数化展开后的用例总数不在此手抄——单一真值为 ctp/receipts/ 最新回执
+- 测试资产：ctp/tests/ 7 个测试文件、80 个测试函数（AST 静态计数，明细见孤儿检查节；conftest.py 为路径配置非用例；fixtures：合法 10 + 非法 24）；参数化展开后的用例总数不在此手抄——单一真值为 ctp/receipts/ 最新回执
 - 一致性规程：docs/conformance/ 已建 9 份（README + V1–V8），实测回执未产生，仍以 test_kind=conformance 的 pending 行预留（共 12 行）
 - 机器可读版：trace.csv（列：spec_entry,test_kind,test_id,evidence_path,status,notes）
 - 状态口径：covered=已有测试足以支撑条目的可测内容；partial=已有测试仅覆盖条目的一部分（或仅契约/机制侧）；pending=无测试（依赖计量/裁决/实现，或明示无测试义务）
@@ -73,13 +73,13 @@
 | 条目 | 类型 | 测试/规程 | 证据 | 状态 | 备注 |
 |---|---|---|---|---|---|
 | R-1 | unit | test_roundtrip_deterministic_json 等 | ctp/tests/test_registry.py:82 | covered | B5 记录：字段集+签名+确定性 JSON |
-| R-2 | unit | test_append_then_replay_chain_consistent 等4例 | ctp/tests/test_registry.py:132 | covered | append-only：链一致/改写/删行检测 |
-| R-3 | unit | test_retire_creates_terminal_tombstone 等4例 | ctp/tests/test_registry.py:215 | covered | 墓碑终态/复用拒绝；权威签名钩子=TODO-G2 首位 |
-| R-4 | unit | test_offline_verification_succeeds 等4例 | ctp/tests/test_registry.py:282 | covered | 两级签名快照与离线校验 |
-| R-5 | unit | test_bind_signed_record_succeeds 等6例 | ctp/tests/test_registry.py:330 | covered | 绑定验签：篡改/无签名/错权威 |
-| R-6 | unit | test_two_level_classification 等 | ctp/tests/test_registry.py:398 | covered | 两级时效（PROP G5 提案待追认）；强制等级[TBD-G] |
+| R-2 | unit | test_append_then_replay_chain_consistent 等 | ctp/tests/test_registry.py:132 | covered | append-only：链一致/改写/删行检测 |
+| R-3 | unit | test_retire_creates_terminal_tombstone 等 | ctp/tests/test_registry.py:215 | covered | 墓碑终态/复用拒绝；权威签名钩子=TODO-G2 首位 |
+| R-4 | unit | test_offline_verification_succeeds 等 | ctp/tests/test_registry.py:282 | covered | 两级签名快照与离线校验 |
+| R-5 | unit | test_bind_signed_record_succeeds 等 | ctp/tests/test_registry.py:361 | covered | 绑定验签：篡改/无签名/错权威 |
+| R-6 | unit | test_two_level_classification 等 | ctp/tests/test_registry.py:429 | covered | 两级时效（PROP G5 提案待追认）；强制等级[TBD-G] |
 
-小结：B5 注册表原型落地后 R-1–R-6 全部 covered（test_registry.py 42 例）；残余治理项（墓碑权威签名 DoS 面、R-6 强制等级）登记于 ctp/docs/registry-notes.md TODO-G2。
+小结：B5 注册表原型落地后 R-1–R-6 全部 covered（test_registry.py；用例数以最新回执为准）；残余治理项（墓碑权威签名 DoS 面、R-6 强制等级）登记于 ctp/docs/registry-notes.md TODO-G2。
 
 ## 第 7 章 组合层（7 条：covered 0 / partial 3 / pending 4）
 
@@ -143,4 +143,4 @@
 
 ## 孤儿检查
 
-77 个测试函数全部归属（多归属函数按条目拆多行；AST 静态计数）：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 12、pixel_uncertainty 7、generator 10、registry 31。第 4–10 章 59 个条目每条至少 1 行，无未归属条目。
+80 个测试函数全部归属（多归属函数按条目拆多行；AST 静态计数）：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 13、pixel_uncertainty 7、generator 10、registry 33。第 4–10 章 59 个条目每条至少 1 行，无未归属条目。

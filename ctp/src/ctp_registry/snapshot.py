@@ -33,6 +33,7 @@ from .record import (
     SNAPSHOT_INVALID,
     TYPE_ERROR,
     UNKNOWN_FIELD,
+    _parse_tz_datetime,
     canonical_json,
     verify_signature,
 )
@@ -65,8 +66,10 @@ class Snapshot:
             raise RegistryError(TYPE_ERROR, "snapshot_version", "must be an int")
         if self.snapshot_version < 1:
             raise RegistryError(SNAPSHOT_INVALID, "snapshot_version", f"must be >= 1, got {self.snapshot_version}")
-        if not isinstance(self.created_at, str) or not self.created_at.strip():
+        if not isinstance(self.created_at, str):
             raise RegistryError(TYPE_ERROR, "created_at", "must be an ISO 8601 string with timezone")
+        # P2-1（wave-2 r4）：按 R-1 同一口径校验 ISO 8601 + 时区，不给任意字符串签名的机会
+        _parse_tz_datetime(self.created_at, "created_at")
         if not isinstance(self.records, tuple) or not all(isinstance(rec, RegistryRecord) for rec in self.records):
             raise RegistryError(TYPE_ERROR, "records", "must be a tuple of RegistryRecord")
         if not isinstance(self.tombstones, tuple) or not all(isinstance(ts, Tombstone) for ts in self.tombstones):
@@ -150,10 +153,12 @@ def build_snapshot(
             tombstones[tombstone.target_id] = tombstone
             latest.pop(tombstone.target_id, None)
     head = events[-1].entry_hash if events else GENESIS_HASH
+    # P2-2（wave-2 r4）：墓碑是终态——手写链上 register→retire→register 的 ID
+    # 不得回到快照 records（与 RegistryStore._latest_records 的终态过滤同口径）
     return Snapshot(
         snapshot_version=snapshot_version,
         created_at=created_at,
-        records=tuple(latest[tid] for tid in sorted(latest)),
+        records=tuple(latest[tid] for tid in sorted(latest) if tid not in tombstones),
         tombstones=tuple(tombstones[tid] for tid in sorted(tombstones)),
         head_hash=head,
     )
