@@ -15,6 +15,11 @@ from llm_loop.tools.safety import CatastrophicGuard
 
 _MAX_WAIT_S = 300
 _DEFAULT_WAIT_S = 120
+_RETRY_HINT = (
+    "请在原会话核对任务与当前状态，若仍需要且尚未执行，使用原申请类型重新提交："
+    "普通命令 escalation_request，宿主路径 host_access_request，验证凭证走原 Host 签发申请入口。"
+    "必须取得新 request_id 并重新人工审批；不得复活旧凭证或重做已完成操作。"
+)
 
 
 def _fail(tool: str, content: str) -> ToolResult:
@@ -149,10 +154,7 @@ class EscalationWaitTool:
             return _fail(
                 self.name,
                 f"[已失效] request_id={rid} 由其他进程签名，本会话无法等待其审批结果。"
-                "请在原会话核对任务与当前状态，若仍需要且尚未执行，使用原申请类型重新提交："
-                "普通命令 escalation_request，宿主路径 host_access_request，"
-                "验证凭证走原 Host 签发申请入口。必须取得新 request_id 并重新人工审批；"
-                "不得复活旧凭证或重做已完成操作。",
+                + _RETRY_HINT,
             )
 
         status = rec.get("status", "")
@@ -235,12 +237,7 @@ class EscalationWaitTool:
                 tool_name=self.name,
             )
         if status == "expired":
-            return _fail(
-                self.name,
-                f"[已过期] request_id={rid}；原申请记录仍保留。"
-                "在原会话确认操作尚未完成且仍必要后，重新提交相同类型的申请并等待新人工决定。"
-                "旧凭证不得复用。",
-            )
+            return _fail(self.name, f"[已过期] request_id={rid}；原申请记录仍保留。" + _RETRY_HINT)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=(
