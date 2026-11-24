@@ -357,6 +357,9 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
         print("请选择一种输入方式：消息、--stdin、--message-file 或 --interactive。", file=sys.stderr)
         return 2
     interactive = inputs == 0
+    if args.resume_draft and (not interactive or not args.session):
+        print("--resume-draft requires interactive mode and --session.", file=sys.stderr)
+        return 2
     if interactive and args.output != "text":
         print("Structured output requires an explicit message, --stdin or --message-file.", file=sys.stderr)
         return 2
@@ -397,12 +400,20 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     from llm_loop.runtime.cli_deployment_identity import capture_startup_artifact
 
     startup_artifact = capture_startup_artifact()
+    binding = None
     try:
         data_dir = getattr(settings, "data_dir", None)
         binding = bind_cli_startup(data_dir, startup_artifact) if data_dir is not None else None
         with cli_state_admission(binding):
             pass
     except CliDeploymentAdmissionError as exc:
+        if interactive and binding is not None:
+            from llm_loop.runtime.cli_reentry import CliReentry, attempt_cli_reentry
+
+            return attempt_cli_reentry(binding, CliReentry(
+                args.session, Path(args.resume_draft) if args.resume_draft else None,
+                workspace_root or str(Path.cwd()), args.plain, args.theme, args.model,
+            ))
         return Presenter(args.output, plain=args.plain).error(str(exc), "cli_deployment_admission_refused", 75)
     engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
@@ -411,6 +422,7 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     try:
         engine._cli_startup_artifact = startup_artifact
         engine._cli_admission_binding = binding
+        engine._cli_resume_draft_path = args.resume_draft
         # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
         if args.model:
             engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
@@ -430,10 +442,17 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
         if not interactive:
             assert message is not None
             return _run_single(engine, message, session_id=args.session)
-        return _run_interactive(engine, session_id=args.session)
+        exit_code = _run_interactive(engine, session_id=args.session)
     finally:
         # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
         engine.close()
+    if exit_code == 75 and binding is not None:
+        from llm_loop.runtime.cli_reentry import CliReentry, attempt_cli_reentry
+
+        request = getattr(engine, "_cli_reentry", None)
+        if isinstance(request, CliReentry):
+            return attempt_cli_reentry(binding, request)
+    return exit_code
 
 
 def _read_stdin_exact() -> str:

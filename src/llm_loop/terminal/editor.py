@@ -366,6 +366,19 @@ class Composer:
         return short + f"· {safe_text(model or 'model: unreported')} · {self.ui.theme} "
 
     def _plain_read(self) -> str:
+        if self.draft:
+            # Plain terminals cannot prefill an input buffer. Never silently
+            # turn a recovered draft into a submitted message.
+            print("[restored draft]\n" + safe_text(self.draft))
+            action = input("/send to submit, /discard to discard, or enter replacement text: ")
+            if action == "/send":
+                draft, self.draft = self.draft, ""
+                return draft
+            if action == "/discard":
+                self.draft = ""
+                return ""
+            self.stashed, self.draft = self.draft, ""
+            return action
         if not self.ui.multiline:
             return input("\n你> ")
         print("[multiline] Enter inserts lines; a single '.' or '/send' sends.")
