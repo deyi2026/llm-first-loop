@@ -1716,7 +1716,10 @@ class SessionStore:
             logger.warning("event_log replay 重建异常（fail-open）: %s: %s", session_id, exc)
             return None
 
-    _SESSION_JSON_CACHE_LIMIT = 8  # 活跃会话工作集上限（FIFO 淘汰；大对象防膨胀）
+    _SESSION_JSON_CACHE_LIMIT = 8
+    # Bound retained source weight as well as entry count. JSON bytes are a
+    # deterministic proxy for parsed object cost, not a hard RSS limit.
+    _SESSION_JSON_CACHE_SOURCE_BYTES_LIMIT = 64 * 1024 * 1024
 
     def _copy_session_shell(self, session: Session) -> Session:
         """缓存命中的返回形态：新 Session 壳 + 新 messages 列表（引用共享）.
@@ -1732,15 +1735,28 @@ class SessionStore:
         try:
             st = os.stat(p)
         except OSError:
+            with self._session_json_cache_lock:
+                self._session_json_cache.pop(session_id, None)
             return Session(session_id=session_id)
         fkey = (st.st_mtime_ns, st.st_size)
         with self._session_json_cache_lock:
             cached = self._session_json_cache.get(session_id)
-        if cached is not None and cached[0] == fkey:
+            if cached is not None and cached[0] == fkey:
+                self._session_json_cache.move_to_end(session_id)
+            else:
+                self._session_json_cache.pop(session_id, None)
+                cached = None
+        if cached is not None:
             return self._copy_session_shell(cached[1])
         try:
             with open(p, encoding="utf-8") as f:
+                # The file may have been atomically replaced after path stat.
+                # Charge the actual opened snapshot, not the preceding path size.
+                opened = os.fstat(f.fileno())
+                fkey = (opened.st_mtime_ns, opened.st_size)
                 data = json.load(f)
+                finished = os.fstat(f.fileno())
+                stable_source = fkey == (finished.st_mtime_ns, finished.st_size)
             messages = [_message_from_dict(m) for m in data.get("messages", [])]
             parsed = Session(
                 session_id=data.get("session_id", session_id),
@@ -1783,10 +1799,17 @@ class SessionStore:
         except Exception:
             return self._degrade_corrupt_session(p, session_id)
         with self._session_json_cache_lock:
-            self._session_json_cache[session_id] = (fkey, parsed)
-            self._session_json_cache.move_to_end(session_id)
-            while len(self._session_json_cache) > self._SESSION_JSON_CACHE_LIMIT:
-                self._session_json_cache.popitem(last=False)
+            # An oversized transcript is still returned in full; it must not
+            # evict the entire hot working set merely to be retained itself.
+            if stable_source and fkey[1] <= self._SESSION_JSON_CACHE_SOURCE_BYTES_LIMIT:
+                self._session_json_cache[session_id] = (fkey, parsed)
+                self._session_json_cache.move_to_end(session_id)
+                while (
+                    len(self._session_json_cache) > self._SESSION_JSON_CACHE_LIMIT
+                    or sum(entry[0][1] for entry in self._session_json_cache.values())
+                    > self._SESSION_JSON_CACHE_SOURCE_BYTES_LIMIT
+                ):
+                    self._session_json_cache.popitem(last=False)
         # 缓存持有私有母本；所有调用方（含首次解析路径）一律拿壳副本——
         # 否则首个调用方的结构变更会污染缓存对象（save 失败后脏对象仍被命中，
         # test_spawn_failure_to_persist_delegated_task 实证）。
