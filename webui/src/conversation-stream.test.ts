@@ -465,7 +465,7 @@ describe("conversation stream ownership", () => {
     await loadHistory("s1");
     h.fetchHistory.mockResolvedValueOnce({ ok: true, messages: [{ role: "user", content: "stale" }], has_more: true, revision: "r2" });
     await loadEarlierHistory("s1");
-    expect(h.fetchHistory.mock.calls[1]).toEqual(["s1", 100, 1, undefined, "r1"]);
+    expect(h.fetchHistory.mock.calls[1]).toEqual(["s1", 50, 1, undefined, "r1"]);
     expect(conversationStore.getState().messages.map(m => m.content)).toEqual(["current"]);
     expect(conversationStore.getState().lastError).toContain("会话历史已变化");
     expect(h.streamChatRequest).not.toHaveBeenCalled();

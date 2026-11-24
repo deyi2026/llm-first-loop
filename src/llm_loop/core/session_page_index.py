@@ -1,10 +1,12 @@
-"""Optional, rebuildable byte-position index for canonical session JSON.
+"""Optional, rebuildable read views for canonical session JSON.
 
-No message body or authorization fact is duplicated. Only the writer's exact
-pretty-printed snapshot is indexed; legacy/changed/corrupt files use normal load.
+The page index contains positions only. The separate private display cache
+contains existing list metadata (including the bounded 80-character preview),
+never authorization facts. Changed/corrupt/missing views use normal load.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import struct
@@ -20,6 +22,7 @@ _MIN_MESSAGES = 1000
 _MAX_MESSAGES = 200_000
 _MAX_SOURCE_BYTES = 128 * 1024 * 1024
 _MAX_PAGE_BYTES = 8 * 1024 * 1024
+_MAX_META_BYTES = 8192
 _MESSAGE_START = b"\n    {"
 _ARRAY_START = b'\n  "messages": [\n'
 _ARRAY_END = b"\n  ]\n}"
@@ -31,6 +34,53 @@ def source_key(st: os.stat_result) -> tuple[int, int, int, int, int]:
 
 def index_path(path: str) -> str:
     return path + ".history.idx"
+
+
+def display_meta_path(path: str) -> str:
+    return path + ".display-meta"
+
+
+def publish_display_meta(path: str, meta: dict, key: tuple[int, int, int, int, int]) -> bool:
+    """Small, private, source-bound display cache; never an authorization source."""
+    tmp = None
+    try:
+        body = json.dumps({"source": key, "meta": meta}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        payload = hashlib.sha256(body).hexdigest().encode("ascii") + b"\n" + body
+        if len(payload) > _MAX_META_BYTES or source_key(os.stat(path)) != key:
+            return False
+        with tempfile.NamedTemporaryFile(mode="wb", dir=os.path.dirname(path), prefix=".display-meta-", delete=False) as f:
+            tmp = f.name
+            f.write(payload)
+        if source_key(os.stat(path)) != key:
+            return False
+        os.replace(tmp, display_meta_path(path))
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        if tmp is not None:
+            with suppress(OSError):
+                os.unlink(tmp)
+
+
+def read_display_meta(path: str, key: tuple[int, int, int, int, int]) -> dict | None:
+    """Bounded read. Checksum detects damage, not a malicious local writer."""
+    try:
+        with open(display_meta_path(path), "rb") as f:
+            raw = f.read(_MAX_META_BYTES + 1)
+        if len(raw) > _MAX_META_BYTES:
+            return None
+        digest, body = raw.split(b"\n", 1)
+        if digest != hashlib.sha256(body).hexdigest().encode("ascii"):
+            return None
+        data = json.loads(body)
+        if not isinstance(data, dict) or data.get("source") != list(key) or not isinstance(data.get("meta"), dict):
+            return None
+        if source_key(os.stat(path)) != key:
+            return None
+        return data["meta"]
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def eligible(count: int, size: int) -> bool:

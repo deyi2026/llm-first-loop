@@ -3880,7 +3880,7 @@ def list_interop_messages(request: Request) -> dict:
 def list_sessions(request: Request, include_archived: bool = False) -> SessionListResponse:
     """会话列表：复用 engine.session.list_sessions，不遍历会话目录."""
     engine = _engine_from(request)
-    metas = engine.session.list_sessions(include_archived=include_archived)
+    metas = engine.session.list_sessions(include_archived=include_archived, display_only=True)
     default_model = getattr(getattr(engine, "llm", None), "model", None)
     items = [
         SessionMetaItem(
@@ -5229,7 +5229,7 @@ def list_workspace_sessions(workspace_id: str, request: Request) -> JSONResponse
             content={"error": "workspace_not_found", "detail": f"工作区未注册: {workspace_id}"},
         )
     metas = engine.session.list_sessions_in(
-        Path(engine.settings.sessions_dir) / ws.id
+        Path(engine.settings.sessions_dir) / ws.id, display_only=True
     )
     return JSONResponse(
         {
