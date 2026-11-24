@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, fetchSessionsResult } from "./core/api";
-import { fetchHistory, fetchModels, streamChatRequest } from "./core/chat";
+import { fetchHistory, fetchModels, fetchSubmissionStatus, streamChatRequest } from "./core/chat";
 
 describe("core fetch fail-open", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -63,6 +63,25 @@ describe("core fetch fail-open", () => {
   it("fetchModels returns empty catalog when fetch rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
     await expect(fetchModels()).resolves.toEqual({ models: [], current: null, catalog: [] });
+  });
+
+  it("treats a gateway 524 as uncertain admission rather than a confirmed rejection", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("gateway timeout", { status: 524 })));
+    const out = await streamChatRequest({ message: "x", session_id: "s1" }, {});
+    expect(out.ok).toBe(false);
+    expect(out.errorType).toBe("network");
+    expect(out.error?.detail).toContain("524");
+  });
+
+  it("submission lookup rejects unrelated or malformed receipts", async () => {
+    const id = "a".repeat(32);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      state: "active", submission_id: id, session_id: "other", run_generation: "g",
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchSubmissionStatus(id, "s1")).toBeNull();
+    expect(await fetchSubmissionStatus(id, null)).toMatchObject({ session_id: "other", run_generation: "g" });
+    expect(fetchMock.mock.calls).toHaveLength(2);
   });
 
   it("streamChatRequest exposes run_started exact generation before later deltas", async () => {

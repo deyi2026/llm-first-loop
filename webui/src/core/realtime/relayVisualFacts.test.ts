@@ -56,7 +56,12 @@ function makeFetch(claimed: QueueItem | null) {
     if (url.includes("/api/v1/chat/queue")) {
       return { ok: true, json: async () => ({ items: claimed ? [claimed] : [] }) };
     }
-    if (url.includes("/api/v1/chat/stream")) {
+    if (url.includes("/api/v1/chat/stream/submission-status")) {
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(init?.body).toBeUndefined();
+      return { ok: true, status: 200, json: async () => ({ state: "unknown" }) };
+    }
+    if (url === "/api/v1/chat/stream" && init?.method === "POST") {
       streamCalls.push({ body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
       return { ok: false, status: 500, text: async () => "server boom" };
     }

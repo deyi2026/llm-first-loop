@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 from typing import Any, Literal
 
+from llm_loop.core import session_page_index
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.event_log.session_types import (  # noqa: F401 — SessionIdConflictError 为 R9-P3-02 re-export（历史导入路径兼容）
@@ -40,9 +42,10 @@ _IDENTITY_FALLBACK_LOCKS: dict[str, threading.Lock] = {}
 _ACTIVE = "active"
 _ARCHIVED = "archived"
 
-# 会话元数据缓存（2026-09-07 CPU 修复）：绝对路径 → ((mtime_ns, size), SessionMeta)。
+# 会话元数据缓存：绝对路径 → (完整文件身份, SessionMeta)。
 # 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
-_SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
+# Third field is canonical provenance. Display sidecars never authorize topology.
+_SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int, int, int, int], SessionMeta, bool]] = OrderedDict()
 _SESSION_META_CACHE_LOCK = threading.Lock()
 # The active workspace has >2.4k session JSON files and the host has >9k
 # across workspace roots.  A 2,048-entry process cache caused each refresh to
@@ -329,6 +332,25 @@ def _session_meta_from_disk_json(data: dict, fallback_session_id: str) -> Sessio
     )
 
 
+def _display_meta_from_index(path: str, key: tuple[int, int, int, int, int]) -> SessionMeta | None:
+    data = session_page_index.read_display_meta(path, key)
+    if data is None:
+        return None
+    strings = ("session_id", "title", "created_at", "updated_at", "last_message_preview", "channel", "origin_channel")
+    if (any(not isinstance(data.get(name), str) for name in strings)
+        or data["session_id"] != os.path.splitext(os.path.basename(path))[0]
+        or data.get("status") not in (_ACTIVE, _ARCHIVED)
+        or type(data.get("message_count")) is not int or data["message_count"] < 0
+        or type(data.get("pinned")) is not bool
+        or any(data.get(name) is not None and not isinstance(data[name], str) for name in ("model_override", "parent_id"))
+        or len(data["last_message_preview"]) > 80):
+        return None
+    try:
+        return SessionMeta(**data)
+    except TypeError:
+        return None
+
+
 class SessionStore:
     """会话持久化（JSON 文件，P0 + P1 多会话方法）.
 
@@ -361,7 +383,7 @@ class SessionStore:
         # load，大会话 1-5MB 重复 parse 0.1-0.8s/次）。键控 (mtime_ns, size)，
         # save/外部变更即失效；FIFO 有界（活跃会话工作集）；命中返回壳副本
         # （messages 列表独立），调用方结构变更互不可见。
-        self._session_json_cache: OrderedDict[str, tuple[tuple[int, int], Session]] = OrderedDict()
+        self._session_json_cache: OrderedDict[str, tuple[tuple[int, int, int, int, int], Session]] = OrderedDict()
         self._session_json_cache_lock = threading.Lock()
         self._identity_verified: OrderedDict[str, None] = OrderedDict()
         self._identity_cache_max = 512
@@ -587,28 +609,44 @@ class SessionStore:
             "event_id": str(getattr(first, "event_id", "") or ""),
         }
 
-    def _apply_message_retraction_overlay(self, session: Session) -> Session:
+    def _apply_message_retraction_overlay(self, session: Session, *, history_page: bool = False) -> Session:
         """Project append-only retractions over the legacy/default JSON read path."""
         store = self._event_store
         if store is None or getattr(store, "enabled", False) is False:
             return session
-        try:
-            # Retraction overlay is a high-frequency read-path projection. EventStore
-            # already provides an exact bounded replay cache keyed by durable tail seq;
-            # bypassing it here forced every SessionStore.load() to JSON-replay the
-            # whole event log again, multiplying CPU cost for large Web sessions.
-            events = getattr(store, "read_cached", store.read)(session.session_id)
-        except Exception:
-            return session
-        if not events:
-            return session
-
         from llm_loop.core.message_retraction import (
             HUMAN_TURN_SOURCE_ID_KEY,
             RETRACTED_MARKER,
             project_retracted_metadata,
         )
         from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED
+
+        if history_page and not any(
+            message.role == "user" and (message.metadata or {}).get(HUMAN_TURN_SOURCE_ID_KEY)
+            for message in session.messages
+        ):
+            return session  # no row on this page can be affected by a retraction
+        try:
+            # Retraction overlay is a high-frequency read-path projection. EventStore
+            # already provides an exact bounded replay cache keyed by durable tail seq;
+            # bypassing it here forced every SessionStore.load() to JSON-replay the
+            # whole event log again, multiplying CPU cost for large Web sessions.
+            selective = getattr(store, "read_message_retractions", None)
+            if history_page and callable(selective):
+                try:
+                    events = selective(session.session_id)
+                    if not isinstance(events, list):
+                        raise TypeError("invalid selective event read")
+                except Exception:
+                    # A derived read optimization must not suppress the existing
+                    # canonical retraction path when it cannot read its source.
+                    events = getattr(store, "read_cached", store.read)(session.session_id)
+            else:
+                events = getattr(store, "read_cached", store.read)(session.session_id)
+        except Exception:
+            return session
+        if not events:
+            return session
 
         changed = False
         for event in events:
@@ -1612,18 +1650,49 @@ class SessionStore:
                 session.title = _make_title(first_user.content)
         # 原子写（tmp+rename）：Web/飞书跨进程共享会话时防半写损坏/交错覆盖
         p = self._path(session.session_id)
-        payload = json.dumps(session.to_dict(), ensure_ascii=False, indent=2)
+        data = session.to_dict()
+        payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        meta = _session_meta_from_disk_json(data, session.session_id)
+        del data
+        published_key = None
         try:
             tmp = os.path.splitext(p)[0] + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
+            with open(tmp, "wb") as f:
                 f.write(payload)
+                f.flush()
+                written = os.fstat(f.fileno())
             os.replace(tmp, p)
         except OSError as exc:
             # P0-4: 原子写失败回退直写（持锁内，无并发写者撕裂面；读者仍有瞬时窗口，
             # 如实 warning 不再静默——该路径现实不可达，仅跨设备 rename 等极端场景）
             logger.warning("会话原子写失败，回退直写（fail-open）: %s: %s", p, exc)
-            with open(p, "w", encoding="utf-8") as f:
+            with open(p, "wb") as f:
                 f.write(payload)
+        else:
+            # Rename may change ctime; bind the actual published inode. A
+            # failed stat must not trigger the canonical write fallback.
+            with suppress(OSError):
+                published = os.stat(p)
+                if (written.st_dev, written.st_ino, written.st_size, written.st_mtime_ns) == (
+                    published.st_dev, published.st_ino, published.st_size, published.st_mtime_ns
+                ):
+                    published_key = session_page_index.source_key(published)
+        if published_key is not None:
+            # Warm only the existing display/parent metadata cache, not ingress
+            # authorization (get_meta retains its canonical overlay path).
+            with _SESSION_META_CACHE_LOCK:
+                _SESSION_META_CACHE[p] = (published_key, meta, True)
+                _SESSION_META_CACHE.move_to_end(p)
+                while len(_SESSION_META_CACHE) > _SESSION_META_CACHE_MAX:
+                    _SESSION_META_CACHE.popitem(last=False)
+            session_page_index.publish_display_meta(p, meta.to_dict(), published_key)
+            if session_page_index.eligible(len(session.messages), published_key[1]):
+                if len(payload) == published_key[1]:
+                    session_page_index.publish_index(p, payload, len(session.messages), published_key)
+            else:
+                with suppress(OSError):
+                    os.unlink(session_page_index.index_path(p))
+        del payload
         # D1 兜底（防御层）: 事件日志缺失时生成 session.created + 消息事件（fail-open）
         self._event_backfill(session)
 
@@ -1669,6 +1738,121 @@ class SessionStore:
                 session_id,
             )
         return self._apply_message_retraction_overlay(self._load_from_json(session_id))
+
+    def load_history_page(self, session_id: str, limit: int, offset: int) -> tuple[list[Message], int] | None:
+        """Optional indexed page; normal load remains the authority/fallback."""
+        if self._read_path_source != "session_json":
+            return None
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        result = session_page_index.read_page(self._path(session_id), limit, offset)
+        if result is None:
+            return None
+        rows, total = result
+        try:
+            messages = [_message_from_dict(row) for row in rows]
+        except (KeyError, ValueError, TypeError):
+            return None
+        page = self._apply_message_retraction_overlay(Session(session_id=session_id, messages=messages), history_page=True)
+        return page.messages, total
+
+    def rebuild_history_index(self, session_id: str) -> bool:
+        """Bounded explicit maintenance; does not rewrite the canonical source."""
+        if self._read_path_source != "session_json":
+            return False
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        with self.management_lease(session_id), self._session_lock(session_id):
+            return session_page_index.rebuild_index(self._path(session_id), session_id, _message_from_dict)
+
+    def rebuild_display_meta(self, session_id: str) -> bool:
+        """Explicit bounded legacy backfill, never called from a Web request."""
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        with self.management_lease(session_id), self._session_lock(session_id):
+            path = self._path(session_id)
+            try:
+                with open(path, "rb") as source:
+                    key = session_page_index.source_key(os.fstat(source.fileno()))
+                    if key[1] > 128 * 1024 * 1024:
+                        return False
+                    raw = source.read(key[1] + 1)
+                    if len(raw) != key[1] or session_page_index.source_key(os.fstat(source.fileno())) != key:
+                        return False
+                data = json.loads(raw)
+                if not isinstance(data, dict) or data.get("session_id", session_id) != session_id:
+                    return False
+                meta = _session_meta_from_disk_json(data, session_id)
+                return session_page_index.publish_display_meta(path, meta.to_dict(), key)
+            except (OSError, ValueError, TypeError, AttributeError, KeyError):
+                return False
+
+    def rebuild_history_views_batch(self, session_ids: list[str], *, max_source_bytes: int = 64 * 1024 * 1024) -> list[dict]:
+        """Explicit maintenance of at most eight legacy sessions, one parse each.
+
+        No directory scan, no Web request hook, no canonical writes. The total
+        source read budget is charged even when parsing or publishing fails.
+        Existing management leases reject active Runs rather than waiting for them.
+        """
+        if self._read_path_source != "session_json":
+            raise ValueError("history view maintenance requires session_json")
+        if not 1 <= len(session_ids) <= 8 or not 1 <= max_source_bytes <= 128 * 1024 * 1024:
+            raise ValueError("history view maintenance budget exceeded")
+        ids = list(dict.fromkeys(_validate_session_id(sid) for sid in session_ids))
+        remaining = max_source_bytes
+        results = []
+        for sid in ids:
+            result = {"session_id": sid, "status": "failed", "source_bytes": 0,
+                      "display_meta": False, "history_index": False}
+            results.append(result)
+            if remaining <= 0:
+                result["status"] = "budget_exhausted"
+                continue
+            if not self.exists(sid):
+                result["status"] = "missing"
+                continue
+            try:
+                self._pin_session_location(sid)
+                self._check_identity_read(sid)
+                with self.management_lease(sid), self._session_lock(sid):
+                    path = self._path(sid)
+                    with open(path, "rb") as source:
+                        key = session_page_index.source_key(os.fstat(source.fileno()))
+                        if key[1] > remaining:
+                            result["status"] = "budget_exhausted"
+                            continue
+                        # Reserve the entire read before I/O, including failures.
+                        remaining -= key[1]
+                        result["source_bytes"] = key[1]
+                        raw = source.read(key[1])
+                        if len(raw) != key[1] or session_page_index.source_key(os.fstat(source.fileno())) != key:
+                            result["status"] = "source_changed"
+                            continue
+                    data = json.loads(raw)
+                    if not isinstance(data, dict) or data.get("session_id", sid) != sid or not isinstance(data.get("messages"), list):
+                        continue
+                    rows = data["messages"]
+                    meta = _session_meta_from_disk_json(data, sid)
+                    result["display_meta"] = session_page_index.publish_display_meta(path, meta.to_dict(), key)
+                    if session_page_index.eligible(len(rows), key[1]):
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                raise ValueError("invalid message row")
+                            _message_from_dict(row)
+                        result["history_index"] = session_page_index.publish_index(path, raw, len(rows), key)
+                        result["status"] = "rebuilt" if result["display_meta"] and result["history_index"] else "partial"
+                    else:
+                        result["status"] = "metadata_only" if result["display_meta"] else "failed"
+            except SessionMutationBusyError:
+                result["status"] = "busy"
+            except SessionIdConflictError:
+                result["status"] = "identity_conflict"
+            except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError):
+                pass
+        return results
 
     def _load_from_event_log(self, session_id: str) -> Session | None:
         """从事件日志 replay 重建 Session（失败返回 None，由调用方回退）."""
@@ -1716,7 +1900,10 @@ class SessionStore:
             logger.warning("event_log replay 重建异常（fail-open）: %s: %s", session_id, exc)
             return None
 
-    _SESSION_JSON_CACHE_LIMIT = 8  # 活跃会话工作集上限（FIFO 淘汰；大对象防膨胀）
+    _SESSION_JSON_CACHE_LIMIT = 8
+    # Bound retained source weight as well as entry count. JSON bytes are a
+    # deterministic proxy for parsed object cost, not a hard RSS limit.
+    _SESSION_JSON_CACHE_SOURCE_BYTES_LIMIT = 64 * 1024 * 1024
 
     def _copy_session_shell(self, session: Session) -> Session:
         """缓存命中的返回形态：新 Session 壳 + 新 messages 列表（引用共享）.
@@ -1726,21 +1913,40 @@ class SessionStore:
         """
         return dataclasses_replace(session, messages=list(session.messages))
 
+    @staticmethod
+    def _json_cache_key(st: os.stat_result) -> tuple[int, int, int, int, int]:
+        # Keep source bytes at index 1 for the weight budget. Include file
+        # identity so an atomic replacement preserving size/mtime cannot hit.
+        return st.st_mtime_ns, st.st_size, st.st_dev, st.st_ino, st.st_ctime_ns
+
     def _load_from_json(self, session_id: str) -> Session:
         """从 session JSON 加载会话（2026-09-23 起 (mtime,size) 键控读缓存）."""
         p = self._path(session_id)
         try:
             st = os.stat(p)
         except OSError:
+            with self._session_json_cache_lock:
+                self._session_json_cache.pop(session_id, None)
             return Session(session_id=session_id)
-        fkey = (st.st_mtime_ns, st.st_size)
+        fkey = self._json_cache_key(st)
         with self._session_json_cache_lock:
             cached = self._session_json_cache.get(session_id)
-        if cached is not None and cached[0] == fkey:
+            if cached is not None and cached[0] == fkey:
+                self._session_json_cache.move_to_end(session_id)
+            else:
+                self._session_json_cache.pop(session_id, None)
+                cached = None
+        if cached is not None:
             return self._copy_session_shell(cached[1])
         try:
             with open(p, encoding="utf-8") as f:
+                # The file may have been atomically replaced after path stat.
+                # Charge the actual opened snapshot, not the preceding path size.
+                opened = os.fstat(f.fileno())
+                fkey = self._json_cache_key(opened)
                 data = json.load(f)
+                finished = os.fstat(f.fileno())
+                stable_source = fkey == self._json_cache_key(finished)
             messages = [_message_from_dict(m) for m in data.get("messages", [])]
             parsed = Session(
                 session_id=data.get("session_id", session_id),
@@ -1783,10 +1989,17 @@ class SessionStore:
         except Exception:
             return self._degrade_corrupt_session(p, session_id)
         with self._session_json_cache_lock:
-            self._session_json_cache[session_id] = (fkey, parsed)
-            self._session_json_cache.move_to_end(session_id)
-            while len(self._session_json_cache) > self._SESSION_JSON_CACHE_LIMIT:
-                self._session_json_cache.popitem(last=False)
+            # An oversized transcript is still returned in full; it must not
+            # evict the entire hot working set merely to be retained itself.
+            if stable_source and fkey[1] <= self._SESSION_JSON_CACHE_SOURCE_BYTES_LIMIT:
+                self._session_json_cache[session_id] = (fkey, parsed)
+                self._session_json_cache.move_to_end(session_id)
+                while (
+                    len(self._session_json_cache) > self._SESSION_JSON_CACHE_LIMIT
+                    or sum(entry[0][1] for entry in self._session_json_cache.values())
+                    > self._SESSION_JSON_CACHE_SOURCE_BYTES_LIMIT
+                ):
+                    self._session_json_cache.popitem(last=False)
         # 缓存持有私有母本；所有调用方（含首次解析路径）一律拿壳副本——
         # 否则首个调用方的结构变更会污染缓存对象（save 失败后脏对象仍被命中，
         # test_spawn_failure_to_persist_delegated_task 实证）。
@@ -2016,15 +2229,15 @@ class SessionStore:
             model_override=session.model_override,
         )
 
-    def list_sessions(self, include_archived: bool = False) -> list[SessionMeta]:
+    def list_sessions(self, include_archived: bool = False, *, display_only: bool = False) -> list[SessionMeta]:
         """列出全部会话元数据（M56: 置顶优先，再按 updated_at 降序；归档默认隐藏）."""
-        return self._list_sessions_in(self._dir, include_archived=include_archived)
+        return self._list_sessions_in(self._dir, include_archived=include_archived, display_only=display_only)
 
-    def list_sessions_in(self, sessions_dir: str | Path, include_archived: bool = False) -> list[SessionMeta]:
+    def list_sessions_in(self, sessions_dir: str | Path, include_archived: bool = False, *, display_only: bool = False) -> list[SessionMeta]:
         """按指定目录列出会话元数据（工作区管理：按工作区分区展示，不改变当前根）."""
-        return self._list_sessions_in(Path(sessions_dir), include_archived=include_archived)
+        return self._list_sessions_in(Path(sessions_dir), include_archived=include_archived, display_only=display_only)
 
-    def _list_sessions_in(self, target: Path, include_archived: bool = False) -> list[SessionMeta]:
+    def _list_sessions_in(self, target: Path, include_archived: bool = False, *, display_only: bool = False) -> list[SessionMeta]:
         """list_sessions 实现体（目录参数化；M56 排序语义不变）.
 
         2026-09-07 CPU 修复：按 (mtime_ns, size) 缓存单文件解析结果——
@@ -2036,17 +2249,14 @@ class SessionStore:
         metas: list[SessionMeta] = []
         target_fs = os.path.abspath(os.fspath(target))
         cache_limit = max(1, int(_SESSION_META_CACHE_MAX))
-        new_cache: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
+        new_cache: OrderedDict[str, tuple[tuple[int, int, int, int, int], SessionMeta, bool]] = OrderedDict()
         seen_paths: set[str] = set()
         try:
-            entries = sorted(
-                (
-                    entry
-                    for entry in os.scandir(target_fs)
-                    if entry.is_file() and entry.name.endswith(".json")
-                ),
-                key=lambda entry: entry.name,
-            )
+            with os.scandir(target_fs) as scan:
+                entries = sorted(
+                    (entry for entry in scan if entry.name.endswith(".json") and entry.is_file()),
+                    key=lambda entry: entry.name,
+                )
         except OSError:
             entries = []
         for entry in entries:
@@ -2056,22 +2266,29 @@ class SessionStore:
             seen_paths.add(p)
             try:
                 st = entry.stat()
-                fkey = (st.st_mtime_ns, st.st_size)
+                fkey = session_page_index.source_key(st)
             except OSError:
                 continue
             with _SESSION_META_CACHE_LOCK:
                 cached = _SESSION_META_CACHE.get(p)
-            if cached is not None and cached[0] == fkey:
+            if cached is not None and cached[0] == fkey and (display_only or cached[2]):
                 meta = cached[1]
                 new_cache[p] = cached
+            elif display_only and (indexed_meta := _display_meta_from_index(p, fkey)) is not None:
+                meta = indexed_meta
+                new_cache[p] = (fkey, meta, False)
             else:
                 try:
                     with open(p, encoding="utf-8") as f:
+                        fkey = session_page_index.source_key(os.fstat(f.fileno()))
                         data = json.load(f)
+                        stable = fkey == session_page_index.source_key(os.fstat(f.fileno()))
                 except (json.JSONDecodeError, OSError):
                     continue
                 meta = _session_meta_from_disk_json(data, os.path.splitext(entry.name)[0])
-                new_cache[p] = (fkey, meta)
+                if not stable:
+                    continue
+                new_cache[p] = (fkey, meta, True)
             new_cache.move_to_end(p)
             while len(new_cache) > cache_limit:
                 new_cache.popitem(last=False)
@@ -2098,6 +2315,36 @@ class SessionStore:
             return None
         return self._to_meta(self.load(session_id))
 
+    def history_revision(self, session_id: str) -> str | None:
+        """Cheap source-change hint; never a substitute for a history read or proof.
+
+        Both the transcript and independent event/retraction source participate.
+        No message body is parsed. Unavailable evidence means no revision hint.
+        """
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        try:
+            path = self._path(session_id)
+            st = os.stat(path)
+            source = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            event_stamp = None
+            store = self._event_store
+            if store is not None and getattr(store, "enabled", False):
+                reader = getattr(store, "history_source_stamp", None)
+                if not callable(reader):
+                    return None
+                event_stamp = reader(session_id)
+                if event_stamp is None:
+                    return None
+            elif self._read_path_source != "session_json":
+                return None
+            return hashlib.sha256(
+                repr((path, self._read_path_source, source, event_stamp)).encode("utf-8")
+            ).hexdigest()
+        except (OSError, ValueError):
+            return None
+
     def parent_id_of(self, session_id: str) -> str:
         """轻量只读：会话的 parent_id（缓存优先；与 load().parent_id 等价）.
 
@@ -2121,21 +2368,25 @@ class SessionStore:
             return ""
         try:
             st = os.stat(path)
-            fkey = (st.st_mtime_ns, st.st_size)
+            fkey = session_page_index.source_key(st)
         except OSError:
             return ""
         with _SESSION_META_CACHE_LOCK:
             cached = _SESSION_META_CACHE.get(path)
-        if cached is not None and cached[0] == fkey:
+        if cached is not None and cached[0] == fkey and cached[2]:
             return str(cached[1].parent_id or "")
         try:
             with open(path, encoding="utf-8") as f:
+                fkey = session_page_index.source_key(os.fstat(f.fileno()))
                 data = json.load(f)
+                stable = fkey == session_page_index.source_key(os.fstat(f.fileno()))
         except (json.JSONDecodeError, OSError):
             return ""
         meta = _session_meta_from_disk_json(data, str(session_id))
+        if not stable:
+            return ""
         with _SESSION_META_CACHE_LOCK:
-            _SESSION_META_CACHE[path] = (fkey, meta)
+            _SESSION_META_CACHE[path] = (fkey, meta, True)
             _SESSION_META_CACHE.move_to_end(path)
             while len(_SESSION_META_CACHE) > _SESSION_META_CACHE_MAX:
                 _SESSION_META_CACHE.popitem(last=False)
@@ -2353,7 +2604,13 @@ class SessionStore:
                     event_delete = getattr(self._event_store, "delete_session", None)
                     if callable(event_delete):
                         event_delete(session_id)
+                    # Display metadata contains title/preview. Do not report a
+                    # successful physical deletion if that private copy remains.
+                    with suppress(FileNotFoundError):
+                        os.unlink(session_page_index.display_meta_path(p))
                     os.unlink(p)
+                    with suppress(OSError):
+                        os.unlink(session_page_index.index_path(p))
                 # owner tombstone与稳定lock/run.lock故意保留：旧sid不可跨workspace重新分配。
                 self._unpin_session_location(session_id)
                 return True
