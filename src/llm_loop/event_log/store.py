@@ -181,6 +181,41 @@ class EventStore:
         except FileNotFoundError:
             return []
 
+    def history_source_stamp(self, session_id: str) -> tuple[object, ...] | None:
+        """Bounded, body-free change hint for Web history (not replay evidence).
+
+        Include every segment's filesystem identity, not only its tail sequence:
+        retractions, replacement, truncation and rotation must invalidate a hint.
+        Unknown/oversized layouts return None so callers use the normal read path.
+        """
+        def stamp(path: str) -> tuple[int, int, int, int, int]:
+            st = os.stat(path)
+            return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+
+        try:
+            single = self._path(session_id)
+            directory = self._segment_dir(session_id)
+            try:
+                single_stamp = stamp(single)
+            except FileNotFoundError:
+                single_stamp = None
+            try:
+                directory_stamp = stamp(directory)
+            except FileNotFoundError:
+                return (single_stamp, None)
+            segments = []
+            with os.scandir(directory) as entries:
+                for count, entry in enumerate(entries, 1):
+                    if count > 128:
+                        return None
+                    if entry.name.endswith(".jsonl") and entry.is_file():
+                        segments.append((entry.name, stamp(entry.path)))
+            if stamp(directory) != directory_stamp:
+                return None
+            return (single_stamp, directory_stamp, tuple(sorted(segments)))
+        except (OSError, ValueError):
+            return None
+
     def _ensure_dir(self) -> bool:
         try:
             self._dir.mkdir(parents=True, exist_ok=True)

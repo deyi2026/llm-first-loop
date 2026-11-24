@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   }>,
   streamChatRequest: vi.fn(),
   fetchHistory: vi.fn(),
+  fetchHistoryRevision: vi.fn(),
   fetchStreamStatus: vi.fn(),
 }));
 
@@ -19,6 +20,7 @@ vi.mock("./core/chat", async (importOriginal) => {
     ...actual,
     streamChatRequest: h.streamChatRequest,
     fetchHistory: h.fetchHistory,
+    fetchHistoryRevision: h.fetchHistoryRevision,
     fetchStreamStatus: h.fetchStreamStatus,
   };
 });
@@ -64,12 +66,14 @@ describe("conversation stream ownership", () => {
     h.pending.length = 0;
     h.streamChatRequest.mockReset();
     h.fetchHistory.mockReset();
+    h.fetchHistoryRevision.mockReset();
     h.fetchStreamStatus.mockReset();
     h.streamChatRequest.mockImplementation(
       (body: Record<string, unknown>, handlers: any, signal?: AbortSignal) =>
         new Promise<StreamOutcome>((resolve) => h.pending.push({ body, handlers, signal, resolve }))
     );
     h.fetchHistory.mockResolvedValue({ messages: [], has_more: false });
+    h.fetchHistoryRevision.mockResolvedValue(null);
     h.fetchStreamStatus.mockResolvedValue(null);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 })));
     sessionStore.setCurrentSession("s1");
@@ -303,6 +307,62 @@ describe("conversation stream ownership", () => {
     expect(next.loadedHistoryCount).toBe(0);
     expect(next.hasMoreHistory).toBe(false);
     expect(next.lastError).toBeNull();
+  });
+
+  it("unchanged revision skips history body; changed revision reloads the current page", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "old" }], has_more: false, revision: "r1" });
+      await loadHistory("s1");
+      h.fetchHistoryRevision.mockResolvedValue("r1");
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.fetchHistoryRevision).toHaveBeenCalledWith("s1");
+      expect(h.fetchHistory).toHaveBeenCalledTimes(1);
+      h.fetchHistoryRevision.mockResolvedValue("r2");
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "new" }], has_more: false, revision: "r2" });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+      expect(conversationStore.getState().messages[0].content).toBe("new");
+      expect(h.streamChatRequest).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unavailable revision falls back to the existing latest-message probe", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "old" }], has_more: false, revision: "r1" });
+      await loadHistory("s1");
+      h.fetchHistoryRevision.mockResolvedValue(null);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+      expect(h.fetchHistory.mock.calls[1].slice(0, 3)).toEqual(["s1", 1, 0]);
+      expect(h.streamChatRequest).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("late revision from the old session does not reload the new session", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "old" }], has_more: false, revision: "r1" });
+      await loadHistory("s1");
+      let resolveRevision!: (value: string) => void;
+      h.fetchHistoryRevision.mockImplementationOnce(() => new Promise((resolve) => { resolveRevision = resolve; }));
+      await vi.advanceTimersByTimeAsync(20_000);
+      sessionStore.setCurrentSession("s2");
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "new session" }], has_more: false, revision: "r3" });
+      await loadHistory("s2");
+      resolveRevision("r2");
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+      expect(conversationStore.getState().messages[0].content).toBe("new session");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("同会话并发历史刷新共享一个请求，不互相 abort 或重复读", async () => {

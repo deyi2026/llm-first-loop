@@ -14,6 +14,7 @@ import {
   toChatMessage,
   buildAssistantNote,
   fetchHistory,
+  fetchHistoryRevision,
   fetchStreamStatus,
   fetchQueueList,
   enqueueQueueMessage,
@@ -86,6 +87,10 @@ let idlePollTimer: number | undefined;
 let idlePollSession: string | null = null;
 /** 上次探针的服务端最新消息指纹（与服务端自比对，消除本地 toChatMessage 映射差异） */
 let idleProbeFp: string | null = null;
+let idleProbeRevision: string | null = null;
+let idleRevisionHits = 0;
+let idlePollInFlight = false;
+let idlePollEpoch = 0;
 
 function emit(): void {
   listeners.forEach((l) => l());
@@ -235,20 +240,51 @@ function fingerprintLatest(m: ChatMessage | undefined): string | null {
 async function idlePollTick(sessionId: string): Promise<void> {
   const st = conversationStore.getState();
   if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0
-    || historyRequest !== null || document.hidden) return;
-  const resp = await fetchHistory(sessionId, 1, 0);
-  if (sessionStore.getState().currentSessionId !== sessionId) return;
-  if (resp.ok === false) return; // background probe is observational; never fabricate empty history
-  const fp = fingerprintLatest(resp.messages[0] as ChatMessage | undefined);
-  if (fp === null) return; // 会话被清空等异常形态：不触发重载（下次探针再判）
-  if (idleProbeFp === null) {
-    idleProbeFp = fp; // 基线跳
-    return;
+    || historyRequest !== null || document.hidden || idlePollInFlight) return;
+  const epoch = idlePollEpoch;
+  const stillIdle = () => {
+    const current = conversationStore.getState();
+    return sessionStore.getState().currentSessionId === sessionId
+      && idlePollSession === sessionId && idlePollEpoch === epoch
+      && !current.streaming && !current.backgroundRunning
+      && historyRequest === null && !document.hidden;
+  };
+  idlePollInFlight = true;
+  try {
+    const baseline = idleProbeRevision;
+    if (baseline !== null) {
+      const revision = await fetchHistoryRevision(sessionId);
+      if (!stillIdle() || idleProbeRevision !== baseline) return;
+      if (revision !== null && revision !== baseline) {
+        void loadHistory(sessionId, true);
+        return;
+      }
+      // Source equality is only a hint, not proof of successful hydration.
+      // Periodically retain the existing exact latest-message probe.
+      if (revision === baseline && ++idleRevisionHits < 15) return;
+      idleRevisionHits = 0;
+    }
+    const resp = await fetchHistory(sessionId, 1, 0);
+    if (!stillIdle() || idleProbeRevision !== baseline || resp.ok === false) return;
+    if (baseline !== null && resp.revision && resp.revision !== baseline) {
+      void loadHistory(sessionId, true);
+      return;
+    }
+    const fp = fingerprintLatest(resp.messages[0] as ChatMessage | undefined);
+    if (fp === null) return;
+    if (idleProbeFp === null) {
+      idleProbeFp = fp;
+      return;
+    }
+    if (fp !== idleProbeFp) void loadHistory(sessionId, true);
+  } finally {
+    idlePollInFlight = false;
   }
-  if (fp !== idleProbeFp) void loadHistory(sessionId, true); // 有新写入 → 全量重载（终态可靠）
 }
 
 function stopIdlePoll(): void {
+  idlePollEpoch++;
+  idlePollSession = null;
   if (idlePollTimer !== undefined) {
     window.clearInterval(idlePollTimer);
     idlePollTimer = undefined;
@@ -261,6 +297,8 @@ export function ensureIdlePoll(sessionId: string): void {
   stopIdlePoll();
   idlePollSession = sessionId;
   idleProbeFp = null;
+  idleProbeRevision = null;
+  idleRevisionHits = 0;
   idlePollTimer = window.setInterval(() => void idlePollTick(sessionId), IDLE_POLL_INTERVAL_MS);
 }
 
@@ -349,7 +387,10 @@ async function loadHistoryRequest(sessionId: string, request: AbortController): 
   // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
   // 空闲增量轮询：飞书桥等外部写入 → Web 20s 内自动刷新；基线指纹直接取自本次加载，省一次探针
   ensureIdlePoll(sessionId);
+  idlePollEpoch++;
   idleProbeFp = fingerprintLatest(messages[messages.length - 1]);
+  idleProbeRevision = resp.revision ?? null;
+  idleRevisionHits = 0;
   void checkBackgroundRun(sessionId);
   // Human Turn 队列：切会话/刷新后恢复队列镜像；空闲且有排队 → 兜底接力
   // （多标签场景：A 标签关页后其 run 终态无人接力，切回时由这里补发）

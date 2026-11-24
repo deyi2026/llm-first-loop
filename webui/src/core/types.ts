@@ -175,6 +175,7 @@ export interface HistoryMessage {
 export interface HistoryResponse {
   messages: HistoryMessage[];
   has_more: boolean;
+  revision?: string | null;
   /** Explicit read outcome: false means the caller must preserve known state. */
   ok?: boolean;
   error?: string;

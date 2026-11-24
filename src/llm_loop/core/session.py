@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -361,7 +362,7 @@ class SessionStore:
         # load，大会话 1-5MB 重复 parse 0.1-0.8s/次）。键控 (mtime_ns, size)，
         # save/外部变更即失效；FIFO 有界（活跃会话工作集）；命中返回壳副本
         # （messages 列表独立），调用方结构变更互不可见。
-        self._session_json_cache: OrderedDict[str, tuple[tuple[int, int], Session]] = OrderedDict()
+        self._session_json_cache: OrderedDict[str, tuple[tuple[int, int, int, int, int], Session]] = OrderedDict()
         self._session_json_cache_lock = threading.Lock()
         self._identity_verified: OrderedDict[str, None] = OrderedDict()
         self._identity_cache_max = 512
@@ -1729,6 +1730,12 @@ class SessionStore:
         """
         return dataclasses_replace(session, messages=list(session.messages))
 
+    @staticmethod
+    def _json_cache_key(st: os.stat_result) -> tuple[int, int, int, int, int]:
+        # Keep source bytes at index 1 for the weight budget. Include file
+        # identity so an atomic replacement preserving size/mtime cannot hit.
+        return st.st_mtime_ns, st.st_size, st.st_dev, st.st_ino, st.st_ctime_ns
+
     def _load_from_json(self, session_id: str) -> Session:
         """从 session JSON 加载会话（2026-09-23 起 (mtime,size) 键控读缓存）."""
         p = self._path(session_id)
@@ -1738,7 +1745,7 @@ class SessionStore:
             with self._session_json_cache_lock:
                 self._session_json_cache.pop(session_id, None)
             return Session(session_id=session_id)
-        fkey = (st.st_mtime_ns, st.st_size)
+        fkey = self._json_cache_key(st)
         with self._session_json_cache_lock:
             cached = self._session_json_cache.get(session_id)
             if cached is not None and cached[0] == fkey:
@@ -1753,10 +1760,10 @@ class SessionStore:
                 # The file may have been atomically replaced after path stat.
                 # Charge the actual opened snapshot, not the preceding path size.
                 opened = os.fstat(f.fileno())
-                fkey = (opened.st_mtime_ns, opened.st_size)
+                fkey = self._json_cache_key(opened)
                 data = json.load(f)
                 finished = os.fstat(f.fileno())
-                stable_source = fkey == (finished.st_mtime_ns, finished.st_size)
+                stable_source = fkey == self._json_cache_key(finished)
             messages = [_message_from_dict(m) for m in data.get("messages", [])]
             parsed = Session(
                 session_id=data.get("session_id", session_id),
@@ -2120,6 +2127,36 @@ class SessionStore:
         if not self.exists(session_id):
             return None
         return self._to_meta(self.load(session_id))
+
+    def history_revision(self, session_id: str) -> str | None:
+        """Cheap source-change hint; never a substitute for a history read or proof.
+
+        Both the transcript and independent event/retraction source participate.
+        No message body is parsed. Unavailable evidence means no revision hint.
+        """
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        try:
+            path = self._path(session_id)
+            st = os.stat(path)
+            source = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            event_stamp = None
+            store = self._event_store
+            if store is not None and getattr(store, "enabled", False):
+                reader = getattr(store, "history_source_stamp", None)
+                if not callable(reader):
+                    return None
+                event_stamp = reader(session_id)
+                if event_stamp is None:
+                    return None
+            elif self._read_path_source != "session_json":
+                return None
+            return hashlib.sha256(
+                repr((path, self._read_path_source, source, event_stamp)).encode("utf-8")
+            ).hexdigest()
+        except (OSError, ValueError):
+            return None
 
     def parent_id_of(self, session_id: str) -> str:
         """轻量只读：会话的 parent_id（缓存优先；与 load().parent_id 等价）.

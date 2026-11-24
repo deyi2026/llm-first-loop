@@ -227,6 +227,7 @@ class SessionMessagesResponse(BaseModel):
     messages: list[MessageItem]
     has_more: bool = False  # D2: 是否还有更早消息（分页用，旧客户端忽略）
     total: int = 0  # D2: 会话消息总数（分页用，旧客户端忽略）
+    revision: str | None = None  # optional source-change hint, not a paging cursor
 
 
 class WorkspaceRequest(BaseModel):

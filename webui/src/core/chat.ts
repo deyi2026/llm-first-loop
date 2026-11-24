@@ -173,6 +173,7 @@ export async function fetchHistory(
       ok: true,
       messages: data.messages,
       has_more: data.has_more === true,
+      revision: typeof data.revision === "string" ? data.revision : null,
     };
   } catch {
     return {
@@ -186,6 +187,27 @@ export async function fetchHistory(
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/** Optional body-free history probe; old servers and failures fall back to history. */
+export async function fetchHistoryRevision(sessionId: string): Promise<string | null> {
+  if (isAuthRequired()) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const resp = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/history-revision`,
+      { signal: controller.signal, cache: "no-store" }
+    );
+    reportUnauthorized(resp.status);
+    if (!resp.ok) return null;
+    const data = await resp.json() as { revision?: unknown };
+    return typeof data.revision === "string" && data.revision.length > 0 ? data.revision : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

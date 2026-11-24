@@ -37,6 +37,21 @@ def _build_session(build_test_engine, n_messages: int):
 
 
 class TestHistoryPagination:
+    def test_revision_probe_uses_no_full_history_load(self, build_test_engine, monkeypatch):
+        engine, sid, _ = _build_session(build_test_engine, 2)
+        client = _make_client(engine)
+        page = client.get(f"/api/v1/sessions/{sid}/messages?limit=1").json()
+        assert page["revision"]
+
+        def unexpected(*args, **kwargs):
+            raise AssertionError("revision probe must not load history")
+
+        monkeypatch.setattr(engine.session, "load", unexpected)
+        resp = client.get(f"/api/v1/sessions/{sid}/history-revision")
+        assert resp.status_code == 200
+        assert resp.json() == {"revision": page["revision"]}
+        assert resp.headers["cache-control"] == "no-store"
+
     def test_limit_returns_slice(self, build_test_engine):
         engine, sid, total = _build_session(build_test_engine, 3)  # 6 条
         client = _make_client(engine)

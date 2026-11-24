@@ -4686,6 +4686,29 @@ def session_durable_recovery_status(session_id: str, request: Request) -> Respon
     return UTF8JSONResponse(content=durable_recovery_view(engine, session_id))
 
 
+def _history_revision_hint(engine: Any, session_id: str) -> str | None:
+    try:
+        revision = engine.session.history_revision(session_id)
+        return revision if isinstance(revision, str) else None
+    except Exception:
+        # A hint is optional; the ordinary history read retains its own errors.
+        return None
+
+
+@router.get("/api/v1/sessions/{session_id}/history-revision", response_model=None)
+def get_session_history_revision(session_id: str, request: Request) -> Response:
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    return JSONResponse(
+        content={"revision": _history_revision_hint(engine, session_id)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get(
     "/api/v1/sessions/{session_id}/messages",
     response_model=SessionMessagesResponse,
@@ -4707,6 +4730,7 @@ def get_session_messages(
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
+    revision_before = _history_revision_hint(engine, session_id) if limit is not None and offset == 0 else None
     try:
         session = engine.session.load(session_id)
     except Exception as exc:
@@ -4799,8 +4823,13 @@ def get_session_messages(
         for m in source_messages
     ]
     if limit is not None:
+        revision = (
+            revision_before
+            if revision_before is not None and revision_before == _history_revision_hint(engine, session_id)
+            else None
+        )
         return SessionMessagesResponse(
-            session_id=session_id, messages=messages, has_more=start > 0, total=total
+            session_id=session_id, messages=messages, has_more=start > 0, total=total, revision=revision
         )
     return SessionMessagesResponse(session_id=session_id, messages=messages, total=total)
 
