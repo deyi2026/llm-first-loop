@@ -367,11 +367,17 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
 
     from llm_loop.factory import build_engine
 
+    # Freeze actual package evidence before the long-lived Engine is created.
+    # Admission is a separate concern; this snapshot does not grant a Run.
+    from llm_loop.runtime.cli_deployment_identity import capture_startup_artifact
+
+    startup_artifact = capture_startup_artifact()
     engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
     # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
     # （单条消息模式 / 交互模式退出）。
     try:
+        engine._cli_startup_artifact = startup_artifact
         # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
         if args.model:
             engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
