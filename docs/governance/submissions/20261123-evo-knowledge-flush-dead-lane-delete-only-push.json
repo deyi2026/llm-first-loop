@@ -1,0 +1,171 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261123-evo-knowledge-flush-dead-lane-delete-only-push",
+  "summary": "EVO-20261123-d43138fc（GOAL-20261123-81f31a85）：修复知识资产闸与 lane 守卫串联形成的永久阻断——2026-11-23 实测：删除一个已合并远端分支被 knowledge_flush_pending 挡住约 4 小时，只能绕道 GitHub refs API。三处同源修复：(1) .githooks/pre-push 对『纯删除远端 ref』的推送豁免知识闸（判定只看 git 传给 hook 的 refspec：全部 local sha 为全零才豁免；读不懂/混入内容 refspec 一律照旧走闸）；(2) review_admission 的 git_push 准入前置与消费口用同一口径豁免（_is_delete_only_push：fail-closed，多命令/内容型 refspec/--all|--mirror|--tags 一律不豁免）；(3) scripts/knowledge_flush.py 的 lane 自检把『worktree 已消失/已非 git 工作树』的空闲 lane 判为可回收（脏树/路径读不懂/.git 损坏仍按 live）。控制边界=知识闸拒推判定与 flush 前 live-lane 阻断判定的适用范围，均为收窄既有闸的适用面，不新增放行通道或第二套闸。证据：RULE-AI-35 应拦/应放行输入以测试固化（见各声明 g3）；定向 314 passed / 0 failed（10 个测试文件，本机，head 16173ed4e）；远端 CI 的门禁（pytest + ruff + pyright）、privacy-gate、安全扫描在 PR #113 head 16173ed4e 上 pass。如实记录：本机 canonical ci_gate 在同一 head 上 exit=1（2 failed，均在 tests/unit/test_linux_polkit_probe.py，该文件不在本 PR 改动集内；执行 run 归因为纯 main 树同红的本机环境问题，本清单撰写 run 未复核），全量结论以远端 CI 为准，不声称本机全量通过。",
+  "components": [
+    {
+      "component_id": "pre-push-delete-only-knowledge-gate-exemption",
+      "paths": [
+        ".githooks/pre-push"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-knowledge-gate-delete-only-exemption",
+      "evidence": [
+        "判定实现：refspec 一次性读入 PUSH_REFS（知识闸豁免与隐私扫描共用这份输入），逐行要求 ref/sha/remote-ref 三字段齐全且 local sha 为全零才置 DELETE_ONLY=1；任何一行字段缺失或非全零即回到知识闸（fail-closed）。",
+        "RULE-AI-35 实测（tests/test_knowledge_push_gate.py，head 16173ed4e，定向 314 passed 内）：应放行 test_hook_allows_delete_only_push_with_untracked_card（纯删 refspec + 工作区有未入库卡 → rc=0 且输出『跳过知识闸』）；应仍拦 test_hook_does_not_exempt_garbled_refspec（2 形态）与 test_hook_still_blocks_content_push_with_untracked_card（删除 + 内容混合 → rc≠0 且『未入库的知识资产』）。",
+        "附带修正：隐私扫描循环改为进程替换读 PUSH_REFS 并显式跳过空 sha 行（原 here-string 在空输入时喂入一条空行，触发 git diff 空参数 → 误判 fail-closed）。"
+      ],
+      "verification_level": "hook_rc0_on_delete_only_rc_nonzero_on_garbled_and_mixed_inputs__in_targeted_314_passed_exit0__remote_ci_privacy_gate_pass_on_16173ed4e",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入只有 git 传给 hook 的 refspec 行与 knowledge_flush.py --check 的退出码，全部机器可验，无模型自证输入。recovery：任一审查发现否决即回退本组件提交并重走闸；exit：revert 后回到『任何推送一律过知识闸』的既有行为（删除分支需先入库卡片或走 GitHub refs API）。",
+      "rollback_route": "git revert 本组件提交；钩子由 git 在每次 push 时从磁盘读取，回退后下一次 push 即恢复旧判定，无状态、无数据影响。"
+    },
+    {
+      "component_id": "review-admission-delete-only-knowledge-gate-exemption",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-knowledge-gate-delete-only-exemption",
+      "evidence": [
+        "_is_delete_only_push：先拒绝含 && || ; | & > < 换行 反引号 $ 的命令串，再 shlex 解析，要求 git push 形态、选项在白名单内、首个位置参数为 remote、refspec 为纯删除形态（--delete/-d，或 :name 前缀，名称匹配 ^[A-Za-z0-9][A-Za-z0-9._/-]*$）。",
+        "RULE-AI-35 实测（tests/unit/test_review_admission_knowledge_flush_gate.py，head 16173ed4e，定向 314 passed 内）：应放行 test_delete_only_push_is_detected（5 形态）与 test_start_preconditions_exempts_delete_only_push_only（有未入库卡时删除型 push 无 denial）；应仍拦 test_content_or_unreadable_push_is_not_exempt（13 形态：内容型、多命令、--all/--mirror/--tags、feat/x:main、-u、空 refspec、带空格 ref 名、含变量、git -C）及同一用例后半段的内容型 push 得到 knowledge_flush_pending。",
+        "消费口知识闸抽成 _consume_knowledge_gate，使 start 前置与消费口共用同一豁免口径；回执占位闸不变（它管交付证据完整性，删除型推送照旧受检）。"
+      ],
+      "verification_level": "unit_and_block_tests_green_in_targeted_314_passed_exit0__remote_ci_gate_pytest_ruff_pyright_pass_on_16173ed4e",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是待审的 push 命令文本（shlex 解析）与 knowledge_flush.py --check 的退出码，无模型自证输入。recovery：审查否决即回退本组件提交并重走闸；exit：revert 后 git_push 准入对所有命令一律先过知识闸。注意本文件是宿主进程内模块，运行中的宿主须重启后才加载新口径。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务；回退后 git_push 准入与消费口恢复『任何推送一律先过知识闸』。"
+    },
+    {
+      "component_id": "knowledge-flush-gone-worktree-lane-reclaim",
+      "paths": [
+        "scripts/knowledge_flush.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-knowledge-flush-gone-worktree-reclaim",
+      "evidence": [
+        "_worktree_state：路径不存在 → gone；不是目录/不可读/git 不可用或超时 → unknown；rev-parse 失败时『有 .git 却读不出』→ unknown，否则 gone；是工作树 → git。_lane_is_stale 仅在 gone 时对空闲超时（4h）的 lane 返回可回收，unknown 一律按 live（fail-closed）。",
+        "RULE-AI-35 实测（head 16173ed4e，定向 314 passed 内）：应放行 tests/unit/test_knowledge_flush.py::test_missing_worktree_lane_is_stale、::test_non_git_worktree_lane_is_stale，以及 tests/test_knowledge_push_gate.py::test_flush_reclaims_lane_with_missing_worktree、::test_flush_reclaims_lane_whose_worktree_is_not_a_git_tree（flush rc=0）；应仍拦 ::test_broken_git_link_lane_stays_live、::test_worktree_path_that_is_a_file_stays_live、::test_dirty_worktree_lane_stays_live，以及 tests/test_knowledge_push_gate.py::test_flush_still_blocked_by_stale_dirty_lane（rc≠0 且『他人 live lane』）。",
+        "保守子集不变：时间戳缺失或时区不可判定、脏树、路径是文件、git 不可用、.git 链接损坏一律仍判 live；只把『物理上已无写者』这一种情形从 live 改为可回收。"
+      ],
+      "verification_level": "unit_and_script_tests_green_in_targeted_314_passed_exit0__remote_ci_gate_pytest_ruff_pyright_pass_on_16173ed4e",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是 lanes.jsonl 行（空闲时长）与文件系统/git 探测结果，无模型自证输入。recovery：审查否决即回退本组件提交并重走闸；exit：revert 后 flush 的 lane 自检恢复『git 失败一律按 live』的旧行为（worktree 已消失的 lane 会重新永久阻断）。",
+      "rollback_route": "git revert 本组件提交；脚本是独立进程，每次调用重新加载，回退后下一次 knowledge_flush 调用即恢复旧判定。"
+    },
+    {
+      "component_id": "knowledge-gate-rule-doc",
+      "paths": [
+        "docs/ai_rules.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "modify",
+      "evidence": [
+        "RULE-AI-28 的『知识资产闸（机械层）』条目与『知识入库同门』条目同步两处口径：纯删除远端 ref 的推送豁免（混入任何内容 refspec 即回到拒推）；worktree 已消失/已非 git 工作树的空闲 lane 可回收，脏树、路径读不懂、git 不可用仍按 live。"
+      ],
+      "verification_level": "doc_only_no_behavior_change",
+      "model_evidence_veto_recovery_exit": "不适用（规则文档，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "knowledge-gate-tests",
+      "paths": [
+        "tests/conftest.py",
+        "tests/test_knowledge_push_gate.py",
+        "tests/unit/test_knowledge_flush.py",
+        "tests/unit/test_review_admission_knowledge_flush_gate.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "evidence": [
+        "tests/conftest.py 新增 dir_outside_any_repo fixture（任何仓库之外的一次性目录，候选不可用则 skip）：『不是 git 工作树』这一支必须在仓库之外测，仓库子目录内 git rev-parse 会向上找到外层工作树。其余三个测试文件的新增用例见各控制组件 evidence；四个文件连同相邻回归共 10 个文件 314 passed / 0 failed（本机，head 16173ed4e）。"
+      ],
+      "verification_level": "314_passed_0_failed_exit0_local_10_files_on_head_16173ed4e",
+      "model_evidence_veto_recovery_exit": "不适用（测试，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261123-evo-knowledge-flush-dead-lane-delete-only-push.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "本清单即 A.5 结构化声明（PR #113 的『A.5 架构提交审查』在 head 16173ed4e 上因缺少清单而 fail：expected exactly one changed architecture-submission manifest，found 0）；提交后以 python scripts/check_architecture_submission.py --base <PR base> --head HEAD 复核。"
+      ],
+      "verification_level": "check_architecture_submission_strict_pass_required_after_commit",
+      "model_evidence_veto_recovery_exit": "不适用（治理清单，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-knowledge-gate-delete-only-exemption",
+      "g1": {
+        "necessity": "知识资产闸的关切是『本地知识资产只活在本机、随 push 交付而丢失』。删除远端 ref 的 push 不发送任何提交/对象，该关切不适用；而未入库卡片在 worktree 被清/换机后长期存在，使『删除一个已合并分支』被永久挡住——EVO-20261123-d43138fc 记录 2026-11-23 实测约 4 小时，最终只能绕道 GitHub refs API，即绕过全部本地闸。需要在钩子与 review_admission 准入两处用同一口径豁免，且保持 fail-closed：混入任何内容 refspec、--all/--mirror/--tags、多命令串联、读不懂的输入一律照旧走闸。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：.githooks/pre-push（git 原生 hook，唯一不可绕过的机械兜底）与 review_admission(action=start, kind=git_push) 的前置/消费口判定；无模型/会话自证输入。",
+        "relationship": "reuse",
+        "non_duplication": "不新增闸、不新增豁免通道：只收窄既有知识闸的适用面，两处共用同一判定口径（全零 local sha / _is_delete_only_push）；隐私扫描、回执占位闸、main 直写守卫、knowledge_flush.py --check 的卡片判定均不变。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦/应放行输入已固化并通过（head 16173ed4e）：放行=纯删 refspec + 未入库卡（pre-push rc=0；git_push 准入无 denial；5 种删除型命令形态）；仍拦=refspec 行读不懂（2 形态）、删除 + 内容混合（rc≠0）、内容型/多命令/--all/--mirror/--tags/feat/x:main/-u/空 refspec/带空格 ref 名/含变量/git -C（13 形态）。用例清单见两个控制组件的 evidence。",
+          "定向回归：10 个测试文件 314 passed / 0 failed，exit 0（本机，2026-11-24，head 16173ed4e，rebase 到 main@9997c3cc3 之后）。",
+          "远端 CI（GitHub Actions，PR #113，head 16173ed4e，2026-11-24 17:26 核实）：门禁（pytest + ruff + pyright）pass、privacy-gate pass、安全扫描 pass。",
+          "独立 Reviewer（RULE-AI-28）：full_test 审查 subagent_2bda8d7e725c（candidate b75ff0d004187812…，16:35 启动回执）与 git_push 审查 subagent_625cb6147048（candidate a600d6c96fbaf922…，first_push_anchor 9997c3cc3，16:42 启动回执）。两个 PASS 终态记录于执行 run 的任务状态；本清单撰写 run 查询这两个子代理时得到 review_child_not_owned，无法重新核验终态，故此处只把启动回执与候选指纹计为可核证据。",
+          "如实记录：本机 canonical bash scripts/ci_gate.sh 在 head 16173ed4e 上 exit=1，2 failed 均在 tests/unit/test_linux_polkit_probe.py（不在本 PR 改动集内）；执行 run 归因为纯 main@9997c3cc3 树同红的本机沙箱环境问题（pytest 临时根回退到 /private/tmp 的权限位触发 unsafe_receipt_directory），该归因未在本 run 复核。全量结论以远端 CI 为准。"
+        ],
+        "recovery_or_reason": "两处豁免均有逐条对应的『应仍拦』用例，任一审查发现否决即 revert 对应组件提交并重走闸；置信度来自定向测试 + 远端 CI + 独立审查，而非自述。review_host_admission.py 属宿主进程内模块，运行中的宿主须重启后才加载新口径，重启后的真实 bare 远端活体复验尚未做。"
+      },
+      "g4": {
+        "rollback": "git revert 两个控制组件提交（钩子随下次 push、模块随宿主重启）即恢复『任何推送一律过知识闸』；无状态、无数据影响。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base 9997c3cc3 --head HEAD 严格 PASS（本清单提交后本机复核，并随 PR 远端 CI 复核）",
+          "定向回归 314 passed / 0 failed（10 文件，本机，head 16173ed4e，清单提交前）",
+          "远端 CI（PR #113，head 16173ed4e）：门禁（pytest + ruff + pyright）、privacy-gate、安全扫描 pass；清单提交后的新 head 以远端 CI 重跑结果为准",
+          "push 新 head 之前重新取得 git_push 审查资格（旧 PASS 绑定 head 16173ed4e，不迁移到新 head）",
+          "本机 canonical ci_gate exit=1 的记录保留在 PR 正文与本清单，不引用为本机全量通过",
+          "宿主重启后 RULE-AI-35 活体复验（待做）：对真实 bare 远端执行删除型 push（应放行）与删除 + 内容混合 push（应仍拦）"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-knowledge-flush-gone-worktree-reclaim",
+      "g1": {
+        "necessity": "knowledge_flush.py 在内部 commit 前自检 lane 账本，防止与他人 live lane 的合并闸竞争。旧实现把 git -C <worktree> status 的任何失败都当作 live：/tmp worktree 被清或被 prune 的 lane 空闲远超 4h 阈值，却永久挡住所有人的知识 flush，进而挡住所有内容推送（与上一声明同一实测事件）。需要把『worktree 已消失 / 已非 git 工作树』判为可回收——这类 lane 物理上已无写者；同时保留保守子集：脏树、时间戳读不懂、路径是文件/不可读、git 不可用、.git 链接损坏一律仍按 live。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧 scripts/knowledge_flush.py 的 lane 自检（事实源 data/audit/lanes.jsonl）；无模型/会话自证输入。",
+        "relationship": "reuse",
+        "non_duplication": "不新增账本或闸：只扩展既有『空闲超时且可证明无风险即按失效回收』判定的『可证明无风险』集合一种情形；命令闸 lane_main_write_guard 的 stale 判定未在本 PR 改动。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦/应放行输入已固化并通过（head 16173ed4e）：放行=worktree 不存在、路径在但不是 git 工作树（单元 _lane_is_stale 为 True；脚本级 flush rc=0）；仍拦=.git 链接损坏、路径是文件、脏树（单元为 False；脚本级 flush rc≠0 且提示『他人 live lane』）。用例清单见控制组件 evidence。",
+          "定向回归与远端 CI：同上一声明（314 passed / 0 failed；远端门禁 pass）。",
+          "独立 Reviewer：同上一声明（PASS 终态记录于执行 run，本 run 只能核验启动回执）。"
+        ],
+        "recovery_or_reason": "回收判定只在『路径不存在或已非工作树』且空闲超时同时成立时生效，其余一律保守；审查否决即 revert 并重走闸。"
+      },
+      "g4": {
+        "rollback": "git revert 本组件提交；脚本是独立进程，回退后下一次 knowledge_flush 调用即恢复『git 失败一律按 live』。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base 9997c3cc3 --head HEAD 严格 PASS（同上一声明）",
+          "定向回归 314 passed / 0 failed（含 tests/unit/test_knowledge_flush.py 与 tests/test_knowledge_push_gate.py 的新增用例）",
+          "远端 CI 门禁（pytest + ruff + pyright）在 head 16173ed4e 上 pass；新 head 以远端 CI 重跑结果为准",
+          "活体复验（待做）：在存在『worktree 已消失且空闲超时』的 lane 账本上执行 knowledge_flush.py --check，确认不再被该 lane 阻断"
+        ]
+      }
+    }
+  ]
+}
