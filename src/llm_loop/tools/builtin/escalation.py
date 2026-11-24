@@ -15,6 +15,11 @@ from llm_loop.tools.safety import CatastrophicGuard
 
 _MAX_WAIT_S = 300
 _DEFAULT_WAIT_S = 120
+_RETRY_HINT = (
+    "请在原会话核对任务与当前状态，若仍需要且尚未执行，使用原申请类型重新提交："
+    "普通命令 escalation_request，宿主路径 host_access_request，验证凭证走原 Host 签发申请入口。"
+    "必须取得新 request_id 并重新人工审批；不得复活旧凭证或重做已完成操作。"
+)
 
 
 def _fail(tool: str, content: str) -> ToolResult:
@@ -94,7 +99,7 @@ class EscalationRequestTool:
             content=(
                 f"[提权申请已提交] request_id={rec.get('id', '')}\n"
                 f"阻断原因: {blocked.reason}（{blocked.evidence}）\n"
-                f"状态: pending（web 面板将弹窗提示人工审批）\n"
+                f"状态: pending（web 面板将弹窗提示人工审批；等待超时不会取消申请）\n"
                 f"下一步: escalation_wait(request_id=...) 等待决定；批准后返回一次性令牌，"
                 f"用 execute_command(command=同一命令, escalation_token=令牌) 重发。"
             ),
@@ -149,7 +154,7 @@ class EscalationWaitTool:
             return _fail(
                 self.name,
                 f"[已失效] request_id={rid} 由其他进程签名，本会话无法等待其审批结果。"
-                "请重新提交提权申请（escalation_request）获取新 request_id。",
+                + _RETRY_HINT,
             )
 
         status = rec.get("status", "")
@@ -231,6 +236,8 @@ class EscalationWaitTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        if status == "expired":
+            return _fail(self.name, f"[已过期] request_id={rid}；原申请记录仍保留。" + _RETRY_HINT)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=(
