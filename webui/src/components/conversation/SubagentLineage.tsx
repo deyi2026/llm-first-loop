@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchAgentsTreeNodes, type AgentTreeNode } from "../../core/api";
 import { useConversation } from "../../core/conversation";
 import { runAwareIntervalMs } from "../../core/runAwarePoll";
-import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
+import { mainViewStore, sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { subagentZh as zh } from "../../i18n/zh";
 
 export function subagentOutcomeLabel(outcome: string | undefined): string {
@@ -108,6 +108,8 @@ export function SubagentLineage() {
   };
 
   const openChild = (id: string, title: string) => {
+    mainViewStore.setView("chat");
+    sessionStore.setNewSessionPending(false);
     sessionStore.setCurrentSession(id);
     setOpen(false);
     void title; // title 仅用于 aria

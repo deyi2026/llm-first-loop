@@ -101,3 +101,73 @@ describe("Coordination Channel live updates", () => {
     expect(screen.queryByRole("button", { name: /打开 Goal GOAL-missing/ })).not.toBeInTheDocument();
   });
 });
+
+
+describe("Coordination delivery", () => {
+  function installDelivery(running: boolean, insertStatus = 202) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+      if (url.includes("/coordination/board")) return reply({ channel: {
+        active_lanes: 1, pending_help: 9, blocking_help: 1, needs_decision: 1,
+        sessions: [{ session_id: "target", lane_id: "lane", goal_id: "GOAL-target", branch: "fix", status: "active", last_activity: "" }],
+        help_items: Array.from({ length: 9 }, (_, i) => ({
+          id: "help-" + i, topic: "topic-" + i, from_session: "requester-" + i,
+          to_session: "target", need: "block", lane_id: "lane", since: "",
+        })),
+      } });
+      if (url.includes("/chat/stream/status")) return reply({ running, run_generation: running ? "gen-A" : undefined });
+      if (url.includes("/chat/queue/interject")) return reply(
+        insertStatus === 202 ? { state: "interject_pending" } : { detail: "当前任务已变化；消息仍保留在普通排队中" }, insertStatus);
+      if (url === "/api/v1/chat/queue" && init?.method === "POST") return reply({ queue_id: "q-1", position: 1 }, 202);
+      return reply({ items: [], count: 0 });
+    });
+  }
+
+  it("queues an idle requester's reply without switching the current session or hiding later requests", async () => {
+    const fetchMock = installDelivery(false);
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStore.setCurrentSession("source");
+    render(<CoordinationChannel collapsed={false} />);
+    fireEvent.click(await screen.findByTestId("coordination-channel-row"));
+    expect(screen.getAllByTestId("coordination-channel-help-item")).toHaveLength(9);
+    fireEvent.click(screen.getAllByRole("button", { name: "回复请求方" })[8]);
+    const wake = await screen.findByRole("button", { name: "唤醒执行（排队）" });
+    fireEvent.change(screen.getByRole("textbox", { name: "协助指令" }), { target: { value: "请继续核验" } });
+    fireEvent.click(wake);
+    await screen.findByText(/已加入目标会话队列/);
+    const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/v1/chat/queue" && init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ session_id: "requester-8", message: "请继续核验" });
+    expect(sessionStore.getState().currentSessionId).toBe("source");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/interject"))).toBe(false);
+  });
+
+  it("binds urgent delivery to the displayed target generation and never resubmits after a conflict", async () => {
+    const fetchMock = installDelivery(true, 409);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CoordinationChannel collapsed={false} />);
+    fireEvent.click(await screen.findByTestId("coordination-channel-row"));
+    fireEvent.click(screen.getByRole("button", { name: "协助 Goal GOAL-target" }));
+    await screen.findByText("当前 Run 运行中");
+    fireEvent.change(screen.getByRole("textbox", { name: "协助指令" }), { target: { value: "暂停下一步" } });
+    fireEvent.click(screen.getByRole("button", { name: "紧急插入" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("消息仍保留在普通排队中");
+    const post = fetchMock.mock.calls.find(([url]) => String(url).includes("/chat/queue/interject"));
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ session_id: "target", queue_id: "q-1", run_generation: "gen-A" });
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/v1/chat/queue" && init?.method === "POST")).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "协助指令" })).toHaveValue("");
+  });
+
+  it("reports urgent admission as pending, not as already received or executed", async () => {
+    const fetchMock = installDelivery(true);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CoordinationChannel collapsed={false} />);
+    fireEvent.click(await screen.findByTestId("coordination-channel-row"));
+    fireEvent.click(screen.getByRole("button", { name: "协助 Goal GOAL-target" }));
+    await screen.findByText("当前 Run 运行中");
+    fireEvent.change(screen.getByRole("textbox", { name: "协助指令" }), { target: { value: "核对证据" } });
+    fireEvent.click(screen.getByRole("button", { name: "紧急插入" }));
+    expect(await screen.findByText(/插入请求已受理，等待当前 Run 安全接收/)).toHaveTextContent("q-1");
+  });
+
+});

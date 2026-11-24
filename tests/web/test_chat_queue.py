@@ -789,3 +789,14 @@ def test_interject_pressure_empty_session_returns_zero_and_none(tmp_path):
         "count": 0,
         "oldest_enqueued_at": None,
     }
+
+
+def test_queue_rejects_non_web_ingress_session(build_test_engine):
+    engine, _ = build_test_engine([{"content": "unused"}])
+    client = _make_client(engine)
+    sid = engine.session.create()
+    assert engine.session.set_channel(sid, "cli")
+    response = client.post("/api/v1/chat/queue", json={"session_id": sid, "message": "do not adopt"})
+    assert response.status_code == 409
+    assert response.json()["error"] == "session_ingress_mismatch"
+    assert client.get("/api/v1/chat/queue", params={"session_id": sid}).json()["items"] == []
