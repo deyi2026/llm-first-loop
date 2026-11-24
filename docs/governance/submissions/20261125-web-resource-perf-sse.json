@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-web-resource-perf-sse",
+  "summary": "P0-B2 first slice: share session and provider notification probes per Web app without changing authoritative Run/session state.",
+  "components": [
+    {
+      "component_id": "existing-web-sse-probe-sharing",
+      "paths": [
+        "docs/governance/submissions/20261125-web-resource-perf-sse.json",
+        "src/llm_loop/web/routes.py",
+        "tests/web/test_sse_fingerprint_cache.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web SSE notification route and fingerprint readers. No new service, execution authority, durable store or Run admission gate.",
+      "disposition": "App-local, workspace/engine-bound single-flight probes for existing session and Provider fingerprints. Reuse existing 1s notification TTL; offload initial Provider read; bound each subscriber wait to 5s without cancelling or duplicating a slow shared read. Discard invalid or old-scope results, preserve per-connection change comparison and both event types. No changes to auth, session/Goal/Run authority, history or model context.",
+      "evidence": [
+        "Base 4f11570557842f4b1f180f3035fa144c6752f5cc, PR118 retained. Isolated worktree only.",
+        "Final focused pytest: 109 passed in 4.52s (SSE fingerprint, API, workspaces, provider admin, SSE GC). Ruff and diff check passed.",
+        "Synthetic provider fingerprint microbenchmark, 14,905-byte config, 15 paired synchronized rounds per arm, no network/model calls: 8 readers 120 vs 15 underlying calls, median process CPU 0.649 vs 0.131 ms, median wall 0.551 vs 0.212 ms. Measurements precede final wait-bound regression; count test covers final behavior. Not whole-system CPU or 4/8 real Run SLO evidence."
+      ],
+      "verification_level": "Local focused tests and synthetic microbenchmark; independent review, full R9, remote CI, production and load acceptance pending.",
+      "model_evidence_veto_recovery_exit": "SSE notifications are hints only; existing authoritative status/history and reconnect remain available. Errors/timeouts do not imply successful reads or task completion; no automatic task retry.",
+      "rollback_route": "Protected revert and coordinated Web deployment. No data migration or authoritative state changes."
+    }
+  ],
+  "declarations": []
+}
