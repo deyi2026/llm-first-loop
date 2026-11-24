@@ -74,7 +74,10 @@ def run(
     n: int = 1000,
 ) -> dict:
     config = dict(config or {})
-    include_forgery = bool(config.get("include_forgery", True))
+    include_forgery = config.get("include_forgery", True)
+    if not isinstance(include_forgery, bool):
+        # bool() 强转会把 "false" / null 静默变成另一个演练范围：范围一变回执就不可比，一律拒绝
+        raise ValueError("V8 'include_forgery' must be a JSON boolean (true / false) when provided")
     if "n" in config:
         n = int(config["n"])
     samples = build_samples(n, include_forgery=include_forgery, seed=seed) if samples is None else samples

@@ -189,3 +189,36 @@ r5（subagent_4b59fb2dc085，候选 4238b9b8…，切片 = `ctp` + `docs/conform
 | 计划 §1.2 两条陈旧行 | 仍写「三份文档未入库」「仅 B1 落地」，与 Wave-1 已合入 main 的事实相反 | 更正并标 as-of 2026-11-24 19:00 |
 
 教训（写给后续执行者，非审查发现）：**概括性的「等」与「无孤儿」声明不相容**；孤儿检查必须用脚本逐名对照并保留可复跑的检查，不采信人读汇总。
+
+## 15. Wave-3 测试准入审查 r1（subagent_cac6e9cc3c4c，2026-11-25 01:48）与修订
+
+候选：lane 分支并入 trunk `4f1157055` 后的 `be8a93ba`（候选提交 `33706b68` 为其第一父；两侧改动文件零重叠）。切片：`ctp/src`、`ctp/tests`、`ctp/docs`、`docs/trace`（200,267 字符，指纹 `4e88fa5a…`）。
+
+**结果**：REVISE，P0 = 0 / P1 = 1 / P2 = 3。报告：`data/review_admission/subagent_cac6e9cc3c4c-full_test.md`。
+
+| 级别 | 发现 | 处置 |
+|---|---|---|
+| **P1-1** | V4 verdict integrity：`v4.run` 用 `config.get(..., NOT_CONFIGURED)` 取 `miss_rate_limit` / `min_sample_size` 且从不校验；`is_limit()` 拒收非数值，于是不可用值让上限检查被跳过，而 `finalize()` 只认 `"not_configured"` / `"[TBD-*"` 两个字符串哨兵为未配置——带着一个无法使用的上限判 `verdict=pass`。必填的 `min_visible_corners` / `min_visible_data_ratio` 有同类缺口（NaN 比较恒假，全部样本落到达标组） | `v4.py` 新增 `_in_range` / `_required_threshold` / `_optional_limit`：必填分组阈值缺失或不是区间内有限数值 → `ValueError`（拒绝运行，不产出回执）；可选上限提供了但不可用 → 归一为未配置 + notes 留痕 → `indeterminate`。区间：`min_visible_corners ≥ 0`、`min_visible_data_ratio ∈ [0, 1]`、`miss_rate_limit ∈ [0, 1]`、`min_sample_size ≥ 1`；`[TBD-*` 哨兵原样保留 |
+| P2-1 | `synth.crop_corners` docstring 写「可见角点 3 / 2 / 1」，与 `_VISIBLE_CORNERS`（1 / 2 / 0）、`geometry()`、说明文档与集成期望矛盾 | docstring 更正为 1 / 2 / 0，并说明矩形裁剪裁掉的是整条边 |
+| P2-2 | 命令行文档假定 `python -m ctp_conformance.v4` 可从 worktree 根导入，未说明机制 | 说明文档 §4 补 `PYTHONPATH=ctp/src` 与原因（src 布局、未安装为包；`conftest.py` 为 pytest 做的是同一件事）；本机实测：带则可导入，不带报 `ModuleNotFoundError` |
+| P2-3 | `conftest.py` 把测试目录追加到 `sys.path` 以暴露 `conformance_stubs` / `reader_testkit`，属模块遮蔽向量（仅测试作用域、名字不易撞） | **不改结构**：可行的替代要么把 `ctp/` 放进 path（引入顶层名 `tests`，可能遮蔽仓库自身的 `tests`），要么给辅助模块建包并改全部导入。在 docstring 如实记录取舍（一律 append、辅助模块名带用途前缀） |
+
+**同根排查（审查未点名，修订时自查发现，一并处置）**：
+
+- `min_sample_size` 给 0 / 负数时「样本量不足」检查恒不触发——与 P1-1 同根，纳入 `_optional_limit`（须 ≥ 1）。
+- `v8.run` 用 `bool(config.get("include_forgery", True))` 强转：传 `"false"` 得 True、传 `null` 得 False，静默改变演练范围（范围一变回执不可比）。改为只接受 JSON 布尔，否则 `ValueError`。
+
+**修订前后对照（一手实测；旧版 `v4.py` 取自 `33706b68`，以 `build_samples(0)` + `conformance_stubs.StubReader / gate_like(4, 1.0)` 驱动；复跑脚本留档于主仓 `.ctp-scratch/takeover/oldcheck.py`，不入库）**：
+
+| 输入（其余项取合法值） | 修订前 | 修订后 |
+|---|---|---|
+| `miss_rate_limit` = None / NaN / True / `"0.1"` / 2.0 / inf（6 种） | **6 种全部 `pass`** | 6 种全部 `indeterminate` |
+| `min_sample_size` = None / NaN / True / `"100"` / 0 / -5（6 种） | **6 种全部 `pass`** | 6 种全部 `indeterminate` |
+| `min_visible_data_ratio` = NaN | **`pass`** | `ValueError` |
+| 分组阈值 = True / 越界 / NaN（角点数） | 带着错误分组出 `fail` | `ValueError` |
+| 分组阈值 = None / 非数值字符串 | `TypeError` 崩溃 | `ValueError`（明确报错） |
+| 合法值（0.0 / 1 / 4 / 1.0） | `pass` | `pass`（行为不变） |
+
+**回归钉**（3 个函数，逐名入追溯矩阵：`conformance_v4` 11→13、`conformance_v8` 8→9，测试函数 167→170，矩阵 225→228）：`test_unusable_optional_limits_are_unconfigured_never_pass`（12 例）、`test_unusable_grouping_thresholds_are_rejected`（10 例）、`test_non_boolean_include_forgery_is_rejected`（5 例）。定向验证：这两个文件 46 passed，`test_trace_matrix.py` 3 passed。
+
+残余（不在本次修订范围，如实登记）：`ctp/` 下 40 个 ruff 提示（`I001` 22、`UP037` 7 等，其中 12 个在已合并的 Wave-2 文件 `ctp_registry/*`）。CI 的 ruff 历史债棘轮范围是 `src tests scripts`，不含 `ctp/`；本机该闸 R9 ruff PASS（new = 0）。未顺手修——那会把 27 个文件的格式改动混进本次审查面，宜另立小任务。

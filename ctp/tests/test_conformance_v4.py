@@ -127,3 +127,53 @@ def test_ratio_threshold_below_one_discloses_unexercisable_dimension():
 def test_requires_thresholds_in_config():
     with pytest.raises(ValueError):
         run_v4(StubReader(build_samples(0), always("output")), config={})
+
+
+@pytest.mark.parametrize(
+    "key, unusable",
+    [
+        ("miss_rate_limit", None),
+        ("miss_rate_limit", float("nan")),
+        ("miss_rate_limit", True),
+        ("miss_rate_limit", "0.1"),
+        ("miss_rate_limit", 2.0),
+        ("miss_rate_limit", float("inf")),
+        ("min_sample_size", None),
+        ("min_sample_size", float("nan")),
+        ("min_sample_size", True),
+        ("min_sample_size", "100"),
+        ("min_sample_size", 0),
+        ("min_sample_size", -5),
+    ],
+)
+def test_unusable_optional_limits_are_unconfigured_never_pass(key, unusable):
+    """提供了但不可用的上限值不得当作"已配置"：否则上限检查被跳过，回执会在一个无法使用的上限下判 pass。"""
+    samples = build_samples(0)
+    report = run_v4(
+        StubReader(samples, gate_like(4, 1.0)), config=dict(CONFIGURED, **{key: unusable}), samples=samples
+    )
+    assert report["verdict"] == "indeterminate", report
+    recorded = {name.split(" ")[0]: value for name, value in report["thresholds_used"].items()}
+    assert recorded[key] == NOT_CONFIGURED
+    assert any(key in note and repr(unusable) in note for note in report["notes"])
+
+
+@pytest.mark.parametrize(
+    "key, unusable",
+    [
+        ("min_visible_corners", None),
+        ("min_visible_corners", float("nan")),
+        ("min_visible_corners", True),
+        ("min_visible_corners", "4"),
+        ("min_visible_corners", -1),
+        ("min_visible_data_ratio", None),
+        ("min_visible_data_ratio", float("nan")),
+        ("min_visible_data_ratio", False),
+        ("min_visible_data_ratio", "1.0"),
+        ("min_visible_data_ratio", 1.5),
+    ],
+)
+def test_unusable_grouping_thresholds_are_rejected(key, unusable):
+    """分组阈值不可用就无法分组（NaN 比较恒假会让全部样本落到达标组）：拒绝运行，不产出回执。"""
+    with pytest.raises(ValueError, match=key):
+        run_v4(StubReader(build_samples(0), always("output")), config=dict(CONFIGURED, **{key: unusable}))

@@ -88,3 +88,10 @@ def test_unreadable_sample_keeps_border_but_destroys_data():
 def test_rejects_non_positive_n():
     with pytest.raises(ValueError):
         build_samples(0)
+
+
+@pytest.mark.parametrize("unusable", ["false", "true", None, 0, 1])
+def test_non_boolean_include_forgery_is_rejected(unusable):
+    """include_forgery 只接受 JSON 布尔：bool() 强转会把 "false" / null 静默变成另一个演练范围。"""
+    with pytest.raises(ValueError, match="include_forgery"):
+        run_v8(StubReader(build_samples(6), always("unknown_version")), config={"include_forgery": unusable})

@@ -21,9 +21,9 @@ covered 条目（13）：C-2a（36h11 码族与码空间）、C-2b（纠错预�
 
 partial 条目（11）：P-3b、P-5b、C-1b、C-1d、C-4b-2、C-5b、M-1、M-3、M-5b、F-3、VC-3（逐条理由见第三节）。
 
-测试资产：16 个测试文件 / 167 个测试函数（AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 13、pixel_uncertainty 7、generator 13、registry 33、gate 16、reader_decode 13、reader_observe 12、error_propagation 4、conformance_receipt 7、conformance_v7 6、conformance_v4 11、conformance_v8 8、integration_reader_conformance 7；每个函数在矩阵中有独立行）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
+测试资产：16 个测试文件 / 170 个测试函数（AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 13、pixel_uncertainty 7、generator 13、registry 33、gate 16、reader_decode 13、reader_observe 12、error_propagation 4、conformance_receipt 7、conformance_v7 6、conformance_v4 13、conformance_v8 9、integration_reader_conformance 7；每个函数在矩阵中有独立行）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
 
-矩阵规模：225 数据行 = unit 167 + pending 占位 46 + conformance 12；行级状态 covered 112 / partial 67 / pending 46。
+矩阵规模：228 数据行 = unit 170 + pending 占位 46 + conformance 12；行级状态 covered 112 / partial 70 / pending 46。
 
 ## 二、pending 清单（35 条，按依赖分组）
 

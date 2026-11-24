@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ._runner import KNOWN_INDICES, drive
@@ -73,16 +74,50 @@ def _split(samples: list[dict], min_corners: int, min_ratio: float) -> tuple[lis
     return below, at_threshold
 
 
+def _in_range(value: Any, low: float, high: float | None) -> bool:
+    """已配置且可用：有限数值（排除 bool、NaN、±inf），且落在 [low, high] 内。"""
+    if not (is_limit(value) and math.isfinite(value)):
+        return False
+    return value >= low and (high is None or value <= high)
+
+
+def _required_threshold(config: dict, key: str, *, low: float, high: float | None = None) -> Any:
+    """必填分组阈值：缺失或不可用一律拒绝运行——分组做不了就不产出回执。"""
+    value = config.get(key)
+    if not _in_range(value, low, high):
+        raise ValueError(
+            f"V4 requires '{key}' to be a finite number in [{low}, {high if high is not None else 'inf'}] "
+            f"(pass the same values the reader's gate uses); got {value!r}"
+        )
+    return value
+
+
+def _optional_limit(config: dict, key: str, *, low: float, high: float | None, notes: list[str]) -> Any:
+    """可选上限：未提供 → 未配置；提供了但不可用 → 同样按未配置处理并留痕。
+
+    不可用的值（None / NaN / bool / 非数值 / ±inf / 越界）绝不能当作"已配置"：
+    否则上限检查被跳过，回执会在一个无法使用的上限下判 pass（违反 receipt 的三值判定规则）。
+    """
+    value = config.get(key, NOT_CONFIGURED)
+    if isinstance(value, str) and (value == NOT_CONFIGURED or value.startswith("[TBD-")):
+        return value  # 未配置哨兵原样保留：finalize() 据此判 indeterminate
+    if not _in_range(value, low, high):
+        notes.append(
+            f"'{key}' 提供了不可用的值 {value!r}（须为 [{low}, {high if high is not None else 'inf'}] 内的有限数值）："
+            "按未配置处理，本轮不足以支撑判定"
+        )
+        return NOT_CONFIGURED
+    return value
+
+
 def run(
     reader: Any, *, config: dict, samples: list[dict] | None = None, seed: int = 0
 ) -> dict:
-    for key in ("min_visible_corners", "min_visible_data_ratio"):
-        if key not in config:
-            raise ValueError(f"V4 requires '{key}' in config (pass the same values the reader's gate uses)")
-    min_corners = config["min_visible_corners"]
-    min_ratio = config["min_visible_data_ratio"]
-    miss_limit = config.get("miss_rate_limit", NOT_CONFIGURED)
-    min_size = config.get("min_sample_size", NOT_CONFIGURED)
+    notes: list[str] = []
+    min_corners = _required_threshold(config, "min_visible_corners", low=0)
+    min_ratio = _required_threshold(config, "min_visible_data_ratio", low=0, high=1)
+    miss_limit = _optional_limit(config, "miss_rate_limit", low=0, high=1, notes=notes)
+    min_size = _optional_limit(config, "min_sample_size", low=1, high=None, notes=notes)
 
     samples = build_samples(seed) if samples is None else samples
     below, at_threshold = _split(samples, min_corners, min_ratio)
@@ -131,7 +166,6 @@ def run(
             counts["at_silent"] += 1
 
     miss_rate = None
-    notes: list[str] = []
     not_exercisable: list[dict] = []
     if counts["at_total"] == 0:
         not_exercisable.append(

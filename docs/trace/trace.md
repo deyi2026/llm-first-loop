@@ -1,13 +1,13 @@
 # CTP 规范条目—测试用例追溯矩阵（人读版）
 
 - 规范：docs/SPEC-20261123-cooperative-target-protocol-v0.9.md（v0.9.2）第 4–10 章
-- 测试资产：ctp/tests/ 16 个测试文件、167 个测试函数（AST 静态计数，明细见孤儿检查节；其中 test_trace_matrix.py 是矩阵自身的元测试，其 3 个用例不属规范覆盖、不入矩阵也不计数；conftest.py 为路径配置非用例；conformance_stubs.py 与 reader_testkit.py 为测试辅助模块非用例；fixtures：合法 10 + 非法 24）；参数化展开后的用例总数不在此手抄——单一真值为 ctp/receipts/ 最新回执
+- 测试资产：ctp/tests/ 16 个测试文件、170 个测试函数（AST 静态计数，明细见孤儿检查节；其中 test_trace_matrix.py 是矩阵自身的元测试，其 3 个用例不属规范覆盖、不入矩阵也不计数；conftest.py 为路径配置非用例；conformance_stubs.py 与 reader_testkit.py 为测试辅助模块非用例；fixtures：合法 10 + 非法 24）；参数化展开后的用例总数不在此手抄——单一真值为 ctp/receipts/ 最新回执
 - 一致性规程：docs/conformance/ 已建 9 份（README + V1–V8），实测回执未产生，仍以 test_kind=conformance 的 pending 行预留（共 12 行）
 - 机器可读版：trace.csv（列：spec_entry,test_kind,test_id,evidence_path,status,notes）
 - 状态口径：covered=已有测试足以支撑条目的可测内容；partial=已有测试仅覆盖条目的一部分（或仅契约/机制侧）；pending=无测试（依赖计量/裁决/实现，或明示无测试义务）
 - 条目计数口径：带字母子条的按子条计独立单元（如 C-4b-2）；无子条的按整条计
 
-条目总数 59：covered 13 ｜ partial 11 ｜ pending 35。矩阵数据行 225：covered 112 ｜ partial 67 ｜ pending 46。
+条目总数 59：covered 13 ｜ partial 11 ｜ pending 35。矩阵数据行 228：covered 112 ｜ partial 70 ｜ pending 46。
 
 ## 第 4 章 物理层（11 条：covered 0 / partial 2 / pending 9）
 
@@ -94,6 +94,8 @@
 | C-4b-2 | unit | test_grouping_moves_samples_when_threshold_admits_them | ctp/tests/test_conformance_v4.py:109 | partial | B7 V4 runner（合成样本；漏检率上限未配置只能 indeterminate） |
 | C-4b-2 | unit | test_ratio_threshold_below_one_discloses_unexercisable_dimension | ctp/tests/test_conformance_v4.py:119 | partial | B7 V4 runner（合成样本；漏检率上限未配置只能 indeterminate） |
 | C-4b-2 | unit | test_requires_thresholds_in_config | ctp/tests/test_conformance_v4.py:127 | partial | B7 V4 runner（合成样本；漏检率上限未配置只能 indeterminate） |
+| C-4b-2 | unit | test_unusable_optional_limits_are_unconfigured_never_pass | ctp/tests/test_conformance_v4.py:149 | partial | B7 V4 runner（合成样本；不可用上限按未配置处理 → indeterminate，不得判 pass） |
+| C-4b-2 | unit | test_unusable_grouping_thresholds_are_rejected | ctp/tests/test_conformance_v4.py:176 | partial | B7 V4 runner（合成样本；分组阈值不可用 → 拒绝运行，不产出回执） |
 | C-4b-2 | unit | test_above_thresholds_is_allowed_never_suppressed | ctp/tests/test_gate.py:154 | partial | B4 闸门：达标样本永不被抑制（漏检率须 V4 实测） |
 | C-4b-2 | unit | test_shadow_records_near_threshold_without_changing_allowed | ctp/tests/test_gate.py:165 | partial | K7 影子通道：记近阈候选但不改判定 |
 | C-4b-2 | unit | test_shadow_band_applies_to_ratio_too | ctp/tests/test_gate.py:188 | partial | K7 影子通道：比例维度的近阈带 |
@@ -253,6 +255,7 @@
 | F-3 | unit | test_forgery_excluded_allows_pass_for_leak_class_only | ctp/tests/test_conformance_v8.py:68 | partial | B7 V8 runner（漏检类可演练；伪造类未演练） |
 | F-3 | unit | test_unreadable_sample_keeps_border_but_destroys_data | ctp/tests/test_conformance_v8.py:76 | partial | B7 V8 runner（漏检类可演练；伪造类未演练） |
 | F-3 | unit | test_rejects_non_positive_n | ctp/tests/test_conformance_v8.py:88 | partial | B7 V8 runner（漏检类可演练；伪造类未演练） |
+| F-3 | unit | test_non_boolean_include_forgery_is_rejected | ctp/tests/test_conformance_v8.py:94 | partial | B7 V8 runner（漏检类可演练；伪造类未演练；非布尔 include_forgery 拒绝运行） |
 | F-3 | unit | test_v8_real_reader_refuses_every_leak_sample | ctp/tests/test_integration_reader_conformance.py:85 | partial | 集成：漏检类全部拒读、无带错输出、无静默（合成） |
 | F-3 | unit | test_v8_with_forgery_samples_is_indeterminate_not_pass | ctp/tests/test_integration_reader_conformance.py:98 | partial | 集成：伪造类未演练 → indeterminate（合成） |
 | F-3 | conformance | V8 | docs/conformance/V8-fail-closed.md | pending | 注入1000故障样本验证带错硬接=0（只验不校准） |
@@ -285,4 +288,4 @@
 
 ## 孤儿检查
 
-167 个测试函数全部归属，**每个函数在矩阵中有独立行**（多归属函数按条目拆多行；AST 静态计数 + 脚本逐名孤儿检查 0 孤儿）：conformance_receipt 7、conformance_v4 11、conformance_v7 6、conformance_v8 8、contract_invalid 6、contract_valid 6、error_propagation 4、gate 16、generator 13、integration_reader_conformance 7、pixel_uncertainty 7、reader_decode 13、reader_observe 12、registry 33、schema_parity 5、uncertainty 13。此前 R-1–R-6 行以「某测试 等」概括同族成员，导致 31 个函数未具名（隐藏孤儿），2026-11-24 复核时补全；Wave-3 新增 0 个函数（闸门 / 读码器 / 一致性 runner / 集成 / 异常传播回归钉）于 2026-11-25 逐名入表。第 4–10 章 59 个条目每条至少 1 行，无未归属条目。
+170 个测试函数全部归属，**每个函数在矩阵中有独立行**（多归属函数按条目拆多行；AST 静态计数 + 脚本逐名孤儿检查 0 孤儿）：conformance_receipt 7、conformance_v4 13、conformance_v7 6、conformance_v8 9、contract_invalid 6、contract_valid 6、error_propagation 4、gate 16、generator 13、integration_reader_conformance 7、pixel_uncertainty 7、reader_decode 13、reader_observe 12、registry 33、schema_parity 5、uncertainty 13。此前 R-1–R-6 行以「某测试 等」概括同族成员，导致 31 个函数未具名（隐藏孤儿），2026-11-24 复核时补全；Wave-3 新增的函数（闸门 / 读码器 / 一致性 runner / 集成 / 异常传播回归钉）于 2026-11-25 逐名入表；同日测试准入审查 r1 修订新增 3 个回归钉（V4 不可用配置 2 个、V8 非布尔 include_forgery 1 个）亦逐名入表。第 4–10 章 59 个条目每条至少 1 行，无未归属条目。

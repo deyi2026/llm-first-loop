@@ -19,6 +19,9 @@
 
 判定规则：有硬断言失败 → fail；无失败但有未演练样本或未配置上限 → indeterminate；否则 pass。
 
+"未配置"不只指没给：调用方给了但不可用的值（None、NaN、bool、非数值、±inf、越界）同样按未配置处理，
+并在回执 notes 留痕——不可用的上限不得当作"已配置"而被跳过检查（2026-11-25 测试准入审查 r1 的 P1）。
+
 ## 2. 合成样本（synth.py）
 
 由 `ctp_gen.codes.bit_matrix` 渲染单靶灰度图（每格 12 像素、核外 4 格静区，均为测试参数），固定 seed 可复现。
@@ -36,18 +39,24 @@
 - **V7**：外来码字 / 无关图案被输出任何 ID 即误读；误读必须为 0。已知族样本被拒读不计失败（属漏检侧）。
 - **V4**：按调用方阈值把样本分成低于阈值组与达标组。低于阈值组出现任何输出即误读（必须为 0）；
   达标组漏检率 = 未产生观测的达标样本 / 达标样本数；"永不输出"（达标组无一输出）判不通过；
-  漏检率上限 `[TBD-V4c]` 与样本量 `[TBD-V4d]` 未配置时只能 indeterminate。
+  漏检率上限 `[TBD-V4c]` 与样本量 `[TBD-V4d]` 未配置时只能 indeterminate；`miss_rate_limit` 须为 [0, 1] 内的
+  有限数值、`min_sample_size` 须为 ≥ 1 的有限数值，否则按未配置处理。分组阈值 `min_visible_corners`（≥ 0）与
+  `min_visible_data_ratio`（[0, 1]）缺失或不可用则直接拒绝运行（分组做不了，不产出回执）。
 - **V8**：漏检类（遮挡 / 超纠错 / 不可读）要求"不输出 + 带码报错"；给出 ID 是带错输出，静默是违例。
   伪造 / 层级矛盾类（错 ID、复制靶标、级间位姿矛盾）期望 STOP + 报警，但回退状态机（F-1–F-5）与
   几何互证（M-2b）均未实现——标 not_exercisable，不计入"带错硬接 = 0"的断言范围。
+  `include_forgery` 只接受 JSON 布尔：给了 `"false"` / null 之类非布尔值直接拒绝运行，不做 bool() 强转
+  （强转会静默改变演练范围）。
 
 ## 4. 命令行
 
-在 worktree 根执行（`--simulated` 必填）：
+在 worktree 根执行（`--simulated` 必填）。`ctp/` 是 src 布局、未安装为包，须把 `ctp/src` 放进 `PYTHONPATH`
+（`ctp/tests/conftest.py` 为 pytest 做的是同一件事；不带它会 `ModuleNotFoundError: No module named 'ctp_conformance'`），
+解释器用仓库共享 `.venv`（numpy 等依赖已在其中）：
 
-    ../../.venv/bin/python -m ctp_conformance.v7 --simulated --reader-spec <spec.json> --out <receipt.json>
-    ../../.venv/bin/python -m ctp_conformance.v4 --simulated --reader-spec <spec.json> --config '{"min_visible_corners":4,"min_visible_data_ratio":1.0}' --out <receipt.json>
-    ../../.venv/bin/python -m ctp_conformance.v8 --simulated --reader-spec <spec.json> --n 1000 --out <receipt.json>
+    PYTHONPATH=ctp/src ../../.venv/bin/python -m ctp_conformance.v7 --simulated --reader-spec <spec.json> --out <receipt.json>
+    PYTHONPATH=ctp/src ../../.venv/bin/python -m ctp_conformance.v4 --simulated --reader-spec <spec.json> --config '{"min_visible_corners":4,"min_visible_data_ratio":1.0}' --out <receipt.json>
+    PYTHONPATH=ctp/src ../../.venv/bin/python -m ctp_conformance.v8 --simulated --reader-spec <spec.json> --n 1000 --out <receipt.json>
 
 `reader-spec.json` 含 thresholds（路径）、camera{fx,fy,cx,cy}、tag_size_m、sigma_px、coverage_factor_k、
 reader_id、reader_version、frame_ref。退出码：pass 为 0，其余为 1。

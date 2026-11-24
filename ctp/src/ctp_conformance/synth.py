@@ -114,7 +114,10 @@ def unrelated_grid(rng: np.random.Generator) -> list[list[bool]]:
 
 
 def crop_corners(image: np.ndarray, remove: int, *, scale: int = SCALE, quiet: int = QUIET) -> np.ndarray:
-    """裁掉靶标的 1–3 个外角（它们落到图像之外）。remove ∈ {1, 2, 3} → 可见角点 3 / 2 / 1。"""
+    """裁掉靶标的 1–3 条边（外角落到图像之外）。remove ∈ {1, 2, 3} → 可见角点 1 / 2 / 0。
+
+    矩形裁剪裁掉的是整条边而不是单个角：逐值几何见 geometry()，与 _VISIBLE_CORNERS 一致。
+    """
     if remove not in (1, 2, 3):
         raise ValueError("remove must be 1, 2 or 3")
     cut = (quiet + 2) * scale  # 越过核内静区与边框各一格
