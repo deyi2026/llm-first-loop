@@ -14,7 +14,7 @@ vi.mock("../../core/conversation", () => ({
   useConversation: h.useConversation,
 }));
 vi.mock("./MessageItem", () => ({
-  MessageItem: () => <div>历史消息</div>,
+  MessageItem: ({ msg }: { msg: { content: string } }) => <div>{msg.content}</div>,
   extractProducedPaths: () => [],
 }));
 
@@ -84,5 +84,37 @@ describe("Web history pagination interaction", () => {
     });
     expect(h.setState).toHaveBeenCalledWith({ lastError: "更早历史读取失败，请重试。" });
     expect(screen.getByRole("button", { name: /加载更早|更早消息/ })).not.toBeDisabled();
+  });
+
+  it("preserves persisted row identity across prepends, but not session switches", () => {
+    const recent = { role: "user", content: "recent", sourceIndex: 50 };
+    h.useConversation.mockReturnValue({ messages: [recent], hasMoreHistory: true, lastError: null });
+    const view = render(<MessageList />);
+    const existing = screen.getByText("recent");
+    h.useConversation.mockReturnValue({ messages: [{ role: "user", content: "earlier", sourceIndex: 49 }, recent], hasMoreHistory: true, lastError: null });
+    view.rerender(<MessageList />);
+    expect(screen.getByText("recent")).toBe(existing);
+    expect(screen.getByText("earlier")).toBeTruthy();
+    h.useConversation.mockReturnValue({ messages: [{ ...recent, content: "[RETRACTED]" }], hasMoreHistory: true, lastError: null });
+    view.rerender(<MessageList />);
+    const replaced = screen.getByText("[RETRACTED]");
+    expect(replaced).not.toBe(existing);
+    sessionStore.setCurrentSession("s2");
+    view.rerender(<MessageList />);
+    expect(screen.getByText("[RETRACTED]")).not.toBe(replaced);
+  });
+
+  it("keeps all 500 existing DOM rows when loading 50 older messages", () => {
+    const recent = Array.from({ length: 500 }, (_, i) => ({ role: "user", content: `row-${i + 50}`, sourceIndex: i + 50 }));
+    h.useConversation.mockReturnValue({ messages: recent, hasMoreHistory: true, lastError: null });
+    const view = render(<MessageList />);
+    const before = Array.from(screen.getByTestId("message-list").children).filter(node => node.textContent?.startsWith("row-"));
+    const earlier = Array.from({ length: 50 }, (_, i) => ({ role: "user", content: `row-${i}`, sourceIndex: i }));
+    h.useConversation.mockReturnValue({ messages: [...earlier, ...recent], hasMoreHistory: false, lastError: null });
+    view.rerender(<MessageList />);
+    const after = Array.from(screen.getByTestId("message-list").children).filter(node => node.textContent?.startsWith("row-"));
+    expect(before).toHaveLength(500);
+    expect(after).toHaveLength(550);
+    expect(after.slice(50).every((node, i) => node === before[i])).toBe(true);
   });
 });

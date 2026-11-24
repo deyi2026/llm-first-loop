@@ -5,15 +5,32 @@ import { MessageItem, extractProducedPaths } from "./MessageItem";
 import { conversationStore, loadEarlierHistory, loadHistory, useConversation } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
 import { projectToolActivityMessages } from "../../core/toolActivity";
+import type { ChatMessage } from "../../core/types";
 import { zh } from "../../i18n/zh";
 
 export function MessageList({ historyLoading = false }: { historyLoading?: boolean }) {
   const conv = useConversation();
+  const sessionId = sessionStore.getState().currentSessionId ?? undefined;
   const [atBottom, setAtBottom] = useState(true);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const earlierInFlight = useRef(false);
   const scrollRevision = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowIdentity = useRef({ next: 0, ids: new WeakMap<ChatMessage, number>() });
+
+  const persistedKey = (message: ChatMessage, originalIndex: number): string => {
+    if (message.sourceIndex === undefined) return `live:${originalIndex}`;
+    // A prepend retains the original raw message object. A fresh snapshot can
+    // replace the same ordinal (e.g. retraction), so reset its local UI state.
+    const raw = conv.messages[originalIndex] ?? message;
+    const identities = rowIdentity.current;
+    let id = identities.ids.get(raw);
+    if (id === undefined) {
+      id = ++identities.next;
+      identities.ids.set(raw, id);
+    }
+    return `history:${message.sourceIndex}:${id}`;
+  };
 
   // 展示层机械聚合 assistant(tool_calls) ↔ tool(receipt)。原始历史数组保持不变。
   const projectedMessages = useMemo(() => projectToolActivityMessages(conv.messages), [conv.messages]);
@@ -21,13 +38,13 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
   // 会话级出产物集合（对齐 DSH turn 级 deliverables）：跨消息累积 edit_file 路径，
   // 供最终回答正文中的路径引用可点击打开（编辑与引用通常在不同消息）
   const producedPaths = useMemo(() => {
-    const out: string[] = [];
+    const out = new Set<string>();
     for (const { msg: m } of projectedMessages) {
       for (const p of extractProducedPaths(m.toolCalls)) {
-        if (!out.includes(p)) out.push(p);
+        out.add(p);
       }
     }
-    return new Set(out);
+    return out;
   }, [projectedMessages]);
 
   const updateBottom = () => {
@@ -129,10 +146,13 @@ export function MessageList({ historyLoading = false }: { historyLoading?: boole
       )}
       {projectedMessages.map(({ msg: m, originalIndex }) => (
         <MessageItem
-          key={`${originalIndex}:${m.role}:${m.sourceIndex ?? "live"}`}
+          // Persisted source positions do not change when older pages prepend.
+          // Keep existing message DOM/expansion state instead of remounting the
+          // entire visible window. Session identity prevents cross-chat reuse.
+          key={`${sessionId ?? ""}:${m.role}:${persistedKey(m, originalIndex)}`}
           msg={m}
           index={m.sourceIndex}
-          sessionId={sessionStore.getState().currentSessionId ?? undefined}
+          sessionId={sessionId}
           producedPaths={producedPaths}
         />
       ))}
