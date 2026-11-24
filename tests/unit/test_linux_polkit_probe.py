@@ -4,7 +4,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -17,17 +16,13 @@ POLICY = ROOT / "packaging/linux/org.llmfirstloop.task-host-probe.policy"
 
 
 @pytest.fixture
-def trusted_tmp_path(tmp_path):
-    """Positive rootless canary needs trusted ancestors, never Linux /tmp (1777).
+def trusted_tmp_path():
+    """Use trusted ancestors for rootless canaries on every platform.
 
-    Production helper deliberately rejects writable ancestors. GitHub Linux
-    pytest tmp_path is under /tmp; Mac's system pytest temp root is private.
-    Use an ignored 0700 pytest-cache test root on Linux, and remove the
-    per-test directory afterward without weakening the Host security check.
+    Both Linux CI and sandboxed macOS can put pytest tmp_path below a
+    world-writable /tmp. Use the existing ignored 0700 pytest-cache test
+    root instead; the production root-chain guard remains unchanged.
     """
-    if sys.platform != "linux":
-        yield tmp_path
-        return
     cache = ROOT / ".pytest_cache"
     assert not cache.is_symlink(), "test cache root must not be a symlink"
     cache.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -195,22 +190,22 @@ def test_rootless_receipt_limit_is_bounded_and_no_new_file(trusted_tmp_path):
     assert len(list(directory.iterdir())) == module.MAX_RECEIPTS
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux /tmp ancestor is the CI-specific denial")
-def test_linux_world_writable_tmp_ancestor_stays_denied(tmp_path):
-    """Do not relax the root-chain guard merely to make Linux CI tests pass."""
+def test_world_writable_tmp_ancestor_stays_denied(trusted_tmp_path):
+    """Exercise the real ancestor guard regardless of pytest's temp root."""
     module = _load()
-    if not any(
-        (parent.stat().st_mode & 0o002) != 0
-        for parent in (tmp_path, *tmp_path.parents)
-    ):
-        pytest.skip("pytest temp root has no world-writable ancestor")
-    directory = tmp_path / "receipts"
+    unsafe_parent = trusted_tmp_path / "unsafe-parent"
+    unsafe_parent.mkdir(mode=0o700)
+    directory = unsafe_parent / "receipts"
     directory.mkdir(mode=0o700)
-    with pytest.raises(module.ProbeDeniedError, match="unsafe_receipt_directory"):
-        module._write_attestation(
-            "b" * 32, 1000, directory=directory, expected_owner=os.getuid(),
-        )
-    assert list(directory.iterdir()) == []
+    unsafe_parent.chmod(0o777)
+    try:
+        with pytest.raises(module.ProbeDeniedError, match="unsafe_receipt_directory"):
+            module._write_attestation(
+                "b" * 32, 1000, directory=directory, expected_owner=os.getuid(),
+            )
+        assert list(directory.iterdir()) == []
+    finally:
+        unsafe_parent.chmod(0o700)
 
 # Deepin25 /usr is immutable. A root-owned /etc/polkit-1/rules.d rule scopes
 # the existing built-in pkexec action to the exact canary program instead.

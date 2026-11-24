@@ -2228,6 +2228,8 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
                 "detail": session_not_found_message(payload.session_id),
             },
         )
+    if not _web_session_reusable(engine, payload.session_id):
+        return _session_ingress_mismatch_response(payload.session_id)
     try:
         with engine.workspace_snapshot():
             attachment_facts = _resolve_chat_attachment_facts(

@@ -57,6 +57,7 @@ export interface SessionMeta {
   last_message_preview: string;
   pinned: boolean;
   channel: string;
+  web_reusable?: boolean;
   model?: string | null;
 }
 
