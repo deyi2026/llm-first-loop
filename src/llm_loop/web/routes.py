@@ -4710,73 +4710,10 @@ def get_session_history_revision(session_id: str, request: Request) -> Response:
     )
 
 
-@router.get(
-    "/api/v1/sessions/{session_id}/messages",
-    response_model=SessionMessagesResponse,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-)
-def get_session_messages(
-    session_id: str,
-    request: Request,
-    limit: int | None = None,
-    offset: int = 0,
-    snapshot_revision: str | None = None,
-    compact: bool = False,
-    expected_sha256: str | None = None,
-) -> SessionMessagesResponse | Response:
-    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
-
-    D2: 可选 limit/offset 分页（offset = 跳过最近 N 条，返回更早消息）；不传 limit 全量返回。
-    """
-    engine = _engine_from(request)
-    if not engine.session.exists(session_id):
-        return JSONResponse(
-            status_code=404,
-            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
-        )
-    if (compact and (limit is None or not 1 <= limit <= 100 or offset < 0)) or (
-        expected_sha256 is not None and (compact or limit != 1 or offset < 0 or len(expected_sha256) != 64)
-    ):
-        return JSONResponse(status_code=400, content={"error": "invalid_history_view"})
-    # A caller continuing a page window must never silently mix two source
-    # revisions. This is a change guard, not an authorization or replay proof.
-    def resync_required() -> Response:
-        return JSONResponse(
-            status_code=409,
-            content={"error": "history_resync_required", "detail": "会话历史已变化，请重新读取后继续翻页。"},
-            headers={"Cache-Control": "no-store"},
-        )
-
-    revision_before = (
-        _history_revision_hint(engine, session_id)
-        if limit is not None and (offset == 0 or snapshot_revision is not None or expected_sha256 is not None or compact)
-        else None
-    )
-    if snapshot_revision is not None and (revision_before is None or revision_before != snapshot_revision):
-        return resync_required()
-    try:
-        indexed = engine.session.load_history_page(session_id, limit, offset) if limit is not None else None
-        if indexed is not None and limit is not None:
-            source_messages, total = indexed
-            start = max(0, total - offset - limit)
-        else:
-            session = engine.session.load(session_id)
-            source_messages = session.messages
-            total = len(source_messages)
-            start = 0
-            if limit is not None:
-                start = max(0, total - offset - limit)
-                end = max(0, total - offset)
-                source_messages = source_messages[start:end]
-    except Exception as exc:
-        logger.exception("session load failed: session_id=%s", session_id)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "load_failed",
-                "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
-            },
-        )
+def _project_history_messages(
+    engine: Any, session_id: str, source_messages: list[Any],
+) -> list[MessageItem]:
+    """Project the selected history window, including exact program-final UI text."""
     # Program-final assistant rows intentionally persist an empty protocol placeholder so
     # subsequent provider prompts never ingest program-authored terminal prose.  The exact
     # UI text is durably stored in EventStore; hydrate only this Web response by the seq
@@ -4849,6 +4786,77 @@ def get_session_messages(
         )
         for m in source_messages
     ]
+    return messages
+
+
+@router.get(
+    "/api/v1/sessions/{session_id}/messages",
+    response_model=SessionMessagesResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def get_session_messages(
+    session_id: str,
+    request: Request,
+    limit: int | None = None,
+    offset: int = 0,
+    snapshot_revision: str | None = None,
+    compact: bool = False,
+    expected_sha256: str | None = None,
+) -> SessionMessagesResponse | Response:
+    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
+
+    D2: 可选 limit/offset 分页（offset = 跳过最近 N 条，返回更早消息）；不传 limit 全量返回。
+    """
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    if (compact and (limit is None or not 1 <= limit <= 100 or offset < 0)) or (
+        expected_sha256 is not None and (compact or limit != 1 or offset < 0 or len(expected_sha256) != 64)
+    ):
+        return JSONResponse(status_code=400, content={"error": "invalid_history_view"})
+    # A caller continuing a page window must never silently mix two source
+    # revisions. This is a change guard, not an authorization or replay proof.
+    def resync_required() -> Response:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "history_resync_required", "detail": "会话历史已变化，请重新读取后继续翻页。"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    revision_before = (
+        _history_revision_hint(engine, session_id)
+        if limit is not None and (offset == 0 or snapshot_revision is not None or expected_sha256 is not None or compact)
+        else None
+    )
+    if snapshot_revision is not None and (revision_before is None or revision_before != snapshot_revision):
+        return resync_required()
+    try:
+        indexed = engine.session.load_history_page(session_id, limit, offset) if limit is not None else None
+        if indexed is not None and limit is not None:
+            source_messages, total = indexed
+            start = max(0, total - offset - limit)
+        else:
+            session = engine.session.load(session_id)
+            source_messages = session.messages
+            total = len(source_messages)
+            start = 0
+            if limit is not None:
+                start = max(0, total - offset - limit)
+                end = max(0, total - offset)
+                source_messages = source_messages[start:end]
+    except Exception as exc:
+        logger.exception("session load failed: session_id=%s", session_id)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "load_failed",
+                "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
+            },
+        )
+    messages = _project_history_messages(engine, session_id, source_messages)
     if limit is not None:
         revision = (
             revision_before
