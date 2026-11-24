@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 from llm_loop.core import session_page_index
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+from llm_loop.core.read_coalescing import ConcurrentRead
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.event_log.session_types import (  # noqa: F401 — SessionIdConflictError 为 R9-P3-02 re-export（历史导入路径兼容）
     BranchSeed,
@@ -349,6 +350,9 @@ def _display_meta_from_index(path: str, key: tuple[int, int, int, int, int]) -> 
         return SessionMeta(**data)
     except TypeError:
         return None
+
+
+_display_session_reads: ConcurrentRead[list[SessionMeta]] = ConcurrentRead()
 
 
 class SessionStore:
@@ -2231,11 +2235,18 @@ class SessionStore:
 
     def list_sessions(self, include_archived: bool = False, *, display_only: bool = False) -> list[SessionMeta]:
         """列出全部会话元数据（M56: 置顶优先，再按 updated_at 降序；归档默认隐藏）."""
-        return self._list_sessions_in(self._dir, include_archived=include_archived, display_only=display_only)
+        return self.list_sessions_in(self._dir, include_archived=include_archived, display_only=display_only)
 
     def list_sessions_in(self, sessions_dir: str | Path, include_archived: bool = False, *, display_only: bool = False) -> list[SessionMeta]:
         """按指定目录列出会话元数据（工作区管理：按工作区分区展示，不改变当前根）."""
-        return self._list_sessions_in(Path(sessions_dir), include_archived=include_archived, display_only=display_only)
+        target = Path(sessions_dir)
+        if display_only:
+            # Directory identity is captured once; workspace switches cannot change this read.
+            key = (str(target.absolute()), include_archived)
+            return list(_display_session_reads.read(key, lambda: self._list_sessions_in(
+                target, include_archived=include_archived, display_only=True,
+            )))
+        return self._list_sessions_in(target, include_archived=include_archived, display_only=False)
 
     def _list_sessions_in(self, target: Path, include_archived: bool = False, *, display_only: bool = False) -> list[SessionMeta]:
         """list_sessions 实现体（目录参数化；M56 排序语义不变）.

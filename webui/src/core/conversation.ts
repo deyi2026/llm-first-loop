@@ -24,6 +24,7 @@ import {
   claimNextQueued,
 } from "./chat";
 import { sessionStore } from "./stores";
+import { isAuthRequired, subscribeAuthRequired } from "./authSession";
 import { newSubmissionId, watchSubmission } from "./submissionRecovery";
 import { fetchPreparedHandoff } from "./api";
 import {
@@ -1091,13 +1092,45 @@ function makeCoalescedPatch(
 // 普通排队：入队冻结事实 → run 终态后
 // FIFO 接力派发（多标签原子 claim 只有一个成功）。
 
-/** 刷新当前会话队列镜像（FIFO 序；切会话/入队/取消/接力后调用） */
-export async function refreshQueue(sessionId: string): Promise<void> {
-  const resp = await fetchQueueList(sessionId);
-  if (!resp) return;
-  // 会话守卫：切换期间返回的旧会话队列不写回当前视图
-  if (sessionStore.getState().currentSessionId !== sessionId) return;
-  conversationStore.setState({ queueItems: resp.items });
+// One in-flight queue projection for the current session. Explicit writes invalidate
+// any earlier read, so stale queued/claimed facts cannot overwrite their receipt.
+let queueRead: { sid: string; controller: AbortController; promise: Promise<void> } | undefined;
+function invalidateQueueRead(): void {
+  const old = queueRead;
+  queueRead = undefined;
+  old?.controller.abort();
+}
+let queueSession = sessionStore.getState().currentSessionId;
+sessionStore.subscribe(() => {
+  const current = sessionStore.getState().currentSessionId;
+  if (current !== queueSession) {
+    queueSession = current;
+    invalidateQueueRead();
+  }
+});
+subscribeAuthRequired(() => {
+  invalidateQueueRead();
+  if (isAuthRequired()) conversationStore.setState({ queueItems: [] });
+});
+
+/** Refresh the current queue mirror; only explicit mutation callers force a new read. */
+export function refreshQueue(sessionId: string, afterMutation = false): Promise<void> {
+  if (isAuthRequired() || sessionStore.getState().currentSessionId !== sessionId) return Promise.resolve();
+  if (afterMutation) invalidateQueueRead();
+  if (queueRead?.sid === sessionId) return queueRead.promise;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  const promise = fetchQueueList(sessionId, controller.signal).then(resp => {
+    if (!resp || controller.signal.aborted || isAuthRequired() ||
+        queueRead?.controller !== controller ||
+        sessionStore.getState().currentSessionId !== sessionId) return;
+    conversationStore.setState({ queueItems: resp.items });
+  }).finally(() => {
+    window.clearTimeout(timeout);
+    if (queueRead?.controller === controller) queueRead = undefined;
+  });
+  queueRead = { sid: sessionId, controller, promise };
+  return promise;
 }
 
 /** 入队一条 human turn（流式时 Composer cmd/ctrl+Enter 调用）：
@@ -1121,7 +1154,7 @@ export async function enqueueQueueTurn(
     return { ok: false, detail: resp.detail ?? "排队失败，请稍后重试" };
   }
   if (st.modelChangePending) sessionStore.setModelChangePending(false);
-  await refreshQueue(sessionId);
+  await refreshQueue(sessionId, true);
   return { ok: true };
 }
 
@@ -1132,7 +1165,7 @@ export async function cancelQueueTurn(
   const sessionId = sessionStore.getState().currentSessionId;
   if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
   const result = await cancelQueueItem(sessionId, queueId);
-  await refreshQueue(sessionId);
+  await refreshQueue(sessionId, true);
   return { ok: result.ok, detail: result.detail };
 }
 
@@ -1155,7 +1188,7 @@ export async function withdrawQueueTurn(
       } : prefill);
     }
   }
-  await refreshQueue(sessionId);
+  await refreshQueue(sessionId, true);
   return { ok: result.ok, detail: result.detail };
 }
 
@@ -1166,7 +1199,7 @@ export async function removeQueueTurn(
   const sessionId = sessionStore.getState().currentSessionId;
   if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
   const result = await cancelQueueItem(sessionId, queueId);
-  await refreshQueue(sessionId);
+  await refreshQueue(sessionId, true);
   return { ok: result.ok, detail: result.detail };
 }
 
@@ -1194,15 +1227,18 @@ export async function steerAllQueued(): Promise<{
   }
   let steered = 0;
   for (const it of queued) {
-    const result = await interjectQueueTurn(it.queue_id, runGeneration);
+    if (sessionStore.getState().currentSessionId !== sessionId) {
+      return { ok: false, steered, detail: "会话已切换；剩余消息保留在原会话队列中。" };
+    }
+    const result = await interjectQueueItem(sessionId, it.queue_id, runGeneration);
     if (!result.ok) {
-      await refreshQueue(sessionId);
+      await refreshQueue(sessionId, true);
       // 部分成功不算整体 ok：detail 如实回传，已 steered 条数单独给出
       return { ok: false, steered, detail: result.detail };
     }
     steered += 1;
   }
-  await refreshQueue(sessionId);
+  await refreshQueue(sessionId, true);
   return { ok: true, steered };
 }
 
@@ -1220,7 +1256,7 @@ export async function interjectQueueTurn(
     return { ok: false, detail: "当前任务身份尚未就绪；消息仍保留在普通排队中。" };
   }
   const result = await interjectQueueItem(sessionId, queueId, runGeneration);
-  await refreshQueue(sessionId);
+  await refreshQueue(sessionId, true);
   return { ok: result.ok, detail: result.detail };
 }
 
@@ -1241,10 +1277,10 @@ export async function relayNextQueued(sessionId: string): Promise<void> {
   try {
     const claimed = await claimNextQueued(sessionId);
     if (!claimed) {
-      await refreshQueue(sessionId); // 队空或被其他标签领走：收敛镜像
+      await refreshQueue(sessionId, true); // 队空或被其他标签领走：收敛镜像
       return;
     }
-    await refreshQueue(sessionId); // claimed 状态立即反映到 UI
+    await refreshQueue(sessionId, true); // claimed 状态立即反映到 UI
     // 以冻结事实发起正式发送（模型/effort 用冻结值；queue_id 让后端终态回写队列）。
     // P1-1：realtime 视觉证据 fact（kind=realtime_visual_evidence）无客户端可回放的
     // attachment ref——它由**服务端冻结值**注入 run 输入；浏览器不得重建（也不能补传

@@ -321,15 +321,17 @@ export interface QueueListResponse {
 }
 
 /** 队列状态列表（FIFO 序；仅活跃项 queued/claimed） */
-export async function fetchQueueList(sessionId: string): Promise<QueueListResponse | null> {
+export async function fetchQueueList(sessionId: string, signal?: AbortSignal): Promise<QueueListResponse | null> {
   if (isAuthRequired()) return null;
   try {
-    const resp = await fetch(`/api/v1/chat/queue?session_id=${encodeURIComponent(sessionId)}`);
+    const resp = await fetch(`/api/v1/chat/queue?session_id=${encodeURIComponent(sessionId)}`, { signal });
+    if (signal?.aborted) return null;
     reportUnauthorized(resp.status);
     if (!resp.ok) return null;
     const data = (await resp.json().catch(() => ({}))) as Partial<QueueListResponse>;
+    if (signal?.aborted || !Array.isArray(data.items)) return null;
     return {
-      items: Array.isArray(data.items) ? (data.items as QueueItem[]) : [],
+      items: data.items as QueueItem[],
       count: typeof data.count === "number" ? data.count : 0,
       queued: typeof data.queued === "number" ? data.queued : 0,
       claimed: typeof data.claimed === "number" ? data.claimed : 0,

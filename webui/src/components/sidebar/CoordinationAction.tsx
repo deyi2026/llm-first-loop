@@ -63,7 +63,7 @@ export function CoordinationAction({ target, onClose }: { target: CoordinationTa
         setNotice("已加入目标会话队列，空闲时自动派发 · " + receipt);
       }
       // Only refresh the currently displayed target, not another session's queue.
-      if (sessionStore.getState().currentSessionId === target.sessionId) void refreshQueue(target.sessionId);
+      if (sessionStore.getState().currentSessionId === target.sessionId) void refreshQueue(target.sessionId, true);
     } finally {
       sending.current = false;
       setBusy(false);

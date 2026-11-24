@@ -1,6 +1,6 @@
 // Web V2 核心：API 客户端（对齐后端 /api/v1/* 契约，POST/GET/流式分离）
 
-import { isAuthRequired, reportUnauthorized } from "./authSession";
+import { isAuthRequired, reportUnauthorized, subscribeAuthRequired } from "./authSession";
 
 export interface ApiResult<T = unknown> {
   status: number;
@@ -19,9 +19,10 @@ export async function api<T = unknown>(
   }
   try {
     const resp = await fetch(url, options);
+    if (options?.signal?.aborted) return { status: 0, data: {} as T };
     reportUnauthorized(resp.status);
     const data = (await resp.json().catch(() => ({}))) as T;
-    return { status: resp.status, data };
+    return options?.signal?.aborted ? { status: 0, data: {} as T } : { status: resp.status, data };
   } catch {
     // 读路径统一 fail-open：离线/卸载后的迟到请求不产生 unhandled rejection。
     return { status: 0, data: {} as T };
@@ -401,9 +402,9 @@ export async function logoutBrowserSession(): Promise<boolean> {
 export async function fetchSessionsResult(includeArchived = false): Promise<SessionListFetchResult> {
   const key = includeArchived ? "archived" : "active";
   const existing = sessionListRequests.get(key);
-  if (existing) return existing;
+  if (existing) return existing.promise;
+  const controller = new AbortController();
   const pending = (async () => {
-    const controller = new AbortController();
     // A stuck list request must not pin every coalesced consumer forever.
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
@@ -411,21 +412,29 @@ export async function fetchSessionsResult(includeArchived = false): Promise<Sess
         `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`,
         { signal: controller.signal }
       );
-      const ok = status === 200 && Array.isArray(data.sessions);
+      const ok = !controller.signal.aborted && status === 200 && Array.isArray(data.sessions);
       return { ok, sessions: ok ? data.sessions : [], status };
     } finally {
       clearTimeout(timeout);
     }
   })();
-  sessionListRequests.set(key, pending);
+  sessionListRequests.set(key, { controller, promise: pending });
   try {
     return await pending;
   } finally {
-    if (sessionListRequests.get(key) === pending) sessionListRequests.delete(key);
+    if (sessionListRequests.get(key)?.promise === pending) sessionListRequests.delete(key);
   }
 }
 
-const sessionListRequests = new Map<string, Promise<SessionListFetchResult>>();
+const sessionListRequests = new Map<string, {
+  controller: AbortController; promise: Promise<SessionListFetchResult>;
+}>();
+
+function invalidateSessionListReads(): void {
+  for (const request of sessionListRequests.values()) request.controller.abort();
+  sessionListRequests.clear();
+}
+subscribeAuthRequired(invalidateSessionListReads);
 
 export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
   return (await fetchSessionsResult(includeArchived)).sessions;
@@ -924,11 +933,13 @@ export interface WorkspaceSwitchResult {
 }
 
 export async function switchWorkspace(id: string): Promise<WorkspaceSwitchResult> {
+  invalidateSessionListReads();
   const { status, data } = await api<{ error?: string; detail?: string }>("/api/v1/workspaces/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
   });
+  if (status === 200) invalidateSessionListReads();
   return {
     ok: status === 200,
     status,
