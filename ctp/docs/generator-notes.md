@@ -23,6 +23,22 @@
 - 与 AprilTag 官方检测器的**互操作位序**未经实测验证——V6 跨实现前必须复核，
   复核前 B3 以本文档与 `board-matrices.json` 为唯一真值。
 
+## 参考系、逐码坐标与公差标注（B6 验收项，2026-11-24 补齐）
+
+- `frame_ref`（**必填**）：本板坐标系的参考系定义引用（SPEC §2「参考系定义」= 靶标坐标系相对其所属
+  对象坐标系的安装几何描述），与 R-1 记录、C-5 pose 的 `frame_ref` 同口径。生成器只校验非空、不解析；
+  缺失或空白即拒绝，不做默认值填充。解析（引用 → 安装几何）属 R-1 / B5。
+- `coordinate_frame` + `tags`：`layout.json` 逐码显式给出 `target_index`、左上角 `x_mm/y_mm`
+  （渲染口径）与中心 `center_x_mm/center_y_mm`（B3 位姿解算用）；原点 = 页面左上角，x 向右、
+  y 向下，单位 mm。`tags` 是几何的派生块——文件内给出时必须与网格几何一致，手改坐标会被
+  `layout_from_dict` 拒绝（`test_layout_from_dict_rejects_tampered_tag_coordinates`）。
+- `tolerance`：`P-2a`（角点边长制造公差）/ `P-2b`（平面度）/ `P-2c`（安装平面度）三个键对应
+  SPEC P-2 子条，值恒为 SPEC 现行的 TBD 占位编号 `[TBD-P2a/b/c]`——**不是数值**，工作组回填前
+  不得改写为经验值；SPEC v1.0 回填后须同步更新 `TOLERANCE_PLACEHOLDERS`。
+  `grade` 是申报方给的公差等级标签（自由文本），未申报时如实写 `unspecified`（P-5：未申报等级的
+  靶标不得引用精度声明）。
+- `LAYOUT_VERSION` 保持 1：v0 未发布、无存量消费者，上述字段并入首版，不另升位。
+
 ## 分层映射（G1 口径）
 
 - 码内承载 `target_index`（板内索引，域 0..586，对应 C-5 `target_index`）；

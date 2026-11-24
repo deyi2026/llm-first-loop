@@ -41,7 +41,11 @@ def build_manifest(outdir: Path, layouts: list[Layout]) -> dict[str, Any]:
             "min_pairwise_hamming": invariants["min_pairwise_hamming"],
         },
         "boards": [
-            {"board_index": layout.board_index, "target_indices": list(layout.target_indices)}
+            {
+                "board_index": layout.board_index,
+                "target_indices": list(layout.target_indices),
+                "frame_ref": layout.frame_ref,
+            }
             for layout in layouts
         ],
         "artifacts": {name: sha256_file(outdir / name) for name in ARTIFACTS},

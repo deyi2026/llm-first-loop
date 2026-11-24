@@ -67,6 +67,24 @@ SPEC §14 相关行（逐字）：
 7. 判定：通过率 ≥ 95%；
 8. 回执落盘（README §3 约定）；预验证回执必须写明"预验证不构成互操作证明，只用于提前暴露契约缺陷"（PLAN F1 原文）。
 
+### 最小冒烟步骤（无全量资源时先跑通流程）
+
+> 性质：只验证"样本链路、流程与回执能跑通"，**不产生任何门槛证据**；冒烟回执的 `simulated` 必须为 `true`（PLAN §0.4：simulated 不得写成"实测"）。
+
+**S1 冒烟一次**
+
+- (a) 生成冒烟板：执行 `README.md` §2 的冒烟板命令，确认末行 `manifest_ok True`、四件产物齐全；
+- (b) 用 B2 自检跑一次相对位姿协方差一致性（**同一实现的两路观测**，`simulated: true`；其中角度只是自检参数，不是门槛数值），输出应为 `first_order_ok True`：
+
+  ```bash
+  ./.venv/bin/python -c "import sys; sys.path.insert(0, 'ctp/src'); import numpy as np; import ctp_calib as c; a = c.pose_matrix((0, 0, 1.2), (0, 0, 0, 1)); b = c.pose_matrix((1, 0.5, 1.5), (0, 0, 0, 1)); cov = np.diag([1e-6] * 3 + [np.radians(0.17) ** 2] * 3); print('first_order_ok', c.check_first_order_validity(a, b, cov, cov, samples=4000)['ok'])"
+  ```
+
+- (c) 按 §5 回执格式落一份冒烟回执（`simulated: true`），核对必填字段齐全后停止——**不得据此填写 §1 的任何判据结论**。
+
+- **跑通判据**：冒烟板四件齐全且清单复核通过；命令输出 `first_order_ok True`（k·√(u₁²+u₂²) 判据在声明口径下可计算）；
+- **止步点**：无第二实现，跨厂商一致性不可得——同实现自检不构成 V6 证据。
+
 ## 5. 回执格式
 
 JSON 字段清单（runner 产出，落盘约定见 README §3）：

@@ -38,6 +38,7 @@ def _layout(**over):
         target_indices=(0, 1, 2, 3, 4, 5),
         page=PageSpec(width_mm=297.0, height_mm=210.0, margin_mm=10.0),
         tag=TagSpec(size_mm=40.0, gap_mm=6.0),
+        frame_ref="frame:test/board-0",
     )
     payload.update(over)
     return Layout(**payload)
@@ -149,6 +150,7 @@ def test_render_rejects_mixed_page_sizes(tmp_path):
             target_indices=(board * 2, board * 2 + 1),
             page=page,
             tag=TagSpec(size_mm=20.0, gap_mm=10.0),
+            frame_ref=f"frame:test/board-{board}",
         )
 
     a4 = PageSpec(width_mm=210.0, height_mm=297.0, margin_mm=10.0)
@@ -158,3 +160,54 @@ def test_render_rejects_mixed_page_sizes(tmp_path):
     except ValueError:
         return
     raise AssertionError("混页尺寸未被 _render_pdf 拒绝")
+
+
+def test_layout_json_carries_frame_ref_tag_coordinates_and_tolerance(tmp_path):
+    """B6 验收项：布局 JSON 逐码给出 target_index、物理坐标、参考系定义引用；公差标注对应 P-2 且只含 TBD 占位。"""
+    layout = _layout(tolerance_grade="smoke-grade")
+    payload = layout.as_dict()
+    assert payload["frame_ref"] == "frame:test/board-0"
+    assert payload["coordinate_frame"] == {
+        "origin": "page_top_left",
+        "x_axis": "right",
+        "y_axis": "down",
+        "length_unit": "mm",
+    }
+    assert [tag["target_index"] for tag in payload["tags"]] == list(range(6))
+    for tag in payload["tags"]:
+        x, y = layout.position_mm(tag["slot"])
+        assert (tag["x_mm"], tag["y_mm"]) == (x, y)
+        assert tag["center_x_mm"] == x + layout.tag.size_mm / 2
+        assert tag["center_y_mm"] == y + layout.tag.size_mm / 2
+    assert payload["tolerance"] == {
+        "grade": "smoke-grade",
+        "P-2a": "[TBD-P2a]",
+        "P-2b": "[TBD-P2b]",
+        "P-2c": "[TBD-P2c]",
+    }
+    assert _layout().as_dict()["tolerance"]["grade"] == "unspecified"  # 未申报等级如实写明，不代填
+    generate([layout], tmp_path / "out")
+    on_disk = json.loads((tmp_path / "out" / "layout.json").read_text(encoding="utf-8"))
+    assert on_disk["boards"][0] == payload
+    assert verify_manifest(tmp_path / "out")["manifest"]["boards"][0]["frame_ref"] == "frame:test/board-0"
+
+
+def test_layout_rejects_missing_or_blank_frame_ref():
+    """应拦输入：参考系定义引用缺失 / 空白即拒绝，不做默认值填充。"""
+    with pytest.raises(ValueError):
+        _layout(frame_ref="   ")
+    payload = _layout().as_dict()
+    del payload["frame_ref"]
+    with pytest.raises(ValueError):
+        layout_from_dict(payload)
+
+
+def test_layout_from_dict_rejects_tampered_tag_coordinates():
+    """应拦输入：layout.json 的 tags 块与网格几何不一致（手改坐标）即拒绝。"""
+    payload = _layout().as_dict()
+    payload["tags"][2]["center_x_mm"] += 5.0
+    with pytest.raises(ValueError):
+        layout_from_dict(payload)
+    restored = layout_from_dict(json.loads(json.dumps(_layout().as_dict())))
+    assert restored == _layout()
+    assert restored.tolerance_grade is None

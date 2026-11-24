@@ -63,6 +63,24 @@ SPEC §9 F-2 NEAR → CONTACT 行与 MID → NEAR 行（逐字，"混入"判定�
 7. 无标记检查：前提不满足场景输出无 `coarse` 标记 → 判不通过（判据句原文）；
 8. 回执落盘（README §3 约定）。
 
+### 最小冒烟步骤（无全量资源时先跑通流程）
+
+> 性质：只验证"样本链路、流程与回执能跑通"，**不产生任何门槛证据**；冒烟回执的 `simulated` 必须为 `true`（PLAN §0.4：simulated 不得写成"实测"）。
+
+**S1 冒烟一次**
+
+- (a) 生成冒烟板：执行 `README.md` §2 的冒烟板命令，确认末行 `manifest_ok True`、四件产物齐全；
+- (b) 核对 V5 判据的承载字段在契约层可用（输出应为 `coarse`）：
+
+  ```bash
+  ./.venv/bin/python -c "import sys; sys.path.insert(0, 'ctp/src'); from ctp_contract import load_observation; print(load_observation('ctp/tests/fixtures/valid/v02_resolved_coarse.json').degradation_flag.value)"
+  ```
+
+- (c) 按 §5 回执格式落一份冒烟回执（`simulated: true`），核对必填字段齐全后停止——**不得据此填写 §1 的任何判据结论**。
+
+- **跑通判据**：冒烟板四件齐全且清单复核通过；命令输出 `coarse`（`degradation_flag` 通道在契约层成立）；
+- **止步点**：无投影仪且 D-10 未裁决，投影前提自检不可执行，冒烟止于标记通道。
+
 ## 5. 回执格式
 
 JSON 字段清单（runner 产出，落盘约定见 README §3）：

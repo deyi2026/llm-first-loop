@@ -28,9 +28,15 @@
 1. **目的与判据引用**——逐字摘录 SPEC §11.2 对应门槛行及相关条目原文（保留条号、行内加粗与代码标记），不改写、不转述；V1 额外写明"非合规判据"。
 2. **前提与样本**——列出依赖的 B 任务（PLAN §4.2 / §5.2）、外部资源标记（`[可自执行]` / `[需外部]` / `[需裁决]`，PLAN §0.2 口径）与样本构造方式；V3 写明独立批次与留出批次，V4 写双向判据两组样本。
 3. **设备与工具**——软件命令与版本口径；凡涉计量真值、台架、制造批次、第二实现、投影仪的项目标注 `[需外部]`。
-4. **步骤**——编号步骤，标注失败中断点；遇需签字或外部资源的边界，登记阻塞并停下，不用"继续推进"代替签字（PLAN §12.5）。
+4. **步骤**——编号步骤，标注失败中断点；遇需签字或外部资源的边界，登记阻塞并停下，不用"继续推进"代替签字（PLAN §12.5）。每份 §4 末尾另有一条**最小冒烟步骤**（A2 验收项）：无全量资源时先跑通样本链路与回执，**不产生门槛证据**，冒烟回执的 `simulated` 必须为 `true`。
 5. **回执格式**——JSON 字段清单；V4 / V7 / V8 必须含 `simulated` 标注字段，其余门槛亦建议统一携带。
 6. **失败处置**——按 SPEC §11.2 验证纪律：修订设计或补测，不放宽门槛。
+
+**冒烟板命令（各规程冒烟步骤 (a) 共用；仓库根目录执行）**——打印输出目录与 `manifest_ok True`，目录内应有 `layout.json` / `board-matrices.json` / `target-board.pdf` / `manifest.json` 四件。2026-11-24 在 lane 工作树以仓库 `.venv` 解释器（Python 3.13）实测通过；板上每个码的物理坐标与参考系引用见 `layout.json` 的 `tags` / `frame_ref`。
+
+```bash
+./.venv/bin/python -c "import sys, tempfile; sys.path.insert(0, 'ctp/src'); from ctp_gen import Layout, PageSpec, TagSpec, generate, verify_manifest; out = tempfile.mkdtemp(prefix='ctp-smoke-'); generate([Layout(board_index=0, rows=2, cols=3, target_indices=(0, 1, 2, 3, 4, 5), page=PageSpec(297.0, 210.0, 10.0), tag=TagSpec(40.0, 6.0), frame_ref='frame:smoke/board')], out); print(out); print('manifest_ok', verify_manifest(out)['ok'])"
+```
 
 读法纪律：
 

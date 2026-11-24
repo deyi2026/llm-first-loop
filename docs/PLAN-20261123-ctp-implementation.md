@@ -36,12 +36,12 @@
 | 交叉考问 | 6 问；3 处自纠、1 处升级、2 条补漏 | `artifacts/ctp-review-20261123/cross-examination.md` |
 | 修订落账 | 54 处定点替换（唯一命中才写盘）；基线 md5 与修订前一致 | `artifacts/ctp-review-20261123/adjudication-and-revision-log.md`、`baseline/` |
 
-### 1.2 未完成（空置事实；as-of 2026-11-23 20:20 +08:00，此后每次开工先复核本表）
+### 1.2 未完成（空置事实；as-of 2026-11-24 19:00 +08:00，此后每次开工先复核本表）
 
 | 项 | 现状 | 复核方式 |
 |---|---|---|
-| 版本控制 | 三份文档仍为未跟踪文件（`git status` 显示 `??`） | 本 run `git status --porcelain` |
-| 代码实现 | **已被本轮事实推翻**：`ctp/` 已落地 B1（收口见 §16 v0.3a 行）；`pyproject.toml` 无 CTP 依赖不构成缺口——CTP 是独立子项目（D-01），依赖不进本仓打包 | `git diff --cached --name-only`、`pytest ctp/tests` 回执 |
+| 版本控制 | **已入库（2026-11-24 复核）**：Wave-1（四份文档 + 决议单 + B1/B2 代码）经 PR #115 合入 main（`3809e95ed`），远端 9 项检查通过；Wave-2（B5 / B6 / A2 / A3）在 lane-4bbd8c8e，随本版所在 PR 入库 | `git log origin/main`、PR #115 |
+| 代码实现 | **部分推翻（2026-11-24 复核）**：`ctp/` 已落地 B1 契约、B2 不确定度、B5 注册表、B6 图案生成；**未落地**：B3 读码器、B4 阈值抑制、B7 一致性 runner、B8 端到端探针（B8 依赖 D-03 硬件答复）。`pyproject.toml` 无 CTP 依赖不构成缺口——CTP 是独立子项目（D-01），依赖不进本仓打包 | `git log main -- ctp/`、`ctp/receipts/` 回执 |
 | 工作组 | 未组建；0 项 `[TBD-G]` 取得决议编号 | SPEC §14 全表仍为 TBD |
 | 计量资源 | 无台架、无实验室档期 | 无记录 |
 | 第二实现 | 无（V6 无互操作对象） | 无记录 |

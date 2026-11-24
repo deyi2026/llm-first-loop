@@ -21,9 +21,9 @@ covered 条目（9）：C-2a（36h11 码族与码空间）、C-5（读取输出�
 
 partial 条目（9）：P-3b、P-5b、C-1b、C-1d、C-5b、M-1、M-3、M-5b、F-3（逐条理由见第三节末与 trace.md 各章小结）。
 
-测试资产：7 个测试文件 / 80 个测试函数（AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 13、pixel_uncertainty 7、generator 10、registry 33）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
+测试资产：8 个测试文件 / 83 个测试函数（第 8 个文件 test_trace_matrix.py 是矩阵自身的元测试，不入矩阵也不计数，并由它机检本文件的计数与证据行号；AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 13、pixel_uncertainty 7、generator 13、registry 33；每个函数在矩阵中有独立行）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
 
-矩阵规模：113 数据行 = unit 62 + pending 占位 39 + conformance 12；行级状态 covered 47 / partial 15 / pending 51。
+矩阵规模：146 数据行 = unit 95 + pending 占位 39 + conformance 12；行级状态 covered 74 / partial 21 / pending 51。
 
 ## 二、pending 清单（41 条，按依赖分组）
 
