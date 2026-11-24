@@ -415,37 +415,40 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
                 workspace_root or str(Path.cwd()), args.plain, args.theme, args.model,
             ))
         return Presenter(args.output, plain=args.plain).error(str(exc), "cli_deployment_admission_refused", 75)
-    engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
-    # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
-    # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
-    # （单条消息模式 / 交互模式退出）。
-    try:
-        engine._cli_startup_artifact = startup_artifact
-        engine._cli_admission_binding = binding
-        engine._cli_resume_draft_path = args.resume_draft
-        # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
-        if args.model:
-            engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
+    from llm_loop.runtime.cli_processes import register_cli_process
 
-        # T5a: 交互模式注入人工审批回调（EXEC_MODE 拦截项可经终端确认放行；
-        # 单条消息模式/web/feishu 不注入 → 拦截即拒绝 fail-closed）
-        engine._cli_output = args.output
-        engine._cli_plain = args.plain
-        engine._cli_no_stream = args.no_stream
-        engine._cli_theme = args.theme
-        engine._cli_workspace = workspace_root or str(Path.cwd())
-        if interactive:
-            bridge = ApprovalBridge()
-            engine._cli_approval_bridge = bridge
-            engine.registry.set_approval_callback(bridge)
+    with register_cli_process(binding):
+        engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
+        # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
+        # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
+        # （单条消息模式 / 交互模式退出）。
+        try:
+            engine._cli_startup_artifact = startup_artifact
+            engine._cli_admission_binding = binding
+            engine._cli_resume_draft_path = args.resume_draft
+            # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
+            if args.model:
+                engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
 
-        if not interactive:
-            assert message is not None
-            return _run_single(engine, message, session_id=args.session)
-        exit_code = _run_interactive(engine, session_id=args.session)
-    finally:
-        # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
-        engine.close()
+            # T5a: 交互模式注入人工审批回调（EXEC_MODE 拦截项可经终端确认放行；
+            # 单条消息模式/web/feishu 不注入 → 拦截即拒绝 fail-closed）
+            engine._cli_output = args.output
+            engine._cli_plain = args.plain
+            engine._cli_no_stream = args.no_stream
+            engine._cli_theme = args.theme
+            engine._cli_workspace = workspace_root or str(Path.cwd())
+            if interactive:
+                bridge = ApprovalBridge()
+                engine._cli_approval_bridge = bridge
+                engine.registry.set_approval_callback(bridge)
+
+            if not interactive:
+                assert message is not None
+                return _run_single(engine, message, session_id=args.session)
+            exit_code = _run_interactive(engine, session_id=args.session)
+        finally:
+            # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
+            engine.close()
     if exit_code == 75 and binding is not None:
         from llm_loop.runtime.cli_reentry import CliReentry, attempt_cli_reentry
 

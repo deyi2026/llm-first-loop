@@ -319,6 +319,7 @@ def _service_identity_report(data: Path) -> dict[str, Any]:
         "desired_generation": deployment.get("generation"),
         "desired_git_head": deployment.get("git_head"),
         "services": services,
+        "cli_processes": view.get("cli_processes"),
     }
 
 

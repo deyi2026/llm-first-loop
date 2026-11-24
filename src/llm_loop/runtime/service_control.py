@@ -2637,9 +2637,12 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             # 唯一硬信号；正常 receipt 消费路径会先把它清掉。
             "terminal_action_barrier": _terminal_action_barrier_reason(store, service),
         }
+    from llm_loop.runtime.cli_processes import cli_process_view
+
     return {
         "deployment": deployment.to_dict() if deployment else None,
         "services": services,
+        "cli_processes": cli_process_view(store.data_dir, deployment),
         "admission_barriers": [b.to_view() for b in store.barriers.snapshot()],
         # design 2.2.2.6 / tasks 9.1：只读证据面（可用出口/分级表/空闲三态/
         # 阶段事实/证据引用/审计信号）。只增字段，不新增任何阻断行为。

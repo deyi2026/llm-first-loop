@@ -159,6 +159,24 @@ export function ServicesPanel() {
           </div>
         ))}
       </div>
+      {info?.cli_processes ? (
+        <div style={cardStyle} className="v2-service-card" data-testid="service-card-cli">
+          <strong>CLI · {info.cli_processes.state === "identity_matches_target" ? "运行身份匹配" :
+            info.cli_processes.state === "update_required" ? "存在待升级进程" :
+            info.cli_processes.state === "not_running" ? "无已登记运行进程" : "身份待核验"}</strong>
+          <div style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
+            仅统计持有进程锁的新版 CLI；未登记的旧进程不视为已收敛。
+          </div>
+          {info.cli_processes.processes.map((proc) => (
+            <div key={proc.pid}>
+              pid {proc.pid} · gen {proc.generation ?? "—"} · {proc.artifact_kind === "wheel_release"
+                ? `wheel ${proc.version} · SHA ${proc.wheel_sha256.slice(0, 12)}` : shortHead(proc.git_head)}
+              {proc.state !== "identity_matches_target" ? ` · ${proc.reason}` : ""}
+            </div>
+          ))}
+          {info.cli_processes.uncertain > 0 ? <div>另有 {info.cli_processes.uncertain} 条身份待核验。</div> : null}
+        </div>
+      ) : null}
       {loaded && !info ? <div style={cardStyle}>（服务身份接口暂不可用）</div> : null}
     </div>
   );
