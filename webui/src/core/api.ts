@@ -367,6 +367,13 @@ export interface DesiredDeploymentInfo {
 }
 
 export interface ServicesStatusInfo {
+  cli_processes?: {
+    state: string;
+    uncertain: number;
+    coverage?: string;
+    processes: Array<{ pid: number; generation: number | null; artifact_kind: string;
+      git_head: string; version: string; wheel_sha256: string; state: string; reason: string }>;
+  };
   deployment: DesiredDeploymentInfo | null;
   services: Record<string, ServiceIdentityInfo>;
   /** 服务器本地时区 UTC 偏移（分钟）；前端据此渲染"服务器挂钟"时间 */

@@ -26,6 +26,7 @@ import { InterjectMetricsPanel } from "./InterjectMetricsPanel";
 import { EscalationPanel, EscalationWatcher } from "./EscalationCenter";
 import { LaneBoard } from "./LaneBoard";
 import { CoordinationChannel } from "./CoordinationChannel";
+import { RuntimeConvergenceSubscriber } from "./RuntimeConvergenceStrip";
 import { zh } from "../../i18n/zh";
 
 // 第 7 tab「协同」view 值，已并入 stores.SidebarView 联合（stores.ts:8）。
@@ -299,6 +300,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       </button>
       {/* 总协调通道栏（常驻条，非 tab）：服务入口之下、tab 区之上 */}
       <CoordinationChannel collapsed={collapsed} onNavigate={onNavigate} />
+      {!collapsed ? <RuntimeConvergenceSubscriber /> : null}
       <div className="v2-sidebar-tabs">
         <button
           type="button"

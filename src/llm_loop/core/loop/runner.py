@@ -1004,11 +1004,15 @@ class BackgroundRunner:
         except Exception as exc:  # noqa: BLE001 — 后台异常如实广播，不泄漏线程
             logger.exception("后台 run 失败: session=%s", session_id)
             err = f"{type(exc).__name__}: {exc}"
-            not_started = isinstance(exc, (SessionBusyError, QueuedIngressDurabilityError))
+            from llm_loop.runtime.cli_admission import CliDeploymentAdmissionError
+
+            not_started = isinstance(exc, (SessionBusyError, QueuedIngressDurabilityError, CliDeploymentAdmissionError))
             if isinstance(exc, SessionBusyError):
                 code = "session_busy"
             elif isinstance(exc, QueuedIngressDurabilityError):
                 code = "queue_ingress_durability_unavailable"
+            elif isinstance(exc, CliDeploymentAdmissionError):
+                code = "cli_deployment_admission_refused"
             else:
                 code = "internal_error"
             terminal_status = "not_started" if not_started else "failed"

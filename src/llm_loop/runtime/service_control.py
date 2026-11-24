@@ -2250,7 +2250,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
     runtime_root = str(store.data_dir.parent)
     idle_state: dict[str, dict[str, str]] = {}
     for target in ("web", "feishu", "wecom", "learning", "all"):
-        state, detail = _target_idle_state(target=target, runtime_root=runtime_root)
+        state, detail = _target_idle_state(target=target, runtime_root=runtime_root, data_dir=store.data_dir)
         idle_state[target] = {"state": state, "detail": detail}
 
     stage_facts = _stage_facts_view(latest_by_service, actions)
@@ -2463,6 +2463,8 @@ def _live_service_identity(
     service: str,
     manifest_path: Path,
     deployment: ManagedServiceDeployment | None,
+    *,
+    allow_port_fallback: bool = True,
 ) -> dict[str, Any]:
     """单服务 live 身份事实（自 ``compose_service_identity_view`` 原样抽出）。
 
@@ -2504,7 +2506,8 @@ def _live_service_identity(
     # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
     # 不引入常态双探针抖动。
     if (
-        service == "web"
+        allow_port_fallback
+        and service == "web"
         and live.get("pid")
         and not live.get("pid_alive")
         and not live.get("manifest_error")
@@ -2637,9 +2640,12 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             # 唯一硬信号；正常 receipt 消费路径会先把它清掉。
             "terminal_action_barrier": _terminal_action_barrier_reason(store, service),
         }
+    from llm_loop.runtime.cli_processes import cli_process_view
+
     return {
         "deployment": deployment.to_dict() if deployment else None,
         "services": services,
+        "cli_processes": cli_process_view(store.data_dir, deployment),
         "admission_barriers": [b.to_view() for b in store.barriers.snapshot()],
         # design 2.2.2.6 / tasks 9.1：只读证据面（可用出口/分级表/空闲三态/
         # 阶段事实/证据引用/审计信号）。只增字段，不新增任何阻断行为。
@@ -2650,6 +2656,36 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             cast(timedelta, system_local_now().utcoffset()).total_seconds() // 60
         ),
     }
+
+
+def compose_runtime_convergence_strip(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
+    """Small coordination-board projection; no action history or port probes.
+
+    Manifest artifact match is inferred, not a durable restart receipt.
+    CLI coverage is limited to lock-backed registered processes.
+    """
+    from llm_loop.runtime.cli_processes import cli_process_view
+
+    desired = store.read()
+    services: dict[str, Any] = {}
+    for service in _MANAGED_SERVICES:
+        live = _live_service_identity(service, store.runtime_dir / f"runtime_manifest.{service}.json",
+                                      desired, allow_port_fallback=False)
+        if desired is None or not live.get("manifest_present") or live.get("manifest_error"):
+            state = "unverified"
+        elif not live.get("pid_alive"):
+            state = "not_running"
+        elif live.get("matches_desired_generation"):
+            state = "artifact_matches"
+        else:
+            state = "update_required"
+        services[service] = {"state": state, "pid": live.get("pid"),
+                             "git_head": live.get("git_head"), "version": live.get("release_version"),
+                             "wheel_sha256": live.get("wheel_sha256"), "inferred": True}
+    return {"desired_generation": desired.generation if desired else None,
+            "desired_git_head": desired.git_head if desired else None,
+            "desired_version": desired.version if desired else None,
+            "services": services, "cli": cli_process_view(store.data_dir, desired)}
 
 
 def compose_convergence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
@@ -3899,7 +3935,7 @@ def _feishu_stale_processing_recovered(
     return True, ""
 
 
-def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
+def _target_idle_state(*, target: str, runtime_root: str, data_dir: str | Path | None = None) -> tuple[str, str]:
     """L22: 目标空闲三态 ``confirmed_busy`` / ``confirmed_idle`` / ``unconfirmable``.
 
     feishu/wecom/all 要求桥 heartbeat 空闲（processing_msg_id 空 且 queue_depth
@@ -3917,6 +3953,7 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
     _feishu_stale_processing_recovered）时按非忙碌放行，证据不足一律
     confirmed_busy（不得以 unconfirmable 绕过 waiting_for_idle 门禁）。
     """
+    data_root = Path(data_dir) if data_dir is not None else Path(runtime_root) / "data"
     reasons: list[str] = []
     unconfirmable: list[str] = []
     if target in {"feishu", "all"}:
@@ -3978,16 +4015,19 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
                     f"wecom busy: processing={processing!r} queue_depth={queue_depth}"
                 )
     if target in {"web", "all"}:
-        sessions_dir = Path(runtime_root) / "data" / "sessions"
+        sessions_dir = data_root / "sessions"
         held = active_run_locks(sessions_dir)
         if held:
             reasons.append(f"active run locks: {len(held)}")
     if target in {"learning", "all"}:
         learning_reason = learning_busy_reason(
-            Path(runtime_root) / "data" / "sessions"
+            data_root / "sessions"
         )
         if learning_reason:
             reasons.append(learning_reason)
+    cli_mutations = active_run_locks(data_root / "runtime" / "cli-mutations")
+    if cli_mutations:
+        reasons.append(f"active CLI mutations: {len(cli_mutations)}")
     if reasons:
         return "confirmed_busy", "confirmed_busy: " + "; ".join(reasons)
     if unconfirmable:
@@ -4005,9 +4045,9 @@ def _target_busy_reason(*, target: str, runtime_root: str) -> str:
     return detail if state == "confirmed_busy" else ""
 
 
-def _target_idle_probe(*, target: str, runtime_root: str) -> str:
+def _target_idle_probe(*, target: str, runtime_root: str, data_dir: str | Path | None = None) -> str:
     """busy_probe 形态的空闲探针：返回以三态前缀开头的如实事实串."""
-    return _target_idle_state(target=target, runtime_root=runtime_root)[1]
+    return _target_idle_state(target=target, runtime_root=runtime_root, data_dir=data_dir)[1]
 
 
 def _requester_run_active(sessions_dir: Path, requester_session_id: str) -> bool:
@@ -4735,7 +4775,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         _mark_action(store, action, status="failed", detail=str(exc))
         return 3
 
-    sessions_dir = Path(deployment.runtime_root) / "data" / "sessions"
+    sessions_dir = store.data_dir / "sessions"
     # Phase 1 - requester exit (web/feishu/all): never kill the dispatching
     # session mid-turn, and never hold the lifecycle lease while waiting for
     # it, so desired-state publication stays unblocked.
@@ -4762,7 +4802,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         action,
         status="waiting_for_idle",
         busy_probe=lambda: _target_idle_probe(
-            target=action.target, runtime_root=deployment.runtime_root
+            target=action.target, runtime_root=deployment.runtime_root, data_dir=store.data_dir
         ),
         poll_s=_IDLE_POLL_S,
         timeout_s=_IDLE_TIMEOUT_S,
