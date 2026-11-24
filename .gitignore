@@ -43,7 +43,8 @@ experiences/*
 *.bak.*
 
 # 本地实验/基准产物（运行输出，不入库；结论以 docs/ 记录为准）
-/artifacts/
+/artifacts/*
+!/artifacts/ctp-review-20261123/
 # 系统
 .DS_Store
 # 含密钥的本地启动脚本（勿提交）

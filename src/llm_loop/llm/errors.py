@@ -52,6 +52,7 @@ class LLMHTTPError(LLMError):
         body: str = "",
         provider: str = "",
         provider_code: str | None = None,
+        retry_after_seconds: float | None = None,
     ) -> None:
         super().__init__(message, provider=provider)
         self.status_code = status_code
@@ -62,6 +63,9 @@ class LLMHTTPError(LLMError):
         self.provider_code = (
             str(provider_code) if provider_code is not None else None
         )
+        # GLM1305-20261124: 服务端显式 Retry-After（秒，HTTP-date 已折算）。
+        # None=未提供；由 _raise_for_status 从响应头提取，供有界重试尊重等待窗口。
+        self.retry_after_seconds = retry_after_seconds
 
 
 class LLMStreamProviderError(LLMHTTPError):
@@ -280,6 +284,12 @@ _GLM_RATE_LIMIT_CODES = ("1302",)          # 速率限制: 瞬时，等待可恢
 _GLM_PERIOD_QUOTA_CODES = ("1310",)        # 周/月配额窗口耗尽: 窗口重置前同模型不可恢复
 _GLM_MODEL_PERMISSION_CODES = ("1311",)    # 当前订阅未开放所选模型权限（针对所选模型）
 _GLM_ACCOUNT_BILLING_CODES = ("1113",)     # 账户欠费: 账户级，本周期不可恢复
+# GLM1305-20261124: HTTP 429 + 业务码 1305 =「模型繁忙/负载压力」瞬时拒绝。
+# 近 24h 实测（GLM5.4）: 188 次 transport settled 中 8 次首传即 429/1305，
+# 195–581ms 返回、无 Retry-After、均未重试——是负载压力而非 Key/配额/权限问题。
+# 与 1302（速率限制）语义并存但文案区分；仅在 GLM 族按码判定（先例:
+# _GLM_OVERFLOW_PROVIDERS），避免劫持其他 provider 同码异义错误。
+_GLM_BUSY_CODES = ("1305",)
 
 # 流内错误类型语义（Anthropic error.type / Google error.status 字符串）
 _STREAM_RATE_LIMIT_TYPES = ("rate_limit_error", "resource_exhausted")
@@ -361,6 +371,15 @@ def _glm_code_semantics(code: str | None) -> LLMErrorSemantics | None:
             same_identity_retry=True, same_account_other_models=True,
             independent_provider=True,
         )
+    if code in _GLM_BUSY_CODES:
+        # GLM1305-20261124: 「模型繁忙」与 1302 限流同属瞬时等待可恢复
+        # （同身份/同账户/独立 provider 三维为真，fallback_eligible 与既有
+        # 429/5xx 一致——不改变可用性降级行为，只提供如实文案与重试事实）。
+        return LLMErrorSemantics(
+            "provider_busy", f"模型繁忙（GLM {code}，HTTP 429）", provider_code=code,
+            same_identity_retry=True, same_account_other_models=True,
+            independent_provider=True,
+        )
     if code in _GLM_PERIOD_QUOTA_CODES:
         # 1310 是周/月配额窗口: 同模型重试要等窗口重置才可能恢复，按瞬时限流处理
         # 会引导无用的同身份重试（d91 实测 9 次重试全部撞同一窗口）。
@@ -383,6 +402,23 @@ def _glm_code_semantics(code: str | None) -> LLMErrorSemantics | None:
             "account_billing", f"账户欠费（GLM {code}）", provider_code=code,
         )
     return None
+
+
+def is_glm_busy_http_rejection(exc: BaseException) -> bool:
+    """GLM 族 HTTP 429 + 业务码 1305（模型繁忙）整响应级显式拒绝.
+
+    GLM1305-20261124: 仅整响应级 HTTP 拒绝命中——流内 2xx error 事件
+    （LLMStreamProviderError）不在列：部分输出已产生，不可重试。
+    供 _stream_openai 有界原地重试判定与测试消费。
+    """
+    if not isinstance(exc, LLMHTTPError) or isinstance(exc, LLMStreamProviderError):
+        return False
+    if int(getattr(exc, "status_code", 0) or 0) != 429:
+        return False
+    if str(getattr(exc, "provider_code", "") or "") != "1305":
+        return False
+    provider = str(getattr(exc, "provider", "") or "").lower()
+    return provider in _GLM_FAMILY_PROVIDERS
 
 
 def classify_llm_error(exc: LLMError) -> LLMErrorSemantics:

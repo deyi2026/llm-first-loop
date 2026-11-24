@@ -63,7 +63,8 @@ export type ProgressStage =
   | "recovering";
 
 export interface ProviderRetryEvent {
-  reason: "timeout" | "disconnect";
+  /** GLM1305-20261124: busy = 模型繁忙（HTTP 429/业务码 1305）有界重试 */
+  reason: "timeout" | "disconnect" | "busy";
   retry_index: number;
   max_retries: number;
 }

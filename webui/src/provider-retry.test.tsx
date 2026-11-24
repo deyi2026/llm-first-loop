@@ -72,4 +72,48 @@ describe("provider retry progress", () => {
     expect(conversationStore.getState().messages[0]?.progressStage).toBe("tool");
     expect(conversationStore.getState().messages[0]?.content).toBe("");
   });
+
+  // GLM1305-20261124: busy=模型繁忙（HTTP 429/业务码 1305）必须有独立文案，
+  // 不得误显示为「模型连接中断」；恢复后进度卡照常退出。
+  it("shows model-busy retry reason (HTTP 429/GLM 1305) without mislabeling as disconnect", async () => {
+    sessionStore.setCurrentSession("s1");
+    sessionStore.setNewSessionPending(false);
+    conversationStore.setState({ messages: [], streaming: false, streamingIndex: -1, activeRunGeneration: null });
+    const encoder = new TextEncoder();
+    let channel!: ReadableStreamDefaultController<Uint8Array>;
+    const push = (type: string, data: unknown) => channel.enqueue(
+      encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`)
+    );
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/chat/stream/status")) {
+        return new Response(JSON.stringify({ running: true, run_generation: "g1" }));
+      }
+      if (String(input).includes("/api/v1/chat/stream")) {
+        return new Response(new ReadableStream<Uint8Array>({ start(controller) { channel = controller; } }));
+      }
+      return new Response(JSON.stringify({ messages: [] }));
+    }));
+    render(<MessageList />);
+    const run = sendMessage("检查", []);
+    await waitFor(() => expect(channel).toBeDefined());
+    act(() => {
+      push("run_started", { session_id: "s1", run_generation: "g1" });
+      push("provider_retry", { reason: "busy", retry_index: 1, max_retries: 2 });
+    });
+    await waitFor(() => {
+      const st = conversationStore.getState();
+      expect(st.messages[st.streamingIndex]?.progressStage).toBe("retrying");
+      const card = screen.getByTestId("progress-card").textContent ?? "";
+      expect(card).toContain("模型繁忙，等待重试，正在重试（1/2）");
+      expect(card).not.toContain("模型连接中断");
+      expect(st.messages[st.streamingIndex]?.content).toBe("");
+    });
+    act(() => {
+      push("done", { session_id: "s1", final_answer: "已恢复" });
+      channel.close();
+    });
+    await run;
+    expect(conversationStore.getState().messages.at(-1)?.content).toBe("已恢复");
+    await waitFor(() => expect(screen.queryByTestId("progress-card")).toBeNull());
+  });
 });

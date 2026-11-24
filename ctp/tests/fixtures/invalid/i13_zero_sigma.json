@@ -1,0 +1,37 @@
+{
+  "target_index": 42,
+  "logical_id": "0x2A",
+  "resolution": "code",
+  "pose": {
+    "position_m": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.2
+    },
+    "quaternion": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "w": 1.0
+    },
+    "frame_ref": "REG-FRAME-0001"
+  },
+  "uncertainty": {
+    "k": 2.0,
+    "model": "iso-gum-linear-v0",
+    "translation_1sigma_m": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "rotation_1sigma_deg": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    }
+  },
+  "degradation_flag": "none",
+  "timestamp": "2026-11-23T10:00:00.123+08:00",
+  "reader_id": "ctp-refreader",
+  "reader_version": "0.1.0"
+}

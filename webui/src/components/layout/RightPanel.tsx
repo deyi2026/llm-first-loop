@@ -26,14 +26,15 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   const caps = useCapabilities();
   // 页签状态归 rightPanelStore：预览入口（chips/链接/文件树）经 store.reveal
   // 全局联动切换，App 壳与面板共享同一事实源。
-  const { tab } = useRightPanel();
+  const { tab, jobTarget } = useRightPanel();
   const setTab = rightPanelStore.setTab;
   const conn = useConnection();
   const theme = useTheme();
   const currentSessionId = useCurrentSessionId();
   const [catalog, setCatalog] = useState<ModelCatalog>({ models: [], current: null, catalog: [] });
   const [auth, setAuth] = useState<AuthStatus | null>(null);
-  const [jobs, setJobs] = useState<JobFact[]>([]);
+  const [jobSnapshot, setJobSnapshot] = useState<{ sessionId: string | null; items: JobFact[] }>({ sessionId: null, items: [] });
+  const jobs = jobSnapshot.sessionId === currentSessionId ? jobSnapshot.items : [];
   const [jobError, setJobError] = useState("");
   const [jobReadError, setJobReadError] = useState("");
   const [jobBusy, setJobBusy] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
 
   const loadJobs = useCallback(async () => {
     if (!currentSessionId) {
-      setJobs([]);
+      setJobSnapshot({ sessionId: null, items: [] });
       setJobReadError("");
       return;
     }
@@ -63,7 +64,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
         return;
       }
       setJobReadError("");
-      setJobs(result.items);
+      setJobSnapshot({ sessionId: currentSessionId, items: result.items });
     } finally {
       if (jobsInFlightSession.current === currentSessionId) jobsInFlightSession.current = null;
     }
@@ -168,6 +169,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
           <JobsView
             sessionId={currentSessionId}
             jobs={jobs}
+            target={jobTarget?.sessionId === currentSessionId ? jobTarget : null}
             error={jobError || jobReadError}
             busyId={jobBusy}
             onRefresh={loadJobs}
@@ -304,14 +306,21 @@ function JobsView({
   busyId,
   onRefresh,
   onCancel,
+  target,
 }: {
   sessionId: string | null;
   jobs: JobFact[];
+  target: { sessionId: string; jobId: string } | null;
   error: string;
   busyId: string | null;
   onRefresh: () => Promise<void>;
   onCancel: (job: JobFact) => Promise<void>;
 }) {
+  const selectedRef = useRef<HTMLDivElement | null>(null);
+  const hasTarget = Boolean(target && jobs.some((job) => job.job_id === target.jobId));
+  useEffect(() => {
+    if (hasTarget) selectedRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [target, hasTarget]);
   if (!sessionId) return <div className="v2-placeholder">选择一个会话后查看后台任务。</div>;
   return (
     <div className="v2-jobs" data-testid="jobs-panel">
@@ -325,7 +334,14 @@ function JobsView({
         const running = job.state === "running";
         const killable = running && job.local_handle === true && !job.killed;
         return (
-          <div className="v2-job-card" key={job.job_id} data-testid="job-card">
+          <div
+            className="v2-job-card"
+            key={job.job_id}
+            data-testid="job-card"
+            data-selected={target?.jobId === job.job_id ? "true" : undefined}
+            ref={target?.jobId === job.job_id ? selectedRef : undefined}
+            style={target?.jobId === job.job_id ? { outline: "2px solid var(--dsw-alias-label-secondary)" } : undefined}
+          >
             <div className="v2-job-head">
               <strong>{job.executor || "external"}</strong>
               <span className={`v2-status-chip ${job.state === "completed" ? "ok" : job.state === "failed" ? "err" : job.state === "orphaned" ? "warn" : "neutral"}`}>

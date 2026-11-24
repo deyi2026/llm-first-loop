@@ -227,9 +227,11 @@ export function useLearningPage(): LearningPage {
 // ── 右侧面板 store：面板开合 + 活动页签（预览 tab 打开时全局联动 App 壳） ──
 export type RightPanelTab = "settings" | "jobs" | "binding" | "preview";
 
-const rightPanelStoreRaw = createStore<{ open: boolean; tab: RightPanelTab }>({
+type JobTarget = { sessionId: string; jobId: string };
+const rightPanelStoreRaw = createStore<{ open: boolean; tab: RightPanelTab; jobTarget: JobTarget | null }>({
   open: false,
   tab: "settings",
+  jobTarget: null,
 });
 
 export const rightPanelStore = {
@@ -239,9 +241,11 @@ export const rightPanelStore = {
   setTab: (tab: RightPanelTab) => rightPanelStoreRaw.setState({ tab }),
   /** 打开面板并切到指定页签（预览入口共用） */
   reveal: (tab: RightPanelTab) => rightPanelStoreRaw.setState({ open: true, tab }),
+  revealJob: (sessionId: string, jobId: string) =>
+    rightPanelStoreRaw.setState({ open: true, tab: "jobs", jobTarget: { sessionId, jobId } }),
 };
 
-export function useRightPanel(): { open: boolean; tab: RightPanelTab } {
+export function useRightPanel(): { open: boolean; tab: RightPanelTab; jobTarget: JobTarget | null } {
   return useSyncExternalStore(rightPanelStore.subscribe, rightPanelStore.getState);
 }
 
