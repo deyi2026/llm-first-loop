@@ -6,6 +6,7 @@
     {
       "component_id": "llm-transport-busy-retry-and-classification",
       "paths": [
+        "docs/governance/submissions/20261124-glm1305-busy-retry.json",
         "src/llm_loop/llm/client.py",
         "src/llm_loop/llm/errors.py",
         "tests/unit/test_glm_busy_1305_retry.py",
