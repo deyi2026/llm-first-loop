@@ -152,14 +152,15 @@ class EventStore:
         """多段形态活跃段路径（最大 segment_seq 文件）."""
         seg_dir = self._segment_dir(session_id)
         try:
-            segments = sorted(
-                (
-                    entry.path
-                    for entry in os.scandir(seg_dir)
-                    if entry.is_file() and entry.name.endswith(".jsonl")
-                ),
-                key=self._segment_seq,
-            )
+            with os.scandir(seg_dir) as entries:
+                segments = sorted(
+                    (
+                        entry.path
+                        for entry in entries
+                        if entry.is_file() and entry.name.endswith(".jsonl")
+                    ),
+                    key=self._segment_seq,
+                )
         except FileNotFoundError:
             segments = []
         return segments[-1] if segments else os.path.join(seg_dir, "1.jsonl")
@@ -168,14 +169,15 @@ class EventStore:
         """多段形态全部段路径（按 segment_seq 递增）."""
         seg_dir = self._segment_dir(session_id)
         try:
-            return sorted(
-                (
-                    entry.path
-                    for entry in os.scandir(seg_dir)
-                    if entry.is_file() and entry.name.endswith(".jsonl")
-                ),
-                key=self._segment_seq,
-            )
+            with os.scandir(seg_dir) as entries:
+                return sorted(
+                    (
+                        entry.path
+                        for entry in entries
+                        if entry.is_file() and entry.name.endswith(".jsonl")
+                    ),
+                    key=self._segment_seq,
+                )
         except FileNotFoundError:
             return []
 

@@ -1,0 +1,43 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-web-emfile-headroom",
+  "summary": "Mitigate observed Mac Web EMFILE under concurrent session/job polling by raising only the Web process soft descriptor limit and closing event segment directory scans deterministically.",
+  "components": [
+    {
+      "component_id": "existing-managed-web-startup",
+      "paths": [
+        "docs/governance/submissions/20261124-web-emfile-headroom.json",
+        "src/llm_loop/runtime/launch.py",
+        "tests/unit/test_web_fd_softlimit.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing runtime.launch managed Web service entrypoint and process-local operating-system resource limits; service_control still owns deployment, restart and live identity.",
+      "disposition": "Only after the non-mutating dry-run path, increase the Web child process RLIMIT_NOFILE soft limit to at most 1024 and never above its existing hard limit. Fail-soft when the OS refuses. Do not change system-wide launchd limits, permissions, other services, API, model, Host or tool authority.",
+      "evidence": [
+        "Production Mac launchctl maxfiles soft=256, hard=unlimited; Web PID 16924 had high CPU and intermittent 5-15 second /health timeouts; web.log contained 16 OSError Errno24 Too many open files exceptions associated with session job and escalation reads.",
+        "A separate isolated macOS child process successfully changed RLIMIT_NOFILE from (256, unlimited) to (1024, unlimited); no production process was modified.",
+        "Focused runtime and event-log tests 20 plus 39 passed; Ruff passed. Independent Reviewer, original complete R9, remote CI, protected merge and managed deployment remain required."
+      ],
+      "verification_level": "Isolated code candidate and focused tests only; no production activation or full R9 claim until exact final SHA is frozen.",
+      "model_evidence_veto_recovery_exit": "No model evidence, veto, approval, replay or execution authority is introduced. The OS limit is a process-local soft resource ceiling only; hard cap, identity checks and managed deployment remain unchanged. On setrlimit error, preserve current startup behavior and report a warning.",
+      "rollback_route": "Revert the bounded launch helper and its tests through protected main, then use existing managed service control only after active Web and Learning runs drain; retain unrelated PR #109 and other Goals."
+    },
+    {
+      "component_id": "existing-event-log-segment-scan",
+      "paths": [
+        "src/llm_loop/event_log/store.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing EventStore segment path enumeration; the same sorted segment list and last_seq semantics remain authoritative.",
+      "disposition": "Use os.scandir as a context manager in active/all segment enumeration to release directory descriptors even if entry inspection or sorting raises. Preserve segment order, errors, event replay, append locking and storage layout.",
+      "evidence": [
+        "Production EMFILE trace includes event_log/store.py _all_segment_paths and last_seq during jobs polling.",
+        "New tests inject OSError from an entry for both scan methods and assert deterministic iterator closure; existing event-log regression suite passes."
+      ],
+      "verification_level": "Targeted tests passed; independent Reviewer, full R9, final SHA CI and production validation pending.",
+      "model_evidence_veto_recovery_exit": "No model or Host control. The context manager changes only descriptor lifetime, not error propagation or durable event facts. Existing EventStore recovery and rollback behavior is retained.",
+      "rollback_route": "Revert the two with-scandir wrappers if regression is detected, preserving all event log data and concurrent Goal state."
+    }
+  ],
+  "declarations": []
+}
