@@ -2250,7 +2250,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
     runtime_root = str(store.data_dir.parent)
     idle_state: dict[str, dict[str, str]] = {}
     for target in ("web", "feishu", "wecom", "learning", "all"):
-        state, detail = _target_idle_state(target=target, runtime_root=runtime_root)
+        state, detail = _target_idle_state(target=target, runtime_root=runtime_root, data_dir=store.data_dir)
         idle_state[target] = {"state": state, "detail": detail}
 
     stage_facts = _stage_facts_view(latest_by_service, actions)
@@ -3899,7 +3899,7 @@ def _feishu_stale_processing_recovered(
     return True, ""
 
 
-def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
+def _target_idle_state(*, target: str, runtime_root: str, data_dir: str | Path | None = None) -> tuple[str, str]:
     """L22: 目标空闲三态 ``confirmed_busy`` / ``confirmed_idle`` / ``unconfirmable``.
 
     feishu/wecom/all 要求桥 heartbeat 空闲（processing_msg_id 空 且 queue_depth
@@ -3917,6 +3917,7 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
     _feishu_stale_processing_recovered）时按非忙碌放行，证据不足一律
     confirmed_busy（不得以 unconfirmable 绕过 waiting_for_idle 门禁）。
     """
+    data_root = Path(data_dir) if data_dir is not None else Path(runtime_root) / "data"
     reasons: list[str] = []
     unconfirmable: list[str] = []
     if target in {"feishu", "all"}:
@@ -3978,13 +3979,13 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
                     f"wecom busy: processing={processing!r} queue_depth={queue_depth}"
                 )
     if target in {"web", "all"}:
-        sessions_dir = Path(runtime_root) / "data" / "sessions"
+        sessions_dir = data_root / "sessions"
         held = active_run_locks(sessions_dir)
         if held:
             reasons.append(f"active run locks: {len(held)}")
     if target in {"learning", "all"}:
         learning_reason = learning_busy_reason(
-            Path(runtime_root) / "data" / "sessions"
+            data_root / "sessions"
         )
         if learning_reason:
             reasons.append(learning_reason)
@@ -4005,9 +4006,9 @@ def _target_busy_reason(*, target: str, runtime_root: str) -> str:
     return detail if state == "confirmed_busy" else ""
 
 
-def _target_idle_probe(*, target: str, runtime_root: str) -> str:
+def _target_idle_probe(*, target: str, runtime_root: str, data_dir: str | Path | None = None) -> str:
     """busy_probe 形态的空闲探针：返回以三态前缀开头的如实事实串."""
-    return _target_idle_state(target=target, runtime_root=runtime_root)[1]
+    return _target_idle_state(target=target, runtime_root=runtime_root, data_dir=data_dir)[1]
 
 
 def _requester_run_active(sessions_dir: Path, requester_session_id: str) -> bool:
@@ -4735,7 +4736,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         _mark_action(store, action, status="failed", detail=str(exc))
         return 3
 
-    sessions_dir = Path(deployment.runtime_root) / "data" / "sessions"
+    sessions_dir = store.data_dir / "sessions"
     # Phase 1 - requester exit (web/feishu/all): never kill the dispatching
     # session mid-turn, and never hold the lifecycle lease while waiting for
     # it, so desired-state publication stays unblocked.
@@ -4762,7 +4763,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         action,
         status="waiting_for_idle",
         busy_probe=lambda: _target_idle_probe(
-            target=action.target, runtime_root=deployment.runtime_root
+            target=action.target, runtime_root=deployment.runtime_root, data_dir=store.data_dir
         ),
         poll_s=_IDLE_POLL_S,
         timeout_s=_IDLE_TIMEOUT_S,

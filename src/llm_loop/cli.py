@@ -88,15 +88,25 @@ def _run_single(engine, text: str, session_id: str | None = None) -> int:
         stream=not getattr(engine, "_cli_no_stream", False),
         plain=getattr(engine, "_cli_plain", False),
     )
-    store = engine.session
-    if session_id and not store.exists(session_id):
-        return view.error(f"Session not found: {session_id}", "session_not_found")
-    sid = session_id or store.create()
-    model = getattr(engine, "_cli_startup_model", None)
-    if model and not _apply_cli_startup_model(engine, store, sid, model):
-        if session_id is None:
-            store.delete(sid)  # No run began; do not leave a new empty session.
-        return view.error("Explicit startup model was not applied; no user run started.", "startup_model_failed")
+    from llm_loop.runtime.cli_admission import (
+        CliDeploymentAdmissionError,
+        cli_state_admission,
+        engine_cli_binding,
+    )
+
+    try:
+        with cli_state_admission(engine_cli_binding(engine)):
+            store = engine.session
+            if session_id and not store.exists(session_id):
+                return view.error(f"Session not found: {session_id}", "session_not_found")
+            sid = session_id or store.create()
+            model = getattr(engine, "_cli_startup_model", None)
+            if model and not _apply_cli_startup_model(engine, store, sid, model):
+                if session_id is None:
+                    store.delete(sid)  # No run began; do not leave a new empty session.
+                return view.error("Explicit startup model was not applied; no user run started.", "startup_model_failed")
+    except CliDeploymentAdmissionError as exc:
+        return view.error(str(exc), "cli_deployment_admission_refused", 75)
     return run_turn(engine, sid, text, view)
 
 
@@ -140,16 +150,26 @@ def _cli_approval_prompt(tool_name: str, args_summary: str) -> bool:
 
 def _run_interactive(engine, session_id: str | None = None) -> int:
     """Interactive shell owns input and presentation; the core owns execution."""
-    store = engine.session
-    if session_id and not store.exists(session_id):
-        print(f"Session not found: {session_id}", file=sys.stderr)
-        return 1
-    sid = session_id or store.create()
-    model = getattr(engine, "_cli_startup_model", None)
-    if model and not _apply_cli_startup_model(engine, store, sid, model):
-        if session_id is None:
-            store.delete(sid)  # Preserve existing sessions; clean up only this new one.
-        return 1
+    from llm_loop.runtime.cli_admission import (
+        CliDeploymentAdmissionError,
+        cli_state_admission,
+        engine_cli_binding,
+    )
+
+    try:
+        with cli_state_admission(engine_cli_binding(engine)):
+            store = engine.session
+            if session_id and not store.exists(session_id):
+                print(f"Session not found: {session_id}", file=sys.stderr)
+                return 1
+            sid = session_id or store.create()
+            model = getattr(engine, "_cli_startup_model", None)
+            if model and not _apply_cli_startup_model(engine, store, sid, model):
+                if session_id is None:
+                    store.delete(sid)  # Preserve existing sessions; clean up only this new one.
+                return 1
+    except CliDeploymentAdmissionError as exc:
+        return Presenter().error(str(exc), "cli_deployment_admission_refused", 75)
     return interactive_session(engine, sid)
 
 
@@ -366,18 +386,31 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
         return 2
 
     from llm_loop.factory import build_engine
+    from llm_loop.runtime.cli_admission import (
+        CliDeploymentAdmissionError,
+        bind_cli_startup,
+        cli_state_admission,
+    )
 
     # Freeze actual package evidence before the long-lived Engine is created.
     # Admission is a separate concern; this snapshot does not grant a Run.
     from llm_loop.runtime.cli_deployment_identity import capture_startup_artifact
 
     startup_artifact = capture_startup_artifact()
+    try:
+        data_dir = getattr(settings, "data_dir", None)
+        binding = bind_cli_startup(data_dir, startup_artifact) if data_dir is not None else None
+        with cli_state_admission(binding):
+            pass
+    except CliDeploymentAdmissionError as exc:
+        return Presenter(args.output, plain=args.plain).error(str(exc), "cli_deployment_admission_refused", 75)
     engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
     # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
     # （单条消息模式 / 交互模式退出）。
     try:
         engine._cli_startup_artifact = startup_artifact
+        engine._cli_admission_binding = binding
         # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
         if args.model:
             engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
