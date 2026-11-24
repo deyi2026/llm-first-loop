@@ -66,6 +66,77 @@ def test_indexed_page_applies_event_only_retraction(tmp_path):
     assert page[0][-1].metadata["retracted"] is True
 
 
+def test_indexed_page_never_replays_full_events(tmp_path, monkeypatch):
+    events = EventStore(tmp_path / "events")
+    store, sid, _ = _seed(tmp_path, events=events)
+    assert store.retract_message_by_source_id("feishu:page-1002")["status"] == "retracted"
+    reopened_events = EventStore(tmp_path / "events")
+    reopened = SessionStore(tmp_path / "sessions", event_store=reopened_events)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("full event replay")
+
+    monkeypatch.setattr(reopened_events, "read", unexpected)
+    monkeypatch.setattr(reopened_events, "read_cached", unexpected)
+    page = reopened.load_history_page(sid, 50, 0)
+    assert page is not None
+    assert page[0][-1].content == "[RETRACTED]"
+    assert not reopened_events._read_cache
+
+
+def test_bounded_batch_rebuild_preserves_source_and_charges_budget(tmp_path):
+    store, sid, _ = _seed(tmp_path)
+    source = Path(store._path(sid))
+    index = Path(session_page_index.index_path(str(source)))
+    meta = Path(session_page_index.display_meta_path(str(source)))
+    index.unlink()
+    meta.unlink()
+    original = source.read_bytes()
+    stamp = session_page_index.source_key(source.stat())
+    other = store.create()
+    too_small = store.rebuild_history_views_batch([sid], max_source_bytes=len(original) - 1)
+    assert too_small[0]["status"] == "budget_exhausted"
+    assert not index.exists() and not meta.exists()
+    result = store.rebuild_history_views_batch([sid, other], max_source_bytes=len(original))
+    assert result[0] == {"session_id": sid, "status": "rebuilt", "source_bytes": len(original), "display_meta": True, "history_index": True}
+    assert result[1]["status"] == "budget_exhausted"
+    assert source.read_bytes() == original
+    assert session_page_index.source_key(source.stat()) == stamp
+    assert store.load_history_page(sid, 50, 0) is not None
+    assert store.rebuild_history_views_batch([other])[0]["status"] == "metadata_only"
+    with pytest.raises(ValueError):
+        store.rebuild_history_views_batch([sid] * 9)
+
+
+def test_batch_rebuild_skips_active_run_without_touching_source(tmp_path):
+    owner, sid, _ = _seed(tmp_path)
+    reader = SessionStore(tmp_path / "sessions")
+    source = Path(owner._path(sid))
+    index = Path(session_page_index.index_path(str(source)))
+    index.unlink()
+    original = source.read_bytes()
+    with owner.run_owned_session(sid) as active:
+        assert active is not None
+        result = reader.rebuild_history_views_batch([sid])
+        assert result[0]["status"] == "busy"
+        assert result[0]["source_bytes"] == 0
+        assert not index.exists()
+    assert source.read_bytes() == original
+    assert reader.rebuild_history_views_batch([sid])[0]["status"] == "rebuilt"
+
+
+def test_batch_rebuild_does_not_adopt_cross_workspace_copy(tmp_path):
+    store, sid, _ = _seed(tmp_path)
+    other = SessionStore(tmp_path / "other", identity_root=tmp_path / "sessions")
+    copied = Path(other._path(sid))
+    copied.write_bytes(Path(store._path(sid)).read_bytes())
+    result = other.rebuild_history_views_batch([sid])
+    assert result[0]["status"] == "identity_conflict"
+    assert result[0]["source_bytes"] == 0
+    assert not Path(session_page_index.index_path(str(copied))).exists()
+    assert not Path(session_page_index.display_meta_path(str(copied))).exists()
+
+
 def test_index_deleted_with_session(tmp_path):
     store, sid, _ = _seed(tmp_path)
     index = Path(session_page_index.index_path(store._path(sid)))

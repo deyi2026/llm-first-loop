@@ -609,28 +609,44 @@ class SessionStore:
             "event_id": str(getattr(first, "event_id", "") or ""),
         }
 
-    def _apply_message_retraction_overlay(self, session: Session) -> Session:
+    def _apply_message_retraction_overlay(self, session: Session, *, history_page: bool = False) -> Session:
         """Project append-only retractions over the legacy/default JSON read path."""
         store = self._event_store
         if store is None or getattr(store, "enabled", False) is False:
             return session
-        try:
-            # Retraction overlay is a high-frequency read-path projection. EventStore
-            # already provides an exact bounded replay cache keyed by durable tail seq;
-            # bypassing it here forced every SessionStore.load() to JSON-replay the
-            # whole event log again, multiplying CPU cost for large Web sessions.
-            events = getattr(store, "read_cached", store.read)(session.session_id)
-        except Exception:
-            return session
-        if not events:
-            return session
-
         from llm_loop.core.message_retraction import (
             HUMAN_TURN_SOURCE_ID_KEY,
             RETRACTED_MARKER,
             project_retracted_metadata,
         )
         from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED
+
+        if history_page and not any(
+            message.role == "user" and (message.metadata or {}).get(HUMAN_TURN_SOURCE_ID_KEY)
+            for message in session.messages
+        ):
+            return session  # no row on this page can be affected by a retraction
+        try:
+            # Retraction overlay is a high-frequency read-path projection. EventStore
+            # already provides an exact bounded replay cache keyed by durable tail seq;
+            # bypassing it here forced every SessionStore.load() to JSON-replay the
+            # whole event log again, multiplying CPU cost for large Web sessions.
+            selective = getattr(store, "read_message_retractions", None)
+            if history_page and callable(selective):
+                try:
+                    events = selective(session.session_id)
+                    if not isinstance(events, list):
+                        raise TypeError("invalid selective event read")
+                except Exception:
+                    # A derived read optimization must not suppress the existing
+                    # canonical retraction path when it cannot read its source.
+                    events = getattr(store, "read_cached", store.read)(session.session_id)
+            else:
+                events = getattr(store, "read_cached", store.read)(session.session_id)
+        except Exception:
+            return session
+        if not events:
+            return session
 
         changed = False
         for event in events:
@@ -1738,7 +1754,7 @@ class SessionStore:
             messages = [_message_from_dict(row) for row in rows]
         except (KeyError, ValueError, TypeError):
             return None
-        page = self._apply_message_retraction_overlay(Session(session_id=session_id, messages=messages))
+        page = self._apply_message_retraction_overlay(Session(session_id=session_id, messages=messages), history_page=True)
         return page.messages, total
 
     def rebuild_history_index(self, session_id: str) -> bool:
@@ -1773,6 +1789,70 @@ class SessionStore:
                 return session_page_index.publish_display_meta(path, meta.to_dict(), key)
             except (OSError, ValueError, TypeError, AttributeError, KeyError):
                 return False
+
+    def rebuild_history_views_batch(self, session_ids: list[str], *, max_source_bytes: int = 64 * 1024 * 1024) -> list[dict]:
+        """Explicit maintenance of at most eight legacy sessions, one parse each.
+
+        No directory scan, no Web request hook, no canonical writes. The total
+        source read budget is charged even when parsing or publishing fails.
+        Existing management leases reject active Runs rather than waiting for them.
+        """
+        if self._read_path_source != "session_json":
+            raise ValueError("history view maintenance requires session_json")
+        if not 1 <= len(session_ids) <= 8 or not 1 <= max_source_bytes <= 128 * 1024 * 1024:
+            raise ValueError("history view maintenance budget exceeded")
+        ids = list(dict.fromkeys(_validate_session_id(sid) for sid in session_ids))
+        remaining = max_source_bytes
+        results = []
+        for sid in ids:
+            result = {"session_id": sid, "status": "failed", "source_bytes": 0,
+                      "display_meta": False, "history_index": False}
+            results.append(result)
+            if remaining <= 0:
+                result["status"] = "budget_exhausted"
+                continue
+            if not self.exists(sid):
+                result["status"] = "missing"
+                continue
+            try:
+                self._pin_session_location(sid)
+                self._check_identity_read(sid)
+                with self.management_lease(sid), self._session_lock(sid):
+                    path = self._path(sid)
+                    with open(path, "rb") as source:
+                        key = session_page_index.source_key(os.fstat(source.fileno()))
+                        if key[1] > remaining:
+                            result["status"] = "budget_exhausted"
+                            continue
+                        # Reserve the entire read before I/O, including failures.
+                        remaining -= key[1]
+                        result["source_bytes"] = key[1]
+                        raw = source.read(key[1])
+                        if len(raw) != key[1] or session_page_index.source_key(os.fstat(source.fileno())) != key:
+                            result["status"] = "source_changed"
+                            continue
+                    data = json.loads(raw)
+                    if not isinstance(data, dict) or data.get("session_id", sid) != sid or not isinstance(data.get("messages"), list):
+                        continue
+                    rows = data["messages"]
+                    meta = _session_meta_from_disk_json(data, sid)
+                    result["display_meta"] = session_page_index.publish_display_meta(path, meta.to_dict(), key)
+                    if session_page_index.eligible(len(rows), key[1]):
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                raise ValueError("invalid message row")
+                            _message_from_dict(row)
+                        result["history_index"] = session_page_index.publish_index(path, raw, len(rows), key)
+                        result["status"] = "rebuilt" if result["display_meta"] and result["history_index"] else "partial"
+                    else:
+                        result["status"] = "metadata_only" if result["display_meta"] else "failed"
+            except SessionMutationBusyError:
+                result["status"] = "busy"
+            except SessionIdConflictError:
+                result["status"] = "identity_conflict"
+            except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError):
+                pass
+        return results
 
     def _load_from_event_log(self, session_id: str) -> Session | None:
         """从事件日志 replay 重建 Session（失败返回 None，由调用方回退）."""

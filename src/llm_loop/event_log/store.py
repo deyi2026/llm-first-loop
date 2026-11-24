@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from llm_loop.event_log.model import Event, serialize_event
+from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED, Event, serialize_event
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,12 @@ class EventStore:
             weakref.WeakValueDictionary()
         )
         self._read_cache_max_sessions = 2
+        # Web page projection needs only retraction declarations, not all tool
+        # and provider payloads. Cache only stable source snapshots, bounded by
+        # both session count and serialized retained bytes.
+        self._retraction_cache: OrderedDict[str, tuple[tuple[object, ...], int, tuple[Event, ...]]] = OrderedDict()
+        self._retraction_cache_max_sessions = 16
+        self._retraction_cache_max_bytes = 1024 * 1024
 
     def set_rotate_manager(self, manager: Any | None) -> None:
         """接线滚动管理器（P1-1：append/run 末自动检查滚动；None 解除接线）."""
@@ -618,6 +624,7 @@ class EventStore:
     def _invalidate_read_cache(self, session_id: str) -> None:
         with self._read_cache_lock:
             self._read_cache.pop(session_id, None)
+            self._retraction_cache.pop(session_id, None)
             self._read_cache_build_locks.pop(session_id, None)
 
     def _read_cache_build_lock(self, session_id: str) -> threading.Lock:
@@ -693,6 +700,62 @@ class EventStore:
             after_last = self.last_seq(session_id)
             if (events[-1].seq if events else 0) == after_last:
                 self._store_read_cache(session_id, events, skipped=skipped)
+            return events
+
+    def read_message_retractions(self, session_id: str) -> list[Event]:
+        """Read exact retraction declarations for Web pages without full replay.
+
+        Scan canonical JSONL in source order, retaining only matching events.
+        The cheap substring filter is lossless for valid JSON: ASCII event type
+        characters can only be literal or Unicode-escaped. Escaped/ambiguous
+        rows are parsed normally. This is not an audit or authorization proof.
+        A changing or unreadable source is never cached as complete.
+        """
+        if not self._enabled:
+            return []
+        session_id = _validate_session_id(session_id)
+        with self._read_cache_build_lock(session_id):
+            before = self.history_source_stamp(session_id)
+            with self._read_cache_lock:
+                cached = self._retraction_cache.get(session_id)
+                if before is not None and cached is not None and cached[0] == before:
+                    self._retraction_cache.move_to_end(session_id)
+                    return list(cached[2])
+                self._retraction_cache.pop(session_id, None)
+            paths = self._all_segment_paths(session_id) if self._is_multi_segment(session_id) else [self._path(session_id)]
+            events: list[Event] = []
+            retained_bytes = 0
+            complete = True
+            for path in paths:
+                try:
+                    with open(path, encoding="utf-8") as source:
+                        for line in source:
+                            if EVENT_MESSAGE_RETRACTED not in line and "\\u" not in line:
+                                continue
+                            event = self._parse_line(line.strip())
+                            if event is not None and event.type == EVENT_MESSAGE_RETRACTED:
+                                events.append(event)
+                                retained_bytes += len(line.encode("utf-8"))
+                except FileNotFoundError:
+                    # A genuinely absent single-file source is a normal empty
+                    # history; a rotation/deletion is caught by the stamp check.
+                    if self._is_multi_segment(session_id):
+                        complete = False
+                except OSError as exc:
+                    complete = False
+                    logger.warning("撤回事件读取失败: %s: %s", path, exc)
+                    # Match the canonical single-file read's failure semantics.
+                    if not self._is_multi_segment(session_id):
+                        return []
+            events.sort(key=lambda event: event.seq)
+            if (complete and before is not None and before == self.history_source_stamp(session_id)
+                    and retained_bytes <= self._retraction_cache_max_bytes):
+                with self._read_cache_lock:
+                    self._retraction_cache[session_id] = (before, retained_bytes, tuple(events))
+                    self._retraction_cache.move_to_end(session_id)
+                    while (len(self._retraction_cache) > self._retraction_cache_max_sessions
+                           or sum(entry[1] for entry in self._retraction_cache.values()) > self._retraction_cache_max_bytes):
+                        self._retraction_cache.popitem(last=False)
             return events
 
     @staticmethod
