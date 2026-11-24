@@ -1,0 +1,48 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-escalation-session-recovery",
+  "summary": "Associate escalation approvals with their exact source session and preserve a human-controlled route to request fresh approval after expiry or restart.",
+  "components": [
+    {
+      "component_id": "existing-escalation-store-origin",
+      "paths": [
+        "docs/governance/submissions/20261124-escalation-session-recovery.json",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/escalation.py",
+        "src/llm_loop/tools/builtin/escalation.py",
+        "src/llm_loop/web/routes.py",
+        "tests/unit/test_escalation.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing EscalationStore, trusted run context, GoalStore and escalation request/wait tools.",
+      "disposition": "Snapshot source run and active Goal only for the actual current session; keep pending requests after wait timeout, retain expired records and give precise recovery guidance. Do not change signatures, human approval, TTL, token consumption or Host authorization.",
+      "evidence": [
+        "EscalationStore already persists session_id and excludes unverifiable records from actionable pending; wait timeout does not cancel pending.",
+        "Process-local signing key deliberately invalidates old authority on restart; expired requests require new approval, not key persistence or old token revival.",
+        "Focused tests cover origin snapshot, session separation, pending idempotence and expiry."
+      ],
+      "verification_level": "Isolated candidate; targeted tests and exact candidate admission required before merge.",
+      "model_evidence_veto_recovery_exit": "The original session rechecks current need and effect evidence, then uses the original request type; no automatic replay or re-signing of foreign records.",
+      "rollback_route": "Revert the origin metadata and recovery guidance; retain all existing approval records and security gates."
+    },
+    {
+      "component_id": "existing-web-escalation-center",
+      "paths": [
+        "webui/src/components/sidebar/EscalationCenter.tsx",
+        "webui/src/components/sidebar/EscalationRecovery.test.tsx",
+        "webui/src/components/sidebar/Sidebar.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web escalation watcher and panel, session store, locator and composer.",
+      "disposition": "Display source session, available Goal and Run, and provide explicit navigation and recovery draft. Reuse existing session locator and workspace switch. Recovery draft references only the request ID; it never auto-sends, approves, executes, or copies a historical command. Denied and consumed records cannot be retried from the card.",
+      "evidence": [
+        "Existing UI omits session_id despite backend storage, leaving the operator unable to identify the source.",
+        "Focused Web tests cover exact navigation, expired and unverifiable history, missing sessions and terminal states."
+      ],
+      "verification_level": "Targeted Vitest and TypeScript checks; independent review, full R9, remote CI and managed deployment remain required.",
+      "model_evidence_veto_recovery_exit": "Human can open the source without sending anything, or confirm the recovery draft in that session; the model checks the original context and current state.",
+      "rollback_route": "Revert UI additions without changing the approval store or existing review endpoint."
+    }
+  ],
+  "declarations": []
+}

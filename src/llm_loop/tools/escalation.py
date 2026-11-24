@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.run_context import current_run_generation, current_session_id
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -148,10 +149,28 @@ def _public(rec: dict) -> dict:
 class EscalationStore:
     """提权请求/决定/令牌的持久存储（data/audit/escalation_requests.json）."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self, path: str | Path,
+        goal_identity_getter: Callable[[str], tuple[str, str] | None] | None = None,
+    ) -> None:
         self._path = Path(path)
         self._lock_path = self._path.with_suffix(".lock")
         self._log_path = self._path.parent / "escalation_log.jsonl"
+        self._goal_identity_getter = goal_identity_getter
+
+    def _origin_fields(self, session_id: str) -> dict[str, str]:
+        """Snapshot origin metadata; never use it as execution authority."""
+        if not session_id or current_session_id.get() != session_id:
+            return {}
+        fields = {"origin_run_generation": current_run_generation.get() or ""}
+        if self._goal_identity_getter is not None:
+            try:
+                identity = self._goal_identity_getter(session_id)
+                if identity:
+                    fields["origin_goal_id"] = identity[0]
+            except (OSError, ValueError, RuntimeError):
+                logger.warning("escalation origin Goal unavailable", exc_info=True)
+        return fields
 
     # ── 基础 IO ──
     @staticmethod
@@ -323,6 +342,7 @@ class EscalationStore:
         if kind not in ("command", "host_grant", "verify_receipt"):
             raise ValueError(f"unknown escalation kind: {kind}")
         sha = hashlib.sha256(command.encode("utf-8")).hexdigest()
+        origin_fields = self._origin_fields(session_id)
         created: dict | None = None
 
         def _fn(records: list[dict]) -> list[dict]:
@@ -347,6 +367,7 @@ class EscalationStore:
                 "command_len": len(command),  # P0-5 展示-审批绑定（截断展示时 UI 可对齐真实长度）
                 "justification": justification[:2000],
                 "session_id": session_id,
+                **origin_fields,
                 "requested_by": requested_by,
                 "status": "pending",
                 "created_at": _now(),

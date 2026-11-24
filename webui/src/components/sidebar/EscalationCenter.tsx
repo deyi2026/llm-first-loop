@@ -6,6 +6,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { isAuthRequired, reportUnauthorized } from "../../core/authSession";
+import { mainViewStore, sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
+import { prefillComposer } from "../../core/conversation";
+import { switchWorkspace } from "../../core/api";
 
 export interface EscalationRequest {
   id: string;
@@ -13,6 +16,8 @@ export interface EscalationRequest {
   command: string;
   justification: string;
   session_id: string;
+  origin_goal_id?: string;
+  origin_run_generation?: string;
   status: string; // pending | approved | denied | consumed | expired
   created_at: string;
   decided_at: string;
@@ -226,15 +231,95 @@ function statusBadge(status: string): { text: string; cls: string } {
   return map[status] || { text: status, cls: "" };
 }
 
+/** Navigation is not approval or execution. Recovery drafts contain only a
+ * request reference, never a command or authority copied from an old record. */
+function EscalationOrigin({ req, onNavigate }: {
+  req: EscalationRequest;
+  onNavigate?: () => void;
+}) {
+  const sessions = useSessions();
+  const currentId = useCurrentSessionId();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const sid = req.session_id;
+  const title = sessions.find((s) => s.session_id === sid)?.title;
+  const recoverable = /^[A-Za-z0-9-]{6,80}$/.test(req.id) && ["pending", "approved", "expired"].includes(req.status);
+  const needsNew = req.status === "expired" || !!req._sig_unverified;
+  const open = async (recover: boolean) => {
+    if (!sid || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (!sessions.some((s) => s.session_id === sid)) {
+        const response = await fetch("/api/v1/evolution/session-locator?session_id=" + encodeURIComponent(sid));
+        reportUnauthorized(response.status);
+        const location = await response.json();
+        if (!response.ok || !location.available || location.session_id !== sid) {
+          setError("无法定位来源会话，请检查会话是否仍存在。");
+          return;
+        }
+        if (!location.current) {
+          if (!location.workspace_id) {
+            setError("来源工作区不可用。");
+            return;
+          }
+          const switched = await switchWorkspace(String(location.workspace_id));
+          if (!switched.ok) {
+            setError("暂不能切换来源工作区，请稍后重试。");
+            return;
+          }
+        }
+      }
+      mainViewStore.setView("chat");
+      sessionStore.setNewSessionPending(false);
+      sessionStore.setCurrentSession(sid);
+      if (recover) {
+        prefillComposer(
+          "请核对本会话中提权申请 " + req.id +
+          " 的原始任务和当前状态。若仍待审批则继续等待；若凭证有效则按原范围处理；" +
+          "若审批或签发材料已失效、签发失败，且操作尚未完成、仍有必要，请重新核验并用原申请类型发起人工审批。" +
+          "不要复用过期凭证、重复已完成操作或执行未获批准的命令。"
+        );
+      }
+      onNavigate?.();
+    } catch {
+      setError("打开来源会话失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!sid) return <div className="v2-esc-hash">来源会话未记录</div>;
+  return (
+    <div className="v2-esc-just" data-testid={"esc-origin-" + req.id}>
+      <div style={{ overflowWrap: "anywhere" }}>来源会话：{title ? title + " · " : ""}{sid}{currentId === sid ? "（当前会话）" : ""}</div>
+      {req.origin_goal_id && <div style={{ overflowWrap: "anywhere" }}>Goal：{req.origin_goal_id}</div>}
+      {req.origin_run_generation && <div style={{ overflowWrap: "anywhere" }}>Run：{req.origin_run_generation}</div>}
+      {req._sig_unverified && <div className="v2-esc-hash warn">历史来源未能验签；请在原会话核对，不得直接复用。</div>}
+      <div className="v2-evo-row" style={{ flexWrap: "wrap" }}>
+        <button type="button" className="v2-evo-btn" disabled={busy} onClick={() => void open(false)}>打开来源会话</button>
+        {recoverable && (
+          <button type="button" className="v2-evo-btn" disabled={busy} onClick={() => void open(true)}>
+            {needsNew ? "重新发起审批" : "返回会话继续处理"}
+          </button>
+        )}
+      </div>
+      {recoverable && <div className="v2-esc-hash">继续处理将填入原会话输入框，确认发送后由该会话核对并处理。</div>}
+      {error && <div className="v2-esc-hash warn" role="alert">{error}</div>}
+    </div>
+  );
+}
+
 // ── 待决卡片（弹窗与面板共用）──
 function PendingCard({
   req,
   busy,
   onDecide,
+  onNavigate,
 }: {
   req: EscalationRequest;
   busy: boolean;
   onDecide: (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => void;
+  onNavigate?: () => void;
 }) {
   const [note, setNote] = useState("");
   // ESC-05（FR-05）: 截断命令必须先看完整原文才能批准——
@@ -282,6 +367,7 @@ function PendingCard({
         <span className={`v2-evo-status ${badge.cls}`}>{badge.text}</span>
         <span style={{ opacity: 0.6, fontSize: 11 }}>{fmtTime(req.created_at)}</span>
       </div>
+      <EscalationOrigin req={req} onNavigate={onNavigate} />
       <div className="v2-esc-cmd" data-testid={`esc-cmd-${req.id}`}>
         <code>{req.command}</code>
       </div>
@@ -347,7 +433,7 @@ function PendingCard({
 }
 
 // ── 全局弹窗（用户要求: web 端弹窗，审批后 AI 闭环接收）──
-export function EscalationWatcher() {
+export function EscalationWatcher({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { data, reload } = useEscalations(true);
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -441,12 +527,17 @@ export function EscalationWatcher() {
           {pending
             .filter((r) => !mutedIds.has(r.id))
             .map((r) => (
-              <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
+              <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} onNavigate={() => {
+                setMutedIds((prev) => new Set([...prev, ...pending.map((item) => item.id)]));
+                setNewArrival(false);
+                onNavigate?.();
+              }} />
             ))}
         </div>
         <div className="v2-esc-modal-foot">
           普通提权批准后 AI 收到一次性令牌；验证凭证类由 Host 专用签发，
           不提供通用文件写权限。拒绝后 AI 会收到拒绝理由。
+          稍后处理或等待超时不会取消待审申请；过期后可从历史返回来源会话重新申请。
         </div>
       </div>
     </div>
@@ -454,7 +545,7 @@ export function EscalationWatcher() {
 }
 
 // ── 侧栏面板 ──
-export function EscalationPanel() {
+export function EscalationPanel({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { data, reload } = useEscalations(true);
   const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
@@ -525,7 +616,7 @@ export function EscalationPanel() {
         {/* R2: 只有确认无待审（非错误态且权威计数为 0）才显示空态提示 */}
         {!data?.error && pendingCount === 0 && <div className="v2-tree-loading">（无待审批提权申请）</div>}
         {pending.map((r) => (
-          <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
+          <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} onNavigate={onNavigate} />
         ))}
         {hasMore && (
           <button type="button" className="v2-evo-btn" data-testid="esc-load-more" onClick={loadMore}>
@@ -538,7 +629,7 @@ export function EscalationPanel() {
           // FR-03: 跨进程失效的 pending 已被待审专用查询排除，历史视图里
           // 仍如实呈现但标记"已失效"——面板永远无法审批它们（签名校验拒绝）。
           const badge =
-            r._sig_unverified && r.status === "pending"
+            r._sig_unverified && (r.status === "pending" || (r.status === "approved" && r.request_kind !== "verify_receipt"))
               ? { cls: "denied", text: "已失效" }
               : r.request_kind === "verify_receipt" && r.status === "approved"
                 ? { cls: "ok", text: "Host 已签发" }
@@ -552,6 +643,7 @@ export function EscalationPanel() {
               <div className="v2-esc-cmd">
                 <code>{r.command}</code>
               </div>
+              <EscalationOrigin req={r} onNavigate={onNavigate} />
               {r.decision_note && <div className="v2-esc-just">备注: {r.decision_note}</div>}
             </div>
           );

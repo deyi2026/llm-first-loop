@@ -2916,6 +2916,9 @@ def escalation_detail(request: Request, id: str = "") -> Response:
             "status": rec.get("status", ""),
             "created_at": rec.get("created_at", ""),
             "session_id": rec.get("session_id", ""),
+            "origin_run_generation": rec.get("origin_run_generation", ""),
+            "origin_goal_id": rec.get("origin_goal_id", ""),
+            "_sig_unverified": bool(rec.get("_sig_unverified")),
             "request_kind": rec.get("request_kind", "command"),
             **({"host_request": rec.get("host_request", {})} if rec.get("host_request") else {}),
         }
