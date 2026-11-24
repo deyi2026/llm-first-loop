@@ -1,0 +1,36 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-coordination-action-navigation",
+  "summary": "Deliver explicit human coordination instructions to exact existing Web-reusable sessions using the existing durable human-turn queue and generation-bound interjection; restore header navigation.",
+  "components": [
+    {
+      "component_id": "existing-web-queue-and-navigation",
+      "paths": [
+        "docs/governance/submissions/20261124-coordination-action-navigation.json",
+        "src/llm_loop/web/routes.py",
+        "tests/web/test_chat_queue.py",
+        "webui/src/components/conversation/JobsCatalog.tsx",
+        "webui/src/components/conversation/SubagentLineage.tsx",
+        "webui/src/components/layout/RightPanel.tsx",
+        "webui/src/components/sidebar/CoordinationAction.tsx",
+        "webui/src/components/sidebar/CoordinationChannel.test.tsx",
+        "webui/src/components/sidebar/CoordinationChannel.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/core/stores.ts",
+        "webui/src/jobs-catalog.test.tsx",
+        "webui/src/tokens/conversation.css"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web V2 coordination, HumanTurnQueue, Web ingress ownership, QueueServerFallback, and session/right-panel navigation. No new scheduler or independent execution authority.",
+      "disposition": "Reuse the existing queue admission and generation-bound interjection endpoints; enforce the same existing Web ingress ownership predicate on queue admission. Idle sessions use the existing server fallback. Preserve queue receipts and never report admission as execution. Restore header dropdown visibility and exact job/session navigation.",
+      "evidence": [
+        "Initial candidate fcda26b24: WebUI 67 files / 668 tests, TypeScript, Ruff and 50 queue/recovery tests passed.",
+        "Latest main aligned without path overlap. Final frozen SHA must pass independent review, original R9, remote CI and physical browser acceptance."
+      ],
+      "verification_level": "Local tests on initial candidate; final review and full R9 pending. No production effectiveness claimed.",
+      "model_evidence_veto_recovery_exit": "Explicit human input only; no automatic tool action from passive help messages. Existing exact session/ingress checks and run generation CAS govern admission. Stale interjection leaves durable queue receipt; existing queue cancellation and recovery remain authoritative.",
+      "rollback_route": "Protected revert of this change and coordinated managed Web deployment; retain session history, help records, and existing durable queue items."
+    }
+  ],
+  "declarations": []
+}
