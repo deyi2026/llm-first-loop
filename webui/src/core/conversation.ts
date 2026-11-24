@@ -603,8 +603,10 @@ async function resumeBackgroundStream(
 export async function loadEarlierHistory(sessionId: string): Promise<void> {
   const cur = conversationStore.getState();
   const offset = cur.loadedHistoryCount;
-  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, offset);
-  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  const epoch = idlePollEpoch;
+  const revision = idleProbeRevision;
+  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, offset, undefined, revision ?? undefined);
+  if (sessionStore.getState().currentSessionId !== sessionId || idlePollEpoch !== epoch) return;
   if (resp.ok === false) {
     conversationStore.setState({ lastError: resp.error ?? "更早历史读取失败，请重试。" });
     return;
@@ -613,6 +615,10 @@ export async function loadEarlierHistory(sessionId: string): Promise<void> {
   // A concurrent reload/second pagination request changed the window while this page was
   // in flight. Its offset is stale, so applying it could duplicate or cross-contaminate rows.
   if (now.loadedHistoryCount !== offset) return;
+  if (revision !== null && resp.revision !== revision) {
+    conversationStore.setState({ lastError: "会话历史已变化，请重新读取后继续翻页。" });
+    return;
+  }
   const earlier = resp.messages.map(toChatMessage);
   conversationStore.setState({
     messages: [...earlier, ...now.messages],

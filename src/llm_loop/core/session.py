@@ -25,6 +25,7 @@ from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 from typing import Any, Literal
 
+from llm_loop.core import session_page_index
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.event_log.session_types import (  # noqa: F401 — SessionIdConflictError 为 R9-P3-02 re-export（历史导入路径兼容）
@@ -41,9 +42,9 @@ _IDENTITY_FALLBACK_LOCKS: dict[str, threading.Lock] = {}
 _ACTIVE = "active"
 _ARCHIVED = "archived"
 
-# 会话元数据缓存（2026-09-07 CPU 修复）：绝对路径 → ((mtime_ns, size), SessionMeta)。
+# 会话元数据缓存：绝对路径 → (完整文件身份, SessionMeta)。
 # 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
-_SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
+_SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int, int, int, int], SessionMeta]] = OrderedDict()
 _SESSION_META_CACHE_LOCK = threading.Lock()
 # The active workspace has >2.4k session JSON files and the host has >9k
 # across workspace roots.  A 2,048-entry process cache caused each refresh to
@@ -1613,11 +1614,17 @@ class SessionStore:
                 session.title = _make_title(first_user.content)
         # 原子写（tmp+rename）：Web/飞书跨进程共享会话时防半写损坏/交错覆盖
         p = self._path(session.session_id)
-        payload = json.dumps(session.to_dict(), ensure_ascii=False, indent=2)
+        data = session.to_dict()
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        meta = _session_meta_from_disk_json(data, session.session_id)
+        del data
+        published_key = None
         try:
             tmp = os.path.splitext(p)[0] + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(payload)
+                f.flush()
+                written = os.fstat(f.fileno())
             os.replace(tmp, p)
         except OSError as exc:
             # P0-4: 原子写失败回退直写（持锁内，无并发写者撕裂面；读者仍有瞬时窗口，
@@ -1625,6 +1632,32 @@ class SessionStore:
             logger.warning("会话原子写失败，回退直写（fail-open）: %s: %s", p, exc)
             with open(p, "w", encoding="utf-8") as f:
                 f.write(payload)
+        else:
+            # Rename may change ctime; bind the actual published inode. A
+            # failed stat must not trigger the canonical write fallback.
+            with suppress(OSError):
+                published = os.stat(p)
+                if (written.st_dev, written.st_ino, written.st_size, written.st_mtime_ns) == (
+                    published.st_dev, published.st_ino, published.st_size, published.st_mtime_ns
+                ):
+                    published_key = session_page_index.source_key(published)
+        if published_key is not None:
+            # Warm only the existing display/parent metadata cache, not ingress
+            # authorization (get_meta retains its canonical overlay path).
+            with _SESSION_META_CACHE_LOCK:
+                _SESSION_META_CACHE[p] = (published_key, meta)
+                _SESSION_META_CACHE.move_to_end(p)
+                while len(_SESSION_META_CACHE) > _SESSION_META_CACHE_MAX:
+                    _SESSION_META_CACHE.popitem(last=False)
+            if session_page_index.eligible(len(session.messages), published_key[1]):
+                raw = payload.encode("utf-8")
+                if len(raw) == published_key[1]:
+                    session_page_index.publish_index(p, raw, len(session.messages), published_key)
+                del raw
+            else:
+                with suppress(OSError):
+                    os.unlink(session_page_index.index_path(p))
+        del payload
         # D1 兜底（防御层）: 事件日志缺失时生成 session.created + 消息事件（fail-open）
         self._event_backfill(session)
 
@@ -1670,6 +1703,34 @@ class SessionStore:
                 session_id,
             )
         return self._apply_message_retraction_overlay(self._load_from_json(session_id))
+
+    def load_history_page(self, session_id: str, limit: int, offset: int) -> tuple[list[Message], int] | None:
+        """Optional indexed page; normal load remains the authority/fallback."""
+        if self._read_path_source != "session_json":
+            return None
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        result = session_page_index.read_page(self._path(session_id), limit, offset)
+        if result is None:
+            return None
+        rows, total = result
+        try:
+            messages = [_message_from_dict(row) for row in rows]
+        except (KeyError, ValueError, TypeError):
+            return None
+        page = self._apply_message_retraction_overlay(Session(session_id=session_id, messages=messages))
+        return page.messages, total
+
+    def rebuild_history_index(self, session_id: str) -> bool:
+        """Bounded explicit maintenance; does not rewrite the canonical source."""
+        if self._read_path_source != "session_json":
+            return False
+        session_id = _validate_session_id(session_id)
+        self._pin_session_location(session_id)
+        self._check_identity_read(session_id)
+        with self.management_lease(session_id), self._session_lock(session_id):
+            return session_page_index.rebuild_index(self._path(session_id), session_id, _message_from_dict)
 
     def _load_from_event_log(self, session_id: str) -> Session | None:
         """从事件日志 replay 重建 Session（失败返回 None，由调用方回退）."""
@@ -2066,7 +2127,7 @@ class SessionStore:
         metas: list[SessionMeta] = []
         target_fs = os.path.abspath(os.fspath(target))
         cache_limit = max(1, int(_SESSION_META_CACHE_MAX))
-        new_cache: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
+        new_cache: OrderedDict[str, tuple[tuple[int, int, int, int, int], SessionMeta]] = OrderedDict()
         seen_paths: set[str] = set()
         try:
             entries = sorted(
@@ -2086,7 +2147,7 @@ class SessionStore:
             seen_paths.add(p)
             try:
                 st = entry.stat()
-                fkey = (st.st_mtime_ns, st.st_size)
+                fkey = session_page_index.source_key(st)
             except OSError:
                 continue
             with _SESSION_META_CACHE_LOCK:
@@ -2097,10 +2158,14 @@ class SessionStore:
             else:
                 try:
                     with open(p, encoding="utf-8") as f:
+                        fkey = session_page_index.source_key(os.fstat(f.fileno()))
                         data = json.load(f)
+                        stable = fkey == session_page_index.source_key(os.fstat(f.fileno()))
                 except (json.JSONDecodeError, OSError):
                     continue
                 meta = _session_meta_from_disk_json(data, os.path.splitext(entry.name)[0])
+                if not stable:
+                    continue
                 new_cache[p] = (fkey, meta)
             new_cache.move_to_end(p)
             while len(new_cache) > cache_limit:
@@ -2181,7 +2246,7 @@ class SessionStore:
             return ""
         try:
             st = os.stat(path)
-            fkey = (st.st_mtime_ns, st.st_size)
+            fkey = session_page_index.source_key(st)
         except OSError:
             return ""
         with _SESSION_META_CACHE_LOCK:
@@ -2190,10 +2255,14 @@ class SessionStore:
             return str(cached[1].parent_id or "")
         try:
             with open(path, encoding="utf-8") as f:
+                fkey = session_page_index.source_key(os.fstat(f.fileno()))
                 data = json.load(f)
+                stable = fkey == session_page_index.source_key(os.fstat(f.fileno()))
         except (json.JSONDecodeError, OSError):
             return ""
         meta = _session_meta_from_disk_json(data, str(session_id))
+        if not stable:
+            return ""
         with _SESSION_META_CACHE_LOCK:
             _SESSION_META_CACHE[path] = (fkey, meta)
             _SESSION_META_CACHE.move_to_end(path)
@@ -2414,6 +2483,8 @@ class SessionStore:
                     if callable(event_delete):
                         event_delete(session_id)
                     os.unlink(p)
+                    with suppress(OSError):
+                        os.unlink(session_page_index.index_path(p))
                 # owner tombstone与稳定lock/run.lock故意保留：旧sid不可跨workspace重新分配。
                 self._unpin_session_location(session_id)
                 return True

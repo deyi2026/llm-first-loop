@@ -134,7 +134,8 @@ export async function fetchHistory(
   sessionId: string,
   limit: number,
   offset: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  snapshotRevision?: string
 ): Promise<HistoryResponse> {
   if (isAuthRequired()) {
     return { ok: false, error: "会话历史读取失败：登录已失效，请重新登录。", messages: [], has_more: false };
@@ -146,8 +147,8 @@ export async function fetchHistory(
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const resp = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`,
-      { signal: controller.signal }
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}${snapshotRevision ? `&snapshot_revision=${encodeURIComponent(snapshotRevision)}` : ""}`,
+      { signal: controller.signal, cache: "no-store" }
     );
     reportUnauthorized(resp.status);
     if (!resp.ok) {
@@ -155,7 +156,9 @@ export async function fetchHistory(
         ok: false,
         error: resp.status === 401
           ? "会话历史读取失败：登录已失效，请重新登录。"
-          : `会话历史读取失败（HTTP ${resp.status}）`,
+          : resp.status === 409 && snapshotRevision
+            ? "会话历史已变化，请重新读取后继续翻页。"
+            : `会话历史读取失败（HTTP ${resp.status}）`,
         messages: [],
         has_more: false,
       };

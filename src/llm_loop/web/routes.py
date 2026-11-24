@@ -4719,6 +4719,7 @@ def get_session_messages(
     request: Request,
     limit: int | None = None,
     offset: int = 0,
+    snapshot_revision: str | None = None,
 ) -> SessionMessagesResponse | Response:
     """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
 
@@ -4730,9 +4731,36 @@ def get_session_messages(
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
-    revision_before = _history_revision_hint(engine, session_id) if limit is not None and offset == 0 else None
+    # A caller continuing a page window must never silently mix two source
+    # revisions. This is a change guard, not an authorization or replay proof.
+    def resync_required() -> Response:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "history_resync_required", "detail": "会话历史已变化，请重新读取后继续翻页。"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    revision_before = (
+        _history_revision_hint(engine, session_id)
+        if limit is not None and (offset == 0 or snapshot_revision is not None)
+        else None
+    )
+    if snapshot_revision is not None and (revision_before is None or revision_before != snapshot_revision):
+        return resync_required()
     try:
-        session = engine.session.load(session_id)
+        indexed = engine.session.load_history_page(session_id, limit, offset) if limit is not None else None
+        if indexed is not None and limit is not None:
+            source_messages, total = indexed
+            start = max(0, total - offset - limit)
+        else:
+            session = engine.session.load(session_id)
+            source_messages = session.messages
+            total = len(source_messages)
+            start = 0
+            if limit is not None:
+                start = max(0, total - offset - limit)
+                end = max(0, total - offset)
+                source_messages = source_messages[start:end]
     except Exception as exc:
         logger.exception("session load failed: session_id=%s", session_id)
         return JSONResponse(
@@ -4742,14 +4770,6 @@ def get_session_messages(
                 "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
             },
         )
-    source_messages = session.messages
-    total = len(source_messages)
-    start = 0
-    end = total
-    if limit is not None:
-        start = max(0, total - offset - limit)
-        end = max(0, total - offset)
-        source_messages = source_messages[start:end]
     # Program-final assistant rows intentionally persist an empty protocol placeholder so
     # subsequent provider prompts never ingest program-authored terminal prose.  The exact
     # UI text is durably stored in EventStore; hydrate only this Web response by the seq
@@ -4828,6 +4848,8 @@ def get_session_messages(
             if revision_before is not None and revision_before == _history_revision_hint(engine, session_id)
             else None
         )
+        if snapshot_revision is not None and revision != snapshot_revision:
+            return resync_required()
         return SessionMessagesResponse(
             session_id=session_id, messages=messages, has_more=start > 0, total=total, revision=revision
         )
