@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261116-sidebar-child-session-discovery",
+  "summary": "Web V2 sidebar-only usability fix: auto-reveal the active child session after asynchronous parent-map loading, flatten matching search results, and support session-ID search. No new control authority, persistence schema, backend endpoint, deployment behavior, or model selection.",
+  "components": [
+    {
+      "component_id": "webui-sidebar-child-discovery",
+      "paths": [
+        "docs/governance/submissions/20261116-sidebar-child-session-discovery.json",
+        "webui/src/components/sidebar/Sidebar.tsx",
+        "webui/src/sidebar-child-visibility.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Web V2 client-only sidebar session tree and search presentation",
+      "disposition": "Admit a small presentation correction: when the current session is a child, expand its ancestor chain once topology loads; when searching, show all matching sessions as independent visible rows and allow ID matches. Manual collapse remains available. No changes to authoritative session metadata, Goal, lane, or access controls.",
+      "evidence": [
+        "Observed live W1 child session 5a331d35-335d-4ca3-9a84-cf13f694d86c has parent_id 1a7bb31d-f3da-497f-9322-336483f4435a, and appears in /api/v1/sessions but is hidden under default collapsed tree.",
+        "Isolated worktree 20261116: 13/13 focused sidebar tests PASS; 603/603 WebUI tests PASS; TypeScript typecheck PASS; WebUI build PASS; git diff --check PASS.",
+        "New regression tests cover async active child, switch and manual collapse, simultaneous parent/child search, and session-ID search."
+      ],
+      "verification_level": "Local focused + full WebUI tests and build PASS; independent Reviewer, original full R9 and remote CI required before merge/deploy.",
+      "model_evidence_veto_recovery_exit": "No model evidence, veto, recovery or exit authority is introduced. Parent topology and current-session ID are read-only server-derived facts; UI only adjusts presentation. On missing tree data, existing flat rendering remains.",
+      "rollback_route": "Revert this PR and rebuild Web V2 through the existing managed release path; session JSON and parent-child relationships remain untouched."
+    }
+  ],
+  "declarations": []
+}

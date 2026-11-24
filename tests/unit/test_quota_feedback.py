@@ -76,6 +76,41 @@ def test_llm_error_text_non_quota_regression():
     assert "检查网络/Key/模型名配置后重试" in text
 
 
+def test_glm_1305_busy_feedback_does_not_misdiagnose_credentials():
+    """GLM 429/1305 means the selected model is busy, not that its Key is missing."""
+    exc = LLMHTTPError(
+        "HTTP 429: Too Many Requests",
+        status_code=429,
+        provider="glm",
+        body='{"error":{"code":"1305","message":"该模型当前访问量过大，请您稍后再试"}}',
+    )
+    text = llm_error_text(exc)
+    assert "1305" in text and "模型繁忙" in text
+    assert "稍后" in text and "切换" in text
+    assert "检查网络/Key/模型名配置后重试" not in text
+    assert "待授权" not in text
+
+
+def test_non_glm_1305_code_keeps_existing_feedback():
+    """A foreign provider's code 1305 must not acquire GLM-specific meaning."""
+    exc = LLMHTTPError(
+        "HTTP 429: Too Many Requests", status_code=429,
+        provider="other", body='{"error":{"code":"1305"}}',
+    )
+    assert "模型繁忙" not in llm_error_text(exc)
+
+
+def test_http_529_overload_feedback_does_not_misdiagnose_key():
+    exc = LLMHTTPError(
+        "HTTP 529: overloaded_error", status_code=529,
+        body='{"error":{"type":"overloaded_error"}}', provider="other",
+    )
+    text = llm_error_text(exc)
+    assert "529" in text and "服务商繁忙" in text
+    assert "稍后" in text
+    assert "检查网络/Key/模型名配置后重试" not in text
+
+
 def test_ssl_eof_feedback_does_not_misdiagnose_key_or_model():
     text = llm_error_text(LLMNetworkError(
         "LLM 网络不可达: [SSL: UNEXPECTED_EOF_WHILE_READING] unexpected EOF"

@@ -27,6 +27,30 @@ _SERVICES = {
 }
 
 
+def _raise_web_fd_soft_limit() -> None:
+    """Give the Web process headroom for concurrent event-log and HTTP handles.
+
+    The managed macOS launchd default is commonly 256; raising only this
+    process's soft limit does not change system-wide policy or hard limits.
+    """
+    try:
+        import resource
+    except ImportError:  # Windows has no resource module.
+        return
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == resource.RLIM_INFINITY:
+            return
+        target = 1024 if hard == resource.RLIM_INFINITY else min(1024, hard)
+        if target <= soft:
+            return
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        print(f"[runtime-launch] web nofile soft limit: {soft} -> {target}", file=sys.stderr)
+    except (OSError, ValueError) as exc:
+        # A platform-imposed cap is not a reason to block Web startup.
+        print(f"[runtime-launch] web nofile limit unchanged: {type(exc).__name__}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="llm_loop.runtime.launch")
     parser.add_argument("service", choices=sorted(_SERVICES))
@@ -63,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
                          ensure_ascii=False, indent=2))
         return 0
 
+    if args.service == "web":
+        _raise_web_fd_soft_limit()
     apply_to_environ(ec)
     # R3: 启动即写 manifest（身份 + 配置指纹 + providers source/effective hashes 的唯一事实源）
     manifest = build_manifest(args.service, ec, report)
