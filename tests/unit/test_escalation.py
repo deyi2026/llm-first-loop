@@ -120,6 +120,38 @@ def test_create_pending_and_idempotent(tmp_path):
     assert s.pending_count() == 1
 
 
+def test_origin_snapshot_is_preserved_and_wait_timeout_does_not_cancel(tmp_path):
+    from llm_loop.core.run_context import current_run_generation, current_session_id
+
+    s = EscalationStore(
+        tmp_path / "audit" / "escalation_requests.json",
+        goal_identity_getter=lambda sid: ("GOAL-" + sid, "generation"),
+    )
+    sid = current_session_id.set("source-session")
+    run = current_run_generation.set("run-original")
+    try:
+        rec = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20,
+                       session_id="source-session")
+        current_run_generation.set("run-later")
+        same = s.create(tool_name="execute_command", command=_CMD, justification="y" * 20,
+                        session_id="source-session")
+        assert same["id"] == rec["id"]
+        assert same["origin_run_generation"] == "run-original"
+        assert same["origin_goal_id"] == "GOAL-source-session"
+        waited = s.wait_for_decision(rec["id"], 0)
+        assert waited is not None and waited["status"] == "pending"
+        assert s.pending_count() == 1
+        assert s.list(status="pending")[0]["session_id"] == "source-session"
+        other = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20,
+                         session_id="other-session")
+        assert other["id"] != rec["id"]
+        assert "origin_goal_id" not in other
+        assert "origin_run_generation" not in other
+    finally:
+        current_run_generation.reset(run)
+        current_session_id.reset(sid)
+
+
 def test_decide_denied_and_no_token(tmp_path):
     s = _store(tmp_path)
     rec = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20, session_id="s1")
@@ -169,6 +201,11 @@ def test_token_expiry(tmp_path):
     rec, reason = s.consume(s.get(rid)["token"], "execute_command", _CMD)
     assert rec is None and "过期" in reason
     assert s.get(rid)["status"] == "expired"
+    fresh = s.create(tool_name="execute_command", command=_CMD,
+                     justification="same session needs a new approval", session_id="s-test")
+    assert fresh["id"] != rid and fresh["status"] == "pending"
+    assert s.get(rid)["status"] == "expired"
+    assert s.get(fresh["id"])["token"] == ""
 
 
 # ── 请求工具防滥用 ──
@@ -346,6 +383,51 @@ def test_cross_process_token_not_consumable(tmp_path, monkeypatch):
     other = esc.EscalationStore(tmp_path / "esc.json")
     result, reason = other.consume(token, "tool_x", "dangerous --cmd")
     assert result is None and ("其他进程" in reason or "无法验证" in reason)
+
+
+def test_cross_process_unverified_pending_web_queue_zero_and_refresh_fresh_id(tmp_path, monkeypatch):
+    """TASK-004 跨进程回归三要素：签名失效 pending 对 Web 待审 0 条可见
+    （list(pending)/pending_count）；失效原因只读可见（快照保留+审批拒绝给原因）；
+    原会话同 session 同命令重新申请开新 ID（ESC-03：不复用失效旧 ID、不误等）。"""
+    import llm_loop.tools.escalation as esc
+
+    sid = "source-session-x"
+    store = esc.EscalationStore(tmp_path / "esc.json")
+    foreign_rid = store.create(
+        tool_name="execute_command", command=_CMD, justification="cross proc draft",
+        session_id=sid,
+    )["id"]
+
+    # 模拟另一进程：换进程内密钥后新实例读同一状态文件
+    monkeypatch.setattr(esc, "_STATE_SIGNING_KEY", esc.secrets.token_bytes(32))
+    origin_view = esc.EscalationStore(tmp_path / "esc.json")
+
+    # 要素1：Web 待审 0 条可见（不可审批记录不入待审队列）
+    assert origin_view.pending_count() == 0
+    assert origin_view.list(status="pending") == []
+
+    # 要素2：失效原因只读可见（快照保留 + 审批拒绝给原因）
+    rec = origin_view.get(foreign_rid)
+    assert rec is not None and rec["_sig_unverified"] is True
+    _, reason = origin_view.decide(foreign_rid, "approved", decided_by="tester")
+    assert "其他进程" in reason or "无法验证" in reason
+
+    # 要素3：原会话重新申请：ESC-03 不复用失效旧 ID、不误等
+    fresh = origin_view.create(
+        tool_name="execute_command", command=_CMD, justification="retry after invalidation",
+        session_id=sid,
+    )
+    assert fresh["id"] != foreign_rid and fresh["status"] == "pending"
+    assert origin_view.pending_count() == 1
+    assert [r["id"] for r in origin_view.list(status="pending")] == [fresh["id"]]
+    waited = origin_view.wait_for_decision(fresh["id"], 0)
+    assert waited is not None and waited["status"] == "pending"
+
+    # 磁盘共存：失效旧记录原样保留（不销毁），新记录为本进程可验证签名
+    on_disk = esc.EscalationStore(tmp_path / "esc.json")._load()
+    assert len(on_disk) == 2
+    flags = {r["id"]: bool(r.get("_sig_unverified")) for r in on_disk}
+    assert flags[foreign_rid] is True and flags[fresh["id"]] is False
 
 
 # ── HostCapabilityGrant（DESIGN-20261107 §6.2/§6.2.1/§6.3）──────────────────
