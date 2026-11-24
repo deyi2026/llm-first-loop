@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { mainViewStore, sessionStore, sidebarViewStore, useSidebarView } from "../../core/stores";
 import { formatRelative } from "./WorkspaceGroups";
 import { fetchCoordinationBoard } from "../../core/coordinationBoard";
+import { CoordinationAction, type CoordinationTarget } from "./CoordinationAction";
 
 interface ChannelSession {
   session_id: string;
@@ -75,6 +76,7 @@ export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: bool
   const [channel, setChannel] = useState(undefined as ChannelState);
   const [loadErr, setLoadErr] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [target, setTarget] = useState<CoordinationTarget | null>(null);
   const view = useSidebarView();
 
   const load = useCallback(() => {
@@ -276,6 +278,7 @@ export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: bool
                 overscrollBehaviorY: "contain",
               }}
             >
+              {target && <CoordinationAction key={target.sessionId} target={target} onClose={() => setTarget(null)} />}
               {Array.isArray(channel.sessions) && channel.sessions.length > 0 ? (
                 channel.sessions.map((s, i) => {
                   const sessionId = typeof s.session_id === "string" ? s.session_id.trim() : "";
@@ -298,17 +301,22 @@ export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: bool
                     </>
                   );
                   return sessionId && goalId ? (
-                    <button
-                      key={s.lane_id + "-" + i}
-                      type="button"
-                      data-testid="coordination-channel-session"
-                      aria-label={"打开 Goal " + goal + " 的会话"}
-                      title={"打开进行中的会话 " + sessionId + " · " + detail}
-                      onClick={() => openSession(sessionId)}
-                      style={{ ...commonStyle, background: "transparent", border: "none", cursor: "pointer" }}
-                    >
-                      {content}
-                    </button>
+                    <div key={s.lane_id + "-" + i} style={{ display: "flex", alignItems: "center" }}>
+                      <button
+                        type="button"
+                        data-testid="coordination-channel-session"
+                        aria-label={"打开 Goal " + goal + " 的会话"}
+                        title={"打开进行中的会话 " + sessionId + " · " + detail}
+                        onClick={() => openSession(sessionId)}
+                        style={{ ...commonStyle, minWidth: 0, flex: "1 1 auto", background: "transparent", border: "none", cursor: "pointer" }}
+                      >
+                        {content}
+                      </button>
+                      <button type="button" className="v2-btn ghost"
+                        style={{ minHeight: 44, flex: "none" }}
+                        aria-label={"协助 Goal " + goal}
+                        onClick={() => setTarget({ sessionId, label: goal })}>协助</button>
+                    </div>
                   ) : (
                     <div
                       key={s.lane_id + "-" + i}
@@ -328,7 +336,7 @@ export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: bool
               )}
               {Array.isArray(channel.help_items) && channel.help_items.length > 0 ? (
                 <div data-testid="coordination-channel-help" style={{ marginTop: 4 }}>
-                  {channel.help_items.slice(0, 5).map((h, i) => {
+                  {channel.help_items.map((h, i) => {
                     return (
                       <div
                         key={(h.id || "") + "-" + i}
@@ -336,13 +344,19 @@ export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: bool
                         title={(h.topic || "") + " · from " + (h.from_session || "?") + " · " + (h.since || "")}
                         style={{
                           padding: "3px 6px",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
+                          overflowWrap: "anywhere",
                           color: h.need === "block" ? "#e53e3e" : "inherit",
                         }}
                       >
                         {(h.need === "block" ? "\u26d4 " : "\u2753 ") + (h.topic || h.id || "未命名") + " · " + (h.from_session || "").slice(0, 8)}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {h.from_session && <button type="button" className="v2-btn ghost" style={{ minHeight: 44 }}
+                            onClick={() => openSession(h.from_session)}>打开请求方</button>}
+                          {h.from_session && <button type="button" className="v2-btn ghost" style={{ minHeight: 44 }}
+                            onClick={() => setTarget({ sessionId: h.from_session, label: "回复：" + (h.topic || h.id) })}>回复请求方</button>}
+                          {h.to_session && h.to_session !== h.from_session && <button type="button" className="v2-btn ghost" style={{ minHeight: 44 }}
+                            onClick={() => setTarget({ sessionId: h.to_session, label: "协助：" + (h.topic || h.id) })}>协助接收方</button>}
+                        </div>
                       </div>
                     );
                   })}

@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { JobsCatalog } from "./components/conversation/JobsCatalog";
-import { sessionStore } from "./core/stores";
+import { rightPanelStore, sessionStore } from "./core/stores";
 import type { JobFact } from "./core/api";
 
 function jobs(): JobFact[] {
@@ -152,4 +152,16 @@ describe("jobs catalog (DSH JobListAction parity)", () => {
     const rows = await screen.findAllByTestId("jobs-catalog-row");
     expect(rows[1].querySelector(".v2-jobs-duration")).toHaveTextContent(/30秒/);
   });
+});
+
+it("opens the exact job in the right panel without changing the current session", async () => {
+  installFetch(() => undefined);
+  render(<JobsCatalog />);
+  fireEvent.click(await screen.findByTestId("jobs-catalog-trigger"));
+  fireEvent.click(screen.getByRole("button", { name: "打开后台任务：npm run build" }));
+  expect(rightPanelStore.getState()).toMatchObject({
+    open: true, tab: "jobs", jobTarget: { sessionId: "s1", jobId: "job-running" },
+  });
+  expect(sessionStore.getState().currentSessionId).toBe("s1");
+  expect(screen.queryByTestId("jobs-catalog-menu")).not.toBeInTheDocument();
 });
