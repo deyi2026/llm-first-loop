@@ -155,3 +155,22 @@ r3（subagent_6014966192ff）回执 PASS 后首次真实执行测试即暴露**�
 | `build_snapshot` 未做墓碑终态过滤，手写 register→retire→register 链可让墓碑 ID 回到快照 records | P2 | 已修：records 过滤 `tid not in tombstones`（与 `_latest_records` 同口径）；新增应拦用例 test_snapshot_excludes_tombstoned_id_even_if_reregistered |
 | 过 PSD 容差但奇异的协方差（某轴 1σ=0）使 Cholesky 裸抛 LinAlgError | P2 | 已修：Monte Carlo 入口转类型化 ValueError；`check_first_order_validity` 增 `except ValueError → ok=False, reason=invalid_covariance`；新增应拦用例 test_singular_covariance_is_typed_failure |
 | lint：TagSpec 注释"默认 10 mm"与 generator-notes（gap 6 / margin 10）矛盾；render.py 未用 `_sha256_bytes`；store.py `import hashlib` 位置与无占位 f-string | P2 | 已修：注释改为"必填，取值见 generator-notes"；删除未用函数及其 hashlib 导入（全仓无其他引用）；hashlib 归位 stdlib 块；f-string 补上底层异常 |
+
+## 12. Wave-2 测试准入 r5 审查者超时与 r6 审查切片收窄（2026-11-24，如实声明）
+
+r5（subagent_4b59fb2dc085，候选 4238b9b8…，切片 = `ctp` + `docs/conformance` + `docs/trace` 全量，材料 30.4 万字符）首轮与其自动重试**均以 reviewer_timeout 失败**——宿主回执原文："LLM 流式总时长超限（>600s）；各 read 间隔均未超时——provider 持续滴流不收敛，已机械截断"。两次都未产出任何审查结论（review_answer_chars=148），**不构成 PASS 也不构成 REVISE**，r4 处置在本轮未获独立复核。
+
+处置：同条件第三次重试预期仍会超时，故 r6（subagent_33409f675de7，候选 d4d8cff2…）**收窄审查切片**以缩短材料（30.4 万 → 24.6 万字符）。移出本轮切片的两块及其依据：
+
+| 移出内容 | 体量 | 依据 | 残余风险 |
+|---|---|---|---|
+| `ctp/docs/upstream/apriltag-tag36h11.c` | 714 行 | vendored 第三方码表数据，不参与测试逻辑；r4 已核"保留完整 BSD-2 许可头、tag36h11_table.py 抽查与上游一致" | 低：数据文件，自 r4 起未改动 |
+| `docs/conformance/`（README + V1–V8） | 846 行 | 书面规程，不参与测试执行；r1/r2 两次 P1 均针对其陈旧表述并已修复，r3/r4 对其内容无新发现 | 低-中：本轮修订未碰这些文件（r4 修复只动 docs/trace），但其最新表述在本轮无独立复核 |
+
+仍在切片内全审：`ctp/src`、`ctp/tests`、`ctp/schema`、`ctp/README.md`、`ctp/docs/{registry-notes,generator-notes,uncertainty-declaration-template}.md`、`ctp/receipts`、`docs/trace`（含 r4 P1 的计数修复）。
+
+兜底：这两块仍属 lane-4bbd8c8e 的合并范围，合并审查（merge_review_start）按 lane 全量 diff 复核；若合并审查同样超时，不得据此视为已审。
+
+**r6 结果**：PASS（候选 `d4d8cff2…`，head `e085e3bd3`，运行时工作树干净）。随后以后台任务执行与 target 逐字一致的命令：`190 passed in 2.30s`，退出码 0——这是 Wave-2 自 B6 提交以来**第一次真实全量通过**。完整回执见 `ctp/receipts/20261124-wave2-pytest.md`（用例总数 190 为单一真值）。
+
+过程勘误（如实记录）：r6 受理后我曾误改 worktree 内一个切片外的已跟踪文件（本文件），会让"切片外内容摘要"在消费时失配；发现后立即 `git checkout` 恢复到提交态、文本暂存主仓 scratch，测试通过后才补回——未影响 r6 资格的有效性。
