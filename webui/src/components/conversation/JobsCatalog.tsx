@@ -5,8 +5,9 @@
 // 结束"而非自然失败。点击行打开精确任务；停止任务走右侧面板的显式 kill。
 // 排序：live 在前按开始时间升序，settled 按结束时间降序（最新完成靠前）。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchSessionJobsResult, type JobFact } from "../../core/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { JobFact } from "../../core/api";
+import { sessionJobs, useSessionList } from "../../core/sessionListPoll";
 import { useCapabilities } from "../../core/capabilities";
 import { useConversation } from "../../core/conversation";
 import { runAwareIntervalMs } from "../../core/runAwarePoll";
@@ -94,48 +95,14 @@ export function JobsCatalog() {
   const _conv = useConversation();
   const runBusy = Boolean(_conv.streaming || _conv.backgroundRunning);
   const sessionId = useCurrentSessionId();
-  const [jobSnapshot, setJobSnapshot] = useState<{ sessionId: string | null; items: JobFact[] }>({ sessionId: null, items: [] });
-  const jobs = jobSnapshot.sessionId === sessionId ? jobSnapshot.items : [];
-  const [readStale, setReadStale] = useState(false);
+  const { items: jobs, stale: readStale } = useSessionList(
+    sessionJobs, sessionId, caps.jobs, runAwareIntervalMs(5000, runBusy),
+  );
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement | null>(null);
   const activeSession = useRef(sessionId);
   activeSession.current = sessionId;
-
-  const load = useCallback(async () => {
-    const sid = activeSession.current;
-    if (!sid) {
-      setJobSnapshot({ sessionId: null, items: [] });
-      setReadStale(false);
-      return;
-    }
-    const result = await fetchSessionJobsResult(sid);
-    if (activeSession.current !== sid) return;
-    if (!result.ok) {
-      setReadStale(true);
-      return;
-    }
-    setReadStale(false);
-    setJobSnapshot({ sessionId: sid, items: result.items });
-  }, []);
-
-  // 发现轮询：空则隐藏 trigger，仍需发现新任务
-  useEffect(() => {
-    if (!caps.jobs) return;
-    void load();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void load();
-    }, runAwareIntervalMs(5000, runBusy));
-    const onVisible = () => {
-      if (!document.hidden) void load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [caps.jobs, sessionId, load]);
 
   const liveCount = useMemo(
     () => jobs.filter((job) => isLiveStatus(jobDisplayStatus(job))).length,

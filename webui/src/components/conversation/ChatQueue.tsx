@@ -29,15 +29,20 @@ export function ChatQueue() {
       : zh.queueInterjectUnavailable;
 
   // 活跃项存在时轮询镜像（claimed→发送中、queued→待发；终态项不返回所以列表自动缩短）
+  const hasItems = items.length > 0;
+  const queueSessionId = items[0]?.session_id;
   useEffect(() => {
-    if (items.length === 0) return;
-    const sid = items[0]?.session_id as string | undefined;
+    if (!hasItems) return;
+    const sid = queueSessionId as string | undefined;
     if (!sid) return;
-    const t = window.setInterval(() => {
-      void refreshQueue(sid);
-    }, 3000);
-    return () => window.clearInterval(t);
-  }, [items.length, items[0]?.session_id]);
+    const poll = () => { if (!document.hidden) void refreshQueue(sid); };
+    const t = window.setInterval(poll, 3000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, [hasItems, queueSessionId]);
 
   if (items.length === 0 && !feedback) return null;
   const queuedCount = items.filter((it) => it.status === "queued").length;

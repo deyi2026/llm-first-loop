@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { JobsCatalog } from "./components/conversation/JobsCatalog";
+import { RightPanel } from "./components/layout/RightPanel";
 import { rightPanelStore, sessionStore } from "./core/stores";
 import type { JobFact } from "./core/api";
 
@@ -164,4 +165,25 @@ it("opens the exact job in the right panel without changing the current session"
   });
   expect(sessionStore.getState().currentSessionId).toBe("s1");
   expect(screen.queryByTestId("jobs-catalog-menu")).not.toBeInTheDocument();
+});
+
+
+it("header and open jobs panel share one read and update together", async () => {
+  let reads = 0;
+  let current = jobs();
+  installFetch(url => {
+    if (!url.endsWith("/api/v1/sessions/s1/jobs")) return undefined;
+    reads++;
+    return new Response(JSON.stringify({ jobs: current }), { status: 200 });
+  });
+  rightPanelStore.setTab("jobs");
+  render(<><JobsCatalog /><RightPanel open /></>);
+  expect(await screen.findByTestId("jobs-catalog-trigger")).toHaveTextContent("2 个后台任务运行中");
+  expect(await screen.findAllByTestId("job-card")).toHaveLength(5);
+  expect(reads).toBe(1);
+  current = [];
+  fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(screen.queryByTestId("jobs-catalog-trigger")).not.toBeInTheDocument());
+  expect(screen.queryAllByTestId("job-card")).toHaveLength(0);
+  expect(reads).toBe(2);
 });

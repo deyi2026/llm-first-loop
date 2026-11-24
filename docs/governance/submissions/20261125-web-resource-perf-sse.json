@@ -1,0 +1,77 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-web-resource-perf-sse",
+  "summary": "P0-B2: coalesce existing Web SSE probes, Jobs/Schedule and queue polling, and overlapping session-list/Board read-only projections.",
+  "components": [
+    {
+      "component_id": "existing-web-sse-probe-sharing",
+      "paths": [
+        "docs/governance/submissions/20261125-web-resource-perf-sse.json",
+        "src/llm_loop/web/routes.py",
+        "tests/web/test_sse_fingerprint_cache.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web SSE notification route and fingerprint readers. No new service, execution authority, durable store or Run admission gate.",
+      "disposition": "App-local, workspace/engine-bound single-flight probes for existing session and Provider fingerprints. Reuse existing 1s notification TTL; offload initial Provider read; bound each subscriber wait to 5s without cancelling or duplicating a slow shared read. Discard invalid or old-scope results, preserve per-connection change comparison and both event types. No changes to auth, session/Goal/Run authority, history or model context.",
+      "evidence": [
+        "Base 4f11570557842f4b1f180f3035fa144c6752f5cc, PR118 retained. Isolated worktree only.",
+        "Final focused pytest: 109 passed in 4.52s (SSE fingerprint, API, workspaces, provider admin, SSE GC). Ruff and diff check passed.",
+        "Synthetic provider fingerprint microbenchmark, 14,905-byte config, 15 paired synchronized rounds per arm, no network/model calls: 8 readers 120 vs 15 underlying calls, median process CPU 0.649 vs 0.131 ms, median wall 0.551 vs 0.212 ms. Measurements precede final wait-bound regression; count test covers final behavior. Not whole-system CPU or 4/8 real Run SLO evidence."
+      ],
+      "verification_level": "Local focused tests and synthetic microbenchmark; independent review, full R9, remote CI, production and load acceptance pending.",
+      "model_evidence_veto_recovery_exit": "SSE notifications are hints only; existing authoritative status/history and reconnect remain available. Errors/timeouts do not imply successful reads or task completion; no automatic task retry.",
+      "rollback_route": "Protected revert and coordinated Web deployment. No data migration or authoritative state changes."
+    },
+    {
+      "component_id": "existing-web-session-list-poll-sharing",
+      "paths": [
+        "webui/src/components/conversation/JobsCatalog.tsx",
+        "webui/src/components/conversation/ScheduleCatalog.tsx",
+        "webui/src/components/layout/RightPanel.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/core/sessionListPoll.ts",
+        "webui/src/core/sessionListPoll.test.ts",
+        "webui/src/jobs-catalog.test.tsx",
+        "webui/src/schedule-catalog.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web V2 Jobs/Schedule presentation and read-only API client. No new service, scheduler, durable state or execution authority.",
+      "disposition": "Share one mounted polling lifecycle and snapshot per exact session/list type; fastest mounted subscriber sets cadence, 5s/20s run-aware header and 2s open Jobs panel. Skip hidden tabs, abort at 10s, retain last known result on transient failure, discard late/invalidated reads and clear on auth/session boundaries. Existing explicit cancel/kill endpoints remain unchanged; force fresh read after mutation. Optional AbortSignal on existing GET wrappers; no new endpoint. Session-list GET coalescing now invalidates on auth/workspace switch; aborted API reads cannot publish old facts.",
+      "evidence": [
+        "TypeScript tsc --noEmit PASS; full WebUI vitest 70 files / 700 tests PASS (3.56s).",
+        "New unit regressions: one timer, fastest cadence, hidden/unmounted stop, slow request abort/recovery, pre-mutation response rejection, auth/session isolation. Component integration verifies header+open panel issue one initial GET and both update on one visibility refresh; schedule switch to failed new-session read does not show old reminders.",
+        "No real model call or production restart. Shared polling counts are local test evidence, not end-to-end production CPU or latency acceptance."
+      ],
+      "verification_level": "Full frontend tests and typecheck locally; independent review, full R9, remote CI and real browser/load acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Snapshots are read-only presentation facts. Explicit user mutations retain existing server authority; errors never imply empty success, and no automatic replay of writes. Auth/session changes invalidate old responses.",
+      "rollback_route": "Protected revert of this frontend slice and coordinated Web deployment; no persistent state or data migration."
+    },
+    {
+      "component_id": "existing-web-presentation-read-coalescing",
+      "paths": [
+        "src/llm_loop/core/read_coalescing.py",
+        "src/llm_loop/core/session.py",
+        "src/llm_loop/introspection/lane_board.py",
+        "tests/unit/test_concurrent_presentation_reads.py",
+        "webui/src/components/conversation/ChatQueue.tsx",
+        "webui/src/components/sidebar/CoordinationAction.tsx",
+        "webui/src/core/chat.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/core/queueReadSharing.test.ts",
+        "tests/web/test_presentation_load.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing SessionStore display metadata, read-only coordination Board and Web queue mirror; no new execution control or durable state.",
+      "disposition": "Share only overlapping exact-scope display scans and Board builds, release registry on completion/error, no TTL or durable cache. Queue GETs coalesce per current session; explicit mutations invalidate old reads; visibility, session and auth boundaries discard late data. Batch interjection remains FIFO and exact-run bound, with one final refresh.",
+      "evidence": [
+        "65 targeted backend tests PASS; 2 isolated real Web stream Run load cases PASS; full WebUI 71 files/702 tests PASS; tsc/Ruff/Pyright PASS.",
+        "Controlled paired 4/8-run fake streaming provider probe, 32/64 GETs, identical fixture and endpoints. At 8 runs base 4f1157055 vs candidate: total 209 vs 121ms, CPU 128.9 vs 102.1% of one core, process peak RSS 144.1 vs 127.9MiB; median session 15.0 vs 8.3ms, board 58.4 vs 30.8ms, queue 6.3 vs 6.3ms, health 12.3 vs 12.2ms.",
+        "Initial simultaneous pre-first-delta probes with non-streaming fake provider overlapped only 1/4 and 1/8; this is a separate admission/first-yield concern, not evidence of 8 simultaneous admissions. Successful probe admits each stream after its first delta and holds all live at second delta. No real provider, production traffic, browser click latency or sustained memory proof."
+      ],
+      "verification_level": "Local targeted regression and paired isolated short-load probe; final independent review, full R9, remote CI and production desktop/mobile/long-duration acceptance pending.",
+      "model_evidence_veto_recovery_exit": "No authority or mutation coalescing; existing queue claim/reaper/Run lock remain authoritative. No fabricated empty queue on malformed read. No completed-result cache. No change to workspace guard or process architecture; reassess from production evidence.",
+      "rollback_route": "Protected revert and coordinated Web deployment; no schema or durable-state migration."
+    }
+  ],
+  "declarations": []
+}

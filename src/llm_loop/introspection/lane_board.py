@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.read_coalescing import ConcurrentRead
 from llm_loop.introspection.lane import TERMINAL_STATUSES, LaneStore
 from llm_loop.timekeeping import system_local_now
 
@@ -480,7 +481,27 @@ def _build_channel(
     }
 
 
+_board_reads: ConcurrentRead[dict[str, Any]] = ConcurrentRead()
+
+
 def build_board(
+    audit_dir: str | Path,
+    *,
+    main_head: str = "",
+    workspace_root: str = "",
+    include_terminal: bool = False,
+    help_session_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Share overlapping exact-scope Board projections, never cache a completed read."""
+    key = (str(Path(audit_dir).absolute()), main_head, workspace_root, include_terminal,
+           str(Path(help_session_dir).absolute()) if help_session_dir is not None else None)
+    return _board_reads.read(key, lambda: _build_board(
+        audit_dir, main_head=main_head, workspace_root=workspace_root,
+        include_terminal=include_terminal, help_session_dir=help_session_dir,
+    ))
+
+
+def _build_board(
     audit_dir: str | Path,
     *,
     main_head: str = "",

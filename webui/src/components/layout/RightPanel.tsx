@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import {
   fetchAuthStatus,
-  fetchSessionJobsResult,
   killSessionJob,
   type AuthStatus,
   type JobFact,
@@ -18,6 +17,7 @@ import {
 } from "../../core/stores";
 import { fetchModels, type ModelCatalog } from "../../core/chat";
 import { useCapabilities } from "../../core/capabilities";
+import { sessionJobs, useSessionList } from "../../core/sessionListPoll";
 import { ProviderManager } from "./ProviderManager";
 import { PreviewTabsPanel } from "../PreviewTabsPanel";
 import { SessionBindingPanel } from "../conversation/SessionBindingPanel";
@@ -33,12 +33,11 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   const currentSessionId = useCurrentSessionId();
   const [catalog, setCatalog] = useState<ModelCatalog>({ models: [], current: null, catalog: [] });
   const [auth, setAuth] = useState<AuthStatus | null>(null);
-  const [jobSnapshot, setJobSnapshot] = useState<{ sessionId: string | null; items: JobFact[] }>({ sessionId: null, items: [] });
-  const jobs = jobSnapshot.sessionId === currentSessionId ? jobSnapshot.items : [];
+  const { items: jobs, stale: jobReadStale, refresh: refreshJobs } = useSessionList(
+    sessionJobs, currentSessionId, open && tab === "jobs" && caps.jobs, 2000,
+  );
   const [jobError, setJobError] = useState("");
-  const [jobReadError, setJobReadError] = useState("");
   const [jobBusy, setJobBusy] = useState<string | null>(null);
-  const jobsInFlightSession = useRef<string | null>(null);
   const activeSession = useRef(currentSessionId);
   activeSession.current = currentSessionId;
 
@@ -48,45 +47,14 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
     setAuth(authStatus);
   }, []);
 
-  const loadJobs = useCallback(async () => {
-    if (!currentSessionId) {
-      setJobSnapshot({ sessionId: null, items: [] });
-      setJobReadError("");
-      return;
-    }
-    if (jobsInFlightSession.current === currentSessionId) return;
-    jobsInFlightSession.current = currentSessionId;
-    try {
-      const result = await fetchSessionJobsResult(currentSessionId);
-      if (activeSession.current !== currentSessionId) return;
-      if (!result.ok) {
-        setJobReadError("后台任务读取失败；当前显示上次已知结果。");
-        return;
-      }
-      setJobReadError("");
-      setJobSnapshot({ sessionId: currentSessionId, items: result.items });
-    } finally {
-      if (jobsInFlightSession.current === currentSessionId) jobsInFlightSession.current = null;
-    }
-  }, [currentSessionId]);
-
   useEffect(() => {
     if (open && tab === "settings") void loadSettings();
   }, [open, tab, loadSettings]);
 
   useEffect(() => {
-    if (!open || tab !== "jobs" || !caps.jobs) return;
-    const poll = () => {
-      if (!document.hidden) void loadJobs();
-    };
-    poll();
-    const timer = window.setInterval(poll, 2000);
-    document.addEventListener("visibilitychange", poll);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", poll);
-    };
-  }, [open, tab, caps.jobs, loadJobs]);
+    setJobError("");
+    setJobBusy(null);
+  }, [currentSessionId]);
 
   if (!open) return null;
 
@@ -95,9 +63,10 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
     setJobBusy(job.job_id);
     setJobError("");
     const result = await killSessionJob(currentSessionId, job.job_id);
+    if (activeSession.current !== currentSessionId) return;
     if (!result.ok) setJobError(result.detail || "停止失败：该任务当前不可由本进程控制。");
-    await loadJobs();
-    setJobBusy(null);
+    await refreshJobs(true);
+    if (activeSession.current === currentSessionId) setJobBusy(null);
   };
 
   return (
@@ -170,9 +139,9 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
             sessionId={currentSessionId}
             jobs={jobs}
             target={jobTarget?.sessionId === currentSessionId ? jobTarget : null}
-            error={jobError || jobReadError}
+            error={jobError || (jobReadStale ? "后台任务读取失败；当前显示上次已知结果。" : "")}
             busyId={jobBusy}
-            onRefresh={loadJobs}
+            onRefresh={() => refreshJobs()}
             onCancel={cancelJob}
           />
         ) : (

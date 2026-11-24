@@ -5,15 +5,15 @@
 // schedule.json 事实源）；overdue 由前端用 trigger_at 与本地时钟计算，后端不派生语义。
 // 取消是显式用户动作（对齐 jobs kill 的产品语言；DSH 目录本身只读）。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelSessionScheduleItem,
-  fetchSessionScheduleResult,
   type ScheduleItem,
 } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { useConversation } from "../../core/conversation";
 import { runAwareIntervalMs } from "../../core/runAwarePoll";
+import { sessionSchedule, useSessionList } from "../../core/sessionListPoll";
 import { useCurrentSessionId } from "../../core/stores";
 import { scheduleZh as zh } from "../../i18n/zh";
 
@@ -119,7 +119,9 @@ export function ScheduleCatalog() {
   const _conv = useConversation();
   const runBusy = Boolean(_conv.streaming || _conv.backgroundRunning);
   const sessionId = useCurrentSessionId();
-  const [items, setItems] = useState<ScheduleItem[]>([]);
+  const { items, stale: readStale, refresh } = useSessionList(
+    sessionSchedule, sessionId, caps.schedule, runAwareIntervalMs(5000, runBusy),
+  );
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [busySid, setBusySid] = useState<string | null>(null);
@@ -128,39 +130,11 @@ export function ScheduleCatalog() {
   const activeSession = useRef(sessionId);
   activeSession.current = sessionId;
 
-  const load = useCallback(async () => {
-    const sid = activeSession.current;
-    if (!sid) {
-      setItems([]);
-      setError("");
-      return;
-    }
-    const result = await fetchSessionScheduleResult(sid);
-    if (activeSession.current !== sid) return;
-    if (!result.ok) {
-      setError("提醒状态读取失败；当前显示上次已知结果。");
-      return;
-    }
-    setError("");
-    setItems(result.items);
-  }, []);
-
-  // 发现轮询：能力可用即拉（trigger 空则隐藏，仍需发现新增提醒）
   useEffect(() => {
-    if (!caps.schedule) return;
-    void load();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void load();
-    }, runAwareIntervalMs(5000, runBusy));
-    const onVisible = () => {
-      if (!document.hidden) void load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [caps.schedule, sessionId, load]);
+    setOpen(false);
+    setError("");
+    setBusySid(null);
+  }, [sessionId]);
 
   // 打开时 1s 心跳驱动相对时间（对齐 DSH）
   useEffect(() => {
@@ -197,9 +171,10 @@ export function ScheduleCatalog() {
     setBusySid(sid);
     setError("");
     const result = await cancelSessionScheduleItem(currentSession, sid);
+    if (activeSession.current !== currentSession) return;
     if (!result.ok) setError(result.detail || zh.cancelFailed);
-    await load();
-    setBusySid(null);
+    await refresh(true);
+    if (activeSession.current === currentSession) setBusySid(null);
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -277,9 +252,9 @@ export function ScheduleCatalog() {
               </li>
             );
           })}
-          {error ? (
+          {error || readStale ? (
             <li className="v2-catalog-error" role="status">
-              {error}
+              {error || "提醒状态读取失败；当前显示上次已知结果。"}
             </li>
           ) : null}
         </ul>

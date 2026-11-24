@@ -13,7 +13,7 @@ import queue
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -4390,6 +4390,102 @@ async def _providers_events_fingerprint_async(engine: Any) -> tuple[str, dict[st
     return await asyncio.to_thread(_providers_events_fingerprint, engine)
 
 
+_ProbeScope = tuple[int, object, str]
+_SSE_SHARED_PROBE_WAIT_S = 5.0
+
+
+class _SSESharedProbe[T]:
+    """App-local, single-flight notification probe; never an authorization cache.
+
+    Each connection still compares its own last fingerprint. Only the expensive
+    read is shared. A cancelled subscriber cannot cancel other subscribers'
+    read; workspace/engine changes invalidate both cached and in-flight values.
+    """
+
+    def __init__(
+        self,
+        read: Callable[[Any], Awaitable[T]],
+        valid: Callable[[T], bool],
+        failure: T,
+    ) -> None:
+        self._read = read
+        self._valid = valid
+        self._failure = failure
+        self._cached: tuple[_ProbeScope, float, T] | None = None
+        self._pending: asyncio.Task[tuple[_ProbeScope, T]] | None = None
+
+    @staticmethod
+    def _scope(engine: Any) -> _ProbeScope:
+        return (
+            id(engine),
+            getattr(engine, "_workspace_epoch", 0),
+            str(getattr(getattr(engine, "session", None), "root", "")),
+        )
+
+    async def _collect(
+        self, engine: Any, scope: _ProbeScope
+    ) -> tuple[_ProbeScope, T]:
+        try:
+            value = await self._read(engine)
+        except Exception:
+            # Notification reads are best effort, not execution evidence.
+            value = self._failure
+        if self._scope(engine) != scope:
+            value = self._failure
+        if self._valid(value):
+            self._cached = (scope, time.monotonic(), value)
+        else:
+            self._cached = None
+            value = self._failure
+        return scope, value
+
+    async def read(self, engine: Any) -> T:
+        scope = self._scope(engine)
+        cached = self._cached
+        if (
+            cached is not None
+            and cached[0] == scope
+            and time.monotonic() - cached[1] < _SSE_FINGERPRINT_CACHE_TTL_S
+        ):
+            return cached[2]
+        if self._pending is None or self._pending.done():
+            self._pending = asyncio.create_task(self._collect(engine, scope))
+        try:
+            observed_scope, value = await asyncio.wait_for(
+                asyncio.shield(self._pending), timeout=_SSE_SHARED_PROBE_WAIT_S
+            )
+        except TimeoutError:
+            # Do not spawn more reads while the existing worker is slow.
+            return self._failure
+        if observed_scope != scope or self._scope(engine) != scope:
+            return self._failure
+        return value
+
+
+def _sse_shared_probes(request: Request) -> tuple[
+    _SSESharedProbe[str], _SSESharedProbe[tuple[str, dict[str, Any]]]
+]:
+    # Creation is synchronous on the app event loop; no await between lookup
+    # and assignment. No process-global engine references or background timer.
+    state = request.app.state
+    probes = getattr(state, "sse_shared_probes", None)
+    if probes is None:
+        probes = (
+            _SSESharedProbe(
+                _session_events_fingerprint_async,
+                lambda value: value != "err" and not value.endswith(":err"),
+                "err",
+            ),
+            _SSESharedProbe(
+                _providers_events_fingerprint_async,
+                lambda value: value[0] != "err",
+                ("err", {}),
+            ),
+        )
+        state.sse_shared_probes = probes
+    return probes
+
+
 # SSE 轮询节拍（秒）。2026-09-23 CPU 诊断定为 3s；抽成常量供测试加速（不改生产值）。
 _SSE_POLL_INTERVAL_S = 3.0
 
@@ -4409,8 +4505,9 @@ async def stream_session_events(request: Request) -> StreamingResponse:
     keepalive 注释行防中间层/浏览器超时掐断长连接。
     """
     engine = _engine_from(request)
-    initial = await _session_events_fingerprint_async(engine)
-    initial_providers, _initial_providers_payload = _providers_events_fingerprint(engine)
+    session_probe, provider_probe = _sse_shared_probes(request)
+    initial = await session_probe.read(engine)
+    initial_providers, _initial_providers_payload = await provider_probe.read(engine)
 
     async def gen():
         nonlocal initial, initial_providers
@@ -4427,18 +4524,16 @@ async def stream_session_events(request: Request) -> StreamingResponse:
             now = loop.time()
             # model-admin design §5.6: Provider 目录指纹（配置版本 + live 默认 + 代数）
             # 变化时推送 providers_updated；跨标签目录收敛不靠轮询 /models。
-            providers_fp, providers_payload = await _providers_events_fingerprint_async(engine)
+            providers_fp, providers_payload = await provider_probe.read(engine)
             if providers_fp != initial_providers and providers_fp != "err":
                 initial_providers = providers_fp
                 last_beat = now
                 yield _sse_event("providers_updated", providers_payload)
-                continue
             # keepalive：20s 无事件也保活（注释行，浏览器忽略内容仅感知存活）
             if now - last_beat >= 20.0:
                 last_beat = now
                 yield ": keepalive\n\n"
-                continue
-            current = await _session_events_fingerprint_async(engine)
+            current = await session_probe.read(engine)
             if current != initial and current != "err":
                 initial = current
                 last_beat = now
