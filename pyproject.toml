@@ -72,7 +72,7 @@ include = ["src"]
 reportMissingImports = "none"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "ctp/tests"]  # ctp 参考实现并入全量回归（明细审查 P1-1）
 # 修复（2026-09-24）: 移除内嵌 `-q`——与调用方显式 `-q` 叠加成 `-qq` 会隐藏最终汇总行
 # （"N passed" 不可见，验证只能靠退出码，A-③ 事故根因）。所有脚本调用方（ci_gate.sh/
 # run_real_smoke.sh 等）均显式携带 `-q`，quiet 化由调用方声明，配置层不再叠加。
