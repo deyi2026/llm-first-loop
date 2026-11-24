@@ -16,6 +16,7 @@ import {
   fetchHistory,
   fetchHistoryRevision,
   fetchStreamStatus,
+  fetchSubmissionStatus,
   fetchQueueList,
   enqueueQueueMessage,
   cancelQueueItem,
@@ -23,6 +24,7 @@ import {
   claimNextQueued,
 } from "./chat";
 import { sessionStore } from "./stores";
+import { newSubmissionId, watchSubmission } from "./submissionRecovery";
 import { fetchPreparedHandoff } from "./api";
 import {
   mergeFinalToolCalls,
@@ -418,13 +420,16 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resumed) return; // 订阅成功——流式接管（done 后自动重载）
   // 回退：轮询直到完成（订阅失败/不支持——run 已结束或网络异常）
+  let statusInFlight = false;
   bgPollTimer = window.setInterval(async () => {
     if (sessionStore.getState().currentSessionId !== sessionId) {
       if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
       bgPollTimer = undefined;
       return;
     }
-    const s = await fetchStreamStatus(sessionId);
+    if (statusInFlight) return;
+    statusInFlight = true;
+    const s = await fetchStreamStatus(sessionId).finally(() => { statusInFlight = false; });
     if (sessionStore.getState().currentSessionId !== sessionId) return;
     // An unreachable/401 status is UNKNOWN, never evidence that a Run ended.
     // Keep the known running fact and never offer a duplicate continuation.
@@ -682,6 +687,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   // Stop/cancel 与断流续联都跟随这个机械事实，而不是永远绑定发送前的 null。
   let ownerSessionId: string | null = sessionId;
   let runGeneration = "";
+  const submissionId = newSubmissionId();
+  let recoveryRequested = false;
   // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
   stopIdlePoll();
   // 附件以服务端 opaque ref 作为唯一授权引用；不再把提取全文拼进 human message。
@@ -744,6 +751,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     new_session: newSessionPending || undefined,
     // 队列项回写：run 终态时后端把该 queue 项标 completed/failed（durable 收敛）
     queue_id: opts?.queueId,
+    submission_id: submissionId,
   };
   const controller = new AbortController();
   abortCtrl = controller;
@@ -761,41 +769,63 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     progressUpdatedAt: Date.now(),
   }), () => abortCtrl === controller && sessionStore.getState().currentSessionId === ownerSessionId);
 
+  const ownsSubmission = () => abortCtrl === controller && !controller.signal.aborted &&
+    (sessionStore.getState().currentSessionId || null) === ownerSessionId;
+  const bindRunReceipt = (event: { session_id?: string; run_generation?: string }): boolean => {
+    const sid = typeof event.session_id === "string" ? event.session_id : "";
+    const generation = typeof event.run_generation === "string" ? event.run_generation : "";
+    if (!sid || !generation || abortCtrl !== controller || controller.signal.aborted) return false;
+    // 2026-10-13 newSessionPending 卡死修复：本请求自带 new_session=true（上方
+    // 闭包快照）时，schema 契约保证服务端强制新建并分配全新 sid；下方 owner
+    // guard 会因 新sid ≠ 发送前 ownerSessionId（残留旧会话）拦掉本回调——若清
+    // pending 放在 guard 之后，标记将永久卡 true，events.ts 的 SSE/看门狗回填
+    // 被一并挡死。事件已带合法 sid/generation 即代表新会话 run 已实质启动，
+    // pending 的保持使命（见 579-581 行注释）已完成，故对"本次请求生效"的
+    // 清除必须先于 owner guard。
+    if (newSessionPending) sessionStore.setNewSessionPending(false);
+    if (ownerSessionId && sid !== ownerSessionId) return false;
+    ownerSessionId = sid;
+    runGeneration = generation;
+    if (sessionStore.getState().currentSessionId === sid || !sessionId) {
+      conversationStore.setState({ activeRunGeneration: generation });
+    }
+    // Update abort ownership before publishing the new session id; the session-store
+    // subscriber must not mistake this mechanical bind for a user session switch.
+    abortSessionId = sid;
+    if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
+    // 2026-09-22（切换会话无变化事故）：会话绑定只服务"新会话首 run"——发送时
+    // 无会话（sessionId=null，new_session 语义），服务端刚分配真实 sid，视图必须
+    // 采用它。既有会话的 run（用户直发后切走、或队列接力）绝不能把用户已切走的
+    // 视图拉回：接力 run_started 晚于用户点击到达时，旧写法无条件
+    // setCurrentSession(sid) 会把视图拽回原会话，表现为"点击不同会话显示没变化"。
+    if (sessionStore.getState().currentSessionId !== sid && !sessionId) {
+      sessionStore.setCurrentSession(sid);
+    }
+    patchStreaming({ progressStage: "analyzing", progressUpdatedAt: Date.now() });
+    return true;
+  };
+  const stopWatch = watchSubmission(
+    submissionId, newSessionPending ? null : sessionId, controller.signal,
+    () => {
+      if (ownsSubmission() && !runGeneration) {
+        patchStreaming({ progressStage: "confirming", progressUpdatedAt: Date.now() });
+      }
+    },
+    receipt => {
+      if (!ownsSubmission() || runGeneration || !bindRunReceipt(receipt)) return;
+      // This is only an SSE detach. The exact accepted generation continues in the runner.
+      recoveryRequested = true;
+      controller.abort();
+    },
+    () => {
+      if (ownsSubmission() && !runGeneration) patchStreaming({ progressStage: "submission_unknown", progressUpdatedAt: Date.now() });
+    },
+  );
+
   const outcome = await streamChatRequest(
     body,
     {
-      onRunStarted: (event) => {
-        const sid = typeof event.session_id === "string" ? event.session_id : "";
-        const generation = typeof event.run_generation === "string" ? event.run_generation : "";
-        if (!sid || !generation) return;
-        // 2026-10-13 newSessionPending 卡死修复：本请求自带 new_session=true（上方
-        // 闭包快照）时，schema 契约保证服务端强制新建并分配全新 sid；下方 owner
-        // guard 会因 新sid ≠ 发送前 ownerSessionId（残留旧会话）拦掉本回调——若清
-        // pending 放在 guard 之后，标记将永久卡 true，events.ts 的 SSE/看门狗回填
-        // 被一并挡死。事件已带合法 sid/generation 即代表新会话 run 已实质启动，
-        // pending 的保持使命（见 579-581 行注释）已完成，故对"本次请求生效"的
-        // 清除必须先于 owner guard。
-        if (newSessionPending) sessionStore.setNewSessionPending(false);
-        if (ownerSessionId && sid !== ownerSessionId) return;
-        ownerSessionId = sid;
-        runGeneration = generation;
-        if (sessionStore.getState().currentSessionId === sid || !sessionId) {
-          conversationStore.setState({ activeRunGeneration: generation });
-        }
-        // Update abort ownership before publishing the new session id; the session-store
-        // subscriber must not mistake this mechanical bind for a user session switch.
-        abortSessionId = sid;
-        if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
-        // 2026-09-22（切换会话无变化事故）：会话绑定只服务"新会话首 run"——发送时
-        // 无会话（sessionId=null，new_session 语义），服务端刚分配真实 sid，视图必须
-        // 采用它。既有会话的 run（用户直发后切走、或队列接力）绝不能把用户已切走的
-        // 视图拉回：接力 run_started 晚于用户点击到达时，旧写法无条件
-        // setCurrentSession(sid) 会把视图拽回原会话，表现为"点击不同会话显示没变化"。
-        if (sessionStore.getState().currentSessionId !== sid && !sessionId) {
-          sessionStore.setCurrentSession(sid);
-        }
-        patchStreaming({ progressStage: "analyzing", progressUpdatedAt: Date.now() });
-      },
+      onRunStarted: (event) => { if (bindRunReceipt(event)) stopWatch(); },
       onAnswerDelta: (d) => {
         // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
@@ -842,6 +872,13 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     },
     controller.signal
   );
+  stopWatch();
+  // A connection may fail before the first receipt, even before the watchdog fires.
+  // One bounded read-only lookup can recover it; absence never authorizes a resend.
+  if (!outcome.ok && outcome.errorType === "network" && ownsSubmission() && !runGeneration) {
+    const receipt = await fetchSubmissionStatus(submissionId, newSessionPending ? null : sessionId, controller.signal);
+    if (receipt && ownsSubmission()) bindRunReceipt(receipt);
+  }
   patchAnswer.dispose();
   patchReasoning.dispose();
   if (abortCtrl === controller) {
@@ -849,15 +886,9 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     abortSessionId = null;
   }
 
-  // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
-  if (sessionStore.getState().currentSessionId !== ownerSessionId) {
-    return;
-  }
-
-  // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
-  if (sessionStore.getState().currentSessionId !== ownerSessionId) {
-    return;
-  }
+  // A fresh session has no id until its receipt; normalize the empty UI id.
+  // A switched view or a newer submission must never receive this terminal state.
+  if ((sessionStore.getState().currentSessionId || null) !== ownerSessionId || abortCtrl !== null) return;
 
   const st = conversationStore.getState();
   const liveActivities = st.streamingIndex >= 0
@@ -870,7 +901,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   if (
     !outcome.ok &&
     outcome.errorType === "network" &&
-    !controller.signal.aborted &&
+    (!controller.signal.aborted || (recoveryRequested &&
+      conversationStore.getState().activeRunGeneration === runGeneration)) &&
     ownerSessionId &&
     runGeneration
   ) {
@@ -955,7 +987,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     // Preserve the visible explanation on the old session; only the *next* human send
     // carries new_session=true, so no user message is silently replayed or auto-routed.
     const ingressMismatch = errorCode === "session_ingress_mismatch";
-    const connectionLost = outcome.errorType === "network" && !controller.signal.aborted;
+    const connectionLost = outcome.errorType === "network" && (!controller.signal.aborted || recoveryRequested);
     const note = connectionLost
       ? "网页连接已断开，任务状态待确认；这不代表 LFL 已停止。已保留收到的内容，请重新连接查看任务进度。"
       : outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
@@ -969,6 +1001,11 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
       ts: Date.now() / 1000,
     });
     conversationStore.setState({ lastError: note });
+    if (connectionLost) {
+      // Unknown is not terminal. Do not dispatch another queued turn from this path.
+      conversationStore.setState({ backgroundRunning: true });
+      return;
+    }
     if (ingressMismatch) {
       sessionStore.setNewSessionPending(true);
       return;

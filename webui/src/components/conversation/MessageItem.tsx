@@ -322,6 +322,8 @@ const PROGRESS_HEARTBEAT_MS = 12_000;
 function progressStageLabel(stage: ProgressStage | undefined): string {
   switch (stage) {
     case "preparing": return "正在准备";
+    case "confirming": return "正在核对任务状态";
+    case "submission_unknown": return "任务状态待确认";
     case "analyzing": return "正在分析";
     case "tool": return "正在使用工具";
     case "integrating": return "正在整理结果";
@@ -350,7 +352,13 @@ function progressSnapshot(msg: ChatMessage, now: number): {
 
   let summary = "正在提交请求并等待运行确认。";
   let next = "收到运行回执后继续显示模型与工具阶段。";
-  if (msg.progressStage === "retrying" && msg.providerRetry) {
+  if (msg.progressStage === "confirming") {
+    summary = "提交确认较慢，正在核对后台是否已受理；请勿重复提交。";
+    next = "取得精确运行回执后恢复进度；未确认不自动重发。";
+  } else if (msg.progressStage === "submission_unknown") {
+    summary = "暂未取得精确运行回执，不能判断任务是否已受理。";
+    next = "保留原请求，连接恢复后查看会话；不会自动重发。";
+  } else if (msg.progressStage === "retrying" && msg.providerRetry) {
     const retry = msg.providerRetry;
     // GLM1305-20261124: busy=模型繁忙（HTTP 429/业务码 1305）独立事实，
     // 不得误显示为「连接中断」；最终失败仍如实保留 provider 真实错误。

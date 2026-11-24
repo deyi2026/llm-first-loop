@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   fetchHistory: vi.fn(),
   fetchHistoryRevision: vi.fn(),
   fetchStreamStatus: vi.fn(),
+  fetchSubmissionStatus: vi.fn(),
 }));
 
 vi.mock("./core/chat", async (importOriginal) => {
@@ -22,6 +23,7 @@ vi.mock("./core/chat", async (importOriginal) => {
     fetchHistory: h.fetchHistory,
     fetchHistoryRevision: h.fetchHistoryRevision,
     fetchStreamStatus: h.fetchStreamStatus,
+    fetchSubmissionStatus: h.fetchSubmissionStatus,
   };
 });
 
@@ -68,6 +70,8 @@ describe("conversation stream ownership", () => {
     h.fetchHistory.mockReset();
     h.fetchHistoryRevision.mockReset();
     h.fetchStreamStatus.mockReset();
+    h.fetchSubmissionStatus.mockReset();
+    h.fetchSubmissionStatus.mockResolvedValue(null);
     h.streamChatRequest.mockImplementation(
       (body: Record<string, unknown>, handlers: any, signal?: AbortSignal) =>
         new Promise<StreamOutcome>((resolve) => h.pending.push({ body, handlers, signal, resolve }))
@@ -86,7 +90,90 @@ describe("conversation stream ownership", () => {
     sessionStore.setCurrentSession("");
     sessionStore.setNewSessionPending(false);
     resetConversation();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("recovers an accepted submission after a missing receipt without resending the human turn", async () => {
+    vi.useFakeTimers();
+    const run = sendMessage("only once", []);
+    await nextTurn();
+    const first = h.pending[0];
+    const id = first.body.submission_id;
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    h.fetchSubmissionStatus.mockResolvedValue({ submission_id: id, session_id: "s1", run_generation: "exact-g" });
+    first.signal?.addEventListener("abort", () => first.resolve(stopped), { once: true });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.fetchSubmissionStatus).toHaveBeenCalledTimes(1);
+    expect(h.pending).toHaveLength(2);
+    expect(h.pending[1].body).toMatchObject({ resume: true, session_id: "s1", run_generation: "exact-g" });
+    expect(h.pending[1].body.message).not.toBe("only once");
+    h.pending[1].resolve({ ok: true, errorType: null, error: null, data: { final_answer: "recovered", session_id: "s1" } });
+    await run;
+    expect(h.pending.filter(p => p.body.resume !== true)).toHaveLength(1);
+  });
+
+  it("recovers a fresh session by its submission id before the original SSE receipt", async () => {
+    vi.useFakeTimers();
+    sessionStore.setCurrentSession("");
+    sessionStore.setNewSessionPending(true);
+    const run = sendMessage("fresh once", []);
+    await nextTurn();
+    const first = h.pending[0];
+    h.fetchSubmissionStatus.mockResolvedValue({ submission_id: first.body.submission_id,
+      session_id: "s-fresh", run_generation: "fresh-g" });
+    first.signal?.addEventListener("abort", () => first.resolve(stopped), { once: true });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.fetchSubmissionStatus.mock.calls[0]?.[1]).toBeNull();
+    expect(sessionStore.getState().currentSessionId).toBe("s-fresh");
+    expect(h.pending[1].body).toMatchObject({ resume: true, session_id: "s-fresh", run_generation: "fresh-g" });
+    h.pending[1].resolve({ ok: true, errorType: null, error: null, data: { final_answer: "ok", session_id: "s-fresh" } });
+    await run;
+    expect(h.pending.filter(p => p.body.resume !== true)).toHaveLength(1);
+  });
+
+  it("recovers an early network failure before the first scheduled status probe", async () => {
+    const run = sendMessage("early failure", []);
+    await nextTurn();
+    const first = h.pending[0];
+    h.fetchSubmissionStatus.mockResolvedValue({ submission_id: first.body.submission_id,
+      session_id: "s1", run_generation: "early-g" });
+    first.resolve({ ok: false, errorType: "network", error: { detail: "HTTP 524" }, data: null });
+    await nextTurn();
+    await nextTurn();
+    expect(h.pending[1].body).toMatchObject({ resume: true, session_id: "s1", run_generation: "early-g" });
+    h.pending[1].resolve({ ok: true, errorType: null, error: null, data: { final_answer: "ok", session_id: "s1" } });
+    await run;
+    expect(h.pending.filter(p => p.body.resume !== true)).toHaveLength(1);
+  });
+
+  it("bounds unknown submission probes and never resends while the receipt is unknown", async () => {
+    vi.useFakeTimers();
+    const run = sendMessage("unknown", []);
+    await nextTurn();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(conversationStore.getState().messages.at(-1)?.progressStage).toBe("confirming");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.fetchSubmissionStatus).toHaveBeenCalledTimes(6);
+    expect(conversationStore.getState().messages.at(-1)?.progressStage).toBe("submission_unknown");
+    expect(h.pending).toHaveLength(1);
+    expect(h.pending[0].signal?.aborted).toBe(false);
+    h.pending[0].resolve({ ok: false, errorType: "network", error: { detail: "lost" }, data: null });
+    await run;
+    expect(conversationStore.getState().backgroundRunning).toBe(true);
+    expect(h.pending).toHaveLength(1);
+  });
+
+  it("cancels pending submission probes when the user switches sessions", async () => {
+    vi.useFakeTimers();
+    const run = sendMessage("switch", []);
+    await nextTurn();
+    sessionStore.setCurrentSession("s2");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.fetchSubmissionStatus).not.toHaveBeenCalled();
+    expect(h.pending).toHaveLength(1);
+    h.pending[0].resolve(stopped);
+    await run;
   });
 
   it("new-session guard stays armed until run_started binds the exact new session", async () => {

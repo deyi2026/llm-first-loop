@@ -42,6 +42,7 @@ export interface StreamChatRequestBody {
   attachments?: { ref: string }[];
   new_session?: boolean;
   queue_id?: string;
+  submission_id?: string;
 }
 
 export async function streamChatRequest(
@@ -69,7 +70,11 @@ export async function streamChatRequest(
     } catch {
       /* ignore */
     }
-    return { ok: false, errorType: "http", error: data, data: null };
+    // A proxy timeout/5xx or a successful response without a readable stream is
+    // not an authoritative admission rejection. Preserve the status for diagnosis.
+    const ambiguous = resp.status >= 500 || resp.status === 408 || resp.ok;
+    return { ok: false, errorType: ambiguous ? "network" : "http",
+      error: data ?? { detail: `HTTP ${resp.status}` }, data: null };
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
@@ -592,14 +597,54 @@ export interface StreamStatus {
   finished_at?: number | null;
 }
 
-export async function fetchStreamStatus(sessionId: string): Promise<StreamStatus | null> {
+export interface SubmissionReceipt {
+  session_id: string;
+  run_generation: string;
+  submission_id: string;
+}
+
+export async function fetchSubmissionStatus(
+  submissionId: string, sessionId: string | null, signal?: AbortSignal,
+): Promise<SubmissionReceipt | null> {
   if (isAuthRequired()) return null;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  const timeout = window.setTimeout(abort, 4000);
   try {
-    const resp = await fetch(`/api/v1/chat/stream/status?session_id=${encodeURIComponent(sessionId)}`);
+    const query = new URLSearchParams({ submission_id: submissionId });
+    if (sessionId) query.set("session_id", sessionId);
+    const resp = await fetch(`/api/v1/chat/stream/submission-status?${query}`, { signal: controller.signal, cache: "no-store" });
     reportUnauthorized(resp.status);
     if (!resp.ok) return null;
-    return (await resp.json()) as StreamStatus;
+    const data = await resp.json();
+    if (data?.state !== "active" || data.submission_id !== submissionId ||
+        typeof data.session_id !== "string" || !data.session_id ||
+        (sessionId && data.session_id !== sessionId) ||
+        typeof data.run_generation !== "string" || !data.run_generation) return null;
+    return data as SubmissionReceipt;
   } catch {
-    return null; // 端点不可用 → 静默（fail-open）
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
+export async function fetchStreamStatus(sessionId: string): Promise<StreamStatus | null> {
+  if (isAuthRequired()) return null;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 4000);
+  try {
+    const resp = await fetch(`/api/v1/chat/stream/status?session_id=${encodeURIComponent(sessionId)}`, { signal: controller.signal, cache: "no-store" });
+    reportUnauthorized(resp.status);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return typeof data?.running === "boolean" ? data as StreamStatus : null;
+  } catch {
+    return null; // unavailable is UNKNOWN, never proof of termination
+  } finally {
+    window.clearTimeout(timeout);
   }
 }

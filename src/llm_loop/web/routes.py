@@ -1494,6 +1494,7 @@ def _stream_background(
     user_metadata: dict[str, Any] | None = None,
     queue_terminal: Callable[[str, str | None], None] | None = None,
     signed_web_canary: Any = None,
+    submission_id: str | None = None,
 ) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
@@ -1519,12 +1520,11 @@ def _stream_background(
         }
         if resume:
             start_kwargs["expected_run_generation"] = expected_run_generation
-        if not resume and user_metadata is not None:
-            start_kwargs["user_metadata"] = user_metadata
-        if not resume and queue_terminal is not None:
-            start_kwargs["terminal_callback"] = queue_terminal
-        if not resume and signed_web_canary is not None:
-            start_kwargs["signed_web_canary"] = signed_web_canary
+        if not resume:
+            start_kwargs.update({key: value for key, value in {
+                "user_metadata": user_metadata, "terminal_callback": queue_terminal,
+                "signed_web_canary": signed_web_canary, "submission_id": submission_id,
+            }.items() if value is not None})
         handle, q = runner.start(session_id, message, **start_kwargs)
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
@@ -1937,16 +1937,13 @@ def chat_stream(
                 expected_run_generation=_expected_run_generation if _resume else None,
                 before_start=_before_start,
                 expected_workspace_epoch=workspace_epoch,
-                user_metadata=(
-                    {
-                        "attachments": attachment_facts,
-                        **({"human_turn_queue_id": _queue_id} if _queue_id else {}),
-                    }
-                    if attachment_facts or _queue_id
-                    else None
-                ),
+                user_metadata={
+                    "attachments": attachment_facts,
+                    **({"human_turn_queue_id": _queue_id} if _queue_id else {}),
+                } if attachment_facts or _queue_id else None,
                 queue_terminal=_queue_terminal,
                 signed_web_canary=_signed_canary,
+                submission_id=payload.submission_id,
             )
             return
         if _resume:
@@ -2115,6 +2112,17 @@ def chat_stream_status(session_id: str, request: Request) -> Response:
     if snap is None:
         return UTF8JSONResponse(content={"running": False})
     return UTF8JSONResponse(content={"running": True, **snap})
+
+
+@router.get("/api/v1/chat/stream/submission-status")
+def chat_submission_status(submission_id: str, request: Request, session_id: str | None = None) -> Response:
+    """Read-only exact correlation, including a newly allocated session; no ingress."""
+    if len(submission_id) != 32 or any(c not in "0123456789abcdef" for c in submission_id):
+        return UTF8JSONResponse(status_code=400, content={"detail": "invalid submission_id"})
+    runner = getattr(_engine_from(request), "runner", None)
+    snap = runner.get_submission_handle(submission_id, session_id) if runner is not None and runner.enabled else None
+    return UTF8JSONResponse(content={"state": "active", **snap} if snap else {"state": "unknown"},
+                            headers={"Cache-Control": "no-store"})
 
 
 @router.post("/api/v1/chat/cancel")

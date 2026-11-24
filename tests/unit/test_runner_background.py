@@ -795,3 +795,26 @@ def test_live_interjection_reaches_same_run_before_stale_final_settles(build_tes
     assert events[-1]["result"].final_answer == "新回答"
     stored = engine.session.load(sid)
     assert any(m.role == "user" and m.content == "改按新要求继续" for m in stored.messages)
+
+
+def test_submission_correlation_is_bound_to_actual_run_registration():
+    engine = FakeEngine(delay=0.05)
+    runner = BackgroundRunner(engine, enabled=True)
+    token = "c" * 32
+    handle, q = runner.start("submission-session", "hello", submission_id=token)
+    assert handle is not None and q is not None
+    assert runner.get_submission_handle(token, "submission-session") == {
+        "session_id": "submission-session", "run_generation": handle.run_generation,
+        "submission_id": token,
+    }
+    assert runner.get_submission_handle("d" * 32) is None
+    assert runner.get_submission_handle(token, "wrong-session") is None
+    # A busy submission cannot replace the accepted request's correlation.
+    assert runner.start("submission-session", "other", submission_id="d" * 32) == (None, None)
+    assert runner.get_submission_handle("d" * 32) is None
+    _drain(q, 4)
+    deadline = time.monotonic() + 2
+    while runner.is_running("submission-session") and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner.get_submission_handle(token) is None
+    assert engine.called == 1

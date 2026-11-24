@@ -55,6 +55,8 @@ export interface ToolActivity {
  */
 export type ProgressStage =
   | "preparing"
+  | "confirming"
+  | "submission_unknown"
   | "analyzing"
   | "tool"
   | "integrating"

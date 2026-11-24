@@ -41,6 +41,7 @@ class ChatRequest(BaseModel):
         description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
     )
     resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
+    submission_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$", description="Live submission correlation only; not authorization or an idempotency key")
     run_generation: str | None = Field(
         default=None,
         min_length=1,
