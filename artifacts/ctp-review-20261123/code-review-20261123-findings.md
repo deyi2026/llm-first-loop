@@ -105,3 +105,11 @@
 | P1-4 `artifacts/` 在 .gitignore 忽略根下，评审工件目录后续新增文件会静默不进 git status | P1 | 已修：根 .gitignore 加 `!/artifacts/ctp-review-20261123/` 例外 |
 
 处置验证：`ruff check ctp/` → All checks passed；`ctp_calib.log_se3(180°)` → `LogSingularityError`；`check_first_order_validity(60°σ, 200 samples)` → `ok=False`；StrEnum 继承生效。
+
+## 7. 勘误与终修（2026-11-24 11:5x）
+
+第六轮合并审查（subagent_3730efe93bca）裁 1 条 P1，经窄范围明细复核（subagent_f28c095cfbe3）**成立**：
+
+- **P1-4 首次修复形态是 git 死行**：`/artifacts/`（带尾斜杠）排除目录本身，git 不再下钻，`!/artifacts/ctp-review-20261123/` 永不求值——`git check-ignore` 实证仍命中 `:46:/artifacts/`。本表 §6 对 P1-4 的"已修"声明在当时形态下不成立，特此勘误。
+- **终修**：`.gitignore` `/artifacts/` → `/artifacts/*`（例外行原样保留），与本仓 `data/*` + `!data/methods/` 既有惯例同构。核验：`git check-ignore artifacts/ctp-review-20261123/NEW-RECEIPT.md` 退出码 1（未被忽略，例外生效）。
+- 同轮排查确认不成立的其他候选：testpaths 扩容打红 CI（uv.lock 含 numpy/jsonschema）、pyright/ruff 门禁范围声明矛盾（§6 未作该声明）、回执与 git 事实一致性、StrEnum 版本兼容——均逐一排除，依据见复核记录。
