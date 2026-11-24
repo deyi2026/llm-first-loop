@@ -21,7 +21,7 @@ covered 条目（9）：C-2a（36h11 码族与码空间）、C-5（读取输出�
 
 partial 条目（9）：P-3b、P-5b、C-1b、C-1d、C-5b、M-1、M-3、M-5b、F-3（逐条理由见第三节末与 trace.md 各章小结）。
 
-测试资产：69 个测试函数 / 185 个参数化用例（contract_valid 24 例、contract_invalid 52 例、schema_parity 37 例、uncertainty 14 例、pixel_uncertainty 7 例、generator 12 例、registry 42 例，含 wave-2 审查修复新增的 4 个应拦用例）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
+测试资产：7 个测试文件 / 77 个测试函数（AST 静态计数：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 12、pixel_uncertainty 7、generator 10、registry 31）；参数化展开后的用例总数不在本文件手抄具体数字——单一真值为 ctp/receipts/ 最新回执（手抄计数已两轮漂移，r1/r2 审查 P1-1/P2-2，改引用制）；conformance 规程 9 份已建（docs/conformance/），V1–V8 以 12 行 pending 占位待实测回执。
 
 矩阵规模：113 数据行 = unit 63 + pending 占位 38 + conformance 12；行级状态 covered 47 / partial 15 / pending 51。
 
@@ -53,7 +53,7 @@ C. 待实现（12 条）——载体（读码器/状态机）未落地：
 D. 无测试义务/资料性（9 条）——规范明示非强制或属治理/部署侧：
 - C-4c（劣化预警非本层强制）、M-4（标定室可选）、T-1（资产定义）、T-2 / T-3（载体为 V8，见 A/C 组关联）、T-4c（物理访问控制）、T-6（残余风险资料性）、F-5（状态图资料性）、VC-1（版本治理流程）
 
-另：8 个门槛 V1–V8 全部 pending（规程未建、docs/conformance/ 为空）；其中 V4 / V7 / V8 可纯软件先行，V2 / V3 / V6 需计量与认证样本。
+另：8 个门槛 V1–V8 全部 pending（规程已建于 docs/conformance/，实测回执未产生）；其中 V4 / V7 / V8 可纯软件先行（依赖 B7 runner），V2 / V3 / V6 需计量与认证样本。
 
 ## 三、partial 判定清单与理由（9 条）
 

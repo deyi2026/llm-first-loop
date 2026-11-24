@@ -126,3 +126,14 @@
 | `_render_pdf` 对所有页用 layouts[0].page，混页静默裁剪 | P2 | 已修：入口对混页尺寸 fail-closed `ValueError`；新增应拦用例 test_render_rejects_mixed_page_sizes |
 | test_uncertainty.py 两个测试定义在 `__main__` 卫语之后，脚本模式执行不到 | P2 | 已修：卫语移到文件末尾，两个测试回归收集序 |
 | （附带）i16 NaN fixture 与"JSON 文本层不可表达"措辞张力 | P2 | 说明：i16 依赖 Python json 的扩展字面量 NaN 解析，非标准 JSON 文本；R4 规则族的声明口径不变 |
+
+## 9. Wave-2 测试准入 r2（subagent_5a5be205c44e，2026-11-24）
+
+回执 REVISE / P0=0 / P1=1 / P2=3（报告 `data/review_admission/subagent_5a5be205c44e-full_test.md`，指纹 eb626558…）。r1 的 5 项处置经复核全部生效。残留与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| conformance README §4 仍基于陈旧树：声称"未落地：B5 注册表"、find 复核只列三包——与本提交同树的 ctp_registry 矛盾（r1 P1 的同类新实例） | P1 | 已修：README 已落地清单改为 B1/B2/B5/B6 四包 + find ctp/src 复核口径；未落地收敛为 B3/B4/B7/B8 |
+| coverage-summary §二 结尾残留"规程未建、docs/conformance/ 为空"旧句 | P2 | 已修：改为"规程已建、实测回执未产生；V4/V7/V8 依赖 B7 runner" |
+| 计数漂移：185 与自身明细求和不一致（uncertainty 实为 12）；trace.md 孤儿检查 generator 9 函数（实为 10） | P2 | 已修：改为引用制——AST 静态函数数（7 文件/77 函数，逐文件列出）可直接机检；参数化用例总数不再多处手抄，单一真值=ctp/receipts/ 最新回执 |
+| 墓碑 retire 默认仍无权威校验（已文档化+钩子+测试+TODO-G2 首位） | P2 | 维持：reviewer 自评"accepted risk for a prototype pending WG ruling"；工作组裁决前不发明规范要求 |

@@ -1,7 +1,7 @@
 # CTP 规范条目—测试用例追溯矩阵（人读版）
 
 - 规范：docs/SPEC-20261123-cooperative-target-protocol-v0.9.md（v0.9.2）第 4–10 章
-- 测试资产：ctp/tests/ 7 个测试文件、69 个测试函数、185 个参数化用例（含 test_registry.py：24 函数 / 42 例；conftest.py 为路径配置非用例；fixtures：合法 10 + 非法 24，以参数化形式计入矩阵，关键样本单列行）
+- 测试资产：ctp/tests/ 7 个测试文件、77 个测试函数（AST 静态计数，明细见孤儿检查节；conftest.py 为路径配置非用例；fixtures：合法 10 + 非法 24）；参数化展开后的用例总数不在此手抄——单一真值为 ctp/receipts/ 最新回执
 - 一致性规程：docs/conformance/ 已建 9 份（README + V1–V8），实测回执未产生，仍以 test_kind=conformance 的 pending 行预留（共 12 行）
 - 机器可读版：trace.csv（列：spec_entry,test_kind,test_id,evidence_path,status,notes）
 - 状态口径：covered=已有测试足以支撑条目的可测内容；partial=已有测试仅覆盖条目的一部分（或仅契约/机制侧）；pending=无测试（依赖计量/裁决/实现，或明示无测试义务）
@@ -143,4 +143,4 @@
 
 ## 孤儿检查
 
-45 个测试函数全部归属（多归属函数按条目拆多行）：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 12、pixel_uncertainty 7、generator 9。第 4–10 章 59 个条目每条至少 1 行，无未归属条目。
+77 个测试函数全部归属（多归属函数按条目拆多行；AST 静态计数）：contract_valid 6、contract_invalid 6、schema_parity 5、uncertainty 12、pixel_uncertainty 7、generator 10、registry 31。第 4–10 章 59 个条目每条至少 1 行，无未归属条目。

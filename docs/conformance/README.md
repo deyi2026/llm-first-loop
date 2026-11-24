@@ -56,6 +56,6 @@
 
 ## 4. 现状基线（as-of 2026-11-24，本 run 复核）
 
-- 已落地：B1（C-5 契约；`pytest ctp/tests` → 132 passed，回执 `ctp/receipts/20261124-b1b2-pytest.md`）、B2（不确定度声明与传播）、B6（图案生成工具链）——由本 run `find ctp/` 复核（存在 `ctp_contract` / `ctp_calib` / `ctp_gen` 三包与 schema）；
-- 未落地：B3 读码器、B4 阈值与双向抑制、B5 注册表、B7 一致性 runner、B8 端到端探针——因此 V1–V8 全部"待实测"，V4 / V7 / V8 的合成面（B7 runner 路径）亦未具备；
+- 已落地：B1（C-5 契约）、B2（不确定度声明与传播）、B5（注册表原型 R-1–R-6）、B6（图案生成工具链）——由本 run `find ctp/src` 复核（`ctp_contract` / `ctp_calib` / `ctp_gen` / `ctp_registry` 四包与 schema；历史测试回执见 `ctp/receipts/`，最新计数以最新回执为准）；
+- 未落地：B3 读码器、B4 阈值与双向抑制、B7 一致性 runner、B8 端到端探针——因此 V1–V8 全部"待实测"，V4 / V7 / V8 的合成面（B7 runner 路径）亦未具备；
 - 工作组未组建（0 项 `[TBD-G]` 取得决议编号）、无计量档期、无第二实现（PLAN §1.2，as-of 2026-11-23 20:20 +08:00，此后每次开工先复核）。
