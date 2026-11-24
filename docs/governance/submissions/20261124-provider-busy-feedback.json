@@ -1,0 +1,28 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-provider-busy-feedback",
+  "summary": "Correct provider-capacity error feedback for GLM 429/1305 and explicit HTTP 529 overload without modifying requests, retries, authorization, credentials, or tool execution.",
+  "components": [
+    {
+      "component_id": "existing-llm-error-feedback",
+      "paths": [
+        "docs/governance/submissions/20261124-provider-busy-feedback.json",
+        "src/llm_loop/feedback/honesty.py",
+        "tests/unit/test_quota_feedback.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing llm_loop.feedback.honesty.llm_error_text maps typed provider errors into truthful user-facing final feedback. Existing llm/errors.py retains classification, provider transport, fallback, and retry authority.",
+      "disposition": "Reuse existing LLMHTTPError status/provider/business-code facts. Add narrowly scoped GLM 429/1305 and HTTP 529 overloaded feedback to avoid suggesting API Key repair for capacity failures. Preserve quota and protocol precedence, non-GLM semantics, strict no-auto-replay boundary, and the original function-size architecture guard. No new API, permissions, state store, Host control, or model invocation path.",
+      "evidence": [
+        "Before fix, focused 429/1305 and HTTP 529 regression tests reproduced two incorrect generic credential messages; after fix, 37 focused tests passed and function-size guard passed.",
+        "Code-only SHA ee12928293954f0881eab87ef3764525fde1a231: original bash scripts/ci_gate.sh --release exit 0; Python 16694 passed, 163 skipped, 3 xfailed; WebUI 661 passed; Ruff/Pyright/env-pin and architecture guards PASS.",
+        "Concurrent PR #46 sidebar changes were merged without conflict; merged code-only candidate SHA b62d332d681bcf06448c62ea7c8d3b81e1be2b30: independent read-only GLM-5.3-flash reviewer PASS P0=0 P1=0 with observed model identity verified; original complete R9 exit 0, Python 16694 passed and WebUI 664 passed.",
+        "Initial PR #109 A.5 remote check failed only because the required single architecture-submission manifest was missing; this document covers exactly the three changed paths."
+      ],
+      "verification_level": "Code-only merged-main candidate b62d332d passed independent Reviewer and original full R9. Manifest-inclusive final SHA must pass local A.5 and final remote required checks before protected merge; no production deployment claim.",
+      "model_evidence_veto_recovery_exit": "Feedback reports observed HTTP/provider facts and explicit non-replay guidance, without exposing or rewriting API Key material, changing fallback/transport/retry authority, or taking model/tool actions. Existing model-level control and user retry choice remain unchanged. On unexpected provider codes, retain existing generic error path; revert through protected main and managed deployment if necessary.",
+      "rollback_route": "Revert only this feedback/test/manifest change through protected GitHub main, then use existing managed service-control update after foreground Web and Learning work becomes idle; preserve unrelated PR #46 and other Goals/Lanes."
+    }
+  ],
+  "declarations": []
+}
