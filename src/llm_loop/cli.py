@@ -393,6 +393,7 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     from llm_loop.runtime.cli_admission import (
         CliDeploymentAdmissionError,
         bind_cli_startup,
+        cli_mutation_lease,
         cli_state_admission,
     )
 
@@ -423,7 +424,15 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     from llm_loop.runtime.cli_processes import register_cli_process
 
     with register_cli_process(binding):
-        engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
+        try:
+            with cli_mutation_lease(binding):
+                engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
+        except CliDeploymentAdmissionError as exc:
+            if not interactive and binding is not None and message is not None:
+                from llm_loop.runtime.cli_reentry import retain_single_input
+
+                retain_single_input(binding, args.session, message)
+            return Presenter(args.output, plain=args.plain).error(str(exc), "cli_deployment_admission_refused", 75)
         # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
         # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
         # （单条消息模式 / 交互模式退出）。

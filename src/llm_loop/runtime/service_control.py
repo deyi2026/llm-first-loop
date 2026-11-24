@@ -2463,6 +2463,8 @@ def _live_service_identity(
     service: str,
     manifest_path: Path,
     deployment: ManagedServiceDeployment | None,
+    *,
+    allow_port_fallback: bool = True,
 ) -> dict[str, Any]:
     """单服务 live 身份事实（自 ``compose_service_identity_view`` 原样抽出）。
 
@@ -2504,7 +2506,8 @@ def _live_service_identity(
     # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
     # 不引入常态双探针抖动。
     if (
-        service == "web"
+        allow_port_fallback
+        and service == "web"
         and live.get("pid")
         and not live.get("pid_alive")
         and not live.get("manifest_error")
@@ -2653,6 +2656,36 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             cast(timedelta, system_local_now().utcoffset()).total_seconds() // 60
         ),
     }
+
+
+def compose_runtime_convergence_strip(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
+    """Small coordination-board projection; no action history or port probes.
+
+    Manifest artifact match is inferred, not a durable restart receipt.
+    CLI coverage is limited to lock-backed registered processes.
+    """
+    from llm_loop.runtime.cli_processes import cli_process_view
+
+    desired = store.read()
+    services: dict[str, Any] = {}
+    for service in _MANAGED_SERVICES:
+        live = _live_service_identity(service, store.runtime_dir / f"runtime_manifest.{service}.json",
+                                      desired, allow_port_fallback=False)
+        if desired is None or not live.get("manifest_present") or live.get("manifest_error"):
+            state = "unverified"
+        elif not live.get("pid_alive"):
+            state = "not_running"
+        elif live.get("matches_desired_generation"):
+            state = "artifact_matches"
+        else:
+            state = "update_required"
+        services[service] = {"state": state, "pid": live.get("pid"),
+                             "git_head": live.get("git_head"), "version": live.get("release_version"),
+                             "wheel_sha256": live.get("wheel_sha256"), "inferred": True}
+    return {"desired_generation": desired.generation if desired else None,
+            "desired_git_head": desired.git_head if desired else None,
+            "desired_version": desired.version if desired else None,
+            "services": services, "cli": cli_process_view(store.data_dir, desired)}
 
 
 def compose_convergence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
