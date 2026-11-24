@@ -149,3 +149,30 @@ def test_real_shell_refused_run_preserves_original_session_and_text(tmp_path, mo
     request = engine._cli_reentry
     assert request.session_id == sid
     assert load_cli_draft(data, request.draft_path, sid) == ("do not replay", "other draft")
+
+
+def test_single_input_retained_exactly_without_replay(tmp_path, monkeypatch, capsys):
+    from llm_loop.runtime.cli_reentry import retain_single_input
+
+    _store, _desired, binding, _request = _target(tmp_path, monkeypatch)
+    text = "first\r\nsecond\n\n"
+    path = retain_single_input(binding, "same-session", text)
+    assert path is not None
+    assert path.read_bytes() == text.encode("utf-8")
+    assert path.stat().st_mode & 0o777 == 0o600
+    output = capsys.readouterr()
+    assert not output.out
+    assert "--session same-session" in output.err and "--message-file" in output.err
+    assert "first" not in output.err
+
+
+def test_draft_cleanup_validates_session_before_unlink(tmp_path):
+    from llm_loop.runtime.cli_reentry import retire_cli_draft
+
+    data = tmp_path / "private-domain"
+    path = save_cli_draft(data, "original", "draft", "")
+    with pytest.raises(ValueError, match="session or schema mismatch"):
+        retire_cli_draft(data, path, "wrong")
+    assert path.exists()
+    retire_cli_draft(data, path, "original")
+    assert not path.exists()

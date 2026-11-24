@@ -16,10 +16,16 @@ from llm_loop.introspection.model_command import handle_model_command, parse_mod
 from llm_loop.introspection.task_store import TaskStore
 from llm_loop.runtime.cli_admission import (
     CliDeploymentAdmissionError,
+    cli_mutation_lease,
     cli_state_admission,
     engine_cli_binding,
 )
-from llm_loop.runtime.cli_reentry import load_cli_draft, prepare_cli_reentry
+from llm_loop.runtime.cli_reentry import (
+    load_cli_draft,
+    prepare_cli_reentry,
+    retire_cli_draft,
+    save_cli_draft,
+)
 from llm_loop.terminal.approval import ApprovalBridge
 from llm_loop.terminal.editor import KEY_HELP, Composer, palette_text
 from llm_loop.terminal.execution import run_turn
@@ -79,6 +85,7 @@ def interactive_session(engine: Any, sid: str) -> int:
     composer.record_source = lambda session_id: engine.session.load(session_id).to_dict()
     binding = engine_cli_binding(engine)
     resume_path = getattr(engine, "_cli_resume_draft_path", None)
+    recovered_sid = sid
     if binding is not None and isinstance(resume_path, str) and resume_path:
         try:
             composer.draft, composer.stashed = load_cli_draft(binding.data_dir, resume_path, sid)
@@ -95,9 +102,27 @@ def interactive_session(engine: Any, sid: str) -> int:
     if detector is not None:
         detector.popup_pending_review = True
     queued_text: str | None = None
+    def retire_recovered() -> None:
+        nonlocal resume_path
+        if binding is None or not isinstance(resume_path, str) or sid != recovered_sid:
+            return
+        try:
+            retire_cli_draft(binding.data_dir, resume_path, recovered_sid)
+            resume_path = None
+        except (OSError, ValueError, TypeError) as exc:
+            print(safe_text(f"[draft cleanup deferred] {type(exc).__name__}: {exc}"), file=sys.stderr)
+
     def request_reentry(text: str) -> bool:
         try:
-            return prepare_cli_reentry(engine, sid, text, composer.stashed or composer.draft)
+            # A refused message, current editor draft and stashed draft may all
+            # be different. Keep the third slot separately, never silently drop it.
+            if binding is not None and composer.draft and composer.stashed and composer.draft not in (text, composer.stashed):
+                extra = save_cli_draft(binding.data_dir, sid, composer.draft, "")
+                print(f"[additional draft retained] {extra}", file=sys.stderr)
+            saved = prepare_cli_reentry(engine, sid, text, composer.stashed or (composer.draft if composer.draft != text else ""))
+            if saved:
+                retire_recovered()
+            return saved
         except (OSError, ValueError, TypeError) as exc:
             composer.draft = text
             print(safe_text(f"[draft retained in this shell] {type(exc).__name__}: {exc}"), file=sys.stderr)
@@ -114,7 +139,13 @@ def interactive_session(engine: Any, sid: str) -> int:
                 # Save failure: remain in composer, never auto-submit a queued draft.
                 queued_text = None
             else:
-                _pending_review(engine, detector)
+                try:
+                    with cli_mutation_lease(binding):
+                        _pending_review(engine, detector)
+                except CliDeploymentAdmissionError:
+                    if request_reentry(queued_text if queued_text is not None else composer.draft):
+                        return 75
+                    queued_text = None
             session = engine.session.load(sid)
             if queued_text is None:
                 try:
@@ -218,6 +249,8 @@ def interactive_session(engine: Any, sid: str) -> int:
                 if request_reentry(text):
                     return 75
                 continue
+            if run_exit == 0 and not composer.draft and not composer.stashed:
+                retire_recovered()
     finally:
         approval.close()
 

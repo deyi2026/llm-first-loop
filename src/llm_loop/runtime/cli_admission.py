@@ -95,3 +95,26 @@ def cli_state_admission(binding: CliAdmissionBinding | None) -> Iterator[None]:
 def engine_cli_binding(engine: Any) -> CliAdmissionBinding | None:
     binding = getattr(engine, "_cli_admission_binding", None)
     return binding if isinstance(binding, CliAdmissionBinding) else None
+
+
+@contextmanager
+def cli_mutation_lease(binding: CliAdmissionBinding | None) -> Iterator[None]:
+    """Long legacy mutations own a drain-visible lease, not the state lock."""
+    if binding is None:
+        yield
+        return
+    import fcntl
+    import os
+    import tempfile
+
+    with ExitStack() as stack:
+        with cli_state_admission(binding):
+            root = Path(binding.data_dir) / "runtime" / "cli-mutations"
+            root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if root.resolve() != root or root.stat().st_uid != os.getuid() or root.stat().st_mode & 0o077:
+                raise CliDeploymentAdmissionError("mutation_registry_unavailable")
+            fd, name = tempfile.mkstemp(prefix="cli-", suffix=".run.lock", dir=root)
+            handle = stack.enter_context(os.fdopen(fd, "w"))
+            stack.callback(Path(name).unlink, missing_ok=True)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield

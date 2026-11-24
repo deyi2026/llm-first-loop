@@ -75,6 +75,12 @@ def load_cli_draft(data_dir: str | Path, path: str | Path, session_id: str) -> t
     return raw["draft"], raw["stashed"]
 
 
+def retire_cli_draft(data_dir: str | Path, path: str | Path, session_id: str) -> None:
+    """Remove a validated handoff only after explicit successful consumption."""
+    load_cli_draft(data_dir, path, session_id)
+    Path(path).expanduser().unlink()
+
+
 def reentry_argv(binding: CliAdmissionBinding, request: CliReentry) -> tuple[list[str], dict[str, str]]:
     """Plan only against a verified fixed release; new process rechecks admission."""
     from llm_loop.runtime.service_control import (
@@ -167,3 +173,36 @@ def prepare_cli_reentry(engine: Any, session_id: str, draft: str, stashed: str) 
     engine._cli_reentry = CliReentry(session_id, path, str(engine._cli_workspace),
                                      bool(engine._cli_plain), engine._cli_theme)
     return True
+
+
+def retain_single_input(binding: CliAdmissionBinding, session_id: str | None, text: str) -> Path | None:
+    """Preserve consumed stdin/file bytes as private UTF-8 text, never replay.
+
+    A noninteractive caller gets the original exit 75 and exactly one stdout
+    protocol response. The operator may explicitly resubmit the saved file.
+    """
+    import shlex
+
+    try:
+        root = _draft_root(binding.data_dir)
+        root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        _check_private_dir(root)
+        fd, name = tempfile.mkstemp(prefix="input-", suffix=".txt", dir=root)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException:
+            Path(name).unlink(missing_ok=True)
+            raise
+        args = ["lfl", "--data-dir", binding.data_dir, "chat"]
+        if session_id:
+            args.extend(["--session", session_id])
+        args.extend(["--message-file", name])
+        print("[CLI upgrade] Input not admitted; retained privately. After upgrade, explicitly submit: "
+              + shlex.join(args), file=sys.stderr)
+        return Path(name)
+    except (OSError, ValueError) as exc:
+        print(f"[CLI upgrade] Input retention failed ({type(exc).__name__}); no automatic retry.", file=sys.stderr)
+        return None

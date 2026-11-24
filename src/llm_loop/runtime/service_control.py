@@ -3992,6 +3992,9 @@ def _target_idle_state(*, target: str, runtime_root: str, data_dir: str | Path |
         )
         if learning_reason:
             reasons.append(learning_reason)
+    cli_mutations = active_run_locks(data_root / "runtime" / "cli-mutations")
+    if cli_mutations:
+        reasons.append(f"active CLI mutations: {len(cli_mutations)}")
     if reasons:
         return "confirmed_busy", "confirmed_busy: " + "; ".join(reasons)
     if unconfirmable:

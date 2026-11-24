@@ -131,3 +131,25 @@ def test_wrong_root_or_unreadable_record_refuses_before_body(tmp_path):
     store.path.write_text("invalid", encoding="utf-8")
     with pytest.raises(CliDeploymentAdmissionError, match="deployment_record_unreadable"):
         bind_cli_startup(store.data_dir, startup)
+
+
+def test_legacy_mutation_lease_drains_without_holding_state_lock(tmp_path):
+    from llm_loop.runtime.cli_admission import cli_mutation_lease
+
+    store, desired, _startup, binding = _setup(tmp_path / "cli-domain")
+    with cli_mutation_lease(binding):
+        state, detail = _target_idle_state(target="web", runtime_root=desired.runtime_root, data_dir=store.data_dir)
+        assert state == "confirmed_busy" and "active CLI mutations" in detail
+        store.compare_and_swap(replace(desired, generation=2), expected_generation=1)
+    assert _target_idle_state(target="web", runtime_root=desired.runtime_root, data_dir=store.data_dir)[0] == "confirmed_idle"
+    with pytest.raises(CliDeploymentAdmissionError, match="deployment_generation_changed"), cli_mutation_lease(binding):
+        pytest.fail("old command must not run")
+
+
+def test_legacy_dispatch_refuses_stale_before_handler(tmp_path, monkeypatch):
+    from llm_loop.cli import _dispatch_legacy_admitted
+
+    store, _desired, startup, _binding = _setup(tmp_path / "cli-domain")
+    monkeypatch.setattr("llm_loop.runtime.cli_deployment_identity.capture_startup_artifact", lambda: replace(startup, git_head="b" * 40))
+    monkeypatch.setattr("llm_loop.cli._dispatch_command", lambda *_a, **_k: pytest.fail("stale command executed"))
+    assert _dispatch_legacy_admitted(["archive-stale", "--data-dir", str(store.data_dir)]) == 75

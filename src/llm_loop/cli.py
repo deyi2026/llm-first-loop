@@ -107,6 +107,7 @@ def _run_single(engine, text: str, session_id: str | None = None) -> int:
                 return view.error("Explicit startup model was not applied; no user run started.", "startup_model_failed")
     except CliDeploymentAdmissionError as exc:
         return view.error(str(exc), "cli_deployment_admission_refused", 75)
+    engine._cli_single_session = sid
     return run_turn(engine, sid, text, view)
 
 
@@ -348,7 +349,7 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
         return legacy_status
     if argv and argv[0] in _LEGACY_COMMANDS:
         _prepare_cli_process()
-        return _dispatch_command(argv, workspace_root=workspace_root)
+        return _dispatch_legacy_admitted(argv, workspace_root=workspace_root)
 
     parser = _chat_parser()
     args = parser.parse_args(argv)
@@ -414,6 +415,10 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
                 args.session, Path(args.resume_draft) if args.resume_draft else None,
                 workspace_root or str(Path.cwd()), args.plain, args.theme, args.model,
             ))
+        if not interactive and binding is not None and message is not None:
+            from llm_loop.runtime.cli_reentry import retain_single_input
+
+            retain_single_input(binding, args.session, message)
         return Presenter(args.output, plain=args.plain).error(str(exc), "cli_deployment_admission_refused", 75)
     from llm_loop.runtime.cli_processes import register_cli_process
 
@@ -444,8 +449,13 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
 
             if not interactive:
                 assert message is not None
-                return _run_single(engine, message, session_id=args.session)
-            exit_code = _run_interactive(engine, session_id=args.session)
+                exit_code = _run_single(engine, message, session_id=args.session)
+                if exit_code == 75 and binding is not None:
+                    from llm_loop.runtime.cli_reentry import retain_single_input
+
+                    retain_single_input(binding, getattr(engine, "_cli_single_session", args.session), message)
+            else:
+                exit_code = _run_interactive(engine, session_id=args.session)
         finally:
             # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
             engine.close()
@@ -477,6 +487,33 @@ def _prepare_cli_process() -> None:
     env_file = legacy_env_snapshot().get("LFL_ENV_FILE")
     load_env_file(env_file) if env_file else load_env_file()
     record_process_start("cli")
+
+
+def _dispatch_legacy_admitted(argv: list[str], *, workspace_root: str | None = None) -> int:
+    """Fence legacy writes including thin-shell commands before any side effect."""
+    from llm_loop.runtime.cli_admission import (
+        CliDeploymentAdmissionError,
+        bind_cli_startup,
+        cli_mutation_lease,
+    )
+    from llm_loop.runtime.cli_deployment_identity import capture_startup_artifact
+
+    cmd = argv[0]
+    if cmd in {"list", "search", "evolve-list", "faults", "export-distill", "export-serve-mcp",
+               "event-inventory", "event-rotate-status"}:
+        return _dispatch_command(argv, workspace_root=workspace_root)
+    try:
+        parsed = _legacy_parser(cmd).parse_args(_normalize_legacy_arguments(cmd, argv[1:]))
+        data_dir = getattr(parsed, "data_dir", None)
+        if data_dir is None:
+            data_dir = getattr(load_settings(), "data_dir", None)
+        binding = bind_cli_startup(data_dir, capture_startup_artifact()) if data_dir is not None else None
+        with cli_mutation_lease(binding):
+            return _dispatch_command(argv, workspace_root=workspace_root)
+    except CliDeploymentAdmissionError as exc:
+        return Presenter().error(str(exc), "cli_deployment_admission_refused", 75)
+    except (OSError, ValueError) as exc:
+        return Presenter().error(str(exc), "cli_maintenance_unavailable", 2)
 
 
 def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> int:
