@@ -137,3 +137,9 @@
 | coverage-summary §二 结尾残留"规程未建、docs/conformance/ 为空"旧句 | P2 | 已修：改为"规程已建、实测回执未产生；V4/V7/V8 依赖 B7 runner" |
 | 计数漂移：185 与自身明细求和不一致（uncertainty 实为 12）；trace.md 孤儿检查 generator 9 函数（实为 10） | P2 | 已修：改为引用制——AST 静态函数数（7 文件/77 函数，逐文件列出）可直接机检；参数化用例总数不再多处手抄，单一真值=ctp/receipts/ 最新回执 |
 | 墓碑 retire 默认仍无权威校验（已文档化+钩子+测试+TODO-G2 首位） | P2 | 维持：reviewer 自评"accepted risk for a prototype pending WG ruling"；工作组裁决前不发明规范要求 |
+
+## 10. Wave-2 测试准入 r3 PASS 后的执行发现（2026-11-24）
+
+r3（subagent_6014966192ff）回执 PASS 后首次真实执行测试即暴露**收集期 ImportError**——`ctp_gen` 包根未导出 `layout_from_dict`（layout.py:89 已定义，`__init__.py` 导入清单与 `__all__` 均缺失），test_generator.py:24 从包根导入失败，整个收集中断。这是 B6 提交（4e2a8e5de）自带的缺陷，三轮只读审查均未执行测试故未暴露；同时首次前台执行消耗了 r3 资格且 60s 墙钟超时丢失输出（执行侧教训：受闸命令一律 run_in_background）。
+
+处置：`ctp_gen/__init__.py` 补导出 `layout_from_dict`（导入行 + `__all__`）；补模块级导入自检（7 个测试文件 import 全通过，exit=0）；本项随 r4 审查重走准入后以后台方式重跑全量测试落回执。

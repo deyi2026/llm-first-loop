@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from .codes import bit_matrix, code_at, family_invariants
-from .layout import Layout, PageSpec, TagSpec, load_layout
+from .layout import Layout, PageSpec, TagSpec, layout_from_dict, load_layout
 from .manifest import verify_manifest
 from .render import generate
 
@@ -21,6 +21,7 @@ __all__ = [
     "code_at",
     "family_invariants",
     "generate",
+    "layout_from_dict",
     "load_layout",
     "verify_manifest",
 ]
