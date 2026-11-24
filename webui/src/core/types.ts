@@ -83,10 +83,18 @@ export interface AttachmentFact {
   sha256?: string;
 }
 
+export interface HistoryPreviewRef {
+  offset: number;
+  sha256: string;
+  bytes: number;
+  revision?: string | null;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   /** 持久化会话中的绝对消息索引；仅历史 API 返回，乐观/流式消息为空 */
   sourceIndex?: number;
+  historyPreview?: HistoryPreviewRef | null;
   content: string;
   attachments?: AttachmentFact[];
   reasoningContent?: string | null;
@@ -148,6 +156,7 @@ export interface ChatDoneData {
 
 export interface HistoryMessage {
   index?: number;
+  history_preview?: HistoryPreviewRef | null;
   role: string;
   content: string;
   attachments?: AttachmentFact[];
@@ -176,6 +185,7 @@ export interface HistoryResponse {
   messages: HistoryMessage[];
   has_more: boolean;
   revision?: string | null;
+  verified_sha256?: string | null;
   /** Explicit read outcome: false means the caller must preserve known state. */
   ok?: boolean;
   error?: string;

@@ -6,6 +6,7 @@ import type {
   ChatDoneData,
   ChatMessage,
   HistoryMessage,
+  HistoryPreviewRef,
   HistoryResponse,
   QueueItem,
   ProviderRetryEvent,
@@ -135,7 +136,8 @@ export async function fetchHistory(
   limit: number,
   offset: number,
   signal?: AbortSignal,
-  snapshotRevision?: string
+  snapshotRevision?: string,
+  original?: HistoryPreviewRef
 ): Promise<HistoryResponse> {
   if (isAuthRequired()) {
     return { ok: false, error: "会话历史读取失败：登录已失效，请重新登录。", messages: [], has_more: false };
@@ -147,7 +149,7 @@ export async function fetchHistory(
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const resp = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}${snapshotRevision ? `&snapshot_revision=${encodeURIComponent(snapshotRevision)}` : ""}`,
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}${snapshotRevision ? `&snapshot_revision=${encodeURIComponent(snapshotRevision)}` : ""}${original ? `&expected_sha256=${encodeURIComponent(original.sha256)}` : "&compact=true"}`,
       { signal: controller.signal, cache: "no-store" }
     );
     reportUnauthorized(resp.status);
@@ -156,7 +158,7 @@ export async function fetchHistory(
         ok: false,
         error: resp.status === 401
           ? "会话历史读取失败：登录已失效，请重新登录。"
-          : resp.status === 409 && snapshotRevision
+          : resp.status === 409
             ? "会话历史已变化，请重新读取后继续翻页。"
             : `会话历史读取失败（HTTP ${resp.status}）`,
         messages: [],
@@ -171,6 +173,9 @@ export async function fetchHistory(
     }
     if (!Array.isArray(data.messages)) {
       return { ok: false, error: "会话历史响应无效", messages: [], has_more: false };
+    }
+    if (original && (data.verified_sha256 !== original.sha256 || (snapshotRevision && data.revision !== snapshotRevision))) {
+      return { ok: false, error: "原文身份无法核验，请重新加载会话。", messages: [], has_more: false };
     }
     return {
       ok: true,
@@ -513,6 +518,7 @@ function normalizeToolCalls(raw: unknown): ToolCallInfo[] | null {
 export function toChatMessage(m: HistoryMessage): ChatMessage {
   return {
     role: m.role as ChatMessage["role"],
+    historyPreview: m.history_preview ?? null,
     sourceIndex: typeof m.index === "number" && m.index >= 0 ? m.index : undefined,
     content: m.content ?? "",
     attachments: Array.isArray(m.attachments) ? m.attachments : [],

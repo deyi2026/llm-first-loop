@@ -160,7 +160,7 @@ class TestHistoryPagination:
                 "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
                 "ts", "attachments", "status", "tool_name", "duration_ms",
                 "fallback_receipt", "reasoning_mode", "reasoning_capable", "reasoning_control",
-                "reasoning_supported", "reasoning_effective", "reasoning_tokens",
+                "reasoning_supported", "reasoning_effective", "reasoning_tokens", "history_preview",
             }
 
     def test_runtime_receipt_history_projection_is_whitelisted(self, build_test_engine):

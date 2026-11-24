@@ -75,6 +75,7 @@ from .schemas import (
     ErrorResponse,
     EvolutionReviewRequest,
     FeedbackRequest,
+    HistoryPreviewRef,
     MessageItem,
     QueueCancelRequest,
     QueueDispatchRequest,
@@ -4720,6 +4721,8 @@ def get_session_messages(
     limit: int | None = None,
     offset: int = 0,
     snapshot_revision: str | None = None,
+    compact: bool = False,
+    expected_sha256: str | None = None,
 ) -> SessionMessagesResponse | Response:
     """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
 
@@ -4731,6 +4734,10 @@ def get_session_messages(
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
+    if (compact and (limit is None or not 1 <= limit <= 100 or offset < 0)) or (
+        expected_sha256 is not None and (compact or limit != 1 or offset < 0 or len(expected_sha256) != 64)
+    ):
+        return JSONResponse(status_code=400, content={"error": "invalid_history_view"})
     # A caller continuing a page window must never silently mix two source
     # revisions. This is a change guard, not an authorization or replay proof.
     def resync_required() -> Response:
@@ -4742,7 +4749,7 @@ def get_session_messages(
 
     revision_before = (
         _history_revision_hint(engine, session_id)
-        if limit is not None and (offset == 0 or snapshot_revision is not None)
+        if limit is not None and (offset == 0 or snapshot_revision is not None or expected_sha256 is not None or compact)
         else None
     )
     if snapshot_revision is not None and (revision_before is None or revision_before != snapshot_revision):
@@ -4850,8 +4857,39 @@ def get_session_messages(
         )
         if snapshot_revision is not None and revision != snapshot_revision:
             return resync_required()
+        if expected_sha256 is not None:
+            if len(messages) != 1 or hashlib.sha256(messages[0].model_dump_json().encode("utf-8")).hexdigest() != expected_sha256:
+                return resync_required()
+            if revision_before is not None and revision_before != _history_revision_hint(engine, session_id):
+                return resync_required()
+        if compact:
+            # Bound the serialized display window, not the authoritative source.
+            # Large tool arguments/attachments/reasoning are also deferred. Keep
+            # one row per original message so the existing offset never skips rows.
+            for i, message in enumerate(messages):
+                raw = message.model_dump_json().encode("utf-8")
+                if len(raw) > 8192:
+                    messages[i] = MessageItem(
+                        role=message.role if message.role in {"user", "assistant", "tool", "system"} else "system",
+                        content=message.content[:512], ts=message.ts,
+                        history_preview=HistoryPreviewRef(
+                            offset=total - 1 - (start + i), sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw),
+                            revision=revision,
+                        ),
+                    )
+            if revision_before is not None and revision_before != _history_revision_hint(engine, session_id):
+                if snapshot_revision is not None:
+                    return resync_required()
+                # Initial page remains a point-in-time display, as before. An
+                # active writer must not turn every first-screen read into 409.
+                # Drop the revision hint; expansion still verifies exact bytes.
+                revision = None
+                for message in messages:
+                    if message.history_preview is not None:
+                        message.history_preview.revision = None
         return SessionMessagesResponse(
-            session_id=session_id, messages=messages, has_more=start > 0, total=total, revision=revision
+            session_id=session_id, messages=messages, has_more=start > 0, total=total, revision=revision,
+            verified_sha256=expected_sha256,
         )
     return SessionMessagesResponse(session_id=session_id, messages=messages, total=total)
 

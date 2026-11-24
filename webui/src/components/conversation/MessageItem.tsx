@@ -6,6 +6,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AttachmentFact,
   ChatMessage,
+  HistoryMessage,
   ProgressStage,
   ToolActivity,
   ToolActivityStatus,
@@ -17,7 +18,7 @@ import {
   isMathRendererReady,
   renderMarkdown,
 } from "../../core/markdown";
-import { formatTokens } from "../../core/chat";
+import { fetchHistory, formatTokens } from "../../core/chat";
 import { forkSession, submitFeedback } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { loadHistory, prefillComposer } from "../../core/conversation";
@@ -605,6 +606,61 @@ function FeedbackButtons({ sessionId, index }: { sessionId: string; index: numbe
   );
 }
 
+function HistoryPreview({ msg, sessionId }: {
+  msg: ChatMessage;
+  sessionId?: string;
+}) {
+  const [full, setFull] = useState<HistoryMessage | null>(null);
+  const [rawOpen, setRawOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => { pending.current?.abort(); pending.current = null; }, []);
+  const ref = msg.historyPreview!;
+  const expand = async () => {
+    if (!sessionId || pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetchHistory(sessionId, 1, ref.offset, controller.signal, ref.revision ?? undefined, ref);
+      if (controller.signal.aborted || sessionStore.getState().currentSessionId !== sessionId) return;
+      if (response.ok === false || response.messages.length !== 1 || response.messages[0].history_preview) {
+        setError(response.error ?? "原文读取失败，请重新加载会话后重试。");
+        return;
+      }
+      setFull(response.messages[0]);
+    } catch {
+      if (!controller.signal.aborted) setError("原文读取失败，请重试。");
+    } finally {
+      if (!controller.signal.aborted) { pending.current = null; setBusy(false); }
+    }
+  };
+  if (full) return (
+    <div className="v2-msg assistant v2-history-expanded">
+      <div className="v2-msg-body">
+        <button type="button" className="v2-btn ghost" onClick={() => { setFull(null); setRawOpen(false); }}>收起原文</button>
+        <pre className="v2-tool-activity-detail" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{full.content}</pre>
+        <CopyButton text={full.content} />
+        <button type="button" className="v2-btn ghost" aria-expanded={rawOpen} onClick={() => setRawOpen(value => !value)}>{rawOpen ? "收起结构化原文" : "查看完整结构化原文（含工具参数、附件等）"}</button>
+        {rawOpen ? <pre className="v2-tool-activity-detail"><code>{JSON.stringify(full, null, 2)}</code></pre> : null}
+      </div>
+    </div>
+  );
+  return (
+    <div className={`v2-msg ${msg.role}`} data-testid="history-preview">
+      <div className="v2-msg-body">
+        <div className="v2-msg-note">长消息预览 · {Math.ceil(ref.bytes / 1024)} KB · {msg.role === "tool" ? "工具回执" : msg.role === "user" ? "用户消息" : "历史消息"}</div>
+        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{msg.content}</div>
+        <button type="button" className="v2-btn ghost" disabled={busy || !sessionId} onClick={() => void expand()}>{busy ? "读取原文中…" : "展开完整原文"}</button>
+        {error ? <div className="v2-panel-error" role="alert">{error}</div> : null}
+        <MessageTime ts={msg.ts} />
+      </div>
+    </div>
+  );
+}
+
 export const MessageItem = memo(
   MessageItemImpl,
   // 2026-09-22（推理时切换不了会话事故）：流式 delta 每次只替换 streaming 消息
@@ -631,6 +687,8 @@ function MessageItemImpl({
   const [editText, setEditText] = useState(msg.content);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState("");
+
+  if (msg.historyPreview) return <HistoryPreview key={`${sessionId}:${msg.historyPreview.revision}:${msg.historyPreview.offset}:${msg.historyPreview.sha256}`} msg={msg} sessionId={sessionId} />;
 
   const editAndFork = async () => {
     if (!sessionId || typeof msg.sourceIndex !== "number" || msg.sourceIndex < 0 || editBusy) return;

@@ -1,0 +1,35 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-long-session-compact-history",
+  "summary": "Bounded Web history display with explicit exact original read; preserve existing storage and execution.",
+  "components": [
+    {
+      "component_id": "compact-history-view",
+      "paths": [
+        "docs/governance/submissions/20261124-long-session-compact-history.json",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/schemas.py",
+        "tests/web/test_history_compact_view.py",
+        "tests/web/test_history_lazy_load.py",
+        "webui/src/components/conversation/MessageItem.tsx",
+        "webui/src/core/chat.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/core/types.ts",
+        "webui/src/history-preview.test.tsx",
+        "webui/src/stage3.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web history route and conversation UI.",
+      "disposition": "Opt-in compact page of 1–100 rows; each projected JSON row above 8192 bytes becomes a clearly labeled 512-character preview, retaining row count and offset. Full single-row read uses the existing history endpoint and existing identity/retraction/program.final projection, validates SHA256 and available snapshot revision, returns explicit verification receipt; stale or wrong hash/offset rejects. Initial page with changing source drops revision hint instead of falsely binding or blocking active writer. Browser validates receipt and aborts stale expansion, renders exact text and optionally full projected JSON only on demand. No changes to model projection, session storage, authority, or Run execution. Old API full rows remain compatible with additive nullable fields.",
+      "evidence": [
+        "91 targeted Python tests passed; 68 WebUI files/672 tests passed; Ruff, Pyright, TypeScript and diff checks passed.",
+        "TestClient synthetic 50 rows each with 9000 newlines: legacy 922764 bytes vs compact 82094 bytes, 91.1% reduction; no production timing claim.",
+        "Exact projected JSON hash and original equality, wrong hash/offset, snapshot change, retraction, program.final hydration, 105 rows across pages, active writer unstable initial revision, invalid limit, unverified response and unmount abort tested."
+      ],
+      "verification_level": "Local targeted and full WebUI regression only; independent review, original R9, CI, deployment and device acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Veto if preview can masquerade as full content or authorize actions, original identity mismatch is accepted, retracted data is exposed beyond existing projection semantics, page loses rows, or active Run becomes blocked. Compact bounds response, not source parse cost; large source-page fallback, event cold replay, legacy backfill and real device acceptance remain open.",
+      "rollback_route": "Revert route/UI changes; canonical session JSON/event log unchanged. Legacy full-history API remains available."
+    }
+  ],
+  "declarations": []
+}

@@ -192,6 +192,13 @@ class AttachmentFactItem(BaseModel):
     created_at: float = 0.0
 
 
+class HistoryPreviewRef(BaseModel):
+    offset: int
+    sha256: str
+    bytes: int
+    revision: str | None = None
+
+
 class MessageItem(BaseModel):
     """会话消息条目（刷新后恢复对话用）."""
 
@@ -218,6 +225,7 @@ class MessageItem(BaseModel):
     ts: float = 0.0  # 消息时间戳（epoch 秒；web 端时间显示，旧消息缺省 0）
     tool_calls: list[dict] | None = None  # assistant 工具声明透传（历史恢复出产物/正文链接）
     attachments: list[AttachmentFactItem] = Field(default_factory=list)
+    history_preview: HistoryPreviewRef | None = None
 
 
 class SessionMessagesResponse(BaseModel):
@@ -228,6 +236,7 @@ class SessionMessagesResponse(BaseModel):
     has_more: bool = False  # D2: 是否还有更早消息（分页用，旧客户端忽略）
     total: int = 0  # D2: 会话消息总数（分页用，旧客户端忽略）
     revision: str | None = None  # optional source-change hint, not a paging cursor
+    verified_sha256: str | None = None  # explicit original read only
 
 
 class WorkspaceRequest(BaseModel):

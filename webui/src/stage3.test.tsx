@@ -137,7 +137,7 @@ describe("Sidebar 会话管理", () => {
     sessionStore.setCurrentSession("handoff-direct");
     conversationStore.setState({ composerPrefill: null });
     await loadHistory("handoff-direct");
-    expect(calls).toContain("GET /api/v1/sessions/handoff-direct/messages?limit=50&offset=0");
+    expect(calls).toContain("GET /api/v1/sessions/handoff-direct/messages?limit=50&offset=0&compact=true");
     expect(calls).toContain("GET /api/v1/sessions/handoff-direct/handoff");
     await waitFor(() => expect(conversationStore.getState().composerPrefill?.text).toContain("核对评测回执"));
     expect(conversationStore.getState().messages).toEqual([]);

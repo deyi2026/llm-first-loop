@@ -233,6 +233,7 @@ sessionStore.subscribe(() => {
 /** 服务端最新消息指纹（limit=1 探针，成本低） */
 function fingerprintLatest(m: ChatMessage | undefined): string | null {
   if (!m) return null;
+  if (m.historyPreview) return m.historyPreview.sha256;
   return JSON.stringify([m.role, m.content, m.note ?? null]);
 }
 
@@ -270,7 +271,8 @@ async function idlePollTick(sessionId: string): Promise<void> {
       void loadHistory(sessionId, true);
       return;
     }
-    const fp = fingerprintLatest(resp.messages[0] as ChatMessage | undefined);
+    const latest = resp.messages[0];
+    const fp = latest?.history_preview?.sha256 ?? fingerprintLatest(latest as ChatMessage | undefined);
     if (fp === null) return;
     if (idleProbeFp === null) {
       idleProbeFp = fp;
