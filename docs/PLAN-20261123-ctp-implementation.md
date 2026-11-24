@@ -37,13 +37,14 @@
 | 修订落账 | 54 处定点替换（唯一命中才写盘）；基线 md5 与修订前一致 | `artifacts/ctp-review-20261123/adjudication-and-revision-log.md`、`baseline/` |
 | Wave-1 参考实现 | B1 C-5 读取输出契约（schema + 校验器；10 合法 + 24 非法样本）与 B2 不确定度传播（SE(3) 数学、一阶 vs 蒙特卡洛自检、像素噪声 → 6DoF）；经 PR #115 合入 main | `ctp/src/ctp_contract`、`ctp/src/ctp_calib`、`ctp/receipts/20261124-b1b2-pytest.md`（132 passed） |
 | Wave-2 交付（随本版入库） | B5 注册表原型（R-1–R-6）；B6 图案生成（布局 JSON 含必填 `frame_ref`、逐码物理坐标、P-2 公差标注占位）；A2 V1–V8 规程（每份含一条最小冒烟步骤）；A3 追溯矩阵（59 个条目，83 个规范覆盖测试函数逐个具名）及机检元测试。全量测试 **196 passed** | `ctp/receipts/20261124-wave2-pytest.md`（第二次运行）、`docs/conformance/`、`docs/trace/` |
+| Wave-3 交付（随本版入库） | B3 36h11 读码器 v0（仅合成图与近正对位形；超出纠错能力按 unknown_version 拒读且不输出 ID）；B4 可配置读出闸门（两项阈值必填无默认）与 K7 影子通道；B7 V4 / V7 / V8 一致性 runner 骨架与机器可读回执（合成样本，`simulated`）。测试准入审查 r1 的 P1（不可用上限静默放行）已修订并加回归钉。CTP 专项回归 **343 passed** | `ctp/receipts/20261125-wave3-pytest.md`、`ctp/docs/{reader-v0-notes,gate-notes,conformance-runner-notes}.md`、`docs/trace/`、审查链 `artifacts/ctp-review-20261123/code-review-20261123-findings.md` §15 |
 
-### 1.2 未完成（空置事实；as-of 2026-11-24 19:00 +08:00，此后每次开工先复核本表）
+### 1.2 未完成（空置事实；as-of 2026-11-25 02:10 +08:00，此后每次开工先复核本表）
 
 | 项 | 现状 | 复核方式 |
 |---|---|---|
-| 版本控制 | **已入库（2026-11-24 复核）**：Wave-1（四份文档 + 决议单 + B1/B2 代码）经 PR #115 合入 main（`3809e95ed`），远端 9 项检查通过；Wave-2（B5 / B6 / A2 / A3）在 lane-4bbd8c8e，随本版所在 PR 入库 | `git log origin/main`、PR #115 |
-| 代码实现 | **部分推翻（2026-11-24 复核）**：`ctp/` 已落地 B1 契约、B2 不确定度、B5 注册表、B6 图案生成；**未落地**：B3 读码器、B4 阈值抑制、B7 一致性 runner、B8 端到端探针（B8 依赖 D-03 硬件答复）。`pyproject.toml` 无 CTP 依赖不构成缺口——CTP 是独立子项目（D-01），依赖不进本仓打包 | `git log main -- ctp/`、`ctp/receipts/` 回执 |
+| 版本控制 | **部分入库（2026-11-25 复核）**：Wave-1（四份文档 + 决议单 + B1/B2 代码）经 PR #115 合入 main（`3809e95ed`，远端 9 项检查通过）；Wave-2（B5 / B6 / A2 / A3）经 PR #117 合入 main（合并提交 `111b2d9c3`，2026-11-24 14:18Z）；Wave-3（B3 / B4 / B7）在 lane-636833fe，随本版所在 PR 入库 | `git log origin/main`、PR #115 / #117 |
+| 代码实现 | **部分落地（2026-11-25 复核）**：`ctp/` 已落地 B1 契约、B2 不确定度、B5 注册表、B6 图案生成，以及本波的 B3 读码器 v0（仅合成图与近正对位形）、B4 读出闸门、B7 一致性 runner 骨架（合成样本）；**未落地**：B8 端到端探针（真实打印件；B8 依赖 D-03 硬件答复）。`pyproject.toml` 无 CTP 依赖不构成缺口——CTP 是独立子项目（D-01），依赖不进本仓打包 | `git log main -- ctp/`、`ctp/receipts/` 回执 |
 | 工作组 | 未组建；0 项 `[TBD-G]` 取得决议编号 | SPEC §14 全表仍为 TBD |
 | 计量资源 | 无台架、无实验室档期 | 无记录 |
 | 第二实现 | 无（V6 无互操作对象） | 无记录 |
@@ -474,3 +475,4 @@ RULE-AI-28 的适配：全量测试与 push 前必须由独立审查者出 PASS 
 | 0.3a | 2026-11-23 | 执行回执：A1 已交付 8 份（docs/decisions/）；B1 已交付（ctp/，10 合法 + 22 非法样本，`pytest ctp/tests` → 105 passed） |
 | 0.3b | 2026-11-24 | 合并收口回执：① 三轮独立审查全落账（合并审查 REVISE→明细归档；测试准入 r1 REVISE 1P1+5P2；r2 REVISE 1P1+2P2 且上轮 6 项处置全 ACCEPTED），发现与处置 verbatim 见 `artifacts/ctp-review-20261123/code-review-20261123-findings.md` §1–§4；② 关键修复：v04 旋转协方差 deg²→rad²（P0 级，差 3283 倍）、分歧集合声明补全为六条规则族并加 fixture i23/i24 钉住、`log_se3` θ→π 显式拒绝、PSD 在模板与 MC 入口落地、`relative_covariance` 帧口径改右扰动并落模板；③ 测试准入 r3 **PASS**（subagent_a848428989db，候选指纹 87e5cf20）；④ `pytest ctp/tests` → **132 passed in 2.11s**，回执 `ctp/receipts/20261124-b1b2-pytest.md`；⑤ **更正 v0.3a 的"105 passed"**——该数为 B1-only 时点收集数且当时无回执文件（审查 P1-1 指出），一律以 132 + 落盘回执为准 |
 | 0.3c | 2026-11-24 | Wave-2 执行回执（B5 / B6 / A2 / A3 随本版入库）：全量测试 **196 passed**，回执 `ctp/receipts/20261124-wave2-pytest.md` 第二次运行。① B6 补齐验收项：布局 JSON 增必填 `frame_ref`、逐码物理坐标、P-2 公差标注（TBD 占位，不填经验值）；验收第 3 条「打印后能被 B3 读通」未满足，B6 保持未完成。② A2：8 份规程各补一条最小冒烟步骤（只跑通流程，回执标 simulated，不产生门槛证据）。③ **自查更正**：追溯矩阵此前声明「无孤儿」不成立——31 个测试函数未具名（r1 重定基时以「某测试 等」概括同族成员），现逐个具名并新增机检测试钉住孤儿 / 计数 / 证据行号三条不变量。④ §1.2 更正两条陈旧基线行（文档已随 PR #115 入库；代码落地范围），§1.1 增 Wave-1 / Wave-2 两行。⑤ 测试准入审查链 r1–r6 及合并前一轮的发现与处置见归档 §8–§14，含 r5 审查者两次超时（无结论）与 r6 起审查切片收窄的如实声明 |
+| 0.3d | 2026-11-25 | Wave-3 执行回执（B3 / B4 / B7 随本版入库）：CTP 专项回归 **343 passed**，回执 `ctp/receipts/20261125-wave3-pytest.md`。① 测试准入审查 r1 REVISE（P0=0 / P1=1 / P2=3）：一致性 runner V4 对「提供了但不可用」的上限静默忽略、可判 pass；修订为不可用上限按未配置处理（indeterminate）、必填分组阈值不可用则拒绝运行，同根排查一并收紧 `min_sample_size ≤ 0` 与 V8 非布尔 `include_forgery`，并以修订前后的对照实测留证；新增 3 个回归钉（27 例）。② 复审 r2 **PASS**（subagent_fa9da6ad3f95）。③ 追溯矩阵同步：测试函数 167 → 170，矩阵数据行 225 → 228。④ §1.1 增 Wave-3 行，§1.2 更正「版本控制」「代码实现」两条基线行（Wave-2 已随 PR #117 入库；B3 / B4 / B7 已落地为 v0 / 骨架，B8 未落地）并把 as-of 更新为 2026-11-25。⑤ 发现与处置见归档 §15。已知遗留：`ctp/` 下 40 个 ruff 提示不在 CI 棘轮范围（src tests scripts）内，本波未改 |
