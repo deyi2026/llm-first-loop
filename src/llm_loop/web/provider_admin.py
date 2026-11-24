@@ -819,6 +819,14 @@ def test_provider(engine: Any, provider_id: str, model_id: str = "") -> dict[str
 
     mspec = spec.models[chosen]
     capable, control = registry.reasoning_contract(provider_id, chosen)
+    # GLM1305-20261124: 探测意图是 low 档推理，但 wire 优先级为 contextvar >
+    # reasoning_default_effort > reasoning_effort——registry 默认档（如 max）
+    # 会覆盖 client 级 low，使探测请求与真实档位漂移。模型支持 low 时清空
+    # 默认档让 low 真正上线；不支持时保留 registry 默认档——不伪造模型
+    # 拒绝的档位，也不谎称关闭推理（本探测不注入 thinking 字段；实际档位
+    # 由响应的 wire_reasoning_effort 机械事实承载）。仍是单次有界无工具探测。
+    probe_efforts = tuple(params.get("reasoning_efforts") or ())
+    probe_low_supported = (not probe_efforts) or ("low" in probe_efforts)
     client = LLMClient(
         api_key=params.get("api_key", ""),
         base_url=params["base_url"],
@@ -833,7 +841,14 @@ def test_provider(engine: Any, provider_id: str, model_id: str = "") -> dict[str
         reasoning_effort="low",
         reasoning_effort_map=params.get("reasoning_effort_map"),
         reasoning_efforts=params.get("reasoning_efforts"),
-        reasoning_default_effort=params.get("reasoning_default_effort"),
+        reasoning_default_effort=(
+            None if probe_low_supported else params.get("reasoning_default_effort")
+        ),
+        # GLM1305-20261124: 探测合同是单次有界物理请求（≤30s）。显式禁用
+        # 断连重试与模型繁忙重试——两者独立于 retry_disconnect 语义，
+        # 由此探测绝不放大请求数。
+        retry_disconnect=0,
+        overload_retry_max=0,
         thinking_supported=registry.supports_thinking(provider_id, chosen),
         reasoning_capable=capable,
         reasoning_control=control,
@@ -846,6 +861,9 @@ def test_provider(engine: Any, provider_id: str, model_id: str = "") -> dict[str
         min_p=getattr(mspec, "min_p", None),
     )
     started = time.monotonic()
+    # GLM1305-20261124: 探测 canonical 解析档位（与 wire 控制同一事实源）。
+    # always_on_effort 契约（GLM）下即 wire 序列化值；测试断言覆盖该等式。
+    wire_effort = client.effective_reasoning_effort()
     try:
         client.chat([{"role": "user", "content": "Reply OK."}], [], timeout_s=client.timeout_s)
     except Exception as exc:
@@ -874,6 +892,12 @@ def test_provider(engine: Any, provider_id: str, model_id: str = "") -> dict[str
         "model": chosen,
         "latency_ms": int((time.monotonic() - started) * 1000),
         "response_received": True,
+        # GLM1305-20261124: 机械事实——canonical 解析档位（脱敏：不含响应
+        # 文本/凭据）。命名如实在先：always_on_effort 契约（GLM）下该值等于
+        # wire 序列化值（payload["reasoning_effort"]）；其他控制协议下为
+        # 映射/开关前的解析档，测试按契约逐一断言，不冒充任意协议的
+        # 序列化值。admin UI 与 5.4 档位对照记录据此消费。
+        "reasoning_effort_resolved": wire_effort,
     }
 
 
