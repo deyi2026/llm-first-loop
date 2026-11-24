@@ -1,0 +1,97 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-runtime-version-convergence",
+  "summary": "Runtime version convergence for the CLI. A CLI Run may start only when the managed deployment record, the data domain, the startup artifact identity and the restart barriers, read at start time under the existing deployment state lease, say the process is on the deployed generation. A refused start exits 75 (cli_deployment_admission_refused) and is reported as not started; the operator's interactive draft or one-shot input is kept in a private file and is never replayed. Lock-backed CLI process identity and the runtime convergence strip are read-only views. Frozen candidate 80e73a27 (base 111b2d9c) was integrated with origin/main 4f115705 by merge commit 3e15ea05 (clean merge, no manual edits, candidate logic unchanged); this manifest is the only later change. The PR #118 manifest docs/governance/submissions/20261124-long-session-lightweight-m1.json is untouched.",
+  "components": [
+    {
+      "component_id": "cli-deployment-admission-fence",
+      "paths": [
+        "src/llm_loop/cli.py",
+        "src/llm_loop/cli_contracts.py",
+        "src/llm_loop/core/loop/lifecycle.py",
+        "src/llm_loop/core/loop/runner.py",
+        "src/llm_loop/runtime/cli_admission.py",
+        "src/llm_loop/runtime/cli_reentry.py",
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/terminal/editor.py",
+        "src/llm_loop/terminal/execution.py",
+        "src/llm_loop/terminal/shell.py",
+        "tests/unit/test_cli_admission.py",
+        "tests/unit/test_cli_reentry.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "cli-deployment-admission-existing-control",
+      "owning_subsystem": "Existing ManagedServiceDeploymentStore in llm_loop.runtime.service_control (authority); CLI entry in llm_loop.cli and Run entry in llm_loop.core.loop (fence callers)",
+      "disposition": "A fence that can only refuse. llm_loop.runtime.cli_admission binds a CLI start to the managed deployment record (deployment_id, generation, data domain, startup artifact identity) and reads the restart barriers under the existing state lease; an unreadable record is a refusal. llm_loop.runtime.cli_reentry keeps a refused draft or one-shot input in private files (0700 directory, 0600 file, O_NOFOLLOW, owner and mode checked) and allows at most one re-open per deployment generation against the verified release. In llm_loop.cli a Run start takes the state admission before a session is created or the run lease is acquired; a fixed set of read-only legacy commands bypasses the fence and every other legacy command holds a drain-visible mutation lease. A refusal exits 75 and the runner reports it as not_started. The restart idle probe counts active CLI mutation locks as busy. Wake-grant re-arm now happens after admission and run lease. No service, daemon, registry or verdict engine is added.",
+      "evidence": [
+        "tests/unit/test_cli_admission.py (+155 lines) and tests/unit/test_cli_reentry.py (+178 lines) exercise real locks, leases and private draft files offline; they grant no execution authority.",
+        "Host-managed independent full_test review subagent_49b56d85f509 (reviewer model glm/glm-5.3-flash) on integrated candidate 3e15ea05: PASS, material fingerprint c030dd3348c90c440bc464824ba9d0d48ff1e35089bd1496ff7a8d7ef7da6189. It does not cover this manifest commit.",
+        "Host-managed independent full_test review subagent_c8073df53548 on 80e73a27: REVISE P0=0 P1=2 P2=3. Both P1 items described the stale-base view against origin/main 4f115705 (the candidate did not touch those paths); they were resolved by the integration merge, not by code edits.",
+        "Reported, not receipted: the 2026-11-24 23:35 handoff states 227 targeted backend tests passed and Ruff, Pyright and tsc passed on pre-integration candidate 80e73a27. The delivering session did not re-run them (user instruction 2026-11-25 01:04 not to repeat passed targeted tests) and found no log or cache artifact for them in the candidate worktree (data/ and .pytest_cache inspected)."
+      ],
+      "verification_level": "Integrated candidate 3e15ea05 passed the Host-managed independent full_test review. The delivering session has run no targeted test and no full gate on the integrated tree. Final-SHA independent review, original bash scripts/ci_gate.sh, push review, remote CI and unified deployment verification are pending.",
+      "model_evidence_veto_recovery_exit": "The fence decides on mechanical facts only and every refusal is an exit: exit 75 is reported as not started and the Run never owns the run lease. An interactive draft is restored only into the editor buffer (plain terminals ask for /send, /discard or replacement text) and is submitted only by a new human action; a refused one-shot input is written once to a private file and is never replayed. No model text, review PASS or operator flag can turn a refusal into admission; model evidence can only report on or veto a merge.",
+      "rollback_route": "Revert the candidate commits and this manifest. No canonical session or event schema changes and no migration. Draft, mutation-lock and process-record files under the data directory are inert private runtime files and can be deleted."
+    },
+    {
+      "component_id": "runtime-convergence-identity-view",
+      "paths": [
+        "docs/governance/submissions/20261124-runtime-version-convergence.json",
+        "src/llm_loop/runtime/cli_deployment_identity.py",
+        "src/llm_loop/runtime/cli_processes.py",
+        "src/llm_loop/terminal/queries.py",
+        "src/llm_loop/web/coordination_routes.py",
+        "tests/unit/test_cli_deployment_identity.py",
+        "tests/unit/test_cli_processes.py",
+        "tests/unit/test_coordination_routes.py",
+        "webui/src/components/services/ServicesPanel.test.tsx",
+        "webui/src/components/services/ServicesPanel.tsx",
+        "webui/src/components/sidebar/RuntimeConvergenceStrip.test.tsx",
+        "webui/src/components/sidebar/RuntimeConvergenceStrip.tsx",
+        "webui/src/components/sidebar/RuntimeConvergenceSubscriber.test.tsx",
+        "webui/src/components/sidebar/Sidebar.tsx",
+        "webui/src/core/api.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "llm_loop.runtime (read-only identity projections), llm_loop.web coordination board route, webui coordination sidebar",
+      "disposition": "Read-only views. cli_deployment_identity captures the loaded package identity (source checkout HEAD and dirty flag, or wheel build identity) and compares it with the desired deployment; admission_verified is always false. cli_processes keeps flock-witnessed records of registered CLI processes and treats a record without a live lock owner as crash residue; readers never kill a process. The CLI identity report and service status expose these fields, the coordination board route adds runtime_convergence without port probes, and the sidebar strip subscribes to the shared coordination poller when present and otherwise performs one fetch. Nothing here admits, refuses or restarts anything.",
+      "evidence": [
+        "Covered by the Host-managed independent full_test review PASS on integrated candidate 3e15ea05 (subagent_49b56d85f509).",
+        "tests/unit/test_cli_deployment_identity.py, tests/unit/test_cli_processes.py, tests/unit/test_coordination_routes.py and three webui test files cover the identity comparison, the lock-witnessed process view and the strip rendering.",
+        "Reported, not receipted: the 2026-11-24 23:35 handoff states 18 targeted webui tests passed and tsc passed on pre-integration candidate 80e73a27; not re-run by the delivering session and no artifact found in the candidate worktree.",
+        "Known P2, not fixed here (confirmed by reading the file): in RuntimeConvergenceStrip.tsx the single-fetch fallback path never clears its stale flag, so it keeps showing the stale hint. That path is live only when the shared coordination poller is absent."
+      ],
+      "verification_level": "Integrated candidate 3e15ea05 passed the Host-managed independent full_test review. No targeted test has been run by the delivering session on the integrated tree. Final-SHA independent review, original full gate, remote CI and deployment verification are pending.",
+      "model_evidence_veto_recovery_exit": "Views only: a wrong or missing view changes no admission decision, because the fence reads the deployment record directly. Model evidence can flag a mismatch but a view grants nothing.",
+      "rollback_route": "Revert. The fields cli_processes and runtime_convergence are additive and optional for the frontend."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "cli-deployment-admission-existing-control",
+      "g1": {
+        "necessity": "A CLI Run that starts while the managed deployment is switching generation would execute on a superseded code or data generation and could race the restart drain. Whether a Run may start must follow mechanical facts read at start time: the deployment record (deployment_id, generation), the data domain, the startup artifact identity and the presence of restart barriers, all read under the same state lease that publish and restart acceptance use. Model or operator judgement cannot stand in for those facts, and an unreadable record is a refusal."
+      },
+      "g2": {
+        "authority_owner": "Existing ManagedServiceDeploymentStore in llm_loop.runtime.service_control: deployment record, state lease and restart barriers.",
+        "relationship": "reuse",
+        "non_duplication": "No new authority. The fence reads the existing deployment record, lease and barriers and adds only refusal paths plus private per-user runtime files (drafts, mutation locks and process records, 0700 and 0600, flock-witnessed). It does not duplicate Run admission, review admission or the restart gate, and it never widens them."
+      },
+      "g3": {
+        "model_evidence": [
+          "Host-managed independent full_test review subagent_49b56d85f509: PASS on integrated candidate 3e15ea05.",
+          "Host-managed independent full_test review subagent_c8073df53548: REVISE P0=0 P1=2 P2=3 on 80e73a27; both P1 items were the stale-base view resolved by merging origin/main 4f115705."
+        ],
+        "recovery_or_reason": "A refused start is a visible exit (75, cli_deployment_admission_refused) and nothing is lost silently. An interactive draft is restored only into the editor buffer and is submitted only by a new human action; a refused one-shot input is written once to a private file and is never replayed; at most one re-open per deployment generation is attempted against the verified release. The operator can resubmit, discard or stop at any time. There is no automatic retry that could produce a duplicate Run."
+      },
+      "g4": {
+        "rollback": "Revert the candidate commits and this manifest. Leftover draft and input files under the data directory are inert private files; no schema or data migration is involved.",
+        "verification": [
+          "Pending: final-SHA Host-managed independent full_test review with P0=0 and P1=0.",
+          "Pending: original bash scripts/ci_gate.sh on the final SHA with real exit code and log.",
+          "Pending: remote CI on the pull request and on main after the protected merge."
+        ]
+      }
+    }
+  ]
+}
