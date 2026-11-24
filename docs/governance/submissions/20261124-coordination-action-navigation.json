@@ -8,7 +8,9 @@
       "paths": [
         "docs/governance/submissions/20261124-coordination-action-navigation.json",
         "src/llm_loop/web/routes.py",
+        "tests/unit/test_linux_polkit_probe.py",
         "tests/web/test_chat_queue.py",
+        "tests/web/test_webui_responsive_contract.py",
         "webui/src/components/conversation/JobsCatalog.tsx",
         "webui/src/components/conversation/SubagentLineage.tsx",
         "webui/src/components/layout/RightPanel.tsx",
@@ -22,10 +24,11 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "Existing Web V2 coordination, HumanTurnQueue, Web ingress ownership, QueueServerFallback, and session/right-panel navigation. No new scheduler or independent execution authority.",
-      "disposition": "Reuse the existing queue admission and generation-bound interjection endpoints; enforce the same existing Web ingress ownership predicate on queue admission. Idle sessions use the existing server fallback. Preserve queue receipts and never report admission as execution. Restore header dropdown visibility and exact job/session navigation.",
+      "disposition": "Reuse the existing queue admission and generation-bound interjection endpoints; enforce the same existing Web ingress ownership predicate on queue admission. Idle sessions use the existing server fallback. Preserve queue receipts and never report admission as execution. Restore header dropdown visibility and exact job/session navigation. Update the responsive contract to assert the new non-clipping wrapped header and all four touch targets. Reuse the existing private pytest-cache fixture on macOS as on Linux, and explicitly test writable-ancestor denial on both platforms; no production Polkit code or security guard changes.",
       "evidence": [
         "Initial candidate fcda26b24: WebUI 67 files / 668 tests, TypeScript, Ruff and 50 queue/recovery tests passed.",
-        "Latest main aligned without path overlap. Final frozen SHA must pass independent review, original R9, remote CI and physical browser acceptance."
+        "Latest main aligned without path overlap. Final frozen SHA must pass independent review, original R9, remote CI and physical browser acceptance.",
+        "R9 job-d1a271a53ae14c88ab55 exit 1: stale responsive selector/scroll contract and two unchanged baseline Polkit positive tests using world-writable /private/tmp. All three reproduced under explicit /private/tmp basetemp; after test-only corrections, 75 focused tests passed with the same unsafe basetemp."
       ],
       "verification_level": "Local tests on initial candidate; final review and full R9 pending. No production effectiveness claimed.",
       "model_evidence_veto_recovery_exit": "Explicit human input only; no automatic tool action from passive help messages. Existing exact session/ingress checks and run generation CAS govern admission. Stale interjection leaves durable queue receipt; existing queue cancellation and recovery remain authoritative.",
