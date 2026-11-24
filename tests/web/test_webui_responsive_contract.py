@@ -32,14 +32,21 @@ def test_mobile_touch_and_narrow_layout_contracts() -> None:
     assert ".v2-composer-tools {\n    flex-wrap: wrap;" in conversation_css
     assert ".v2-chat-queue-item {\n    flex-wrap: wrap;" in conversation_css
     assert "min-height: var(--v2-mobile-touch-target)" in conversation_css
-    # The mobile title now has its own row.  Keep the actions independently
-    # scrollable and touch-sized rather than requiring the old whole-header
-    # horizontal scroller (which truncated titles on narrow screens).
+    # The mobile title has its own row. Wrap the actions instead of clipping
+    # the absolute-positioned task menus in a horizontal overflow container.
     assert ".v2-conversation-header {\n    flex-direction: column;" in conversation_css
     assert ".v2-conversation-header-actions {\n    flex: 0 0 auto;" in conversation_css
-    assert ".v2-conversation-header-actions {\n  flex: 1 1 auto;" in conversation_css
-    assert "overflow-x: auto;" in conversation_css
-    assert ".v2-catalog-trigger,\n  .v2-conversation-header-actions > .v2-btn" in conversation_css
+    actions = conversation_css.split(".v2-conversation-header-actions {", 1)[1].split("}", 1)[0]
+    assert "flex: 1 1 auto;" in actions
+    assert "flex-wrap: wrap;" in actions
+    assert "overflow: visible;" in actions
+    assert "overflow-x:" not in actions
+    assert "position: relative;" in actions
+    assert ".v2-conversation-header-actions > .v2-catalog {\n  position: static;" in conversation_css
+    touch_rule = conversation_css.split("  .v2-catalog-trigger,", 1)[1].split("}", 1)[0]
+    for selector in (".v2-agents-row,", ".v2-jobs-open,", ".v2-conversation-header-actions > .v2-btn {"):
+        assert selector in touch_rule
+    assert "min-height: var(--v2-mobile-touch-target);" in touch_rule
     assert ".v2-tool-activity-toggle,\n  .v2-tool-activity-row-toggle" in conversation_css
 
 

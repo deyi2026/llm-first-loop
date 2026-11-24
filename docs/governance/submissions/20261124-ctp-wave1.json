@@ -1,0 +1,185 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261124-ctp-wave1",
+  "summary": "CTP（合作目标校准协议）第一波交付入库：规范 v0.9.2、[TBD-G] 裁决建议稿、设计文档、实施计划与 7 份工作组决议单；独立子目录 ctp/ 下的 C-5 读取输出契约（JSON Schema 加 Python 校验器）与不确定度声明、协方差传播参考实现；独立审查证据归档。pyproject 的 testpaths 把 ctp/tests 并入全量回归，.gitignore 为审查证据目录开例外。不改动 llm_loop 运行时，不新增权限、否决或恢复出口，不冻结任何门槛数值，不含读码器与台架验证。",
+  "components": [
+    {
+      "component_id": "ctp-spec-plan-and-decision-sheets",
+      "paths": [
+        "docs/DESIGN-20261123-physical-world-sensing-calibration-v1.md",
+        "docs/PLAN-20261123-ctp-implementation.md",
+        "docs/SPEC-20261123-CTP-tbd-resolutions-proposal.md",
+        "docs/SPEC-20261123-cooperative-target-protocol-v0.9.md",
+        "docs/decisions/README.md",
+        "docs/decisions/WG-RES-SHEET-G1-prefix-length.md",
+        "docs/decisions/WG-RES-SHEET-G2-code-family.md",
+        "docs/decisions/WG-RES-SHEET-G3-interlevel-threshold.md",
+        "docs/decisions/WG-RES-SHEET-G4-reference-temperature.md",
+        "docs/decisions/WG-RES-SHEET-G5-record-expiry.md",
+        "docs/decisions/WG-RES-SHEET-G6-tolerance-band.md",
+        "docs/decisions/WG-RES-SHEET-G7-min-readable.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "新增的独立文档面：docs/ 下 CTP（合作目标校准协议）规范 v0.9.2、[TBD-G] 裁决建议稿 0.2、设计文档 v1.2.3、实施计划 v0.3b，以及 7 份工作组决议单和索引。不进入 llm_loop 运行时，不被 src/ 下任何代码读取。",
+      "disposition": "书面交付物入库（计划任务 A1、A4）。规范处于「结构冻结、数值未冻结」状态：全部门槛数值保留 [TBD-*] 编号，未以经验值填充。决议单是供工作组签字的提案材料，不是决议；实施计划记录三道审查闸、写区划分，以及执行期暂定值 D-01、D-08、D-09 和各自的回退代价。",
+      "evidence": [
+        "docs/SPEC-20261123-cooperative-target-protocol-v0.9.md 第 0.2 节与第 14 章",
+        "docs/decisions/README.md",
+        "docs/PLAN-20261123-ctp-implementation.md 第 13.1 节与第 15 章",
+        "artifacts/ctp-review-20261123/deepseek-v4-flash-review.md",
+        "artifacts/ctp-review-20261123/cross-examination.md",
+        "artifacts/ctp-review-20261123/adjudication-and-revision-log.md"
+      ],
+      "verification_level": "独立盲审与交叉考问已落账并逐条裁决；设计文档第 10 章十二问均有归属。数值冻结与专利正式检索未完成，文档自身写明为未闭合项。",
+      "model_evidence_veto_recovery_exit": "不引入模型裁决、否决或恢复出口：这些文件不被运行时加载。计划决策表里的「建议」列都是提案，需工作组 WG-RES-* 决议编号才能回填规范。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时依赖。"
+    },
+    {
+      "component_id": "ctp-reference-implementation",
+      "paths": [
+        "ctp/README.md",
+        "ctp/docs/uncertainty-declaration-template.md",
+        "ctp/receipts/20261124-b1b2-pytest.md",
+        "ctp/schema/observation.schema.json",
+        "ctp/src/ctp_calib/__init__.py",
+        "ctp/src/ctp_calib/pixel.py",
+        "ctp/src/ctp_calib/se3.py",
+        "ctp/src/ctp_calib/uncertainty.py",
+        "ctp/src/ctp_contract/__init__.py",
+        "ctp/src/ctp_contract/errors.py",
+        "ctp/src/ctp_contract/model.py",
+        "ctp/src/ctp_contract/validate.py",
+        "ctp/tests/conftest.py",
+        "ctp/tests/fixtures/_build_fixtures.py",
+        "ctp/tests/fixtures/invalid/i01_missing_target_index.json",
+        "ctp/tests/fixtures/invalid/i02_missing_timestamp.json",
+        "ctp/tests/fixtures/invalid/i03_target_index_string.json",
+        "ctp/tests/fixtures/invalid/i04_resolution_unknown.json",
+        "ctp/tests/fixtures/invalid/i05_degradation_trailing_space.json",
+        "ctp/tests/fixtures/invalid/i06_logical_null_with_code.json",
+        "ctp/tests/fixtures/invalid/i07_logical_set_with_unresolved.json",
+        "ctp/tests/fixtures/invalid/i08_quaternion_not_unit.json",
+        "ctp/tests/fixtures/invalid/i09_timestamp_no_timezone.json",
+        "ctp/tests/fixtures/invalid/i10_k_zero.json",
+        "ctp/tests/fixtures/invalid/i11_unknown_field.json",
+        "ctp/tests/fixtures/invalid/i12_covariance_asymmetric.json",
+        "ctp/tests/fixtures/invalid/i13_zero_sigma.json",
+        "ctp/tests/fixtures/invalid/i14_missing_reader_version.json",
+        "ctp/tests/fixtures/invalid/i15_negative_sigma.json",
+        "ctp/tests/fixtures/invalid/i16_nan_position.json",
+        "ctp/tests/fixtures/invalid/i17_timestamp_no_seconds.json",
+        "ctp/tests/fixtures/invalid/i18_k_boolean.json",
+        "ctp/tests/fixtures/invalid/i19_whitespace_reader_id.json",
+        "ctp/tests/fixtures/invalid/i20_bad_extension_key.json",
+        "ctp/tests/fixtures/invalid/i21_timestamp_leading_space.json",
+        "ctp/tests/fixtures/invalid/i22_resolution_array.json",
+        "ctp/tests/fixtures/invalid/i23_timestamp_calendar_invalid.json",
+        "ctp/tests/fixtures/invalid/i24_target_index_float.json",
+        "ctp/tests/fixtures/valid/v01_minimal_code.json",
+        "ctp/tests/fixtures/valid/v02_resolved_coarse.json",
+        "ctp/tests/fixtures/valid/v03_unresolved_null.json",
+        "ctp/tests/fixtures/valid/v04_covariance.json",
+        "ctp/tests/fixtures/valid/v05_extension.json",
+        "ctp/tests/fixtures/valid/v06_tiny_sigma.json",
+        "ctp/tests/fixtures/valid/v07_timestamp_utc_z.json",
+        "ctp/tests/fixtures/valid/v08_negative_position.json",
+        "ctp/tests/fixtures/valid/v09_quarantine.json",
+        "ctp/tests/fixtures/valid/v10_schema_version.json",
+        "ctp/tests/test_contract_invalid.py",
+        "ctp/tests/test_contract_valid.py",
+        "ctp/tests/test_pixel_uncertainty.py",
+        "ctp/tests/test_schema_parity.py",
+        "ctp/tests/test_uncertainty.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "新增独立子目录 ctp/（计划 D-01 执行期暂定 B）：src/ctp_contract 是 C-5 读取输出契约（JSON Schema 2020-12 加 Python 校验器），src/ctp_calib 是 SE(3) 指数对数、不确定度声明模板、一阶协方差传播与蒙特卡洛自检、像素噪声到 6DoF 协方差；另有 schema、tests、docs、receipts。不并入 llm_loop 包，src/llm_loop 没有任何对它的 import。",
+      "disposition": "计划任务 B1、B2 的参考实现。fail-closed：缺字段或非法值显式报稳定错误码，不做默认值填充。schema 与校验器之间的六条 validator-only 规则族由 test_schema_parity 钉死。不给出任何性能数字，精度与时延门槛均为 [TBD-*]。B3 读码器、B4 阈值抑制、B7 一致性 runner、B8 端到端探针不在本次范围。",
+      "evidence": [
+        "ctp/schema/observation.schema.json",
+        "ctp/src/ctp_contract/validate.py",
+        "ctp/src/ctp_calib/uncertainty.py",
+        "ctp/receipts/20261124-b1b2-pytest.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md"
+      ],
+      "verification_level": "ctp 全量测试 132 passed，回执见 ctp/receipts/20261124-b1b2-pytest.md。合并审查与测试准入经过多轮独立审查，发现与处置原文见 code-review-20261123-findings.md 第 1 至 7 节，含 v04 旋转协方差 deg² 改 rad² 的 P0 级修复。Linux 上的全量门禁以本 PR 的远端 CI 结果为准。",
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口。注册表签名与阈值抑制属后续任务 B5、B4，本提交不含。",
+      "rollback_route": "整目录独立：经同一受保护 PR revert 即可，无运行时引用、无数据迁移。"
+    },
+    {
+      "component_id": "ctp-independent-review-artifacts",
+      "paths": [
+        "artifacts/ctp-review-20261123/adjudication-and-revision-log.md",
+        "artifacts/ctp-review-20261123/baseline/DESIGN-20261123-physical-world-sensing-calibration-v1.md",
+        "artifacts/ctp-review-20261123/baseline/SPEC-20261123-CTP-tbd-resolutions-proposal.md",
+        "artifacts/ctp-review-20261123/baseline/SPEC-20261123-cooperative-target-protocol-v0.9.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md",
+        "artifacts/ctp-review-20261123/cross-examination.md",
+        "artifacts/ctp-review-20261123/deepseek-v4-flash-review.md",
+        "artifacts/ctp-review-20261123/review-20261123-plan-v0.3-digest.md",
+        "artifacts/ctp-review-20261123/revision-scripts/apply_revisions.py",
+        "artifacts/ctp-review-20261123/revision-scripts/fix_log.py",
+        "artifacts/ctp-review-20261123/revision-scripts/fix_m2.py",
+        "artifacts/ctp-review-20261123/revision-scripts/fix_round2.py",
+        "artifacts/ctp-review-20261123/revision-scripts/fix_round3.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "评审证据归档目录 artifacts/ctp-review-20261123/（.gitignore 只对该目录开例外）：盲审原文、交叉考问、裁决与修订日志、修订脚本、修订前基线快照。",
+      "disposition": "只读证据，不被运行时读取。修订脚本是当时执行的定点替换脚本留档，入库后未再运行。",
+      "evidence": [
+        "artifacts/ctp-review-20261123/adjudication-and-revision-log.md 第 5 节",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 1 至 7 节"
+      ],
+      "verification_level": "裁决日志第 5 节勘误了脚本归档位置；历次审查提出的记录漂移均已修正并留痕。",
+      "model_evidence_veto_recovery_exit": "不涉及。",
+      "rollback_route": "revert 对应提交。"
+    },
+    {
+      "component_id": "repo-ignore-artifacts-exception",
+      "paths": [
+        ".gitignore"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "仓库级忽略规则（根目录 .gitignore）。",
+      "disposition": "原规则 /artifacts/ 连目录本身一并排除，其下的否定例外永不求值（合并审查第六轮 P1-4：首次修复形态是失效行）。改为 /artifacts/* 加 !/artifacts/ctp-review-20261123/，与既有 data/* 加 !data/methods/ 的写法同构；其余 artifacts/ 内容仍被忽略。",
+      "evidence": [
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 7 节",
+        ".gitignore"
+      ],
+      "verification_level": "用忽略规则检查命令实证：例外目录下的新文件未被忽略，其余 artifacts/ 路径仍命中忽略。",
+      "model_evidence_veto_recovery_exit": "不涉及。",
+      "rollback_route": "revert .gitignore 的该处改动；恢复后该目录文件变为未跟踪，但不会丢失。"
+    },
+    {
+      "component_id": "gate-testpaths-ctp-coverage",
+      "paths": [
+        "pyproject.toml"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "仓库测试门禁配置 pyproject.toml 的 [tool.pytest.ini_options]，是 scripts/ci_gate.sh 与远端 CI 全量回归的入口。",
+      "disposition": "testpaths 由只有 tests 扩为 tests 加 ctp/tests：把 CTP 参考实现并入全量回归，让契约与数学测试在门禁内执行。不改动门禁的其他环节（ruff、pyright、安全扫描、构建）和通过判据。",
+      "evidence": [
+        "pyproject.toml [tool.pytest.ini_options]",
+        "ctp/receipts/20261124-b1b2-pytest.md"
+      ],
+      "verification_level": "本地按门禁同款命令执行 ctp 测试 132 passed。与 tests/ 合跑的全量门禁以本 PR 的 CI 结果为准。这是覆盖面扩展，不是拦截判据变更。",
+      "model_evidence_veto_recovery_exit": "不新增否决或恢复出口，只扩大门禁的执行范围。",
+      "rollback_route": "revert pyproject.toml 该行；ctp 测试退出全量回归，文件保留。"
+    },
+    {
+      "component_id": "a5-manifest-self",
+      "paths": [
+        "docs/governance/submissions/20261124-ctp-wave1.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "治理提交清单，A.5 架构提交审查的机械覆盖对象。",
+      "disposition": "本清单自身，随 PR 入库。",
+      "evidence": [
+        "docs/governance/architecture-submission-v0.1.schema.json"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py 本地预检通过。",
+      "model_evidence_veto_recovery_exit": "不涉及。",
+      "rollback_route": "随 PR 整体 revert。"
+    }
+  ],
+  "declarations": []
+}

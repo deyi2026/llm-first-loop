@@ -2,7 +2,7 @@
 // ⚡ 计数触发器（有 live 任务时带运行点）+ popover 行 =
 // 状态点 · 执行器徽标 · 命令（等宽/省略/ title 全文）· 状态 · 时长（tabular-nums）。
 // 状态语义对齐 DSH：stopping（终止请求中）与 killed 共用警示色——都是"按用户请求
-// 结束"而非自然失败。面板只读；停止任务走右侧「后台任务」面板的显式 kill。
+// 结束"而非自然失败。点击行打开精确任务；停止任务走右侧面板的显式 kill。
 // 排序：live 在前按开始时间升序，settled 按结束时间降序（最新完成靠前）。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +10,7 @@ import { fetchSessionJobsResult, type JobFact } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { useConversation } from "../../core/conversation";
 import { runAwareIntervalMs } from "../../core/runAwarePoll";
-import { useCurrentSessionId } from "../../core/stores";
+import { rightPanelStore, useCurrentSessionId } from "../../core/stores";
 import { jobsZh as zh } from "../../i18n/zh";
 
 type JobDotState = "ongoing" | "warning" | "done" | "error" | "idle";
@@ -94,7 +94,8 @@ export function JobsCatalog() {
   const _conv = useConversation();
   const runBusy = Boolean(_conv.streaming || _conv.backgroundRunning);
   const sessionId = useCurrentSessionId();
-  const [jobs, setJobs] = useState<JobFact[]>([]);
+  const [jobSnapshot, setJobSnapshot] = useState<{ sessionId: string | null; items: JobFact[] }>({ sessionId: null, items: [] });
+  const jobs = jobSnapshot.sessionId === sessionId ? jobSnapshot.items : [];
   const [readStale, setReadStale] = useState(false);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -105,7 +106,7 @@ export function JobsCatalog() {
   const load = useCallback(async () => {
     const sid = activeSession.current;
     if (!sid) {
-      setJobs([]);
+      setJobSnapshot({ sessionId: null, items: [] });
       setReadStale(false);
       return;
     }
@@ -116,7 +117,7 @@ export function JobsCatalog() {
       return;
     }
     setReadStale(false);
-    setJobs(result.items);
+    setJobSnapshot({ sessionId: sid, items: result.items });
   }, []);
 
   // 发现轮询：空则隐藏 trigger，仍需发现新任务
@@ -152,6 +153,7 @@ export function JobsCatalog() {
   useEffect(() => {
     if (jobs.length === 0 && open) setOpen(false);
   }, [jobs.length, open]);
+  useEffect(() => setOpen(false), [sessionId]);
 
   // 外部点击关闭
   useEffect(() => {
@@ -209,27 +211,37 @@ export function JobsCatalog() {
             return (
               <li
                 key={job.job_id}
-                className={`v2-jobs-row ${live ? "" : "settled"}`}
                 data-testid="jobs-catalog-row"
               >
-                <span className={`v2-catalog-livedot ${dotState(status)}`} aria-hidden="true" />
-                <span className="v2-jobs-kind">{job.executor || "external"}</span>
-                <span className="v2-jobs-label" title={job.command || job.job_id}>
-                  {job.command || job.job_id}
-                </span>
-                <span className="v2-jobs-status">{jobStatusLabel(status)}</span>
-                <span
-                  className="v2-jobs-duration"
-                  title={
-                    duration
-                      ? live
-                        ? zh.durationTitleLive(duration)
-                        : zh.durationTitleDone(duration)
-                      : undefined
-                  }
+                <button
+                  type="button"
+                  className={`v2-jobs-row v2-jobs-open ${live ? "" : "settled"}`}
+                  aria-label={"打开后台任务：" + (job.command || job.job_id)}
+                  onClick={() => {
+                    if (!sessionId || activeSession.current !== sessionId) return;
+                    rightPanelStore.revealJob(sessionId, job.job_id);
+                    setOpen(false);
+                  }}
                 >
-                  {duration ?? "—"}
-                </span>
+                  <span className={`v2-catalog-livedot ${dotState(status)}`} aria-hidden="true" />
+                  <span className="v2-jobs-kind">{job.executor || "external"}</span>
+                  <span className="v2-jobs-label" title={job.command || job.job_id}>
+                    {job.command || job.job_id}
+                  </span>
+                  <span className="v2-jobs-status">{jobStatusLabel(status)}</span>
+                  <span
+                    className="v2-jobs-duration"
+                    title={
+                      duration
+                        ? live
+                          ? zh.durationTitleLive(duration)
+                          : zh.durationTitleDone(duration)
+                        : undefined
+                    }
+                  >
+                    {duration ?? "—"}
+                  </span>
+                </button>
               </li>
             );
           })}
