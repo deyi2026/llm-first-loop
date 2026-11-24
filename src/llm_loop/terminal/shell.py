@@ -72,6 +72,11 @@ def _preinput_signal_guard(composer: Composer):
         signal.signal(signal.SIGTERM, previous_term)
 
 
+def _queued_or_draft(queued_text: str | None, draft: str) -> str:
+    """A queued refused message wins over the editor draft; only a missing queue falls back."""
+    return draft if queued_text is None else queued_text
+
+
 def interactive_session(engine: Any, sid: str) -> int:
     try:
         ui = load_ui()
@@ -134,7 +139,7 @@ def interactive_session(engine: Any, sid: str) -> int:
                 with cli_state_admission(binding):
                     pass
             except CliDeploymentAdmissionError:
-                if request_reentry(queued_text if queued_text is not None else composer.draft):
+                if request_reentry(_queued_or_draft(queued_text, composer.draft)):
                     return 75
                 # Save failure: remain in composer, never auto-submit a queued draft.
                 queued_text = None
@@ -143,7 +148,7 @@ def interactive_session(engine: Any, sid: str) -> int:
                     with cli_mutation_lease(binding):
                         _pending_review(engine, detector)
                 except CliDeploymentAdmissionError:
-                    if request_reentry(queued_text if queued_text is not None else composer.draft):
+                    if request_reentry(_queued_or_draft(queued_text, composer.draft)):
                         return 75
                     queued_text = None
             session = engine.session.load(sid)
