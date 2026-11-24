@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from ctp_contract import (
     DegradationFlag,
     Observation,

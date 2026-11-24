@@ -9,11 +9,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class Resolution(str, Enum):
+class Resolution(StrEnum):
     """C-5 resolution：解析状态。"""
 
     CODE = "code"
@@ -21,7 +21,7 @@ class Resolution(str, Enum):
     UNRESOLVED = "unresolved"
 
 
-class DegradationFlag(str, Enum):
+class DegradationFlag(StrEnum):
     """C-5 degradation_flag：降级标记。"""
 
     NONE = "none"

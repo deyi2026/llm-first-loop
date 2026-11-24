@@ -329,14 +329,13 @@ def collect_errors(obj: Any) -> list[ContractError]:
                     )
                 )
 
-    degradation: DegradationFlag | None = None
     if "degradation_flag" in present:
         flag = obj["degradation_flag"]
         if not isinstance(flag, str):
             errors.append(ContractError(TYPE_ERROR, "degradation_flag", "expected string"))
         else:
             try:
-                degradation = DegradationFlag(flag)
+                DegradationFlag(flag)
             except ValueError:
                 errors.append(
                     ContractError(

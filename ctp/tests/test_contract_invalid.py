@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from ctp_contract import ContractError, collect_errors, parse_observation
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "invalid"
@@ -76,12 +75,8 @@ def test_root_must_be_object():
 
 def test_nonfinite_numbers_are_rejected():
     """分歧集合第 4 条：NaN/Inf 在 Python dict 里可出现，必须按 type_error 拒绝。"""
-    import math
-
-    raw = _load("i01_missing_target_index".replace("i01_missing_target_index", "i14_missing_reader_version"))
+    raw = _load("i14_missing_reader_version")
     raw["reader_version"] = "0.1.0"
-    raw["target_index"] = 42
     raw["pose"]["position_m"]["x"] = float("nan")
     codes = {error.code for error in collect_errors(raw)}
     assert "type_error" in codes, codes
-    assert math.isnan(raw["pose"]["position_m"]["x"])

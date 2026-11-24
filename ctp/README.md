@@ -21,7 +21,7 @@ ctp/
 │   ├── uncertainty.py               # 声明模板、一阶传播、蒙特卡洛自检
 │   └── pixel.py                     # 角点像素噪声 → 6DoF 协方差（雅可比 + 真解算 MC）
 ├── docs/uncertainty-declaration-template.md  # 11.1-c 填写模板
-└── tests/                           # 10 合法 + 22 非法样本 + schema 一致性 + B2 数学（含退化位形边界）
+└── tests/                           # 10 合法 + 24 非法样本 + schema 一致性 + B2 数学（含退化位形边界）
 ```
 
 `ctp_contract` 保持零第三方依赖（契约要能跨语言重写）；`ctp_calib` 只为参考实现与自检服务，
@@ -33,7 +33,8 @@ ctp/
 ./.venv/bin/python -m pytest ctp/tests -q
 ```
 
-不依赖安装：`ctp/tests/conftest.py` 把 `ctp/src` 追加进 `sys.path`；仓库 `.venv` 已带
+需要 Python ≥ 3.11（`StrEnum`）。不依赖安装：`ctp/tests/conftest.py` 把 `ctp/src` 追加进
+`sys.path`；仓库 `.venv` 已带
 `jsonschema` 与测试运行器。打包（`pyproject.toml`）留到迁出为独立 repo 时补，当前不落。
 
 ## 契约决定（待 G2 追认）

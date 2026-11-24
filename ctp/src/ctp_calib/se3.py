@@ -74,6 +74,10 @@ def exp_se3(xi: np.ndarray) -> np.ndarray:
     return transform
 
 
+class LogSingularityError(ValueError):
+    """θ→π 处对数映射奇异（轴符号不可定）；供调用方精确捕获。"""
+
+
 def log_se3(transform: np.ndarray) -> np.ndarray:
     """SE(3) 对数映射；θ→π 时轴的符号不可定（公式奇异），显式拒绝而非返回垃圾值。"""
     rotation = np.asarray(transform, dtype=float)[:3, :3]
@@ -81,7 +85,7 @@ def log_se3(transform: np.ndarray) -> np.ndarray:
     cos_theta = max(-1.0, min(1.0, (float(np.trace(rotation)) - 1.0) / 2.0))
     theta = math.acos(cos_theta)
     if theta > math.pi - 1e-9:
-        raise ValueError(
+        raise LogSingularityError(
             "log_se3 is singular at rotation angle pi (axis sign ambiguous); "
             "callers must keep rotations away from 180 degrees"
         )

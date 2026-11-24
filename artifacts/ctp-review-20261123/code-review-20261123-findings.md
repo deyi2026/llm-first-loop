@@ -79,3 +79,29 @@
 | 分歧集合声明仍不完整：时间戳**日历/偏移语义**（`2026-13-45T25:00:00+08:60` 过 schema pattern、被 fromisoformat 拒）与 **target_index 整数值浮点**（2020-12 integer 接受 `42.0`，`_is_int` 拒绝）两类分歧未声明、无 fixture 钉 | P1 | 已修：分歧集合四条 → **六条规则族**（R1 模长/R2 对称+非负对角/R3 全零/R4 非有限/R5 日历语义/R6 整数值浮点），schema description、validate.py docstring、parity 测试头三处同一份清单；新增 fixture i23（`format_error`）/i24（`type_error`）并把 VALIDATOR_ONLY 扩为六个 fixture、逐条标注规则映射 |
 | 模板自检片段迁移到仓库根后 `'src'` 相对路径失效 | P2 | 已修：改为 `sys.path.insert(0,'ctp/src')` |
 | `monte_carlo_relative` 未守护 θ→π 奇异：大 σ 采样命中时自检会中断而非判不通过 | P2 | 已修：`check_first_order_validity` 捕获该 ValueError 转为 `ok=False + reason=pi_singularity`（fail-closed 判定）；MC 直接调用方在 docstring 中要求自行缩小适用域；探测器测试兼容两种失败形态 |
+
+## 5. 第四轮：全量测试准入终审（subagent_a848428989db，2026-11-24 00:4x）
+
+回执 **PASS / P0=0 / P1=0**（FINGERPRINT 87e5cf20…；前三轮 6+3 项发现逐条 ACCEPTED；配套测试回执落盘 `ctp/receipts/20261124-b1b2-pytest.md`，132 passed / 2.11s）。终轮随 PASS 附带 3 项 P2 与处置：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| README 目录行写"10 合法 + 22 非法"，语料实为 24 非法 | P2 | 已修：README 计数改 24 |
+| `check_first_order_validity` 把一切 `ValueError` 都标 `reason=pi_singularity`（非奇异错误也得到该 reason） | P2 | 已修：se3 新增专属异常 `LogSingularityError`，`log_se3` 抛它、自检只捕它，其余 ValueError 照常传播 |
+| NaN 注入测试写法混淆（`.replace(...)` 实际加载 i14）+ 末尾自证断言 | P2 | 已修：直接 `_load("i14_missing_reader_version")`，删自证断言 |
+
+注：该轮无 `data/review_admission/*-full_test.md` 报告文件（工具仅前两轮落盘）；持久锚点为主会话事件日志 action_trace（pass 判定序列，会话 620199be）与回执内 FINGERPRINT 87e5cf20 的一致性。
+
+## 6. 第五轮：合并审查（subagent_bcd74df31265，2026-11-24 11:05）+ 明细复核（subagent_2f37847d66ae）
+
+- 官方合并审查回执 REVISE / p0=3 / p1=1——**四条经明细复核全部不成立（误报）**：其输入是跨分叉两点 diff `5fdd2108..a01b05df`，把 main 侧 PR #109/#110 的推进（EMFILE 修复、容量反馈、Sidebar 可见性、三份治理清单）视差读成分支删除。分支相对 merge-base（a64081687）真实增量为 87 文件全新增、零删除修改；且 lane 队列走三点合并，上述内容合并后保留。
+- 明细复核独立发现并确认 **4 条真 P1**，处置如下：
+
+| 发现 | 定级 | 处置 |
+|---|---|---|
+| P1-1 ctp/ 对三道既有门不可见：pyproject `testpaths=["tests"]` 不含 ctp/tests（全量回归漏跑）、`ruff check ctp/` 现存 6 错（UP042×2 / F841 / I001×3） | P1 | 已修：`testpaths += ctp/tests`（根 pyproject，+1 行）；StrEnum 改写（需 Python ≥3.11，README 已注明）；F841 删除未用变量；I001 三处 import 排序修复；`ruff check ctp/` 清零（回执见下） |
+| P1-2 终轮 PASS 无落盘报告文件 | P1 | 已修：本文件 §5 注明工具行为差异 + 事件日志锚点；回执内 FINGERPRINT 交叉引用 |
+| P1-3 findings 只记到第二轮、README 计数过时 | P1 | 已修：本 §5/§6 即补齐；README 计数改 24 |
+| P1-4 `artifacts/` 在 .gitignore 忽略根下，评审工件目录后续新增文件会静默不进 git status | P1 | 已修：根 .gitignore 加 `!/artifacts/ctp-review-20261123/` 例外 |
+
+处置验证：`ruff check ctp/` → All checks passed；`ctp_calib.log_se3(180°)` → `LogSingularityError`；`check_first_order_validity(60°σ, 200 samples)` → `ok=False`；StrEnum 继承生效。

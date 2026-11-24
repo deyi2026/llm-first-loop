@@ -197,7 +197,7 @@ def check_first_order_validity(
         empirical, residuals = monte_carlo_relative(
             pose_a, pose_b, covariance_a, covariance_b, samples=samples, seed=seed
         )
-    except ValueError as error:
+    except se3.LogSingularityError as error:
         # 采样命中 θ→π 奇异 ⇒ 声明的 σ 已在一阶适用域之外，本身就是 ok=False
         return {
             "ok": False,
