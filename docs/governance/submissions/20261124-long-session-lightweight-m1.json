@@ -23,6 +23,7 @@
         "tests/unit/test_session_page_index.py",
         "tests/web/test_history_compact_view.py",
         "tests/web/test_history_lazy_load.py",
+        "tests/web/test_tool_call_bind.py",
         "webui/src/components/conversation/MessageItem.tsx",
         "webui/src/components/conversation/MessageList.test.tsx",
         "webui/src/components/conversation/MessageList.tsx",

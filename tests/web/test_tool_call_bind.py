@@ -137,7 +137,12 @@ def test_message_item_contract_allows_planned_fields(build_test_engine):
             "reasoning_capable", "reasoning_supported", "reasoning_effective",
             "reasoning_tokens",
             "fallback_receipt",
+            # M1: opt-in compact history rows carry a hash-bound original reference.
+            "history_preview",
         }
+        # The default history API still returns the original, not a preview.
+        assert m.get("history_preview") is None
+        assert m["content"] == "[状态: success] ok"
 
 
 def test_sse_event_types_unchanged(build_test_engine, tmp_path):
