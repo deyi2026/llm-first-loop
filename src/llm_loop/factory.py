@@ -1233,7 +1233,10 @@ def build_engine(
     # 提权闭环（EVO-20260923-c58a0bb1 accepted + 用户批准 2026-09-23）:
     # 灾难硬阻断 → escalation_request → web 弹窗人工审批 → 一次性令牌定向放行。
     # 存储与 web 面板共用同一 data/audit 文件（flock 跨进程安全）。
-    _escalation_store = EscalationStore(settings.audit_dir / "escalation_requests.json")
+    _escalation_store = EscalationStore(
+        settings.audit_dir / "escalation_requests.json",
+        goal_identity_getter=lambda sid: GoalStore(settings.audit_dir).active_identity(sid),
+    )
 
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
     registry = ToolRegistry(

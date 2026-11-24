@@ -120,6 +120,38 @@ def test_create_pending_and_idempotent(tmp_path):
     assert s.pending_count() == 1
 
 
+def test_origin_snapshot_is_preserved_and_wait_timeout_does_not_cancel(tmp_path):
+    from llm_loop.core.run_context import current_run_generation, current_session_id
+
+    s = EscalationStore(
+        tmp_path / "audit" / "escalation_requests.json",
+        goal_identity_getter=lambda sid: ("GOAL-" + sid, "generation"),
+    )
+    sid = current_session_id.set("source-session")
+    run = current_run_generation.set("run-original")
+    try:
+        rec = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20,
+                       session_id="source-session")
+        current_run_generation.set("run-later")
+        same = s.create(tool_name="execute_command", command=_CMD, justification="y" * 20,
+                        session_id="source-session")
+        assert same["id"] == rec["id"]
+        assert same["origin_run_generation"] == "run-original"
+        assert same["origin_goal_id"] == "GOAL-source-session"
+        waited = s.wait_for_decision(rec["id"], 0)
+        assert waited is not None and waited["status"] == "pending"
+        assert s.pending_count() == 1
+        assert s.list(status="pending")[0]["session_id"] == "source-session"
+        other = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20,
+                         session_id="other-session")
+        assert other["id"] != rec["id"]
+        assert "origin_goal_id" not in other
+        assert "origin_run_generation" not in other
+    finally:
+        current_run_generation.reset(run)
+        current_session_id.reset(sid)
+
+
 def test_decide_denied_and_no_token(tmp_path):
     s = _store(tmp_path)
     rec = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20, session_id="s1")
@@ -169,6 +201,11 @@ def test_token_expiry(tmp_path):
     rec, reason = s.consume(s.get(rid)["token"], "execute_command", _CMD)
     assert rec is None and "过期" in reason
     assert s.get(rid)["status"] == "expired"
+    fresh = s.create(tool_name="execute_command", command=_CMD,
+                     justification="same session needs a new approval", session_id="s-test")
+    assert fresh["id"] != rid and fresh["status"] == "pending"
+    assert s.get(rid)["status"] == "expired"
+    assert s.get(fresh["id"])["token"] == ""
 
 
 # ── 请求工具防滥用 ──

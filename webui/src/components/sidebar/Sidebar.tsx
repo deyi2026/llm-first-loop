@@ -369,7 +369,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       ) : view === "evo" ? (
         <EvolutionPanel />
       ) : view === "esc" ? (
-        <EscalationPanel />
+        <EscalationPanel onNavigate={onNavigate} />
       ) : view === "metrics" ? (
         <InterjectMetricsPanel sessionId={currentId ?? ""} />
       ) : view === LANES_VIEW ? (
@@ -639,7 +639,7 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       <div className="v2-sidebar-footer">
         <span>{zh.sessionCount.replace("{n}", String(sessions.length))}</span>
       </div>
-      <EscalationWatcher />
+      <EscalationWatcher onNavigate={onNavigate} />
     </aside>
   );
 }
