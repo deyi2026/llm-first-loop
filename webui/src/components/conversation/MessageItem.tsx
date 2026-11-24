@@ -6,6 +6,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AttachmentFact,
   ChatMessage,
+  HistoryMessage,
   ProgressStage,
   ToolActivity,
   ToolActivityStatus,
@@ -17,7 +18,7 @@ import {
   isMathRendererReady,
   renderMarkdown,
 } from "../../core/markdown";
-import { formatTokens } from "../../core/chat";
+import { fetchHistory, formatTokens } from "../../core/chat";
 import { forkSession, submitFeedback } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { loadHistory, prefillComposer } from "../../core/conversation";
@@ -321,6 +322,8 @@ const PROGRESS_HEARTBEAT_MS = 12_000;
 function progressStageLabel(stage: ProgressStage | undefined): string {
   switch (stage) {
     case "preparing": return "正在准备";
+    case "confirming": return "正在核对任务状态";
+    case "submission_unknown": return "任务状态待确认";
     case "analyzing": return "正在分析";
     case "tool": return "正在使用工具";
     case "integrating": return "正在整理结果";
@@ -349,7 +352,13 @@ function progressSnapshot(msg: ChatMessage, now: number): {
 
   let summary = "正在提交请求并等待运行确认。";
   let next = "收到运行回执后继续显示模型与工具阶段。";
-  if (msg.progressStage === "retrying" && msg.providerRetry) {
+  if (msg.progressStage === "confirming") {
+    summary = "提交确认较慢，正在核对后台是否已受理；请勿重复提交。";
+    next = "取得精确运行回执后恢复进度；未确认不自动重发。";
+  } else if (msg.progressStage === "submission_unknown") {
+    summary = "暂未取得精确运行回执，不能判断任务是否已受理。";
+    next = "保留原请求，连接恢复后查看会话；不会自动重发。";
+  } else if (msg.progressStage === "retrying" && msg.providerRetry) {
     const retry = msg.providerRetry;
     // GLM1305-20261124: busy=模型繁忙（HTTP 429/业务码 1305）独立事实，
     // 不得误显示为「连接中断」；最终失败仍如实保留 provider 真实错误。
@@ -611,6 +620,61 @@ function FeedbackButtons({ sessionId, index }: { sessionId: string; index: numbe
   );
 }
 
+function HistoryPreview({ msg, sessionId }: {
+  msg: ChatMessage;
+  sessionId?: string;
+}) {
+  const [full, setFull] = useState<HistoryMessage | null>(null);
+  const [rawOpen, setRawOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => { pending.current?.abort(); pending.current = null; }, []);
+  const ref = msg.historyPreview!;
+  const expand = async () => {
+    if (!sessionId || pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetchHistory(sessionId, 1, ref.offset, controller.signal, ref.revision ?? undefined, ref);
+      if (controller.signal.aborted || sessionStore.getState().currentSessionId !== sessionId) return;
+      if (response.ok === false || response.messages.length !== 1 || response.messages[0].history_preview) {
+        setError(response.error ?? "原文读取失败，请重新加载会话后重试。");
+        return;
+      }
+      setFull(response.messages[0]);
+    } catch {
+      if (!controller.signal.aborted) setError("原文读取失败，请重试。");
+    } finally {
+      if (!controller.signal.aborted) { pending.current = null; setBusy(false); }
+    }
+  };
+  if (full) return (
+    <div className="v2-msg assistant v2-history-expanded">
+      <div className="v2-msg-body">
+        <button type="button" className="v2-btn ghost" onClick={() => { setFull(null); setRawOpen(false); }}>收起原文</button>
+        <pre className="v2-tool-activity-detail" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{full.content}</pre>
+        <CopyButton text={full.content} />
+        <button type="button" className="v2-btn ghost" aria-expanded={rawOpen} onClick={() => setRawOpen(value => !value)}>{rawOpen ? "收起结构化原文" : "查看完整结构化原文（含工具参数、附件等）"}</button>
+        {rawOpen ? <pre className="v2-tool-activity-detail"><code>{JSON.stringify(full, null, 2)}</code></pre> : null}
+      </div>
+    </div>
+  );
+  return (
+    <div className={`v2-msg ${msg.role}`} data-history-row="true" data-testid="history-preview">
+      <div className="v2-msg-body">
+        <div className="v2-msg-note">长消息预览 · {Math.ceil(ref.bytes / 1024)} KB · {msg.role === "tool" ? "工具回执" : msg.role === "user" ? "用户消息" : "历史消息"}</div>
+        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{msg.content}</div>
+        <button type="button" className="v2-btn ghost" disabled={busy || !sessionId} onClick={() => void expand()}>{busy ? "读取原文中…" : "展开完整原文"}</button>
+        {error ? <div className="v2-panel-error" role="alert">{error}</div> : null}
+        <MessageTime ts={msg.ts} />
+      </div>
+    </div>
+  );
+}
+
 export const MessageItem = memo(
   MessageItemImpl,
   // 2026-09-22（推理时切换不了会话事故）：流式 delta 每次只替换 streaming 消息
@@ -638,6 +702,8 @@ function MessageItemImpl({
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState("");
 
+  if (msg.historyPreview) return <HistoryPreview key={`${sessionId}:${msg.historyPreview.revision}:${msg.historyPreview.offset}:${msg.historyPreview.sha256}`} msg={msg} sessionId={sessionId} />;
+
   const editAndFork = async () => {
     if (!sessionId || typeof msg.sourceIndex !== "number" || msg.sourceIndex < 0 || editBusy) return;
     if (!editText.trim()) {
@@ -663,7 +729,7 @@ function MessageItemImpl({
 
   if (msg.role === "user") {
     return (
-      <div className="v2-msg user" data-testid="msg-user">
+      <div className="v2-msg user" data-history-row={msg.sourceIndex !== undefined && !msg.streaming && !editing ? "true" : undefined} data-testid="msg-user">
         <div className="v2-msg-bubble user">
           {/* EVO-20260818: 用户输入消息与 assistant 同格式渲染（markdown/代码块/表格/
               公式/路径点击）——输入端（Composer）直接输入 markdown 语法即可 */}
@@ -725,7 +791,7 @@ function MessageItemImpl({
       ...(typeof msg.toolDurationMs === "number" ? { durationMs: msg.toolDurationMs } : {}),
     };
     return (
-      <div className="v2-msg tool" data-testid="msg-tool">
+      <div className="v2-msg tool" data-history-row={msg.sourceIndex !== undefined && !msg.streaming ? "true" : undefined} data-testid="msg-tool">
         <div className="v2-msg-body">
           <ToolActivityPanel activities={[fallbackActivity]} />
           <MessageTime ts={msg.ts} />
@@ -735,7 +801,7 @@ function MessageItemImpl({
   }
   // assistant
   return (
-    <div className="v2-msg assistant" data-testid="msg-assistant">
+    <div className="v2-msg assistant" data-history-row={msg.sourceIndex !== undefined && !msg.streaming ? "true" : undefined} data-testid="msg-assistant">
       <div className="v2-msg-body">
         {msg.streaming ? <ProgressCard msg={msg} /> : null}
         {msg.reasoningContent ? (

@@ -214,7 +214,9 @@ def test_chat_stream_initial_background_run_emits_generation_before_model_deltas
 
     engine.runner = BackgroundRunner(engine, enabled=True)
     client = _make_client(engine)
-    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    with mock.patch.object(engine.runner, "start", wraps=engine.runner.start) as start:
+        resp = client.post("/api/v1/chat/stream", json={"message": "hi", "submission_id": "e" * 32})
+        assert start.call_args.kwargs["submission_id"] == "e" * 32
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
     assert events[0]["type"] == "run_started"
@@ -716,3 +718,34 @@ def test_chat_stream_rejects_cli_origin_session_before_run(build_test_engine):
     assert response.status_code == 409
     assert response.json()["error"] == "session_ingress_mismatch"
     assert len(fake.calls) == calls_before
+
+
+def test_submission_status_exact_live_correlation_is_read_only(build_test_engine):
+    from llm_loop.core.loop.runner import BackgroundRunner, RunHandle
+
+    engine, fake = build_test_engine([])
+    sid = engine.session.create()
+    runner = BackgroundRunner(engine, enabled=True)
+    engine.runner = runner
+    token = "a" * 32
+    handle = RunHandle(session_id=sid, submission_id=token)
+    runner._registry[sid] = handle
+    client = _make_client(engine)
+    url = "/api/v1/chat/stream/submission-status"
+
+    response = client.get(url, params={"submission_id": token, "session_id": sid})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"state": "active", "session_id": sid,
+                               "run_generation": handle.run_generation, "submission_id": token}
+    # Fresh session recovery uses the exact opaque correlation, not the shared current session.
+    assert client.get(url, params={"submission_id": token}).json() == response.json()
+    for params in ({"submission_id": "b" * 32}, {"submission_id": token, "session_id": "other"}):
+        assert client.get(url, params=params).json() == {"state": "unknown"}
+    assert client.get(url, params={"submission_id": "invalid"}).status_code == 400
+    runner._registry["other"] = RunHandle(session_id="other", submission_id=token)
+    assert client.get(url, params={"submission_id": token}).json() == {"state": "unknown"}
+    runner._registry.pop("other")
+    handle.status = "done"
+    assert client.get(url, params={"submission_id": token}).json() == {"state": "unknown"}
+    assert len(fake.calls) == 0

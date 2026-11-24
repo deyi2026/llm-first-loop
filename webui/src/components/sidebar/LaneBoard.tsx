@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { mainViewStore, sessionStore } from "../../core/stores";
-import { fetchCoordinationBoard } from "../../core/coordinationBoard";
+import { refreshCoordinationBoard, subscribeCoordinationBoard } from "../../core/coordinationBoard";
 
 interface LaneRow {
   lane_id: string;
@@ -49,19 +49,9 @@ interface BoardResp {
   } | null;
 }
 
-const POLL_MS = 10000;
-
 function shortSha(sha: string | undefined | null): string {
   const s = String(sha || "").trim();
   return s ? s.slice(0, 7) : "—";
-}
-
-async function fetchBoard(): Promise<BoardResp | null> {
-  try {
-    return await fetchCoordinationBoard<BoardResp>();
-  } catch {
-    return null;
-  }
 }
 
 function SyncBadge({ deployment }: { deployment: BoardResp["deployment"] }) {
@@ -78,28 +68,16 @@ export function LaneBoard({ onNavigate }: { onNavigate?: () => void } = {}) {
   const [data, setData] = useState<BoardResp | null>(null);
   const [loadErr, setLoadErr] = useState(false);
   const load = useCallback(() => {
-    void fetchBoard().then((d) => {
+    void refreshCoordinationBoard();
+  }, []);
+  useEffect(() => subscribeCoordinationBoard<BoardResp>((d) => {
       if (d) {
         setData(d);
         setLoadErr(false);
       } else {
         setLoadErr(true);
       }
-    });
-  }, []);
-  useEffect(() => {
-    const poll = () => {
-      if (!document.hidden) load();
-    };
-    poll();
-    const t = window.setInterval(poll, POLL_MS);
-    // 隐藏标签页不消耗 Board 轮询；重新可见时立即补读。
-    document.addEventListener("visibilitychange", poll);
-    return () => {
-      window.clearInterval(t);
-      document.removeEventListener("visibilitychange", poll);
-    };
-  }, [load]);
+  }), []);
 
   // 按 lane_id + goal_id 精确绑定会话，绝不猜测同 Goal 下其它 Lane 的 owner。
   const sessionByLane = new Map<string, { goal_id: string; session_id: string }>();

@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { mainViewStore, sessionStore, sidebarViewStore, useSidebarView } from "../../core/stores";
 import { formatRelative } from "./WorkspaceGroups";
-import { fetchCoordinationBoard } from "../../core/coordinationBoard";
+import { refreshCoordinationBoard, subscribeCoordinationBoard } from "../../core/coordinationBoard";
 import { CoordinationAction, type CoordinationTarget } from "./CoordinationAction";
 
 interface ChannelSession {
@@ -49,28 +49,8 @@ interface BoardResp {
   channel?: ChannelBlock | null;
 }
 
-const POLL_MS = 10000;
-
 /** channel 三态状态：undefined = 首次加载中；null = 请求成功但 channel 段缺失；对象 = 正常 */
 type ChannelState = ChannelBlock | null | undefined;
-
-/** fetch 结果显式区分三态：请求失败 ≠ channel 段缺失（后者是后端未提供，不得当 0） */
-type FetchResult =
-  | { kind: "ok"; channel: ChannelBlock | null }
-  | { kind: "error" };
-
-async function fetchChannel(): Promise<FetchResult> {
-  try {
-    const body = await fetchCoordinationBoard<BoardResp>();
-    if (!body) return { kind: "error" };
-    if (!body || typeof body !== "object" || body.channel == null) {
-      return { kind: "ok", channel: null };
-    }
-    return { kind: "ok", channel: body.channel };
-  } catch {
-    return { kind: "error" };
-  }
-}
 
 export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const [channel, setChannel] = useState(undefined as ChannelState);
@@ -80,29 +60,17 @@ export function CoordinationChannel({ collapsed, onNavigate }: { collapsed: bool
   const view = useSidebarView();
 
   const load = useCallback(() => {
-    void fetchChannel().then((res) => {
-      if (res.kind === "error") {
+    void refreshCoordinationBoard();
+  }, []);
+
+  useEffect(() => subscribeCoordinationBoard<BoardResp>((body) => {
+      if (body === null) {
         setLoadErr(true); // 保留旧数据（若有）叠加提示——LaneBoard 同款纪律
       } else {
         setLoadErr(false);
-        setChannel(res.channel);
+        setChannel(body.channel ?? null);
       }
-    });
-  }, []);
-
-  useEffect(() => {
-    const poll = () => {
-      if (!document.hidden) load();
-    };
-    poll();
-    const t = window.setInterval(poll, POLL_MS);
-    // 隐藏标签页不消耗 Board 轮询；重新可见时立即补读。
-    document.addEventListener("visibilitychange", poll);
-    return () => {
-      window.clearInterval(t);
-      document.removeEventListener("visibilitychange", poll);
-    };
-  }, [load]);
+  }), []);
 
   // 点击主行：不在 lanes 视图 → 先切过去；已在 → 切换本条展开/折叠
   const onMainRowClick = () => {

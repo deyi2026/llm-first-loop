@@ -41,6 +41,7 @@ class ChatRequest(BaseModel):
         description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
     )
     resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
+    submission_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$", description="Live submission correlation only; not authorization or an idempotency key")
     run_generation: str | None = Field(
         default=None,
         min_length=1,
@@ -192,6 +193,13 @@ class AttachmentFactItem(BaseModel):
     created_at: float = 0.0
 
 
+class HistoryPreviewRef(BaseModel):
+    offset: int
+    sha256: str
+    bytes: int
+    revision: str | None = None
+
+
 class MessageItem(BaseModel):
     """会话消息条目（刷新后恢复对话用）."""
 
@@ -218,6 +226,7 @@ class MessageItem(BaseModel):
     ts: float = 0.0  # 消息时间戳（epoch 秒；web 端时间显示，旧消息缺省 0）
     tool_calls: list[dict] | None = None  # assistant 工具声明透传（历史恢复出产物/正文链接）
     attachments: list[AttachmentFactItem] = Field(default_factory=list)
+    history_preview: HistoryPreviewRef | None = None
 
 
 class SessionMessagesResponse(BaseModel):
@@ -227,6 +236,8 @@ class SessionMessagesResponse(BaseModel):
     messages: list[MessageItem]
     has_more: bool = False  # D2: 是否还有更早消息（分页用，旧客户端忽略）
     total: int = 0  # D2: 会话消息总数（分页用，旧客户端忽略）
+    revision: str | None = None  # optional source-change hint, not a paging cursor
+    verified_sha256: str | None = None  # explicit original read only
 
 
 class WorkspaceRequest(BaseModel):

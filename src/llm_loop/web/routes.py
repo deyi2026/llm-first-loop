@@ -75,6 +75,7 @@ from .schemas import (
     ErrorResponse,
     EvolutionReviewRequest,
     FeedbackRequest,
+    HistoryPreviewRef,
     MessageItem,
     QueueCancelRequest,
     QueueDispatchRequest,
@@ -1493,6 +1494,7 @@ def _stream_background(
     user_metadata: dict[str, Any] | None = None,
     queue_terminal: Callable[[str, str | None], None] | None = None,
     signed_web_canary: Any = None,
+    submission_id: str | None = None,
 ) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
@@ -1518,12 +1520,11 @@ def _stream_background(
         }
         if resume:
             start_kwargs["expected_run_generation"] = expected_run_generation
-        if not resume and user_metadata is not None:
-            start_kwargs["user_metadata"] = user_metadata
-        if not resume and queue_terminal is not None:
-            start_kwargs["terminal_callback"] = queue_terminal
-        if not resume and signed_web_canary is not None:
-            start_kwargs["signed_web_canary"] = signed_web_canary
+        if not resume:
+            start_kwargs.update({key: value for key, value in {
+                "user_metadata": user_metadata, "terminal_callback": queue_terminal,
+                "signed_web_canary": signed_web_canary, "submission_id": submission_id,
+            }.items() if value is not None})
         handle, q = runner.start(session_id, message, **start_kwargs)
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
@@ -1936,16 +1937,13 @@ def chat_stream(
                 expected_run_generation=_expected_run_generation if _resume else None,
                 before_start=_before_start,
                 expected_workspace_epoch=workspace_epoch,
-                user_metadata=(
-                    {
-                        "attachments": attachment_facts,
-                        **({"human_turn_queue_id": _queue_id} if _queue_id else {}),
-                    }
-                    if attachment_facts or _queue_id
-                    else None
-                ),
+                user_metadata={
+                    "attachments": attachment_facts,
+                    **({"human_turn_queue_id": _queue_id} if _queue_id else {}),
+                } if attachment_facts or _queue_id else None,
                 queue_terminal=_queue_terminal,
                 signed_web_canary=_signed_canary,
+                submission_id=payload.submission_id,
             )
             return
         if _resume:
@@ -2114,6 +2112,17 @@ def chat_stream_status(session_id: str, request: Request) -> Response:
     if snap is None:
         return UTF8JSONResponse(content={"running": False})
     return UTF8JSONResponse(content={"running": True, **snap})
+
+
+@router.get("/api/v1/chat/stream/submission-status")
+def chat_submission_status(submission_id: str, request: Request, session_id: str | None = None) -> Response:
+    """Read-only exact correlation, including a newly allocated session; no ingress."""
+    if len(submission_id) != 32 or any(c not in "0123456789abcdef" for c in submission_id):
+        return UTF8JSONResponse(status_code=400, content={"detail": "invalid submission_id"})
+    runner = getattr(_engine_from(request), "runner", None)
+    snap = runner.get_submission_handle(submission_id, session_id) if runner is not None and runner.enabled else None
+    return UTF8JSONResponse(content={"state": "active", **snap} if snap else {"state": "unknown"},
+                            headers={"Cache-Control": "no-store"})
 
 
 @router.post("/api/v1/chat/cancel")
@@ -3885,7 +3894,7 @@ def list_interop_messages(request: Request) -> dict:
 def list_sessions(request: Request, include_archived: bool = False) -> SessionListResponse:
     """会话列表：复用 engine.session.list_sessions，不遍历会话目录."""
     engine = _engine_from(request)
-    metas = engine.session.list_sessions(include_archived=include_archived)
+    metas = engine.session.list_sessions(include_archived=include_archived, display_only=True)
     default_model = getattr(getattr(engine, "llm", None), "model", None)
     items = [
         SessionMetaItem(
@@ -4691,46 +4700,33 @@ def session_durable_recovery_status(session_id: str, request: Request) -> Respon
     return UTF8JSONResponse(content=durable_recovery_view(engine, session_id))
 
 
-@router.get(
-    "/api/v1/sessions/{session_id}/messages",
-    response_model=SessionMessagesResponse,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-)
-def get_session_messages(
-    session_id: str,
-    request: Request,
-    limit: int | None = None,
-    offset: int = 0,
-) -> SessionMessagesResponse | Response:
-    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
+def _history_revision_hint(engine: Any, session_id: str) -> str | None:
+    try:
+        revision = engine.session.history_revision(session_id)
+        return revision if isinstance(revision, str) else None
+    except Exception:
+        # A hint is optional; the ordinary history read retains its own errors.
+        return None
 
-    D2: 可选 limit/offset 分页（offset = 跳过最近 N 条，返回更早消息）；不传 limit 全量返回。
-    """
+
+@router.get("/api/v1/sessions/{session_id}/history-revision", response_model=None)
+def get_session_history_revision(session_id: str, request: Request) -> Response:
     engine = _engine_from(request)
     if not engine.session.exists(session_id):
         return JSONResponse(
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
-    try:
-        session = engine.session.load(session_id)
-    except Exception as exc:
-        logger.exception("session load failed: session_id=%s", session_id)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "load_failed",
-                "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
-            },
-        )
-    source_messages = session.messages
-    total = len(source_messages)
-    start = 0
-    end = total
-    if limit is not None:
-        start = max(0, total - offset - limit)
-        end = max(0, total - offset)
-        source_messages = source_messages[start:end]
+    return JSONResponse(
+        content={"revision": _history_revision_hint(engine, session_id)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _project_history_messages(
+    engine: Any, session_id: str, source_messages: list[Any],
+) -> list[MessageItem]:
+    """Project the selected history window, including exact program-final UI text."""
     # Program-final assistant rows intentionally persist an empty protocol placeholder so
     # subsequent provider prompts never ingest program-authored terminal prose.  The exact
     # UI text is durably stored in EventStore; hydrate only this Web response by the seq
@@ -4803,9 +4799,118 @@ def get_session_messages(
         )
         for m in source_messages
     ]
+    return messages
+
+
+@router.get(
+    "/api/v1/sessions/{session_id}/messages",
+    response_model=SessionMessagesResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def get_session_messages(
+    session_id: str,
+    request: Request,
+    limit: int | None = None,
+    offset: int = 0,
+    snapshot_revision: str | None = None,
+    compact: bool = False,
+    expected_sha256: str | None = None,
+) -> SessionMessagesResponse | Response:
+    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
+
+    D2: 可选 limit/offset 分页（offset = 跳过最近 N 条，返回更早消息）；不传 limit 全量返回。
+    """
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    if (compact and (limit is None or not 1 <= limit <= 100 or offset < 0)) or (
+        expected_sha256 is not None and (compact or limit != 1 or offset < 0 or len(expected_sha256) != 64)
+    ):
+        return JSONResponse(status_code=400, content={"error": "invalid_history_view"})
+    # A caller continuing a page window must never silently mix two source
+    # revisions. This is a change guard, not an authorization or replay proof.
+    def resync_required() -> Response:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "history_resync_required", "detail": "会话历史已变化，请重新读取后继续翻页。"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    revision_before = (
+        _history_revision_hint(engine, session_id)
+        if limit is not None and (offset == 0 or snapshot_revision is not None or expected_sha256 is not None or compact)
+        else None
+    )
+    if snapshot_revision is not None and (revision_before is None or revision_before != snapshot_revision):
+        return resync_required()
+    try:
+        indexed = engine.session.load_history_page(session_id, limit, offset) if limit is not None else None
+        if indexed is not None and limit is not None:
+            source_messages, total = indexed
+            start = max(0, total - offset - limit)
+        else:
+            session = engine.session.load(session_id)
+            source_messages = session.messages
+            total = len(source_messages)
+            start = 0
+            if limit is not None:
+                start = max(0, total - offset - limit)
+                end = max(0, total - offset)
+                source_messages = source_messages[start:end]
+    except Exception as exc:
+        logger.exception("session load failed: session_id=%s", session_id)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "load_failed",
+                "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
+            },
+        )
+    messages = _project_history_messages(engine, session_id, source_messages)
     if limit is not None:
+        revision = (
+            revision_before
+            if revision_before is not None and revision_before == _history_revision_hint(engine, session_id)
+            else None
+        )
+        if snapshot_revision is not None and revision != snapshot_revision:
+            return resync_required()
+        if expected_sha256 is not None:
+            if len(messages) != 1 or hashlib.sha256(messages[0].model_dump_json().encode("utf-8")).hexdigest() != expected_sha256:
+                return resync_required()
+            if revision_before is not None and revision_before != _history_revision_hint(engine, session_id):
+                return resync_required()
+        if compact:
+            # Bound the serialized display window, not the authoritative source.
+            # Large tool arguments/attachments/reasoning are also deferred. Keep
+            # one row per original message so the existing offset never skips rows.
+            for i, message in enumerate(messages):
+                raw = message.model_dump_json().encode("utf-8")
+                if len(raw) > 8192:
+                    messages[i] = MessageItem(
+                        role=message.role if message.role in {"user", "assistant", "tool", "system"} else "system",
+                        content=message.content[:512], ts=message.ts,
+                        history_preview=HistoryPreviewRef(
+                            offset=total - 1 - (start + i), sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw),
+                            revision=revision,
+                        ),
+                    )
+            if revision_before is not None and revision_before != _history_revision_hint(engine, session_id):
+                if snapshot_revision is not None:
+                    return resync_required()
+                # Initial page remains a point-in-time display, as before. An
+                # active writer must not turn every first-screen read into 409.
+                # Drop the revision hint; expansion still verifies exact bytes.
+                revision = None
+                for message in messages:
+                    if message.history_preview is not None:
+                        message.history_preview.revision = None
         return SessionMessagesResponse(
-            session_id=session_id, messages=messages, has_more=start > 0, total=total
+            session_id=session_id, messages=messages, has_more=start > 0, total=total, revision=revision,
+            verified_sha256=expected_sha256,
         )
     return SessionMessagesResponse(session_id=session_id, messages=messages, total=total)
 
@@ -5183,7 +5288,7 @@ def list_workspace_sessions(workspace_id: str, request: Request) -> JSONResponse
             content={"error": "workspace_not_found", "detail": f"工作区未注册: {workspace_id}"},
         )
     metas = engine.session.list_sessions_in(
-        Path(engine.settings.sessions_dir) / ws.id
+        Path(engine.settings.sessions_dir) / ws.id, display_only=True
     )
     return JSONResponse(
         {

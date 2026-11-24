@@ -37,6 +37,75 @@ def _build_session(build_test_engine, n_messages: int):
 
 
 class TestHistoryPagination:
+    def test_large_history_api_uses_index_without_full_session_load(self, build_test_engine, monkeypatch):
+        from llm_loop.core.message import Message, MessageSource
+
+        engine, sid, _ = _build_session(build_test_engine, 1)
+        session = engine.session.load(sid)
+        session.messages = [Message(role="user", content=f"row-{i}", source=MessageSource.USER) for i in range(1003)]
+        engine.session.save(session)
+
+        def unexpected(*args, **kwargs):
+            raise AssertionError("full history load")
+
+        monkeypatch.setattr(engine.session, "load", unexpected)
+        client = _make_client(engine)
+        first = client.get(f"/api/v1/sessions/{sid}/messages?limit=50")
+        assert first.status_code == 200
+        body = first.json()
+        assert body["total"] == 1003
+        assert body["revision"]
+        assert [m["content"] for m in body["messages"]] == [f"row-{i}" for i in range(953, 1003)]
+        earlier = client.get(f"/api/v1/sessions/{sid}/messages?limit=50&offset=50&snapshot_revision={body['revision']}")
+        assert earlier.status_code == 200
+        assert [m["content"] for m in earlier.json()["messages"]] == [f"row-{i}" for i in range(903, 953)]
+
+    def test_snapshot_revision_rejects_changed_history(self, build_test_engine):
+        engine, sid, _ = _build_session(build_test_engine, 2)
+        client = _make_client(engine)
+        first = client.get(f"/api/v1/sessions/{sid}/messages?limit=1").json()
+        revision = first["revision"]
+        assert revision
+        earlier = client.get(f"/api/v1/sessions/{sid}/messages?limit=1&offset=1&snapshot_revision={revision}")
+        assert earlier.status_code == 200
+        assert earlier.json()["revision"] == revision
+        session = engine.session.load(sid)
+        engine.session.save(session)
+        stale = client.get(f"/api/v1/sessions/{sid}/messages?limit=1&offset=1&snapshot_revision={revision}")
+        assert stale.status_code == 409
+        assert stale.json()["error"] == "history_resync_required"
+
+    def test_snapshot_revision_rejects_change_during_page_read(self, build_test_engine, monkeypatch):
+        engine, sid, _ = _build_session(build_test_engine, 2)
+        client = _make_client(engine)
+        revision = client.get(f"/api/v1/sessions/{sid}/messages?limit=1").json()["revision"]
+        original = engine.session.load
+
+        def changed_after_read(session_id):
+            session = original(session_id)
+            engine.session.save(session)
+            return session
+
+        monkeypatch.setattr(engine.session, "load", changed_after_read)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=1&offset=1&snapshot_revision={revision}")
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "history_resync_required"
+
+    def test_revision_probe_uses_no_full_history_load(self, build_test_engine, monkeypatch):
+        engine, sid, _ = _build_session(build_test_engine, 2)
+        client = _make_client(engine)
+        page = client.get(f"/api/v1/sessions/{sid}/messages?limit=1").json()
+        assert page["revision"]
+
+        def unexpected(*args, **kwargs):
+            raise AssertionError("revision probe must not load history")
+
+        monkeypatch.setattr(engine.session, "load", unexpected)
+        resp = client.get(f"/api/v1/sessions/{sid}/history-revision")
+        assert resp.status_code == 200
+        assert resp.json() == {"revision": page["revision"]}
+        assert resp.headers["cache-control"] == "no-store"
+
     def test_limit_returns_slice(self, build_test_engine):
         engine, sid, total = _build_session(build_test_engine, 3)  # 6 条
         client = _make_client(engine)
@@ -91,7 +160,7 @@ class TestHistoryPagination:
                 "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
                 "ts", "attachments", "status", "tool_name", "duration_ms",
                 "fallback_receipt", "reasoning_mode", "reasoning_capable", "reasoning_control",
-                "reasoning_supported", "reasoning_effective", "reasoning_tokens",
+                "reasoning_supported", "reasoning_effective", "reasoning_tokens", "history_preview",
             }
 
     def test_runtime_receipt_history_projection_is_whitelisted(self, build_test_engine):

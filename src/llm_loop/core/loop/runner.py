@@ -109,6 +109,7 @@ class RunHandle:
     # Human steer mailbox. Web threads may append only through BackgroundRunner;
     # the engine worker is the sole consumer at a safe round boundary.
     interjections: list[dict[str, Any]] = field(default_factory=list, repr=False)
+    submission_id: str | None = field(default=None, repr=False)
 
     def snapshot(self) -> dict:
         return {
@@ -432,6 +433,20 @@ class BackgroundRunner:
         with self._guard:
             h = self._registry.get(session_id)
             return h.snapshot() if h else None
+
+    def get_submission_handle(self, submission_id: str, session_id: str | None = None) -> dict | None:
+        """Exact live correlation only; absence is not proof of non-admission."""
+        with self._guard:
+            matches = [
+                h for h in self._registry.values()
+                if h.submission_id == submission_id and h.status == "running"
+                and (session_id is None or h.session_id == session_id)
+            ]
+            if len(matches) != 1:
+                return None
+            h = matches[0]
+            return {"session_id": h.session_id, "run_generation": h.run_generation,
+                    "submission_id": submission_id}
 
     def enqueue_interjection(
         self,
@@ -813,6 +828,7 @@ class BackgroundRunner:
         user_metadata: dict[str, Any] | None = None,
         terminal_callback: Callable[[str, str | None], None] | None = None,
         signed_web_canary: Any = None,
+        submission_id: str | None = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -865,7 +881,7 @@ class BackgroundRunner:
                 if resume:
                     # resume 语义=订阅已有 run；无进行中 run 时无可订阅（不启动新 run）
                     return None, None
-                handle = RunHandle(session_id=session_id)
+                handle = RunHandle(session_id=session_id, submission_id=submission_id)
                 self._registry[session_id] = handle
                 # _bus 在锁内赋值，避免unsubscribe观察到半初始化handle。
                 bus = EventBus()

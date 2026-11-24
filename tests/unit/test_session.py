@@ -619,7 +619,8 @@ def test_parent_id_of_matches_load_and_uses_meta_cache(tmp_path, monkeypatch):
     sess2.parent_id = other
     store.save(sess2)
     assert store.parent_id_of(child) == other
-    assert calls["n"] == 2
+    # Save publishes exact source-bound metadata, so no reparse is necessary.
+    assert calls["n"] == 1
 
 
 def test_parent_id_of_missing_session_returns_empty_like_load_fail_open(tmp_path):

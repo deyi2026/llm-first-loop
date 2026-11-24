@@ -10,7 +10,9 @@ const h = vi.hoisted(() => ({
   }>,
   streamChatRequest: vi.fn(),
   fetchHistory: vi.fn(),
+  fetchHistoryRevision: vi.fn(),
   fetchStreamStatus: vi.fn(),
+  fetchSubmissionStatus: vi.fn(),
 }));
 
 vi.mock("./core/chat", async (importOriginal) => {
@@ -19,7 +21,9 @@ vi.mock("./core/chat", async (importOriginal) => {
     ...actual,
     streamChatRequest: h.streamChatRequest,
     fetchHistory: h.fetchHistory,
+    fetchHistoryRevision: h.fetchHistoryRevision,
     fetchStreamStatus: h.fetchStreamStatus,
+    fetchSubmissionStatus: h.fetchSubmissionStatus,
   };
 });
 
@@ -64,12 +68,16 @@ describe("conversation stream ownership", () => {
     h.pending.length = 0;
     h.streamChatRequest.mockReset();
     h.fetchHistory.mockReset();
+    h.fetchHistoryRevision.mockReset();
     h.fetchStreamStatus.mockReset();
+    h.fetchSubmissionStatus.mockReset();
+    h.fetchSubmissionStatus.mockResolvedValue(null);
     h.streamChatRequest.mockImplementation(
       (body: Record<string, unknown>, handlers: any, signal?: AbortSignal) =>
         new Promise<StreamOutcome>((resolve) => h.pending.push({ body, handlers, signal, resolve }))
     );
     h.fetchHistory.mockResolvedValue({ messages: [], has_more: false });
+    h.fetchHistoryRevision.mockResolvedValue(null);
     h.fetchStreamStatus.mockResolvedValue(null);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 })));
     sessionStore.setCurrentSession("s1");
@@ -82,7 +90,90 @@ describe("conversation stream ownership", () => {
     sessionStore.setCurrentSession("");
     sessionStore.setNewSessionPending(false);
     resetConversation();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("recovers an accepted submission after a missing receipt without resending the human turn", async () => {
+    vi.useFakeTimers();
+    const run = sendMessage("only once", []);
+    await nextTurn();
+    const first = h.pending[0];
+    const id = first.body.submission_id;
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    h.fetchSubmissionStatus.mockResolvedValue({ submission_id: id, session_id: "s1", run_generation: "exact-g" });
+    first.signal?.addEventListener("abort", () => first.resolve(stopped), { once: true });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.fetchSubmissionStatus).toHaveBeenCalledTimes(1);
+    expect(h.pending).toHaveLength(2);
+    expect(h.pending[1].body).toMatchObject({ resume: true, session_id: "s1", run_generation: "exact-g" });
+    expect(h.pending[1].body.message).not.toBe("only once");
+    h.pending[1].resolve({ ok: true, errorType: null, error: null, data: { final_answer: "recovered", session_id: "s1" } });
+    await run;
+    expect(h.pending.filter(p => p.body.resume !== true)).toHaveLength(1);
+  });
+
+  it("recovers a fresh session by its submission id before the original SSE receipt", async () => {
+    vi.useFakeTimers();
+    sessionStore.setCurrentSession("");
+    sessionStore.setNewSessionPending(true);
+    const run = sendMessage("fresh once", []);
+    await nextTurn();
+    const first = h.pending[0];
+    h.fetchSubmissionStatus.mockResolvedValue({ submission_id: first.body.submission_id,
+      session_id: "s-fresh", run_generation: "fresh-g" });
+    first.signal?.addEventListener("abort", () => first.resolve(stopped), { once: true });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(h.fetchSubmissionStatus.mock.calls[0]?.[1]).toBeNull();
+    expect(sessionStore.getState().currentSessionId).toBe("s-fresh");
+    expect(h.pending[1].body).toMatchObject({ resume: true, session_id: "s-fresh", run_generation: "fresh-g" });
+    h.pending[1].resolve({ ok: true, errorType: null, error: null, data: { final_answer: "ok", session_id: "s-fresh" } });
+    await run;
+    expect(h.pending.filter(p => p.body.resume !== true)).toHaveLength(1);
+  });
+
+  it("recovers an early network failure before the first scheduled status probe", async () => {
+    const run = sendMessage("early failure", []);
+    await nextTurn();
+    const first = h.pending[0];
+    h.fetchSubmissionStatus.mockResolvedValue({ submission_id: first.body.submission_id,
+      session_id: "s1", run_generation: "early-g" });
+    first.resolve({ ok: false, errorType: "network", error: { detail: "HTTP 524" }, data: null });
+    await nextTurn();
+    await nextTurn();
+    expect(h.pending[1].body).toMatchObject({ resume: true, session_id: "s1", run_generation: "early-g" });
+    h.pending[1].resolve({ ok: true, errorType: null, error: null, data: { final_answer: "ok", session_id: "s1" } });
+    await run;
+    expect(h.pending.filter(p => p.body.resume !== true)).toHaveLength(1);
+  });
+
+  it("bounds unknown submission probes and never resends while the receipt is unknown", async () => {
+    vi.useFakeTimers();
+    const run = sendMessage("unknown", []);
+    await nextTurn();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(conversationStore.getState().messages.at(-1)?.progressStage).toBe("confirming");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.fetchSubmissionStatus).toHaveBeenCalledTimes(6);
+    expect(conversationStore.getState().messages.at(-1)?.progressStage).toBe("submission_unknown");
+    expect(h.pending).toHaveLength(1);
+    expect(h.pending[0].signal?.aborted).toBe(false);
+    h.pending[0].resolve({ ok: false, errorType: "network", error: { detail: "lost" }, data: null });
+    await run;
+    expect(conversationStore.getState().backgroundRunning).toBe(true);
+    expect(h.pending).toHaveLength(1);
+  });
+
+  it("cancels pending submission probes when the user switches sessions", async () => {
+    vi.useFakeTimers();
+    const run = sendMessage("switch", []);
+    await nextTurn();
+    sessionStore.setCurrentSession("s2");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.fetchSubmissionStatus).not.toHaveBeenCalled();
+    expect(h.pending).toHaveLength(1);
+    h.pending[0].resolve(stopped);
+    await run;
   });
 
   it("new-session guard stays armed until run_started binds the exact new session", async () => {
@@ -305,6 +396,62 @@ describe("conversation stream ownership", () => {
     expect(next.lastError).toBeNull();
   });
 
+  it("unchanged revision skips history body; changed revision reloads the current page", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "old" }], has_more: false, revision: "r1" });
+      await loadHistory("s1");
+      h.fetchHistoryRevision.mockResolvedValue("r1");
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.fetchHistoryRevision).toHaveBeenCalledWith("s1");
+      expect(h.fetchHistory).toHaveBeenCalledTimes(1);
+      h.fetchHistoryRevision.mockResolvedValue("r2");
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "new" }], has_more: false, revision: "r2" });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+      expect(conversationStore.getState().messages[0].content).toBe("new");
+      expect(h.streamChatRequest).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unavailable revision falls back to the existing latest-message probe", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "old" }], has_more: false, revision: "r1" });
+      await loadHistory("s1");
+      h.fetchHistoryRevision.mockResolvedValue(null);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+      expect(h.fetchHistory.mock.calls[1].slice(0, 3)).toEqual(["s1", 1, 0]);
+      expect(h.streamChatRequest).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("late revision from the old session does not reload the new session", async () => {
+    vi.useFakeTimers();
+    try {
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "old" }], has_more: false, revision: "r1" });
+      await loadHistory("s1");
+      let resolveRevision!: (value: string) => void;
+      h.fetchHistoryRevision.mockImplementationOnce(() => new Promise((resolve) => { resolveRevision = resolve; }));
+      await vi.advanceTimersByTimeAsync(20_000);
+      sessionStore.setCurrentSession("s2");
+      h.fetchHistory.mockResolvedValue({ ok: true, messages: [{ role: "assistant", content: "new session" }], has_more: false, revision: "r3" });
+      await loadHistory("s2");
+      resolveRevision("r2");
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(h.fetchHistory).toHaveBeenCalledTimes(2);
+      expect(conversationStore.getState().messages[0].content).toBe("new session");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("同会话并发历史刷新共享一个请求，不互相 abort 或重复读", async () => {
     let resolveHistory!: (value: { ok: true; messages: Array<{ role: string; content: string }>; has_more: boolean }) => void;
     h.fetchHistory.mockImplementationOnce(() => new Promise((resolve) => { resolveHistory = resolve; }));
@@ -398,6 +545,17 @@ describe("conversation stream ownership", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("pagination binds the loaded revision and refuses a changed snapshot", async () => {
+    h.fetchHistory.mockResolvedValueOnce({ ok: true, messages: [{ role: "assistant", content: "current" }], has_more: true, revision: "r1" });
+    await loadHistory("s1");
+    h.fetchHistory.mockResolvedValueOnce({ ok: true, messages: [{ role: "user", content: "stale" }], has_more: true, revision: "r2" });
+    await loadEarlierHistory("s1");
+    expect(h.fetchHistory.mock.calls[1]).toEqual(["s1", 50, 1, undefined, "r1"]);
+    expect(conversationStore.getState().messages.map(m => m.content)).toEqual(["current"]);
+    expect(conversationStore.getState().lastError).toContain("会话历史已变化");
+    expect(h.streamChatRequest).not.toHaveBeenCalled();
   });
 
   it("加载更早的旧会话迟到响应不得污染已经切换的新会话", async () => {
