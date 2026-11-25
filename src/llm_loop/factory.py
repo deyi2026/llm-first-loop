@@ -251,7 +251,9 @@ def review_terminal_predicate(child_id: str, *, _authority: Any = None) -> bool:
     return authority.snapshot_child_state(child_id) == "settled"
 
 
-def _configure_review_admission(registry: Any, event_store: Any, settings: Settings) -> HostReviewAdmission:
+def _configure_review_admission(
+    registry: Any, event_store: Any, settings: Settings
+) -> HostReviewAdmission:
     """Attach the existing Host authority without expanding the factory body."""
     authority = HostReviewAdmission(
         reviewer_models_raw=reviewer_models_configured(
@@ -277,6 +279,7 @@ def _make_tool_fault_observer(
     status_provider: ArchitectureStatusProvider,
 ) -> Callable[[str, Any], None]:
     """Bind the existing post-result fault recorder to this engine status provider."""
+
     def _observer(tool_name: str, result: Any) -> None:
         status = getattr(result, "status", None)
         content = str(getattr(result, "content", "") or "")
@@ -302,6 +305,7 @@ def _make_tool_fault_observer(
         status_provider.record_tool_fault(
             tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
         )
+
     return _observer
 
 
@@ -629,8 +633,12 @@ def _cwd_in_system_temp(cwd: Path) -> bool:
     # 垃圾中多数即来自 /var/folders 下的 pytest-of-* 目录）。
     for cand in (
         tempfile.gettempdir(),
-        "/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp",
-        "/var/folders", "/private/var/folders",
+        "/tmp",
+        "/var/tmp",
+        "/private/tmp",
+        "/private/var/tmp",
+        "/var/folders",
+        "/private/var/folders",
     ):
         if not cand:
             continue
@@ -688,7 +696,9 @@ def _resolve_default_workspace_root() -> Path:
     return root
 
 
-def _activate_default_workspace(engine: Any, settings: Any, *, workspace_root: str | None = None) -> None:
+def _activate_default_workspace(
+    engine: Any, settings: Any, *, workspace_root: str | None = None
+) -> None:
     """工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区.
 
     2026-09-23 学习风暴根因修复：learning 分支提前 return 曾跳过本步——
@@ -713,9 +723,7 @@ def _activate_default_workspace(engine: Any, settings: Any, *, workspace_root: s
     if _cwd_in_system_temp(root) and _registry_is_production_default(settings):
         # 根治点：临时根不写入生产注册表。隔离运行（DATA_DIR 显式指向
         # 临时/评测目录）不受影响——那类注册表本身就是一次性的，照常注册。
-        logger.info(
-            "[workspace] 默认工作区根位于系统临时目录，跳过自动注册: %s", root
-        )
+        logger.info("[workspace] 默认工作区根位于系统临时目录，跳过自动注册: %s", root)
         engine.workspace_store = workspace_store
         current_ws = workspace_store.get_current()
         if current_ws is not None:
@@ -916,7 +924,9 @@ def _attach_dialog_probes(perceive_tool: Any, operation_tool: Any, actuator: Any
     operation_tool.attach_dialog_state_probe(probe)
 
 
-def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner: Any, job_registry: Any) -> None:
+def _wire_coordination_sources(
+    correction_ctx: Any, engine: Any, subagent_runner: Any, job_registry: Any
+) -> None:
     """把三个只读事实源接到装配点（engine 拓扑面 + coordination_status 的 running 段）.
 
     DESIGN-20261103 §6.4 N1。设计稿里的 ``from llm_loop.subagent import get_runner``
@@ -932,8 +942,12 @@ def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner
 
 
 def _wire_host_review_and_verify(
-    registry: Any, host_review: Any, runner: Any, settings: Settings,
-    escalation_store: EscalationStore, engine: Any,
+    registry: Any,
+    host_review: Any,
+    runner: Any,
+    settings: Settings,
+    escalation_store: EscalationStore,
+    engine: Any,
 ) -> None:
     """One Host-owned wiring point; keep build_engine's frozen size unchanged."""
     host_review.attach_runner(runner)
@@ -1009,7 +1023,8 @@ def build_engine(
             if _note:
                 logger.info(
                     "history_max_chars 未配置（无独立全局 cap）；%s，诊断预算=%d",
-                    _note, _budget,
+                    _note,
+                    _budget,
                 )
             else:
                 logger.info(
@@ -1024,9 +1039,7 @@ def build_engine(
                 if _budget != settings.history_max_chars:
                     settings = dataclasses.replace(settings, history_max_chars=_budget)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
-        reasoning_capable, reasoning_control = registry.reasoning_contract(
-            provider_id, model_id
-        )
+        reasoning_capable, reasoning_control = registry.reasoning_contract(provider_id, model_id)
         model_registry_resolved = True
         if "/" in settings.llm_model:
             llm_params = registry.client_params(provider_id, model_id)
@@ -1067,7 +1080,8 @@ def build_engine(
         reasoning_efforts=(llm_params or {}).get("reasoning_efforts"),
         reasoning_default_effort=(llm_params or {}).get("reasoning_default_effort"),
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
-        thinking_supported=thinking_supported, reasoning_capable=reasoning_capable,
+        thinking_supported=thinking_supported,
+        reasoning_capable=reasoning_capable,
         reasoning_control=reasoning_control,
         provider=resolved_provider_id,
         send_tool_choice=bool((llm_params or {}).get("send_tool_choice", True)),
@@ -1102,7 +1116,8 @@ def build_engine(
     model_pool = ModelClientPool(
         registry=registry,
         default_client=llm,
-        model_fallbacks_raw=settings.model_fallbacks_raw, model_roles_raw=settings.model_roles_raw,
+        model_fallbacks_raw=settings.model_fallbacks_raw,
+        model_roles_raw=settings.model_roles_raw,
         base_timeout_s=settings.llm_timeout_s,
         base_max_tokens=settings.llm_max_tokens,
         transport_observer=transport_observer,
@@ -1433,13 +1448,23 @@ def build_engine(
             ) -> str | None:
                 owner = _evidence_owner_for_session(session_id)
                 # A history envelope includes protocol state that plain content refs do not.
-                envelope = msg.role == "assistant" and bool(msg.tool_calls or msg.reasoning_content or (msg.metadata or {}).get("provider_replay"))
-                source_text = (
-                    json.dumps({"kind": "archived_assistant_message", "message": msg.to_llm_dict()},
-                               ensure_ascii=False, sort_keys=True)
-                    if envelope else msg.content
+                envelope = msg.role == "assistant" and bool(
+                    msg.tool_calls
+                    or msg.reasoning_content
+                    or (msg.metadata or {}).get("provider_replay")
                 )
-                existing = "" if envelope else str((msg.metadata or {}).get("evidence_ref", "") or "")
+                source_text = (
+                    json.dumps(
+                        {"kind": "archived_assistant_message", "message": msg.to_llm_dict()},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    if envelope
+                    else msg.content
+                )
+                existing = (
+                    "" if envelope else str((msg.metadata or {}).get("evidence_ref", "") or "")
+                )
                 if existing:
                     try:
                         existing_ref = EvidenceRef(existing)
@@ -1457,7 +1482,9 @@ def build_engine(
                     f"{msg.role}\0{msg.tool_call_id or ''}\0{msg.content}".encode()
                 ).hexdigest()
                 if msg_seq is not None:
-                    stable_capture_id = f"history-envelope-msg:{msg_seq}" if envelope else f"history-msg:{msg_seq}"
+                    stable_capture_id = (
+                        f"history-envelope-msg:{msg_seq}" if envelope else f"history-msg:{msg_seq}"
+                    )
                     source_slot = str(msg_seq)
                 elif archive_id:
                     stable_capture_id = f"history-archive:{archive_id}"
@@ -1552,7 +1579,9 @@ def build_engine(
         # Artifact identity is a continuity aid, not permission to make the whole
         # runtime unavailable.  Tools remain usable and report ref unavailability.
         _artifact_store = None
-        logger.warning("workspace artifact store unavailable; artifact refs disabled", exc_info=True)
+        logger.warning(
+            "workspace artifact store unavailable; artifact refs disabled", exc_info=True
+        )
     _file_service = FileService(
         artifact_store=_artifact_store,
         lock_root=Path(settings.data_dir) / "file_locks",
@@ -1587,9 +1616,7 @@ def build_engine(
         if ref.startswith("attachment://"):
             if _attachment_store_for_tools is None:
                 raise SynopsisError("attachment store 当前不可用。")
-            record, text = _attachment_store_for_tools.ensure_full_text(
-                ref, workspace_scope=scope
-            )
+            record, text = _attachment_store_for_tools.ensure_full_text(ref, workspace_scope=scope)
             return SourceSnapshot(
                 source_ref=ref,
                 source_kind="attachment",
@@ -1645,9 +1672,7 @@ def build_engine(
             chunks: list[str] = []
             exact = False
             while True:
-                page = episode_store.hydrate_truncated(
-                    sid, ref, offset=offset, max_chars=100_000
-                )
+                page = episode_store.hydrate_truncated(sid, ref, offset=offset, max_chars=100_000)
                 if page is None:
                     raise SynopsisError("truncated source 不存在或当前 session 无权访问。")
                 total = int(page.get("total_chars") or 0)
@@ -1686,15 +1711,20 @@ def build_engine(
         "source_synopsis",
         SourceSynopsisTool(_synopsis_store, _resolve_synopsis_source),
     )
-    _register_basic("task_state", TaskStateTool(session_store, event_store, data_dir=settings.data_dir))
+    _register_basic(
+        "task_state", TaskStateTool(session_store, event_store, data_dir=settings.data_dir)
+    )
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
-    _register_desktop_perceive(_register_basic, settings)  # M3 桌面感知 + M4 桌面窄操作（D0-A′；写默认关）
+    _register_desktop_perceive(
+        _register_basic, settings
+    )  # M3 桌面感知 + M4 桌面窄操作（D0-A′；写默认关）
     # EVO-20260912-10818cb5: smx 感知层 opt-in（wait 谓词轮询 + snapshot/diff + 回执查询；
     # 执行面不并入，维持经 execute_command；LFL_SMX_PERCEIVE 为空 → 不注册）
     if settings.smx_perceive_path:
         _register_basic(
-            "smx_perceive", SmxPerceiveTool(
+            "smx_perceive",
+            SmxPerceiveTool(
                 smx_path=settings.smx_perceive_path,
                 data_dir=settings.data_dir,
                 max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
@@ -1831,13 +1861,17 @@ def build_engine(
                     download_dir_provider=_browser_download_dir_provider(settings),  # M2-A B6
                 )
                 _browser_page_controller.attach_mutation_host(_browser_actuator)
-                _browser_perceive_tool.attach_download_state_probe(_browser_actuator.download_state)  # M2-A B6
+                _browser_perceive_tool.attach_download_state_probe(
+                    _browser_actuator.download_state
+                )  # M2-A B6
                 # The review freezes real page text from the same read-only
                 # capture backend; no model-supplied JSON can mint a PASS.
                 _host_review.attach_browser_capture(_browser_host.capture)
                 _browser_action_adapter = BrowserActionAdapter(
                     perception=_browser_adapter,
-                    receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
+                    receipt_store=BrowserActionReceiptStore(
+                        Path(settings.data_dir) / "browser_action"
+                    ),
                     capture_backend=_browser_host,
                     actuator=_browser_actuator,
                     dialog_state_probe=_browser_actuator.dialog_state,
@@ -1869,7 +1903,9 @@ def build_engine(
                     session_id_getter=lambda: current_session_id_ctx.get(),
                     page_controller=_browser_page_controller,
                 )
-                _attach_dialog_probes(_browser_perceive_tool, _browser_semantic_operation_tool, _browser_actuator)
+                _attach_dialog_probes(
+                    _browser_perceive_tool, _browser_semantic_operation_tool, _browser_actuator
+                )
                 _register_basic("browser_operate", _browser_semantic_operation_tool)
     _register_basic_tools(_register_basic, settings)
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
@@ -1885,13 +1921,12 @@ def build_engine(
     from llm_loop.tools.registry import GetToolSchemaTool
 
     registry.register(GetToolSchemaTool(registry))
+
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
     # EVO-20261014-7ba73d88: push/publish/全量测试闸提示记录器（机器事实探测 +
     # review_gate_probe 观测事件落盘；观测失败记 unknown，不授予审查资格或免审）。
     def _review_gate_audit(action_type: str, detail_text: str, sid: str) -> None:
-        status_provider.record_action(
-            "tool.review_gate", action_type, detail_text, session_id=sid
-        )
+        status_provider.record_action("tool.review_gate", action_type, detail_text, session_id=sid)
 
     _review_gate_recorder = make_review_gate_probe(
         event_store, current_session_id.get, _review_gate_audit
@@ -1931,9 +1966,7 @@ def build_engine(
     # 装配处 ScheduleStore() 分裂为两个实例，due() 只扫内存互不可见 → 永不触发；
     # 路径从 settings.data_dir 绝对化派生，消除 LFL_DATA_DIR env 与进程 cwd
     # 双基准导致的落点分裂（实证：注册与调度写读不同 schedule.json）。
-    _schedule_store = ScheduleStore(
-        Path(settings.data_dir).resolve() / "schedule.json"
-    )
+    _schedule_store = ScheduleStore(Path(settings.data_dir).resolve() / "schedule.json")
 
     def _schedule_goal_binding(session_id: str) -> tuple[str, str] | None:
         """Strict-session active Goal identity for delegated wake lifecycle fencing."""
@@ -2061,7 +2094,6 @@ def build_engine(
             archive_dir=settings.archive_dir,
         )
 
-
     # Persistent Knowledge path identity.  Production load_settings supplies the
     # exact RuntimePaths object; direct Settings construction in tests/factories is
     # normalized here without making cwd authoritative for mutable state.
@@ -2104,9 +2136,8 @@ def build_engine(
             _memory_warm = semantic_retriever.warm_memory_store(memory)
             logger.info("semantic memory startup warmup: %s", _memory_warm)
             if int(_memory_warm.get("remaining_missing", 0) or 0) > 0:
-                logger.warning(
-                    "semantic memory startup warmup incomplete: %s", _memory_warm
-                )
+                logger.warning("semantic memory startup warmup incomplete: %s", _memory_warm)
+
             def _memory_post_save_hook(entry: Any) -> None:
                 # fail-open observer：入队结果（bool）无消费方，显式丢弃以符合 hook 契约
                 semantic_retriever.schedule_memory_entry(entry)
@@ -2289,12 +2320,8 @@ def build_engine(
         _experience_warm = semantic_retriever.warm_experience_store(experience_store)
         logger.info("semantic experience startup warmup: %s", _experience_warm)
         if int(_experience_warm.get("remaining_missing", 0) or 0) > 0:
-            logger.warning(
-                "semantic experience startup warmup incomplete: %s", _experience_warm
-            )
-        experience_store.add_post_save_hook(
-            semantic_retriever.schedule_experience_candidate
-        )
+            logger.warning("semantic experience startup warmup incomplete: %s", _experience_warm)
+        experience_store.add_post_save_hook(semantic_retriever.schedule_experience_candidate)
     method_store = MethodStore(
         _runtime_paths.methods_dir,
         seed_dir=_runtime_paths.method_seed_dir,
@@ -2314,11 +2341,10 @@ def build_engine(
                 "keyword recall remains available and vectors warm incrementally",
                 int(_method_warm.get("deferred_candidates", 0) or 0),
             )
+
         def _method_post_save_hook(record: Any) -> None:
             # fail-open observer：丢弃入队结果（bool），符合 hook 契约
-            semantic_retriever.schedule_method_candidate(
-                method_store.semantic_candidate(record)
-            )
+            semantic_retriever.schedule_method_candidate(method_store.semantic_candidate(record))
 
         method_store.add_post_save_hook(_method_post_save_hook)
     # REPORT-20260924 多查询融合影子模式：mode=shadow 时旁路测量（延迟/排序差异 JSONL），主路径零行为
@@ -2339,6 +2365,7 @@ def build_engine(
     _knowledge_read_sink: Callable[[dict], None] | None = None
     _rule_feedback_projection = None
     if getattr(event_store, "enabled", False):
+
         def _append_knowledge_read_event(payload: dict) -> None:
             sid = str(payload.get("session_id") or "")
             if not sid:
@@ -2422,9 +2449,7 @@ def build_engine(
     try:
         docs_searcher = DocsSearcher(
             docs_dir=str(_runtime_paths.docs_dir),
-            semantic_retriever=(
-                semantic_retriever if settings.semantic_docs_enabled else None
-            ),
+            semantic_retriever=(semantic_retriever if settings.semantic_docs_enabled else None),
         )
 
         class _DocsSearcherAdapter:
@@ -2644,6 +2669,7 @@ def build_engine(
                 learning_resource_target = None
                 logger.warning("Learning cloud route unavailable; preserving foreground yield")
         if pinned_client is not None:
+
             def _resolve_pinned_learning_model(_model_ref: str) -> Any:
                 return pinned_client
 
@@ -2776,9 +2802,7 @@ def build_engine(
                     Path(settings.data_dir).expanduser(), "learning_job"
                 ),
                 admission_heartbeat_path=(
-                    Path(settings.data_dir).expanduser()
-                    / "runtime"
-                    / "learning_admission.json"
+                    Path(settings.data_dir).expanduser() / "runtime" / "learning_admission.json"
                 ),
                 # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL → Settings.
                 # learning_model）：学习提取/反思走独立模型（如 flash），
@@ -2787,7 +2811,9 @@ def build_engine(
             )
             learning_plane.start()
             engine.learning_plane = learning_plane
-            logger.info("Learning Plane dedicated consumer 已启动 journal=%s", learning_journal._path)
+            logger.info(
+                "Learning Plane dedicated consumer 已启动 journal=%s", learning_journal._path
+            )
         else:
             logger.info("Learning journal producer 已挂载；task runtime 不启动 Reflection consumer")
     else:
@@ -2832,7 +2858,9 @@ def build_engine(
             # 常驻授权每次触发开新会话执行（设计 §5.3）：新会话不占原会话 run 槽。
             new_session=lambda: session_store.create(),
             # R7：授权时钉死的工作目录与运行时不符 → 降级为通知，不在新目录执行。
-            workspace_root=str(Path(workspace_root).resolve()) if workspace_root else str(Path.cwd()),
+            workspace_root=str(Path(workspace_root).resolve())
+            if workspace_root
+            else str(Path.cwd()),
         )
 
         engine.scheduler = SchedulerThread(_schedule_store, notify=_deliver_schedule)
@@ -2900,12 +2928,8 @@ def build_engine(
     status_provider.set_budget_fn(lambda: engine._run_state().last_budget_info)
     # 2026-09-04 P1: 最近一次真实 provider request 的 context/cache 事实按需可查，
     # 不再靠 prompt 注入让模型猜 headroom / prefix 漂移。
-    status_provider.set_request_usage_fn(
-        lambda: engine._run_state().last_request_usage
-    )
-    status_provider.set_causality_fn(
-        lambda sid: diagnose_event_store(engine._event_store, sid)
-    )
+    status_provider.set_request_usage_fn(lambda: engine._run_state().last_request_usage)
+    status_provider.set_causality_fn(lambda sid: diagnose_event_store(engine._event_store, sid))
     # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
     try:
@@ -2972,13 +2996,13 @@ def build_engine(
     _fleet_coordinator: ProjectCoordinator | None = None
     if settings.fleet_workspace_root:
         _fleet_coordinator = ProjectCoordinator(
-            fleet_dir=settings.fleet_state_dir
-            or str(Path(settings.data_dir) / "fleet"),
+            fleet_dir=settings.fleet_state_dir or str(Path(settings.data_dir) / "fleet"),
             project_id=settings.fleet_project_id or "default",
             physical_root=settings.fleet_workspace_root,
             repo_head=settings.fleet_repo_head,
             owner_id=uuid.uuid4().hex,
         )
+
     def _child_context_limits(model_ref: str) -> tuple[int, int | None, float] | None:
         """Snapshot model/provider capacity from the same live registry as the client pool."""
         ref = str(model_ref or settings.llm_model).strip()
@@ -3014,7 +3038,9 @@ def build_engine(
         project_coordinator=_fleet_coordinator,
     )
     # Host review and receipt issuance share a single trusted process boundary.
-    _wire_host_review_and_verify(registry, _host_review, subagent_runner, settings, _escalation_store, engine)
+    _wire_host_review_and_verify(
+        registry, _host_review, subagent_runner, settings, _escalation_store, engine
+    )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面与 coordination_status 的 running 段都在这个装配点接线。
@@ -3469,9 +3495,7 @@ def _build_pending_actions_fn(settings) -> Any:
         # 服务控制动作进入 pending 投影，下一会话直接读到 sid/时间/原因，
         # 不再零可见。两段各自 fail-open，不侵蚀上方演进计数。
         scan_data_dir = getattr(settings, "data_dir", None)
-        degraded_wake_notify = (
-            _scan_degraded_wake_notify(scan_data_dir) if scan_data_dir else []
-        )
+        degraded_wake_notify = _scan_degraded_wake_notify(scan_data_dir) if scan_data_dir else []
         failed_service_actions = (
             _scan_failed_service_actions(scan_data_dir) if scan_data_dir else []
         )
@@ -3514,9 +3538,7 @@ def _build_pending_actions_fn(settings) -> Any:
             n_by_state: dict[str, int] = {}
             for g in pending_compaction_gates:
                 n_by_state[str(g.get("state"))] = n_by_state.get(str(g.get("state")), 0) + 1
-            parts = [
-                f"{k}={v}" for k, v in n_by_state.items() if v
-            ]
+            parts = [f"{k}={v}" for k, v in n_by_state.items() if v]
             hint_parts.append(
                 f"压缩恢复门：{'，'.join(parts)}"
                 "（详情见 pending_compaction_gates；degraded=快照降级未开确认门）"
