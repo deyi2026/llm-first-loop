@@ -34,9 +34,19 @@ _NARROWING_RE = re.compile(r"(^|\s)-k\S*|\S*::\S*|\S*\.py\b|(^|\s)tests?/\S*|(^|
 # 不执行任何测试。须落在该次 pytest 调用所在的命令段内，且文本内全部 pytest
 # 调用均为非执行形态才不归类；--fixtures/--setup-only 会导入并执行 setup，
 # 不在豁免之列。help/version 旗标口径与只读探测面（_READ_ONLY_STANDALONE_FLAGS）
-# 一致。
+# 一致。口径边界（独立审查 P2-1，已声明不改）：--co/--collect-only 仍会导入
+# conftest 与测试模块（模块级代码会执行），只是不运行测试用例——它与
+# --fixtures/--setup-only（执行 setup）的区别在此，不声称收集零副作用。
 _PYTEST_NON_EXEC_RE = re.compile(r"(?:^|\s)(?:-[hV?]|--(?:help|version|co\b|collect-only))(?![\w-])")
 _SHELL_SEGMENT_END_RE = re.compile(r"[;&|\n]")
+# 接力修复（独立审查 P2-3，subagent_3c3885323858，2026-11-26）：选项段里的引号串
+# 不是选项——`pytest "my --version file"`、`pytest -- -h` 的旗标文本不是 pytest 旗标。
+_PYTEST_QUOTED_SPAN_RE = re.compile(r"\"[^\"]*\"|'[^']*'")
+# 接力修复（独立审查 P1，subagent_3c3885323858，2026-11-26）：命令位之外的 pytest
+# 词元。_PYTEST_CMD_RE 的命中只收命令位的调用（命令起点或 shell 操作符之后），
+# 引号串 / bash -c 载荷里的调用不在命中之列。排除标识符与包名片段
+# （foo_pytest / pytest-xdist / pytest_cov）。
+_PYTEST_ANY_TOKEN_RE = re.compile(r"(?<![\w.-])pytest3?(?![\w-])")
 # 只读探测的旗标形态（供 execute_command 复用，保持单一定义点）。
 # argv0 允许集（basename 归一后）：只读豁免只对集合内命令生效——
 # rm status / tee diff / ./deploy.sh --dry-run 等 argv0 混淆形态一律不放行
@@ -137,6 +147,17 @@ def is_read_only_probe(command: str) -> bool:
     return rest[0] in subcommands and _safe_args(rest[1:])
 
 
+def _pytest_option_segment(text: str, hit: re.Match[str]) -> str:
+    """该次 pytest 调用的选项段（接力修复，独立审查 P2-3）.
+
+    到下一个 shell 操作符为止；去掉引号串与 ``--`` 之后传给被测程序的参数——
+    那里的旗标文本不是 pytest 旗标（``pytest "my --version file"`` /
+    ``pytest -- -h`` 修复前被当作非执行形态）。
+    """
+    segment = _SHELL_SEGMENT_END_RE.split(text[hit.end() :], 1)[0]
+    return _PYTEST_QUOTED_SPAN_RE.sub('""', segment.split(" -- ", 1)[0])
+
+
 def classify_review_gate_command(command: str) -> str | None:
     """Deterministically classify a shell command as a review-gate trigger.
 
@@ -154,12 +175,18 @@ def classify_review_gate_command(command: str) -> str | None:
         # 取其所在命令段（到下一个 shell 操作符为止）核对旗标；同串只要有一处
         # 真实调用，仍归类为全量闸面。
         if all(
-            _PYTEST_NON_EXEC_RE.search(
-                _SHELL_SEGMENT_END_RE.split(text[hit.end() :], 1)[0]
-            )
-            for hit in pytest_hits
+            _PYTEST_NON_EXEC_RE.search(_pytest_option_segment(text, hit)) for hit in pytest_hits
         ):
-            return None
+            # 接力修复（独立审查 P1，subagent_3c3885323858，2026-11-26）：上面的
+            # 命中只收命令位的调用。引号串 / bash -c 载荷里的 pytest 不在命中之列，
+            # 却会被 shell 真实执行——`pytest --version; bash -c 'pytest -q'` 修复前
+            # 对诱饵 --version 成立即被判非执行。命中之外只要还有 pytest 词元，
+            # 「全部非执行」就不成立（与修复前判定一致：全量闸面）。
+            residual = text
+            for hit in reversed(pytest_hits):
+                residual = residual[: hit.start()] + residual[hit.end() :]
+            if _PYTEST_ANY_TOKEN_RE.search(residual) is None:
+                return None
         return "full_test"
     return None
 

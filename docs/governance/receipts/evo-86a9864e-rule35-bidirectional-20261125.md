@@ -16,10 +16,10 @@
 
 ## 2. 修法
 
-- `review_host_admission._strip_heredoc_units` 新增可选 `net_out` 镜像，收集 shell 实际解析的文本。仅当「终止符已配对 + 已豁免 + 引导位于 shell 顶层」时数据体不进镜像，其余照常进。
-- `_advance_quote_state`：逐字符推进引号状态，用于判定 `<<` 是否位于顶层（不在跨行未闭合的引号串内）。
+- `review_host_admission._strip_heredoc_units` 新增可选 `net_out` 镜像，收集 shell 实际解析的文本。仅当「终止符已配对 + 已豁免 + 引导位于 shell 顶层 + opener 行整行收在顶层」时数据体不进镜像，其余照常进（末项为 2026-11-26 接力修复，见 §8.2）。
+- `_advance_quote_state`：逐字符推进引号状态，用于判定 `<<` 是否位于顶层（不在跨行未闭合的引号串内），以及 opener 行尾是否留下未闭合引号。
 - `classify_host_shell` 的反引号网改扫 `"".join(net_parts) or value`。
-- `review_gate.classify_review_gate_command`：逐个 pytest 调用取其所在命令段核对非执行旗标，全部为非执行形态才返回 `None`。
+- `review_gate.classify_review_gate_command`：逐个 pytest 调用取其所在命令段核对非执行旗标，全部为非执行形态、且命中之外不残留 pytest 词元才返回 `None`（后半句为 2026-11-26 接力修复，见 §8.1）。
 
 ### 与建议正文的偏离（RULE-AI-06 子规则 6：accepted 不冻结实现手段，新证据优先）
 
@@ -143,4 +143,52 @@
 
 - 真实入口活体验证（部署后）：`execute_command` 下正文含 Markdown 代码span 的写文档命令不再被拒；真实 push 与全量测试命令在无资格时仍被拒。
 - `evolution_complete` 登记（注明上述偏离与 B11 缺口）。
+
+## 8. 接力修复（2026-11-26，独立审查 P1）
+
+合入前复验时，push 闸（`subagent_3c3885323858`）与后续 lane 的 full_test 闸（`subagent_801ecd8bf25d`）各返回 1 条 P1，均为 REVISE，未放行。两条先用分类器与真实 bash 复现，确认后再修。修后定向单测 327 passed（原 318，新增 9 条）；全量门禁见 `full-test-gate-evo-86a9864e-20261125.json`。下表「基线」取 main `a4623895`（这两个文件与 `c6612c7e9` 相同）。
+
+### 8.1 P1-A：非执行判定放过藏在引号 / `bash -c` 载荷里的真实调用
+
+`_PYTEST_CMD_RE` 的命中只收命令位的调用。`pytest --version; bash -c 'pytest -q'` 的唯一命中是诱饵 `pytest --version`，「全部非执行」成立，被判 `None`，而 `pytest -q` 会被 shell 真实执行。这是本次改动新引入的 fail-open。
+
+修法：把全部命中的文本挖掉后，若仍残留 pytest 词元（排除 `pytest-xdist` / `pytest_cov` 这类包名片段），不断言非执行，回到全量闸面。
+
+| 用例 | 基线 | 本 lane 修复前 | 修复后 |
+|---|---|---|---|
+| `pytest --version; bash -c 'pytest -q'` | `full_test` | `None`（新漏放） | `full_test` |
+| `pytest --co && sh -c 'pytest'` | `full_test` | `None`（新漏放） | `full_test` |
+| `python -m pytest -h; python -c 'import pytest, sys; pytest.main()'` | `full_test` | `None`（新漏放） | `full_test` |
+| `pytest --version; pip install pytest-xdist` | `full_test` | `None` | `None`（保持放行） |
+| `pip install pytest==8.0.0`（无命令位命中） | `None` | `None` | `None` |
+
+同批收紧 P2-3（旗标须是该次调用的选项）：`pytest "my --version file"` 与 `pytest -- -h` 的旗标文本在引号串里或 `--` 之后，修复前被判非执行，现归全量闸面；`pytest --version "out --help.txt"` 保持放行。P2-1 的 `--co` 导入副作用边界已在正则注释中声明，口径不改。
+
+### 8.2 P1-B：opener 行尾留下未闭合引号时体被脱敏
+
+审查者给的原样例（行尾 `; echo "note`）含 `;`，本就被判非豁免，不是洞。但它指向的根因成立：豁免与「引导位于顶层」只看 `<<` 之前的文本，`<<WORD` 之后的行尾文本不检查引号状态。行尾不含 `;&|()` 却留下未闭合引号时（如 `> "note`），shell 把后续各行当作该引号串的延续——属于命令行，不是 here-doc 体，双引号内的命令替换真实执行。分类器却把这些行当作可豁免的体，从反引号网与内容网脱敏。
+
+真实 bash 实测（无害的 `touch` 标记代替受保护动作，2026-11-26 01:47）：
+
+    cat > doc_p1b.md <<'EOF' > "note
+    `touch marker_p1b` x"
+    EOF
+
+结果：`MARKER_CREATED: command substitution ran`，`doc_p1b.md` 为 0 字节。
+
+修法：`data_body = is_exempt 且 opener 行尾引号状态收在顶层`，同时用于内容网豁免与反引号网脱敏。体的反引号替换均为 `` `git push origin main` ``。
+
+| opener 行 | 基线 | 本 lane 修复前 | 修复后 |
+|---|---|---|---|
+| `cat > f <<'EOF' > "note` | `git_push` | `None`（新漏放） | `git_push` |
+| 同上，其后另有一行使骨架引号配平 | `git_push` | `None`（新漏放） | `git_push` |
+| `cat <<'EOF' 'arg` | `None` | `None` | `git_push`（保守过拦：真实 bash 也不执行，接受） |
+| `cat > f <<'EOF' > "a b"`（引号已闭合） | `git_push`（误拒） | `None` | `None` |
+| `cat > f <<'EOF' # it's fine` | `None` | `None` | `None` |
+| `cat > f <<'EOF' 2>/dev/null` | `git_push`（误拒） | `None` | `None` |
+| `cat > f <<'EOF' && echo done` | `git_push` | `git_push` | `git_push` |
+
+### 8.3 顺带发现（未修，不在已批准范围）
+
+Host 准入分类器对 `pytest -- -h` 返回 `None`（`--` 之后的 `-h` 被当作 help 旗标），而真实 pytest 会跑全量。基线与修后一致，属既有缺口，另行提演进建议。
 

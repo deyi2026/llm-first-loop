@@ -69,6 +69,45 @@ def test_gate_ignores_pytest_non_execution_forms() -> None:
     assert classify_review_gate_command('pytest -q "a" ; echo --version') == "full_test"
 
 
+def test_non_execution_form_cannot_hide_a_real_pytest_call() -> None:
+    """接力修复（独立审查 P1，subagent_3c3885323858，2026-11-26）：命中只收命令位调用.
+
+    `pytest --version; bash -c 'pytest -q'` 曾被判非执行——引号 / bash -c 载荷里的
+    真实调用不在 _PYTEST_CMD_RE 命中之列，「全部非执行」对诱饵 --version 成立。
+    命中之外只要还有 pytest 词元，就不得断言全部非执行（回到修复前判定：全量闸面）。
+    """
+    for command in (
+        "pytest --version; bash -c 'pytest -q'",
+        "pytest --version; bash -c 'pytest'",
+        "pytest --co && sh -c 'pytest'",
+        "python -m pytest -h; python -c 'import pytest, sys; pytest.main()'",
+        "pytest --version; echo run pytest now",
+    ):
+        assert classify_review_gate_command(command) == "full_test", command
+    # 非调用位置的包名片段不算残留：非执行判定保持。
+    for command in (
+        "pytest --version; pip install pytest-xdist",
+        "pytest --version && pip install pytest_cov",
+        'pytest --version "out --help.txt"',
+    ):
+        assert classify_review_gate_command(command) is None, command
+    # 没有命令位命中时本就不归类（口径不变）。
+    assert classify_review_gate_command("pip install pytest==8.0.0") is None
+
+
+def test_non_execution_flag_must_be_an_option_not_quoted_or_passthrough_text() -> None:
+    """接力修复（独立审查 P2-3）：旗标文本须是该次调用的选项.
+
+    引号串里的 ` --version`、`--` 之后传给被测程序的 `-h` 不是 pytest 旗标；
+    两种形态都真实运行测试。
+    """
+    assert classify_review_gate_command('pytest "my --version file"') == "full_test"
+    assert classify_review_gate_command("pytest -- -h") == "full_test"
+    # 选项段里真正的非执行旗标不受引号串影响。
+    assert classify_review_gate_command('pytest --version "out --help.txt"') is None
+    assert classify_review_gate_command("pytest -q --co") is None
+
+
 def test_non_execution_forms_agree_with_host_classifier() -> None:
     """EVO-20261125-86a9864e：观测行分类器与 Host 准入分类器对非执行形态口径一致."""
     from llm_loop.tools.review_host_admission import classify_host_shell
@@ -77,6 +116,15 @@ def test_non_execution_forms_agree_with_host_classifier() -> None:
         command = f"python3 -m pytest {flag}"
         assert classify_review_gate_command(command) is None, flag
         assert classify_host_shell(command) is None, flag
+    # 接力修复（独立审查 P1）：藏在引号 / bash -c 载荷里的真实调用，两侧同判全量闸面。
+    for command in (
+        "pytest --version; bash -c 'pytest -q'",
+        "pytest --co && sh -c 'pytest'",
+        "python -m pytest -h; python -c 'import pytest, sys; pytest.main()'",
+        'pytest "my --version file"',
+    ):
+        assert classify_review_gate_command(command) == "full_test", command
+        assert classify_host_shell(command) == "full_test", command
 
 
 def test_gate_non_triggers() -> None:
