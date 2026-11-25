@@ -1067,30 +1067,15 @@ def _is_delete_only_push(command: str) -> bool:
     return all(item.startswith(":") and _REFSPEC_NAME_RE.match(item[1:]) for item in refspecs)
 
 
-def _consume_knowledge_gate(workdir: str, command: str) -> tuple[str, str] | None:
-    """消费口的知识闸：审查窗口内新落卡 → 非消费性拒绝（返回 reason, hint）。
+def _knowledge_gate_warning(workdir: str) -> dict[str, Any] | None:
+    """git_push 前置：有未入库知识资产 → 结构化非阻塞告警；干净 → None。
 
-    投递本就也会被 .githooks/pre-push 拦，资格却已被消费、白烧一个审查周期，
-    故把同一口径的只读判定前置到消费口。纯删 ref 的推送与 start 前置同口径
-    豁免（EVO-20261123-d43138fc）。
-    """
-    if _is_delete_only_push(command):
-        return None
-    receipt = _knowledge_gate_receipt(workdir)
-    if receipt is None:
-        return None
-    return (
-        "工作区存在未入库知识资产（方法卡/经验卡），推送会被 pre-push 知识闸拒绝；"
-        "资格未被消费。",
-        str(receipt.get("fix") or ""),
-    )
-
-
-def _knowledge_gate_receipt(workdir: str) -> dict[str, Any] | None:
-    """git_push 准入前置：有未入库知识资产 → 拒绝回执；干净 → None。
-
-    workdir 为空时不判定，交给 _target 报 workdir_required（同一调用仍会被拒，
-    不构成绕过）。扫描本身失败按 fail-closed 拒绝（RULE-AI-30）。
+    EVO-20261125-e802c5c8 P0（人工 2026-11-25 批准）：知识闸 2026-11-09 起按「工作区有
+    任何未入库卡」拒绝受理；2026-11-25 02:13 实测它把 82 张方法卡 / 15 条经验卡（97 个
+    文件，全部非推送会话产物）记在一次代码推送头上，受理恒拒。现降为告警，口径与
+    .githooks/pre-push 一致：未入库卡与判定不可用都只告警、不拒绝；卡片入库走
+    scripts/knowledge_flush.py 独立安全批次。workdir 为空时不判定，交给 _target 报
+    workdir_required（同一调用仍会被拒，不构成绕过）。
     """
     if not workdir:
         return None
@@ -1100,24 +1085,38 @@ def _knowledge_gate_receipt(workdir: str) -> dict[str, Any] | None:
             Path(top.decode("utf-8", "surrogateescape").strip())
         )
     except (ValueError, OSError):
+        # 判不出不伪报干净（RULE-AI-30 在告警级成立：闸已不挡路，看不见的后果只是
+        # 少一条告警），如实给 scan_unavailable。
         return {
-            "accepted": False,
-            "reason": "knowledge_flush_scan_unavailable",
+            "code": "knowledge_flush_scan_unavailable",
+            "blocking": False,
             "fix": "python3 scripts/knowledge_flush.py --check --json",
         }
     files = cards + experiences + extras
     if not files:
         return None
     return {
-        "accepted": False,
-        "reason": "knowledge_flush_pending",
+        "code": "knowledge_flush_pending",
+        "blocking": False,
         "cards": len(cards),
         "experiences": len(experiences),
         "other_files": len(extras),
         "files": files[:_KNOWLEDGE_SAMPLE_LIMIT],
         "files_truncated": len(files) > _KNOWLEDGE_SAMPLE_LIMIT,
-        "fix": "python3 scripts/knowledge_flush.py   # 入库后重试 review_admission(action=start)",
+        "fix": "python3 scripts/knowledge_flush.py   # 独立安全批次入库；不阻塞本次审查/推送",
     }
+
+
+def _consume_knowledge_warning(workdir: str, command: str) -> dict[str, Any] | None:
+    """消费口（git push 执行前）的知识告警；纯删 ref 的推送与 start 前置同口径豁免。
+
+    EVO-20261125-e802c5c8 P0：消费口此前是「非消费性拒绝」，防的是审查窗口内新落卡
+    导致 push 被 pre-push 知识闸拦下而资格已消费。pre-push 同步降为告警后该风险不复
+    存在，这里只产出同口径的结构化告警，不消费资格、不拒绝。
+    """
+    if _is_delete_only_push(command):
+        return None
+    return _knowledge_gate_warning(workdir)
 
 
 def _receipt_placeholder_receipt(workdir: str) -> dict[str, Any] | None:
@@ -1227,26 +1226,28 @@ def _receipt_placeholder_hits(root: Path) -> list[str]:
 
 def _start_preconditions(
     kind: str, scope: str, paths: Sequence[str] | None, workdir: str, command: str = ""
-) -> tuple[dict[str, Any], tuple[str, ...], dict[str, Any] | None]:
-    """start 的前置判定：scope 解析错误 → 拒；git_push 再有未入库知识资产/回执
-    占位 → 拒。
+) -> tuple[dict[str, Any], tuple[str, ...], dict[str, Any] | None, list[dict[str, Any]]]:
+    """start 的前置判定：scope 解析错误或 git_push 回执占位 → 拒；git_push 未入库
+    知识资产 → 非阻塞告警（第四项，随受理回执返回）。
 
     独立成助手是为了不让 start 本身体积增长（function-lines 棘轮，2026-11-09）。
     """
     scope_receipt, scope_paths, scope_error = _resolve_scope(kind, scope, paths)
     if scope_error:
-        return scope_receipt, scope_paths, {"accepted": False, "reason": scope_error}
+        return scope_receipt, scope_paths, {"accepted": False, "reason": scope_error}, []
+    warnings: list[dict[str, Any]] = []
     if kind == "git_push":
         # 纯删 ref 的 push 不携带任何内容，知识闸的关切（资产随 push 交付丢失）
-        # 不适用（EVO-20261123-d43138fc）；回执占位闸不变——它管交付证据完整性。
+        # 不适用（EVO-20261123-d43138fc），不告警；回执占位闸不变——它是硬拒绝，
+        # 管交付证据完整性。
         if not _is_delete_only_push(command):
-            blocked = _knowledge_gate_receipt(workdir)
-            if blocked is not None:
-                return scope_receipt, scope_paths, blocked
+            knowledge = _knowledge_gate_warning(workdir)
+            if knowledge is not None:
+                warnings.append(knowledge)
         blocked = _receipt_placeholder_receipt(workdir)
         if blocked is not None:
-            return scope_receipt, scope_paths, blocked
-    return scope_receipt, scope_paths, None
+            return scope_receipt, scope_paths, blocked, warnings
+    return scope_receipt, scope_paths, None, warnings
 
 
 # EVO-20261030-62773eae: 单路径材料超限与 git 状态超限此前共用
@@ -4079,7 +4080,7 @@ class HostReviewAdmission:
     ) -> dict[str, Any]:
         if not parent or self._runner is None or self._reviewer_model_error:
             return {"accepted": False, "reason": self._reviewer_model_error or "review_host_unavailable"}
-        scope_receipt, scope_paths, denial = _start_preconditions(kind, scope, paths, workdir, command)
+        scope_receipt, scope_paths, denial, knowledge = _start_preconditions(kind, scope, paths, workdir, command)
         if denial is not None:
             return denial
         # 先算一次切片外绑定：材料头与回执必须说同一个数（分两次算会漂）。
@@ -4166,7 +4167,7 @@ class HostReviewAdmission:
                 scope_receipt=scope_receipt, task_chars=task_chars,
                 review_deadline=review_deadline, estimated=estimated,
                 coverage=coverage, push_remote_commit=push_remote_commit,
-                push_extra=push_extra, reviewer_model=str(spawned["model"]),
+                push_extra=push_extra, reviewer_model=str(spawned["model"]), warnings=knowledge,
             ),
             parent, kind, sha, target,
         )
@@ -4233,6 +4234,7 @@ class HostReviewAdmission:
         scope_receipt: dict[str, Any], task_chars: int, review_deadline: float,
         estimated: float, coverage: dict[str, Any] | None,
         push_remote_commit: str, push_extra: dict[str, Any], reviewer_model: str,
+        warnings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """签发回执组装（2026-11-02 自 ``start`` 抽出，行为不变，只为棘轮归零）。"""
         receipt: dict[str, Any] = {
@@ -4288,6 +4290,9 @@ class HostReviewAdmission:
                         "增量）整体放行"
                     ),
                 }
+        if warnings:
+            # EVO-20261125-e802c5c8 P0：非阻塞结构化告警随受理回执返回；无告警时不出现该键。
+            receipt["warnings"] = [dict(item) for item in warnings]
         return receipt
 
     def _prepare_attempt(
@@ -5570,6 +5575,12 @@ class HostReviewAdmission:
             hint="资格未被消费；等 lane 终态后原样重试同一命令即可。",
         )
 
+    def _note_knowledge_warning(self, parent: str, workdir: str, command: str) -> None:
+        """消费口：未入库知识资产只记一条结构化告警（审计事件），不消费资格、不拒绝。"""
+        warning = _consume_knowledge_warning(workdir, command)
+        if warning is not None:
+            self._audit(parent, "review_admission_knowledge_warning", warning)
+
     def check_shell(self, parent: str, command: str, workdir: str) -> AdmissionDecision:
         kind = classify_host_shell(command)
         if kind is None:
@@ -5614,10 +5625,9 @@ class HostReviewAdmission:
             lane_denial = self._lane_push_precheck(parent, command, workdir)
             if lane_denial is not None:
                 return lane_denial
-            # 收口治理③（2026-11-10）：知识闸前置到消费口（含纯删 ref 豁免）。
-            consume_gate = _consume_knowledge_gate(workdir, command)
-            if consume_gate is not None:
-                return self._deny(consume_gate[0], hint=consume_gate[1])
+            # EVO-20261125-e802c5c8 P0：知识闸降为结构化非阻塞告警（口径同 pre-push，含
+            # 纯删 ref 豁免）——只记审计，不消费资格、不拒绝。
+            self._note_knowledge_warning(parent, workdir, command)
         for scope_paths, recorded_digest, tier, review_base, review_ref in scopes:
             try:
                 # full_test runs on the local worktree; recompute with the
