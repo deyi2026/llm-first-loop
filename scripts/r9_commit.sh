@@ -224,7 +224,14 @@ bash "$CHECK" "$PROBE"
 # Gate 0 日志归档：GATE_LOG 不再即弃，归档 /tmp/r9_gate_last.log（失败指纹审计面）。
 REGISTRY="tests/guards/external_red_registry.json"
 FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
-PROBE_WT="$(mktemp -d /tmp/r9probe.XXXXXX)"
+# PROBE checkout must live under a trusted (non-world-writable) ancestor:
+# rootless canary tests reject any world-writable ancestor chain, and macOS
+# exposes /tmp as /private/tmp (mode 1777). Default to the repo-ignored
+# .cache/ root (see .gitignore); R9_PROBE_ROOT lets foreign CI pin its own
+# trusted root. mktemp -d still creates the probe dir itself as 0700.
+R9_PROBE_BASE="${R9_PROBE_ROOT:-$(git rev-parse --show-toplevel)/.cache}"
+mkdir -p "$R9_PROBE_BASE"
+PROBE_WT="$(mktemp -d "$R9_PROBE_BASE/r9probe.XXXXXX")"
 # Git lists physical paths (e.g. /private/tmp on macOS), not symlink aliases.
 PROBE_WT="$(cd "$PROBE_WT" && pwd -P)"
 r9_cleanup_exit() {
