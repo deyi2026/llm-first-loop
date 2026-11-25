@@ -1,0 +1,46 @@
+{
+  "schema": "rule28-full-test-gate/v1",
+  "evolution_id": "EVO-20261125-86a9864e",
+  "goal_id": "GOAL-20261125-40677ea1",
+  "lane_id": "lane-27aa2dc0",
+  "branch": "fix/rule28-heredoc-data-region-classify-20261125",
+  "worktree": ".worktrees/evo-rule28-heredoc-data-region-20261125",
+  "candidate_head": "c995cbb74422d745495be54948bf28a5f72afb1b",
+  "base_main": "1f0601e9d0225bfb66160e9fb2a569eba176cf99",
+  "reviewer_admission": {
+    "kind": "full_test",
+    "scope": "patch",
+    "command": "bash scripts/ci_gate.sh",
+    "paths": [
+      "src/llm_loop/tools/review_host_admission.py",
+      "src/llm_loop/tools/review_gate.py",
+      "tests/unit/test_review_host_admission.py",
+      "tests/unit/test_review_gate.py",
+      "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
+      "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt"
+    ],
+    "candidate_sha256": "5969aac0613486418696cb1cfae01dc113e1774a43ddfea9d60f5959938e32d0",
+    "reviewer_model": "glm/glm-5.3-flash",
+    "child_id": "subagent_d469f82235c4",
+    "qualification": "PASS",
+    "pass_observed_at": "2026-11-25T19:21:52+08:00"
+  },
+  "full_test": {
+    "command": "bash scripts/ci_gate.sh",
+    "job_id": "job-279e6765c8594ca5880a",
+    "started_at": "2026-11-25T19:22:07+08:00",
+    "terminal_observed_at": "2026-11-25T19:39+08:00",
+    "exit_code": 0,
+    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+    "ruff": {"historical": 67, "current": 27, "new": 0, "changed_file_diagnostics": 0},
+    "pyright": {"historical": 45, "current": 8, "new": 0, "changed_file_diagnostics": 0}
+  },
+  "receipts": {
+    "rule35": "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
+    "probe": "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt"
+  },
+  "notes": [
+    "门禁在候选 head c995cbb74 上运行；本回执文件是其之后追加的提交，不改代码。",
+    "证据层级：本地全量门禁。真实入口活体验证待部署后进行。"
+  ]
+}
