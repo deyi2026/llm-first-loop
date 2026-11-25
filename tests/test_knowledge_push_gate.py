@@ -1,17 +1,22 @@
-"""推送知识资产闸回归测试（RULE-AI-28 push 闸新增层，2026-11-09）。
+"""推送知识资产告警回归测试（RULE-AI-28 push 闸新增层，2026-11-09；EVO-20261125-e802c5c8 P0）。
 
 背景：``data/methods/*/METHOD.md`` 与 ``experiences/*.md`` 在 .gitignore 里是入库
 例外，但此前没有任何 gate 提过它们——卡片只活在生成它的那台机器的工作区，换机、
-清工作区或新 clone 即静默丢失。闸落在已激活的 ``.githooks/pre-push``
-（``core.hooksPath=.githooks``），与既有隐私扫描同层判定。
+清工作区或新 clone 即静默丢失。判定落在已激活的 ``.githooks/pre-push``
+（``core.hooksPath=.githooks``），与既有隐私扫描同层。
 
-本测试固化三条行为契约：
+2026-11-09 至 11-25 的实现是「工作区有任何未入库卡即拒推、判定异常也拒推」，实测把
+无关会话的知识债务记在每次代码推送头上，推送恒拒。本测试现在固化的行为契约是：
 
-1. 有未入库卡 → 拒（exit 1 + 可操作提示）。判定是**工作区**层面的，不因「这次推的
-   哪个提交」而改变；唯一例外是「纯删除远端 ref」的推送（不携带任何提交/文件，
-   EVO-20261123-d43138fc）——混入任何内容 refspec 即回到拒推；
-2. 入库后 → 放行：闸不是恒拒，否则会逼出 ``--no-verify`` 这种绕过习惯；
-3. 闸脚本缺失 → fail-closed 拒：看不见的闸等于没有闸（RULE-AI-35）。
+1. 有未入库卡 → **放行**，并给结构化非阻塞告警（单行可机读的
+   ``[pre-push][warn] knowledge_flush_pending blocking=false cards=… experiences=…
+   other=… pending=…``）+ 修复指引。判定仍是**工作区**层面的，不因「这次推的哪个
+   提交」而改变；「纯删除远端 ref」的推送（不携带任何提交/文件，
+   EVO-20261123-d43138fc）连告警都不出——混入任何内容 refspec 即恢复告警；
+2. 入库后 → 放行且无告警：告警不是恒有的，否则会训练出忽略习惯；
+3. 闸脚本缺失/崩溃 → 放行 + ``knowledge_flush_scan_unavailable`` 告警：闸已不挡路，
+   看不见的后果只是少一条告警，故不再 fail-closed 拒推；
+4. P0 只动知识闸——隐私扫描与回执占位闸不变，仍是硬拒绝（应拦输入实测）。
 """
 
 import json
@@ -83,33 +88,45 @@ def _make_card(repo: Path, rel: str) -> Path:
     return card
 
 
-def test_blocks_untracked_method_card(repo: Path) -> None:
-    """未入库方法卡必须拦住推送，并给出修复命令而不是只报错。"""
+def test_warns_on_untracked_method_card_without_blocking(repo: Path) -> None:
+    """未入库方法卡：放行，并给结构化告警 + 修复指引（P0 前在这里拒推）。"""
     _make_card(repo, "data/methods/card-a/METHOD.md")
     out = _run_hook(repo)
-    assert out.returncode == 1, out.stdout + out.stderr
+    assert out.returncode == 0, out.stdout + out.stderr
     assert "未入库的知识资产" in out.stderr
     assert "knowledge_flush.py" in out.stderr
+    assert "拒绝" not in out.stderr
+    assert (
+        "[pre-push][warn] knowledge_flush_pending blocking=false "
+        "cards=1 experiences=0 other=0 pending=1"
+    ) in out.stderr
 
 
-def test_blocks_untracked_experience_card(repo: Path) -> None:
-    """经验卡与方法卡同属知识资产，不得只拦一类。"""
+def test_warns_on_untracked_experience_card(repo: Path) -> None:
+    """经验卡与方法卡同属知识资产，不得只告警一类。"""
     _make_card(repo, "experiences/EXPERIENCE-20261109-probe.md")
     out = _run_hook(repo)
-    assert out.returncode == 1, out.stdout + out.stderr
-    assert "未入库的知识资产" in out.stderr
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert (
+        "[pre-push][warn] knowledge_flush_pending blocking=false "
+        "cards=0 experiences=1 other=0 pending=1"
+    ) in out.stderr
 
 
 def test_passes_when_clean(repo: Path) -> None:
-    """干净工作区必须放行——闸不能把每次推送都卡住。"""
+    """干净工作区放行且无告警——闸不能把每次推送都卡住，告警也不能每次推送都出现。"""
     out = _run_hook(repo)
     assert out.returncode == 0, out.stdout + out.stderr
+    assert "[pre-push][warn]" not in out.stderr
 
 
-def test_passes_after_flush(repo: Path) -> None:
-    """入库后放行：先证明拦得住，再证明拦得对（不是恒拒）。"""
+def test_warning_disappears_after_flush(repo: Path) -> None:
+    """入库后告警消失：先证明告得对（有卡才告），再证明入库能清掉它。"""
     _make_card(repo, "data/methods/card-b/METHOD.md")
-    assert _run_hook(repo).returncode == 1, "前置条件失败：未入库卡应先被拦住"
+    warned = _run_hook(repo)
+    assert warned.returncode == 0 and "knowledge_flush_pending" in warned.stderr, (
+        warned.stdout + warned.stderr
+    )
 
     flush = subprocess.run(
         ["python3", str(repo / "scripts" / "knowledge_flush.py")],
@@ -121,15 +138,32 @@ def test_passes_after_flush(repo: Path) -> None:
         errors="replace",
     )
     assert flush.returncode == 0, flush.stdout + flush.stderr
-    assert _run_hook(repo).returncode == 0, "入库后仍被拦：闸变成了恒拒"
+    after = _run_hook(repo)
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert "[pre-push][warn]" not in after.stderr, "入库后仍告警：告警清不掉"
 
 
-def test_fail_closed_when_gate_script_missing(repo: Path) -> None:
-    """闸脚本缺失必须拒推：无法判定 ≠ 通过。"""
+def test_warns_when_gate_script_missing(repo: Path) -> None:
+    """闸脚本缺失：放行 + scan_unavailable 告警——不伪报干净，也不把工具缺失变成推送故障。"""
     (repo / "scripts" / "knowledge_flush.py").unlink()
     out = _run_hook(repo)
-    assert out.returncode == 1, out.stdout + out.stderr
-    assert "知识闸脚本缺失" in out.stderr
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert (
+        "[pre-push][warn] knowledge_flush_scan_unavailable blocking=false exit=127"
+    ) in out.stderr
+    assert "手工确认" in out.stderr
+
+
+def test_warns_when_gate_script_crashes(repo: Path) -> None:
+    """闸脚本崩溃（退出码非 0 非 3）与缺失同处置：告警放行。"""
+    (repo / "scripts" / "knowledge_flush.py").write_text(
+        "raise SystemExit(2)\n", encoding="utf-8"
+    )
+    out = _run_hook(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert (
+        "[pre-push][warn] knowledge_flush_scan_unavailable blocking=false exit=2"
+    ) in out.stderr
 
 
 # --- EVO-20261109-b1dad92e P4: flush 也尊重 lane 主写门 ---
@@ -188,8 +222,13 @@ def test_flush_blocked_while_other_lane_live(repo: Path) -> None:
     out = _run_flush(repo)
     assert out.returncode != 0, out.stdout + out.stderr
     assert "他人 live lane" in out.stderr
-    # 闸的承诺是「拦住」，不是「写一半」：卡片仍在工作区，hook 仍然拒推
-    assert _run_hook(repo).returncode == 1
+    # flush 的承诺是「拦住」，不是「写一半」：卡片仍在工作区、未进任何提交；
+    # pre-push 不再因此拒推，但如实告警（卡片只活在本机工作区）。
+    hooked = _run_hook(repo)
+    assert hooked.returncode == 0 and "knowledge_flush_pending" in hooked.stderr, (
+        hooked.stdout + hooked.stderr
+    )
+    assert (repo / "data/methods/card-c/METHOD.md").exists()
 
 
 def test_flush_allows_own_lane(repo: Path) -> None:
@@ -301,16 +340,24 @@ def test_hook_allows_delete_only_push_with_untracked_card(repo: Path) -> None:
 
 @pytest.mark.parametrize("garbled", ["foo bar\n", "(delete)  refs/heads/gone 1111\n"])
 def test_hook_does_not_exempt_garbled_refspec(repo: Path, garbled: str) -> None:
-    """应拦输入仍拦：refspec 行读不懂（字段缺失/非全零 sha）→ 不豁免。"""
+    """应拦输入仍拦：refspec 行读不懂（字段缺失/非全零 sha）→ 不豁免，照旧出知识告警。
+
+    是否最终拒推由下游隐私/回执闸决定（fail-closed，非本层职责）；这里只断言知识层
+    没有因为读不懂 refspec 就误判成「纯删除」而静默。
+    """
     _make_card(repo, "data/methods/card-m/METHOD.md")
     out = _run_hook(repo, stdin=garbled)
-    assert out.returncode != 0, out.stdout + out.stderr
-    assert "未入库的知识资产" in out.stderr
+    assert "跳过知识闸" not in out.stdout
+    assert "[pre-push][warn] knowledge_flush_pending" in out.stderr, out.stdout + out.stderr
 
 
-def test_hook_still_blocks_content_push_with_untracked_card(repo: Path) -> None:
-    """应拦输入仍拦：删除与内容推送混在一起时，知识闸照旧拒推。"""
+def test_hook_warns_on_mixed_push_without_exemption(repo: Path) -> None:
+    """删除与内容推送混在一起：不豁免知识判定，照旧出知识告警。"""
     _make_card(repo, "data/methods/card-l/METHOD.md")
+    # per-ref 循环会跑隐私扫描：stub 成恒过，把知识告警单独隔离出来
+    scan = repo / "scripts" / "git_security_scan.sh"
+    scan.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    scan.chmod(0o755)
     tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
     mixed = (
         "(delete) 0000000000000000000000000000000000000000 "
@@ -318,8 +365,9 @@ def test_hook_still_blocks_content_push_with_untracked_card(repo: Path) -> None:
         f"refs/heads/main {tip} refs/heads/main {tip}\n"
     )
     out = _run_hook(repo, stdin=mixed)
-    assert out.returncode != 0, out.stdout + out.stderr
-    assert "未入库的知识资产" in out.stderr
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "跳过知识闸" not in out.stdout
+    assert "[pre-push][warn] knowledge_flush_pending" in out.stderr
 
 
 # --- EVO-20261109-b1dad92e P5: hook 扫描回执占位 ---
@@ -330,6 +378,32 @@ def test_hook_blocks_placeholder_receipt(repo: Path) -> None:
     out = _run_hook(repo)
     assert out.returncode == 1, out.stdout + out.stderr
     assert "回执" in out.stderr and "待回填" in out.stderr
+
+
+def test_hook_still_blocks_placeholder_receipt_with_pending_card(repo: Path) -> None:
+    """应拦输入仍拦（P0）：知识告警在场时，回执占位仍是硬拒绝，不被降级成放行。"""
+    _make_card(repo, "data/methods/card-p/METHOD.md")
+    receipt = repo / "docs/governance/receipts/merge-probe.md"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text("| main_sha_after | 待回填 |\n", encoding="utf-8")
+    out = _run_hook(repo)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "待回填" in out.stderr
+    assert "[pre-push][warn] knowledge_flush_pending" in out.stderr
+
+
+def test_hook_still_blocks_privacy_hit_with_pending_card(repo: Path) -> None:
+    """应拦输入仍拦（P0）：隐私扫描命中时，知识告警不得把它降级成放行。"""
+    _make_card(repo, "data/methods/card-q/METHOD.md")
+    scan = repo / "scripts" / "git_security_scan.sh"
+    scan.write_text(
+        "#!/usr/bin/env bash\necho '模拟隐私扫描命中' >&2\nexit 1\n", encoding="utf-8"
+    )
+    scan.chmod(0o755)
+    tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    out = _run_hook(repo, stdin=f"refs/heads/main {tip} refs/heads/main {tip}\n")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "模拟隐私扫描命中" in out.stderr
 
 
 def test_hook_allows_backfilled_receipt(repo: Path) -> None:
