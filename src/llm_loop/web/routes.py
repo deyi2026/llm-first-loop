@@ -306,7 +306,9 @@ def _queue_terminal_callback(
     queue_id: str,
     request: Request,
 ) -> Callable[[str, str | None], None]:
-    """run 终态→队列事实回写回调（模块级：chat_stream/event_stream 共用）.
+    """run 终态→队列事实回写回调（chat_stream 外层与其内嵌 event_stream 生成器
+    共用同一回调实例；event_stream 是 chat_stream 的内嵌函数、非独立模块级
+    函数——其重构随 chat_stream 同一 hunk 生效，基线 event_stream=191 即此口径）.
 
     语义与原内嵌闭包逐行等价：not_started 原子回滚 release（保持 FIFO 队位），
     其余 mark_terminal 终态回写；M1 事件唤醒——run 终态=会话空闲事件，同会话

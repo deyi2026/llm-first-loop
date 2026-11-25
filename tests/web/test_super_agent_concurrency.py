@@ -177,19 +177,22 @@ def test_restart_redelivery_once_and_unknown_side_effect(tmp_path: Path) -> None
     assert runner.starts[before:] == []
 
     # not_started 机械证明：浏览器侧会话查询是 reaper 真实触发面（fallback
-    # tick 只扫 queued，不主动碰 claimed 悬挂——既有设计）；回滚后兜底派发
+    # tick 只扫 queued，不主动碰 claimed 悬挂——既有设计）；轮询等待 reaper
+    # 回滚（CI 慢机安全，不依赖固定 sleep），回滚后兜底派发
     hq_probe = HumanTurnQueue(
         data,
         workspace_scope="/ws/a",
         claim_timeout_s=0.05,
         claim_state_probe=lambda sid, qid: "not_started",
     )
-    time.sleep(0.08)  # 等 claim_timeout_s=0.05 过期
-    actives = hq_probe.list_active(SIDS[0])  # reaper 在此执行
+    deadline = time.time() + 2.0
+    actives = hq_probe.list_active(SIDS[0])
+    while actives and actives[0]["status"] != "queued" and time.time() < deadline:
+        time.sleep(0.01)
+        actives = hq_probe.list_active(SIDS[0])  # 每次查询即 reaper 触发面
     assert actives and actives[0]["status"] == "queued"
     fb3, _, _ = _mk(tmp_path, runner)
     fb3._hq = hq_probe
-    time.sleep(0.08)  # 等 claim_timeout_s=0.05 过期，reaper 可回滚
     before = len(runner.starts)
     fb3.tick_once()
     assert runner.starts[before:] == [(SIDS[0], "在途")]
