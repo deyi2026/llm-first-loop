@@ -118,6 +118,9 @@ reflog 消息的形态构造的（06:48 那次没有找到完整命令）：
 - `git branch -f main` / `fetch origin main:main`：main 被检出时 git 自己拒绝，不需要收。
 - `-C $VAR` 解析不出真实目录时按命令 workdir 判：对别的仓库做 update-ref 会被按本仓库判，
   拒绝文案里的检出路径会不对。
+- 命令文本落进解析器的保守哨兵（`eval`、`bash -c`、不透明 token 等）时，本规则读不到
+  update-ref 段，不触发。这是既有解析器的边界，合并审查指出后补记。
+- `git update-ref --stdin < 脚本文件`：命令文本里没有 ref 名，读不到。
 - **端到端未测**：真实 `execute_command` 入口要走已部署的新代码。部署后的补测做法：在 scratch
   克隆上发应拦输入（闸失效时也只动 scratch 的 main），应看到 `[main 直写拒绝] main_ref_pointer_move`。
 
@@ -332,3 +335,21 @@ PASS   git -C <RUNTIME_ROOT> update-ref refs/heads/main ab05f960876bd68d350f7761
 
 failures: 0
 ```
+
+## 5. 审查记录（补记）
+
+- RULE-AI-28：full_test 审查 PASS（child `subagent_7a4c0daf5762`，candidate_sha256 `bc2df19e…`）；
+  git_push 审查 PASS 两次（child `subagent_619e2a50920b`，head `adba4cf26`；child
+  `subagent_bd5c86e45194`，head `d07f87dae`）。
+- 独立合并审查（head `adba4cf26`，child `subagent_a44620d860b1`）：REVISE，p0=0，p1=1。
+  它没有指出代码缺陷。P1 的内容：测试执行证据与回执绑定没有获得独立确认——全量门禁回执里的
+  `candidate_head` 是 `31bb13ea2`，不是被审的 `adba4cf26`；回执里的解释是父代理自述；只读审查员
+  不能跑测试。它同时指出保守哨兵边界没写进 §3（已补）。
+- 处置：全量门禁跑在提交 `31bb13ea2` 之前的工作树上。从 `31bb13ea2` 到写这条时的 head
+  （`d07f87dae`），差异只有两个治理文档，`src/`、`tests/`、`scripts/` 下 0 行。一条命令可核：
+
+  ```bash
+  git diff --name-only 31bb13ea27c334c5351e84f7ca42b86ee048337b <被审 head>
+  ```
+
+  之后若 head 再变，只应是 `docs/governance/` 下的文档；出现别的路径，本回执的全量门禁结论不再覆盖新 head。
