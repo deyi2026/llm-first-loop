@@ -614,6 +614,12 @@ def _strip_heredoc_units(
         # 从反引号网脱敏。
         at_top_level = quote is None and _advance_quote_state(None, head_txt) is None
         ph = f"__XPL_{len(payloads)}__"
+        # EVO-20261125-66cb3b21：引导之后、同一行上的文本在 shell 中会被正常解析
+        # （`; cmd`、`&& cmd`、重定向、注释…），必须留在骨架里供段网判定；旧实现把它
+        # 整段丢弃，同一行上其后的真实动作因此对段网不可见。
+        tail = line[m.end() :]
+        skeleton_line = (head + " " + ph) if head else ph
+        skeleton_line = (skeleton_line + " " + tail).strip()
         body: list[str] = []
         j = i + 1
         closed = False
@@ -632,14 +638,14 @@ def _strip_heredoc_units(
             payloads.append("\n".join(body))
             if exempt is not None:
                 exempt.append(is_exempt)
-            out.append((head + " " + ph).strip() if head else ph)
+            out.append(skeleton_line)
             for _bl in lines[i + 1 :]:
                 _net_keep(_bl + "\n")
             return _finish()
         payloads.append("\n".join(body))
         if exempt is not None:
             exempt.append(is_exempt)
-        out.append((head + " " + ph).strip() if head else ph)
+        out.append(skeleton_line)
         if not (is_exempt and at_top_level):
             # 未豁免/非顶层：体照常进反引号网扫描面。
             for _bl in body:

@@ -221,6 +221,20 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF\nend\" ; echo \"\nx\"", "git_push"),
     # 终止符未配对：体保守保留在反引号网扫描范围内。
     ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`", "git_push"),
+    # ── EVO-20261125-66cb3b21（人工批准 2026-11-25）：opener 行引导之后的文本进骨架 ──
+    # heredoc 引导之后、同一行上的文本在 shell 中会被正常解析执行；修前生成骨架时
+    # 被整段丢弃，段网看不到同一行上其后的真实动作（漏放）。
+    ("cat > /tmp/doc.md <<'EOF'; git push origin main\n示例\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF' && git push origin main\n示例\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF'; pytest -q\n示例\nEOF", "full_test"),
+    ("cat > /tmp/doc.md <<'EOF'; git push origin main\n示例", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF' > /tmp/out; git push origin main\n示例\nEOF", "git_push"),
+    # 既有数据接收者豁免形态结果不变：后续文本只是重定向或注释。
+    ("cat > /tmp/doc.md <<'EOF' > /tmp/out\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' 2>> /tmp/err\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' # 说明：git push origin main 会被拦\n示例\nEOF", None),
+    ("tee /tmp/a.md <<'EOF' >> /tmp/b.md\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n示例\nEOF\necho done", None),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
