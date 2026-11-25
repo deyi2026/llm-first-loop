@@ -147,6 +147,12 @@
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
 一致：拒绝必须基于已证事实）。
+
+2026-11-25（用户确认的同步规矩）新增第二条规则，**不以他人 live lane 为条件**：
+``git update-ref`` 把 main/master 挪到远端跟踪分支上已有的提交，而该分支正被某个
+工作树检出 → 拒绝（update-ref 只移指针，被检出的工作树会停在旧树）。解析器把
+update-ref 也收进动词，但它不计入 commit/push 命中。见
+:func:`check_update_ref_main_move`。
 """
 from __future__ import annotations
 
@@ -213,7 +219,7 @@ _PUSH_FLAGS_WITH_VALUE = frozenset(
 def _git_verbs(
     command: str, workdir: str | None = None
 ) -> list[tuple[str, list[str], str | None]]:
-    """抽出 ``(verb, refspec_tokens, 目标仓库路径)``；仅识别 commit/push。
+    """抽出 ``(verb, refspec_tokens, 目标仓库路径)``；动词识别 commit/push/update-ref。
 
     ``-C`` 按 git 语义**顺序链式**解析（后段相对前段）；无法解析时返回哨兵
     ``""``（调用方按"目标仓库不明"保守当 main 处理，不静默放行）。
@@ -1816,10 +1822,10 @@ def check_push_lane_block(
 # 会话在 GitHub 合并 PR 后用 `git update-ref refs/heads/main <sha>` 把本地 main
 # 拨到 origin/main。update-ref 只移指针，不更新正被检出 main 的那个工作树的
 # 暂存区和工作树：旧树显示成反向“已暂存”（几十个文件），运行期工作树停在旧代码；
-# 事后补 ff-merge 回“Already up to date”，修不回来。2026-11-25 一天六次。
+# 事后补 ff-merge 回“Already up to date”，修不回来。2026-11-25 一天七次（06:37 到 21:22）。
 # 同一目的由 `git -C <主检出> merge --ff-only origin/main` 安全完成：完成则一并
-# 更新暂存区和工作树，否则整体拒绝、什么都不动（scratch 仓库实测，见
-# docs/governance/receipts/ 下本改动的 RULE-AI-35 回执）。
+# 更新暂存区和工作树，否则整体拒绝、什么都不动（可执行依据见
+# test_ff_merge_updates_index_and_worktree_unlike_update_ref）。
 # 不在本规则内（已知、未覆盖）：`git branch -f main` / `fetch origin main:main`
 # （main 被检出时 git 自己拒绝）、`reset --soft/--mixed <commit>` 挪 main（同一类
 # 后果，未收）、`update-ref -d` 删 main 引用、`--stdin -z` 脚本。

@@ -9,7 +9,7 @@
   ② 该分支正被某个工作树检出；③ 新值是远端跟踪分支上已有的提交。
 - 基线：`origin/main` = `64e64832838696a040a76bec38c33ecdaee5c5d9`（PR #126 合并提交）。
 - 被测：分支 `fix/main-guard-update-ref-sync-20261125` 的工作树，文件 sha256：
-  - `src/llm_loop/core/lane_main_write_guard.py` = `22d17b509070c04aa0b84bc110b447dc555f08e52227dece2173f501f954c4aa`
+  - `src/llm_loop/core/lane_main_write_guard.py` = `d1574771992252f3d7f46f34fee28177a6f7fa6198ee071b4181c18081b435d7`
   - `src/llm_loop/tools/builtin/execute_command.py` = `1a6263f5f5f3e8e02ae8226482ee3bb915b7bb71f7c80a746eb168603af6194b`
   - `tests/unit/test_lane_main_write_guard.py` = `cfab6453d145cab91f867890d14a1a9859d4a629600abd2da9d55d22f94c63bf`
 - 解释器：项目 `.venv/bin/python`（3.13.13），`PYTHONPATH=<lane>/src`；git 2.50.1。
@@ -105,6 +105,12 @@ reflog 消息的形态构造的（06:48 那次没有找到完整命令）：
 | `git -C /Users/…/llm-first-loop-mirror update-ref refs/heads/main ab05f9608…`（本地 main 现值，没挪动） | PASS |
 | `… update-ref refs/heads/main ab05f9608… 717c8def2…`（带旧值 CAS，新值是本地独有提交——20:33 那次 lane 合并的提交） | PASS |
 
+定稿前复跑（源码此后只改了说明文字与注释；此时本地 main 已等于 origin/main = `64e648328…`）：
+对最终代码用 `rule35-live-probe-final.py` 再跑一遍，应拦 5/5 BLOCK、应放行 5/5 PASS，`failures: 0`；
+定向单元 10 passed。相对 §4.1 的探针只改了几行输入：应拦里两条「挪到 origin/main」的输入换成了远端
+历史上的旧提交（main 已等于 origin/main 时它们没挪动），另加一条 `cd … &&` 写法；应放行里加了
+「没挪动」的同步形态 `git update-ref refs/heads/main origin/main`。
+
 首轮探针有一条 PASS 是我输入写错：17:08 那条的完整 sha 我手抄成了 `…569eb5a1b7f25`，
 仓库里不存在这个对象，判定函数按「新值读不出 → 放行」处理。换成真实 sha
 `1f0601e9d0225bfb66160e9fb2a569eba176cf99` 后 BLOCK。这条同时是 §3 第一条残余的实例。
@@ -121,6 +127,8 @@ reflog 消息的形态构造的（06:48 那次没有找到完整命令）：
 - 命令文本落进解析器的保守哨兵（`eval`、`bash -c`、不透明 token 等）时，本规则读不到
   update-ref 段，不触发。这是既有解析器的边界，合并审查指出后补记。
 - `git update-ref --stdin < 脚本文件`：命令文本里没有 ref 名，读不到。
+- `workdir=None` 时新规则直接放行。命令闸调用点在调用前已把 None 换成工作区根（无工作区时为进程
+  cwd），经工具入口不会出现 None；只有直接调用函数才会遇到（合并审查指出后补）。
 - **端到端未测**：真实 `execute_command` 入口要走已部署的新代码。部署后的补测做法：在 scratch
   克隆上发应拦输入（闸失效时也只动 scratch 的 main），应看到 `[main 直写拒绝] main_ref_pointer_move`。
 
@@ -338,18 +346,21 @@ failures: 0
 
 ## 5. 审查记录（补记）
 
-- RULE-AI-28：full_test 审查 PASS（child `subagent_7a4c0daf5762`，candidate_sha256 `bc2df19e…`）；
-  git_push 审查 PASS 两次（child `subagent_619e2a50920b`，head `adba4cf26`；child
-  `subagent_bd5c86e45194`，head `d07f87dae`）。
-- 独立合并审查（head `adba4cf26`，child `subagent_a44620d860b1`）：REVISE，p0=0，p1=1。
-  它没有指出代码缺陷。P1 的内容：测试执行证据与回执绑定没有获得独立确认——全量门禁回执里的
-  `candidate_head` 是 `31bb13ea2`，不是被审的 `adba4cf26`；回执里的解释是父代理自述；只读审查员
-  不能跑测试。它同时指出保守哨兵边界没写进 §3（已补）。
-- 处置：全量门禁跑在提交 `31bb13ea2` 之前的工作树上。从 `31bb13ea2` 到写这条时的 head
-  （`d07f87dae`），差异只有两个治理文档，`src/`、`tests/`、`scripts/` 下 0 行。一条命令可核：
-
-  ```bash
-  git diff --name-only 31bb13ea27c334c5351e84f7ca42b86ee048337b <被审 head>
-  ```
-
-  之后若 head 再变，只应是 `docs/governance/` 下的文档；出现别的路径，本回执的全量门禁结论不再覆盖新 head。
+- RULE-AI-28：full_test 审查与 git_push 审查都走过并通过。每多一个提交，push 审查资格就作废，
+  要重发；git_push 审查不能按 paths 切片，回 `push_batch_full_review_required`，得整树发起。
+- 独立合并审查两次 REVISE，都是 p0=0、p1=1，都没有指出代码缺陷：
+  - 第一次（head `adba4cf26`，child `subagent_a44620d860b1`）。P1：测试执行证据与回执绑定没有
+    获得独立确认——全量门禁回执里的被测提交是 `31bb13ea2`，不是被审 head；解释是父代理自述；
+    只读审查员不能跑测试。它同时指出保守哨兵边界没写进 §3（已补）。
+  - 第二次（head `e0098760a`，child `subagent_bf2054f86e28`）。同一类 P1：它没有 shell，也读不了
+    evidence 引用，「此后只有文档变化」对它仍是自述。它已核的部分：`_lane_main_write_gate`、判定
+    新增段、`_collect_main_write_hits` / `_main_write_targets` 的 update-ref 分支与冻结 diff 一致；
+    子进程均为固定参数列表，`_rev_sha` 有 `_SAFE_REV_RE` 防选项注入；没有发现安全或回归缺陷。
+    它没核完的三点和处置：
+    ① `workdir=None` 时新规则直接放行，§3 没列——调用点在调用前已把 None 换成工作区根，已补进 §3；
+    ② `_git_verbs` 与模块说明还写着「只认 commit/push」——已改；
+    ③ 代码注释写「一天六次」，与这里说的七次不一致——已改成七次。
+- 绑定怎么做（吸取两次 P1）：回执放进分支就必然晚于被测提交，只能自述。所以全量门禁回执不再
+  进分支：代码、测试、本回执、架构清单全部定稿并提交之后，在那个提交本身上重跑
+  `bash scripts/ci_gate.sh`，回执贴在 PR #128 的评论里；远端 CI 对同一 head 的结果是独立佐证。
+  本回执只承担 RULE-AI-35 的实测记录，不承担全量门禁的绑定。
