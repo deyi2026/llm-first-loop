@@ -10,12 +10,12 @@
         "artifacts/ctp-review-20261123/code-review-20261123-findings.md"
       ],
       "owning_subsystem": "既有文档面：CTP 实施计划（基线表与变更历史）与独立审查发现/处置归档。不进入运行时。",
-      "disposition": "计划第 1.1 节与变更历史追加 Wave-3 交付与执行回执；第 1.2 节把「版本控制」「代码实现」两条基线行更新为当前事实（Wave-2 已随 PR #117 入库；B3 / B4 / B7 已落地，B8 未落地）并把 as-of 更新为 2026-11-25。归档第 15 节记录测试准入审查 r1 的发现、处置，以及修订前后在同一组不可用配置上的对照实测。",
+      "disposition": "计划第 1.1 节与变更历史追加 Wave-3 交付与执行回执；第 1.2 节把「版本控制」「代码实现」两条基线行更新为当前事实（Wave-2 已随 PR #117 入库；B3 / B4 / B7 已落地，B8 未落地）并把 as-of 更新为 2026-11-25。归档第 15 节记录测试准入审查 r1 的发现、处置，以及修订前后在同一组不可用配置上的对照实测；第 16 节记录候选重放到 main 6349346d 之后的测试准入复审 r3（PASS，P2 四条只归档）。",
       "evidence": [
         "docs/PLAN-20261123-ctp-implementation.md 第 1.1、1.2 节与第 16 章",
-        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15 节"
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15、16 节"
       ],
-      "verification_level": "文档行；其中引用的用例数取自同一提交内的回归回执。计划与归档在测试准入 r2 切片之外（归档第 15 节在切片内），由 git_push 审查与合并审查按 lane 全量 diff 复核。",
+      "verification_level": "文档行；其中引用的用例数取自同一分支的回归回执。计划 0.3d 行、归档第 15 节与本清单首版在测试准入 r3 切片内；计划 0.3e 行、归档第 16 节与本清单的本次更新在 r3 之后写入，由 git_push 审查与合并审查按 lane 全量 diff 复核。",
       "control_machinery": false,
       "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
       "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
@@ -95,7 +95,7 @@
       "evidence": [
         "ctp/docs/conformance-runner-notes.md",
         "ctp/src/ctp_conformance/v4.py",
-        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15 节",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15、16 节",
         "ctp/receipts/20261125-wave3-pytest.md"
       ],
       "verification_level": "随 CTP 专项回归执行并计入 343 passed，其中 r1 修订的回归钉 27 例；修订前后在同一组不可用配置上的对照实测见归档第 15 节。全部为合成样本，不构成 V4 / V7 / V8 门槛证据。",
@@ -114,7 +114,7 @@
       "disposition": "矩阵同步 Wave-3：读码器 / 读出闸门 / 一致性 runner / 集成 / 异常传播回归钉逐名入表，并计入测试准入审查 r1 修订新增的 3 个回归钉。规范覆盖测试函数 167 → 170，矩阵数据行 225 → 228；条目级覆盖为 covered 13、partial 11、pending 35，其余待实测、待裁决或待实现，均如实标注。",
       "evidence": [
         "docs/trace/coverage-summary.md",
-        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15 节"
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15、16 节"
       ],
       "verification_level": "矩阵机检测试（每个测试函数具名、文档计数等于 AST 实测、证据行号指向 def 行）随 CTP 专项回归通过。",
       "control_machinery": false,
@@ -131,7 +131,7 @@
       "evidence": [
         "ctp/receipts/20261125-wave3-pytest.md"
       ],
-      "verification_level": "文档；数字取自同一提交内的执行输出（job job-25daa280abd041ad9942，退出码 0）。",
+      "verification_level": "文档；数字取自执行输出（本次 job job-f3c5835129ef40c69db0，退出码 0；候选重放到 main 6349346d 之后复跑，与重放前一致）。",
       "control_machinery": false,
       "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
       "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"

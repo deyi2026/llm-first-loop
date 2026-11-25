@@ -222,3 +222,24 @@ r5（subagent_4b59fb2dc085，候选 4238b9b8…，切片 = `ctp` + `docs/conform
 **回归钉**（3 个函数，逐名入追溯矩阵：`conformance_v4` 11→13、`conformance_v8` 8→9，测试函数 167→170，矩阵 225→228）：`test_unusable_optional_limits_are_unconfigured_never_pass`（12 例）、`test_unusable_grouping_thresholds_are_rejected`（10 例）、`test_non_boolean_include_forgery_is_rejected`（5 例）。定向验证：这两个文件 46 passed，`test_trace_matrix.py` 3 passed。
 
 残余（不在本次修订范围，如实登记）：`ctp/` 下 40 个 ruff 提示（`I001` 22、`UP037` 7 等，其中 12 个在已合并的 Wave-2 文件 `ctp_registry/*`）。CI 的 ruff 历史债棘轮范围是 `src tests scripts`，不含 `ctp/`；本机该闸 R9 ruff PASS（new = 0）。未顺手修——那会把 27 个文件的格式改动混进本次审查面，宜另立小任务。
+
+## 16. Wave-3 测试准入审查 r3（subagent_524af23f7ebf，2026-11-25 08:45–08:53，候选重放到 main `6349346d` 之后）
+
+**缘由**：Wave-3 候选原 head `d9d1c55df` 的基线是 main `4f1157055`。主干前进到 `6349346d` 后，把 3 个非合并提交线性重放过去（`eb88b6b92` / `b591d8f9b` / `9dc0dee72`，内容不变，相对主干的差异前后一致：40 files，+4014 / −130）。r2 的 PASS 绑定的是重放前的候选指纹，对重放后的候选不构成放行依据；按 RULE-AI-28 对当前候选重新发起测试准入。
+
+**受理与结论**：child `subagent_524af23f7ebf`（独立只读审查者，模型 glm/glm-5.3-flash），切片为 lane 全量 diff（11 条路径，切片外 tracked / untracked 均为 0），候选指纹 `429a47b1b8c9c2852c96032eb828b6c68e0377568c3d9fb2e53876caa9c3ab83`；执行前 status 回执 **PASS**，P0=0 / P1=0 / P2=4，指纹与受理时一致。
+
+**发现（审查者原文要旨，P2 四条；均只归档、不在本次修订范围——P2 不阻塞入库，且修订会改变已测候选）**：
+
+| 编号 | 位置 | 问题 | 处置 |
+|---|---|---|---|
+| P2-1 | `docs/trace/coverage-summary.md` 第 26 行 | 构成行「228 数据行 = unit 170 + pending 占位 46 + conformance 12」与它描述的 trace.csv 不符：按 diff 计 unit 182、pending 占位 34、conformance 12。总数 228、条目计数 13 / 11 / 35、逐文件函数数（合计 170）均正确；现有机检不覆盖这一拆分行 | 留待下一波修订文档：改为「unit 182 + pending 占位 34 + conformance 12」 |
+| P2-2 | `docs/trace/trace.csv` 第 76、77、209 行 | 两条新增 C-4b-2 回归钉行的 `spec_entry` 带前导空格（" C-4b-2"），这两行与新增的 F-3 行 notes 带尾随空格；宽松解析下无碍，严格或外部解析器可能分出幽灵条目 | 留待下一波规范化空白 |
+| P2-3 | `ctp/src/ctp_conformance/receipt.py` `is_limit` | 文档写「已配置的有限数值」，实现只拒绝 NaN，`is_limit(float("inf"))` 返回 True。当前所有 V4 调用都经 `_optional_limit` / `_in_range`（有 `math.isfinite`）屏蔽，但它是导出的辅助函数，新调用方直接用会漏掉 inf 限值检查——正是 r1 P1 修的那类问题 | 留待下一波：补有限性检查，或改名 / 改文档 |
+| P2-4 | `ctp/src/ctp_conformance/v8.py` `run` | `n = int(config["n"])` 仍静默强转（`"1000"` 可用、`10.9` 被截断），与同函数刚收紧的 `include_forgery` 不一致 | 留待下一波：只接受非布尔的 int |
+
+审查者另有一条不计入的观察：V4 runner 接受的分组阈值定义域（角点数 ≥ 0、比例 ∈ [0, 1]）宽于闸门 `ThresholdConfig`（≥ 1、(0, 1]），已在 conformance-runner-notes 说明；用闸门非法阈值跑 runner 只会出 `indeterminate`，不会报配置错误。
+
+**审查者核对无问题的面（要旨）**：r1 P1 修订的三处实现与回归钉一致；V8 `include_forgery` 严格布尔；异常类改法在三个文件中等价且已被回归钉钉住；几何与文档一致；36h11 纠错预算与最小已知位数的论断成立；回执 343 与点阵算术、§15 的 46、函数清单合计 170、矩阵 228 及状态行 112 / 70 / 46 可复算；治理清单的变更路径划分无遗漏；36h11 归属声明完备；无密钥、网络、子进程或运行时导入面。
+
+**随后的全量运行**：`pytest ctp/tests` → **343 passed in 2.72s**（退出码 0），回执 `ctp/receipts/20261125-wave3-pytest.md`。
