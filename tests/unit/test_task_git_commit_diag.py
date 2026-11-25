@@ -6,8 +6,8 @@ Git/文件副作用。
 """
 from __future__ import annotations
 
-from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
 
 
 def test_no_task_context_failclosed_with_guidance(tmp_path):
