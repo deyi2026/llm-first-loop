@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20261125-evo-knowledge-gate-nonblocking-warning",
-  "summary": "EVO-20261125-e802c5c8 P0（GOAL-20261125-563d91e0；人工 2026-11-25 09:20 批准 exec_override，09:52 改派本会话实施）：知识资产闸从『工作区有任何未入库卡即拒』降为结构化非阻塞告警，review_admission 与 .githooks/pre-push 同口径。2026-11-25 02:13 实测：一次代码推送的 git_push 审查被 knowledge_flush_pending 拒绝受理，82 张方法卡 + 15 条经验卡（97 个文件）全部非推送会话产物——无关会话的知识债务记在每次代码推送头上，受理恒拒。三处同源改动：(1) .githooks/pre-push 对 knowledge_flush.py --check 的 exit 3 改为 stderr 结构化告警并放行，判定异常（脚本缺失 / 退出码非 0 非 3）同样只告警；(2) review_admission 的 git_push 准入前置把拒绝回执换成受理回执的可选字段 warnings[]，消费口（check_shell）从『非消费性拒绝』改为只记审计事件；(3) RULE-AI-28 条款与 push-review-gate skill 同步为『知识入库走独立安全批次』。控制边界=既有知识闸的严重级别（拒 → 告警），不新增闸、不改判定口径（仍以 scripts/knowledge_flush.py --check 的结果为准）。未动：精确候选绑定、实际交付完整性、隐私/安全扫描、回执占位闸、受管审批、CI。证据：RULE-AI-35 应拦/应放行输入以测试固化（见声明 g3）；定向 133 passed / 0 failed（5 个测试文件）与准入闸主集 + 架构守卫 345 passed / 0 failed（本机，清单提交前工作树）；ruff 检查通过、R9 棘轮 ruff 与 pyright 均 PASS（new=0）。如实记录：远端 CI、独立 Reviewer、宿主重启后的活体复验在本清单撰写时尚未完成，以后续回执为准，不在此声称通过。",
+  "summary": "EVO-20261125-e802c5c8 P0（GOAL-20261125-563d91e0；人工 2026-11-25 09:20 批准 exec_override，09:52 改派本会话实施）：知识资产闸从『工作区有任何未入库卡即拒』降为结构化非阻塞告警，review_admission 与 .githooks/pre-push 同口径。2026-11-25 02:13 实测：一次代码推送的 git_push 审查被 knowledge_flush_pending 拒绝受理，82 张方法卡 + 15 条经验卡（97 个文件）全部非推送会话产物——无关会话的知识债务记在每次代码推送头上，受理恒拒。三处同源改动：(1) .githooks/pre-push 对 knowledge_flush.py --check 的 exit 3 改为 stderr 结构化告警并放行，判定异常（脚本缺失 / 退出码非 0 非 3）同样只告警；(2) review_admission 的 git_push 准入前置把拒绝回执换成受理回执的可选字段 warnings[]，消费口（check_shell）从『非消费性拒绝』改为只记审计事件；(3) RULE-AI-28 条款与 push-review-gate skill 同步为『知识入库走独立安全批次』。控制边界=既有知识闸的严重级别（拒 → 告警），不新增闸、不改判定口径（仍以 scripts/knowledge_flush.py --check 的结果为准）。未动：精确候选绑定、实际交付完整性、隐私/安全扫描、回执占位闸、受管审批、CI。证据（逐项回执见声明 g3）：代码与测试终态为提交 46633d7c4；定向 134 passed / 0 failed（5 个测试文件）；准入闸主集 + 架构守卫 345 passed / 0 failed；bash scripts/ci_gate.sh 全链路通过（exit 0），在 07d90b1fe 与 46633d7c4 各跑一次；R9 ruff / pyright PASS（new=0）；RULE-AI-28 两道审查在 46633d7c4 上均 PASS。远端 CI 在 07d90b1fe 上六项 pass（门禁 pytest + ruff + pyright、privacy-gate、安全扫描、受管预合并证据、部署环境泄漏门禁、Linux 安装验收），『A.5 架构提交审查』fail——本分支叠在未合入的 PR #119 之上，区间内有两份清单而校验器要求恰好一份；#119 合入 main 后本 PR 区间只剩本清单。本清单所在的提交只改文档，不触碰被测代码。如实记录：远端 CI 对 46633d7c4 及本提交、独立合并审查的复审、人工签发的 verify_ref、宿主重启后的活体复验尚未完成，以后续回执为准，不在此声称通过。",
   "components": [
     {
       "component_id": "pre-push-knowledge-gate-nonblocking-warning",
@@ -14,10 +14,10 @@
       "declaration_id": "decl-knowledge-gate-nonblocking-warning",
       "evidence": [
         "判定实现：知识闸段改调 knowledge_flush.py --check --json 并取退出码。exit 3 → stderr 两行提示 + 单行可机读告警『[pre-push][warn] knowledge_flush_pending blocking=false cards=… experiences=… other=… pending=…』后继续执行（计数取自 JSON 回执，取不到给 ?）；脚本缺失（exit=127）或其它非 0 退出码 → 『[pre-push][warn] knowledge_flush_scan_unavailable blocking=false exit=N』后继续。纯删除远端 ref 的豁免（EVO-20261123-d43138fc）不变，连告警都不出。隐私扫描段与回执占位闸段未改。",
-        "RULE-AI-35 实测（tests/test_knowledge_push_gate.py，定向 133 passed 内）：应放行 test_warns_on_untracked_method_card_without_blocking、test_warns_on_untracked_experience_card、test_warning_disappears_after_flush、test_warns_when_gate_script_missing、test_warns_when_gate_script_crashes、test_hook_warns_on_mixed_push_without_exemption（rc=0 且告警行在场）；干净工作区 test_passes_when_clean 无告警行。应仍拦 test_hook_still_blocks_placeholder_receipt_with_pending_card 与 test_hook_still_blocks_privacy_hit_with_pending_card（未入库卡在场时回执占位 / 隐私命中仍 rc=1）。不豁免 test_hook_does_not_exempt_garbled_refspec（2 形态，告警照出）。tests/test_privacy_gate.py 未改且通过（真实隐私扫描器 + 钩子）。",
+        "RULE-AI-35 实测（tests/test_knowledge_push_gate.py，定向 134 passed 内）：应放行 test_warns_on_untracked_method_card_without_blocking、test_warns_on_untracked_experience_card、test_warning_disappears_after_flush、test_warns_when_gate_script_missing、test_warns_when_gate_script_crashes、test_hook_warns_on_mixed_push_without_exemption（rc=0 且告警行在场）、test_check_json_emitter_contract_for_hook_fields（用真实发射端钉住字段契约：exit 3、单行 JSON、cards / experiences / other / pending 的取值与 int 类型、钩子告警行逐字段对应——合并审查首轮 P1 的回应）；干净工作区 test_passes_when_clean 无告警行。应仍拦 test_hook_still_blocks_placeholder_receipt_with_pending_card 与 test_hook_still_blocks_privacy_hit_with_pending_card（未入库卡在场时回执占位 / 隐私命中仍 rc=1）。不豁免 test_hook_does_not_exempt_garbled_refspec（2 形态，告警照出）。tests/test_privacy_gate.py 未改且通过（真实隐私扫描器 + 钩子）。",
         "附带事实：用 edit_file 重写钩子会丢失执行位（100755 → 100644，被 tests/test_privacy_gate.py 的 git 警告暴露），已恢复 755；tests/unit/test_githooks_exec_bit.py 通过，git diff --summary 无 mode change。"
       ],
-      "verification_level": "hook_rc0_with_structured_warning_on_pending_and_scan_unavailable__rc1_on_placeholder_and_privacy_hit__in_targeted_133_passed_exit0__pre_commit_worktree",
+      "verification_level": "hook_rc0_with_structured_warning_on_pending_and_scan_unavailable__rc1_on_placeholder_and_privacy_hit__in_targeted_134_passed_exit0__head_46633d7c4",
       "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是 git 传给 hook 的 refspec 行与 knowledge_flush.py --check 的退出码 / JSON 回执，全部机器可验，无模型自证输入。recovery：任一审查发现否决即回退本组件提交并重走闸；exit：revert 后下一次 push 即恢复『有任何未入库卡即拒推』。",
       "rollback_route": "git revert 本组件提交；钩子由 git 在每次 push 时从磁盘读取，回退后下一次 push 即恢复旧判定，无状态、无数据影响。"
     },
@@ -33,9 +33,9 @@
       "evidence": [
         "_knowledge_gate_receipt → _knowledge_gate_warning：判定不变（仍是 git status 的未入库卡枚举），返回告警 dict（code=knowledge_flush_pending、blocking=false、cards / experiences / other_files 计数、files 样本与 files_truncated、fix）或 None；判定失败返回 code=knowledge_flush_scan_unavailable，不伪报干净。",
         "_start_preconditions 返回四元组（…, warnings）；start 把 warnings 传入 _start_receipt，受理回执在有告警时带 warnings[]（无告警不出现该键）。start 与 _target 均在函数行数棘轮基线上零增长（tests/unit/test_arch_guards.py 通过）。消费口 _consume_knowledge_gate → _consume_knowledge_warning，check_shell 改调 _note_knowledge_warning：只追加审计事件 review_admission_knowledge_warning，不消费资格、不拒绝。纯删 ref 豁免口径不变；回执占位闸不变且优先于告警。",
-        "RULE-AI-35 实测（tests/unit/test_review_admission_knowledge_flush_gate.py，定向 133 passed 内）：应放行 test_foreign_cards_do_not_block_push_at_either_admission_layer（未入库方法卡 + 经验卡在场：start accepted=true 且 warnings[0].code=knowledge_flush_pending；PASS 后 check_shell allowed 且记审计事件）、test_clean_workspace_receipt_carries_no_warnings、test_scan_failure_does_not_block_start、test_untracked_card_does_not_block_start_before_target。应仍拦 test_receipt_placeholder_still_blocks_with_knowledge_pending（回执占位 + 未入库卡 → denial reason=receipt_placeholder_pending）。不豁免 test_content_or_unreadable_push_is_not_exempt（13 形态）。tests/unit/test_review_host_admission.py 未改：与 test_arch_guards.py 合计 345 passed，精确候选 / 推送区间 / 选项白名单等既有拒绝路径未受影响。"
+        "RULE-AI-35 实测（tests/unit/test_review_admission_knowledge_flush_gate.py，定向 134 passed 内）：应放行 test_foreign_cards_do_not_block_push_at_either_admission_layer（未入库方法卡 + 经验卡在场：start accepted=true 且 warnings[0].code=knowledge_flush_pending；PASS 后 check_shell allowed 且记审计事件）、test_clean_workspace_receipt_carries_no_warnings、test_scan_failure_does_not_block_start、test_untracked_card_does_not_block_start_before_target。应仍拦 test_receipt_placeholder_still_blocks_with_knowledge_pending（回执占位 + 未入库卡 → denial reason=receipt_placeholder_pending）。不豁免 test_content_or_unreadable_push_is_not_exempt（13 形态）。tests/unit/test_review_host_admission.py 未改：与 test_arch_guards.py 合计 345 passed，精确候选 / 推送区间 / 选项白名单等既有拒绝路径未受影响。"
       ],
-      "verification_level": "unit_and_block_tests_green_in_targeted_133_plus_main_345_passed_exit0__pre_commit_worktree",
+      "verification_level": "unit_and_block_tests_green_in_targeted_134_plus_main_345_passed_exit0__head_46633d7c4",
       "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是待审的 push 命令文本与 git status 的未入库卡枚举，无模型自证输入。recovery：审查否决即回退本组件提交并重走闸；exit：revert 后 git_push 准入恢复『有任何未入库卡即拒绝受理』、消费口恢复非消费性拒绝。注意本文件是宿主进程内模块，运行中的宿主须重启后才加载新口径。",
       "rollback_route": "git revert 本组件提交并重启宿主服务；回退后受理回执不再出现 warnings[]。"
     },
@@ -65,9 +65,9 @@
       "owning_subsystem": "host-governance",
       "disposition": "modify",
       "evidence": [
-        "两个测试文件由『未入库卡即拒』改写为『未入库卡即结构化告警』，并新增应仍拦用例（回执占位 / 隐私命中有未入库卡在场时仍拒）与端到端用例（他人未入库卡在场时 start 受理带 warnings[]、消费口放行且留审计）。连同 tests/unit/test_knowledge_flush.py、tests/test_privacy_gate.py、tests/unit/test_githooks_exec_bit.py 共 5 个文件 133 passed / 0 failed（本机，清单提交前工作树）。"
+        "两个测试文件由『未入库卡即拒』改写为『未入库卡即结构化告警』，并新增应仍拦用例（回执占位 / 隐私命中有未入库卡在场时仍拒）与端到端用例（他人未入库卡在场时 start 受理带 warnings[]、消费口放行且留审计）；合并审查首轮 P1 后新增发射端字段契约用例 test_check_json_emitter_contract_for_hook_fields。连同 tests/unit/test_knowledge_flush.py、tests/test_privacy_gate.py、tests/unit/test_githooks_exec_bit.py 共 5 个文件，在代码终态 46633d7c4 上 134 passed in 21.01s / 0 failed（本机）。"
       ],
-      "verification_level": "133_passed_0_failed_exit0_local_5_files_pre_commit_worktree",
+      "verification_level": "134_passed_0_failed_exit0_local_5_files_head_46633d7c4",
       "model_evidence_veto_recovery_exit": "不适用（测试，非控制机器）。",
       "rollback_route": "随本 PR 一并 revert。"
     },
@@ -100,20 +100,23 @@
       },
       "g3": {
         "model_evidence": [
-          "RULE-AI-35 应拦 / 应放行输入已固化并通过（清单提交前工作树）：放行=工作区有未入库卡时的 git_push 受理与 hook（受理带 warnings[]、hook rc=0 且告警行在场）、知识扫描失败、纯删 ref（连告警都不出）；仍拦=回执占位 + 未入库卡（准入 denial / hook rc=1）、隐私命中 + 未入库卡（hook rc=1）、refspec 读不懂（不豁免）、内容型 / 多命令 / --all / --mirror / --tags 等 13 形态（不豁免）。用例清单见两个控制组件的 evidence。",
-          "定向回归：5 个测试文件 133 passed / 0 failed；准入闸主集 + 架构守卫 345 passed / 0 failed，exit 0（本机，2026-11-25）。",
-          "静态检查（本机，scripts/check_static_diagnostics.py）：R9 ruff PASS（historical=67, current=27, new=0）；R9 pyright PASS（historical=45, current=8, new=0，status=complete）。未做整文件 ruff format（RULE-AI-32）：这三个文件在基线上就有格式债，新增代码沿用文件既有紧凑写法。",
-          "未完成项（如实记录）：远端 CI（门禁 pytest + ruff + pyright、privacy-gate、安全扫描）、独立 Reviewer（full_test 与 git_push 两道）、宿主重启后的活体复验——在本清单撰写时均未完成，以后续回执为准。"
+          "RULE-AI-35 应拦 / 应放行输入已固化并通过（代码终态 46633d7c4）：放行=工作区有未入库卡时的 git_push 受理与 hook（受理带 warnings[]、hook rc=0 且告警行在场）、知识扫描失败、纯删 ref（连告警都不出）；仍拦=回执占位 + 未入库卡（准入 denial / hook rc=1）、隐私命中 + 未入库卡（hook rc=1）、refspec 读不懂（不豁免）、内容型 / 多命令 / --all / --mirror / --tags 等 13 形态（不豁免）。用例清单见两个控制组件的 evidence。",
+          "本机测试回执（2026-11-25，代码终态 46633d7c4）：定向 5 个测试文件 134 passed in 21.01s / 0 failed；准入闸主集 + 架构守卫 345 passed in 206.95s / 0 failed（测量于首个代码提交 23d424f28 的内容，该模块与其主测试文件此后未改，且被全量门禁整体覆盖）；bash scripts/ci_gate.sh 在 07d90b1fe（11:04–11:18）与 46633d7c4（11:44–11:59）各一次，均 exit 0，终判行『ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）』；46633d7c4 那次的分段回执：tier0 341 passed / 2 skipped / 16892 deselected，WebUI Vitest 73 文件 705 测试通过。并行集的精确通过数落在回执被省略的区段，未取到，故不引用。",
+          "RULE-AI-28 审查回执（46633d7c4）：full_test 审查 PASS（child subagent_a4e2e2ff7cb3）；git_push 审查 PASS（child subagent_48872bb13223）。前一状态 07d90b1fe 同样两道 PASS（subagent_a77847b0170e / subagent_bd0949616cb8）。远端 CI（PR #123，head 07d90b1fe）：门禁（pytest + ruff + pyright）pass 12m43s，privacy-gate、安全扫描、受管预合并证据、部署环境泄漏门禁、Linux 安装验收均 pass；『A.5 架构提交审查』fail，日志为 expected exactly one changed architecture-submission manifest、found 2——叠加分支所致，#119 合入 main 后重跑即过，不是清单内容缺陷。",
+          "静态检查（本机，scripts/check_static_diagnostics.py 与 ci_gate）：R9 ruff PASS（historical=67, current=27, new=0）；R9 pyright PASS（historical=45, current=8, new=0，status=complete）。未做整文件 ruff format（RULE-AI-32）：这三个文件在基线上就有格式债，新增代码沿用文件既有紧凑写法。",
+          "独立合并审查首轮（subagent_3eed1107005a）：REVISE，P0=0 P1=1——①测试证据仅为提交自述、只读模式无可核验回执，且本清单当时自述远端 CI 与独立评审待完成；②钩子正则解析 --check --json 字段、测试断言精确串，发射端字段契约未被确认。回应：②新增 test_check_json_emitter_contract_for_hook_fields（提交 46633d7c4）；①以上两条逐项列出可核对的命令、子代理标识与 CI 结论，不再以通过数自述代替。",
+          "未完成项（如实记录）：远端 CI 对 46633d7c4 与本提交、独立合并审查的复审、人工签发的 verify_ref、宿主重启后的活体复验——在本清单撰写时均未完成，以后续回执为准。"
         ],
         "recovery_or_reason": "应拦输入有逐条对应用例，任一审查发现否决即 revert 对应组件提交并重走闸；置信度来自定向测试与既有测试集，而非自述。已知残余：一次推送若只交付了某张卡单元的一部分（例如手工只 add 了 METHOD.md），现在也只告警——原闸只是被『任何未入库卡即拒』顺带覆盖，P0 未实现按推送区间判定的规则。消费口告警只进审计事件，模型可见的是受理回执 warnings[] 与 pre-push stderr。review_host_admission.py 属宿主进程内模块，运行中的宿主须重启后才加载新口径。"
       },
       "g4": {
         "rollback": "git revert 两个控制组件提交（钩子随下次 push 生效、模块随宿主重启生效）即恢复『有任何未入库卡即拒』；受理回执的 warnings[] 键随之消失。无状态、无数据迁移。",
         "verification": [
-          "python scripts/check_architecture_submission.py --base a6f53357f --head HEAD 严格 PASS（本清单提交后本机复核）；#119 合入后以 main 为 base 再复核一次",
-          "定向回归 133 passed / 0 failed（5 文件）与准入闸主集 + 架构守卫 345 passed / 0 failed（本机，清单提交前工作树）",
-          "静态检查：R9 ruff 与 R9 pyright 均 PASS（本机，new=0）；全量 pytest 与远端 CI 待完成，以后续回执为准，不引用为本机全量通过",
-          "独立 Reviewer（RULE-AI-28）：full_test 与 git_push 两道审查待完成",
+          "python scripts/check_architecture_submission.py --base a6f53357f --head HEAD 严格 PASS（首次清单提交后复核：changed_paths=7、components=5、controls=2；本次清单提交后复核结果记入 PR #123 描述）。在 PR 的 main…head 区间上会因叠加 #119 报两份清单，#119 合入后以 main 为 base 复核",
+          "本机全量门禁：bash scripts/ci_gate.sh 在 07d90b1fe 与代码终态 46633d7c4 上均 exit 0；定向 134 passed；回执行见 g3",
+          "RULE-AI-28：full_test 与 git_push 审查在 46633d7c4 上均 PASS；本提交只改文档，其 git_push 审查由宿主强制执行，结果在审查回执中而不在本清单",
+          "远端 CI：07d90b1fe 上六项 pass、A.5 因叠加 #119 而 fail（见 g3）；46633d7c4 与本提交的远端 CI 待完成",
+          "独立合并审查的复审与人工签发的 verify_ref：待完成",
           "宿主重启后 RULE-AI-35 活体复验（待做）：主工作区存在他人未入库卡时，git_push 审查应受理并带 warnings[]，push 应放行且 stderr 出现告警行；隐私命中 / 回执占位应仍被拦"
         ]
       }
