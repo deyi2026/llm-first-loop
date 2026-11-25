@@ -254,7 +254,7 @@ def _queue_workspace_options(engine: Any) -> dict:
             except Exception:  # noqa: BLE001
                 return None
             if ws is not None and getattr(ws, "path", ""):
-                return str(ws.path)
+                return str(getattr(ws, "path", ""))
         return None
 
     return {"workspace_scope": scope, "legacy_scope_resolver": _legacy_scope_resolver}
@@ -298,6 +298,31 @@ def _poke_queue_fallback(request: Request, session_id: str) -> None:
             poke(session_id)
         except Exception:  # noqa: BLE001 - 唤醒失败不影响请求响应与队列事实
             logger.debug("queue fallback poke failed: sid=%s", session_id[:8])
+
+
+def _queue_terminal_callback(
+    queue_store: HumanTurnQueue,
+    session_id: str,
+    queue_id: str,
+    request: Request,
+) -> Callable[[str, str | None], None]:
+    """run 终态→队列事实回写回调（模块级：chat_stream/event_stream 共用）.
+
+    语义与原内嵌闭包逐行等价：not_started 原子回滚 release（保持 FIFO 队位），
+    其余 mark_terminal 终态回写；M1 事件唤醒——run 终态=会话空闲事件，同会话
+    还有排队项时经 poke 即时派发下一条（fail-open，满丢由 tick 兜底），不等
+    15s tick + 60s min_age。派发仍走 dispatch_claim 单一原子裁决（严格 FIFO：
+    在途队首不越过、scope 队首阻断）。
+    """
+
+    def _on_terminal(status: str, run_error: str | None = None) -> None:
+        if status == "not_started":
+            queue_store.release(session_id, queue_id)
+        else:
+            queue_store.mark_terminal(session_id, queue_id, status, run_error)
+        _poke_queue_fallback(request, session_id)
+
+    return _on_terminal
 
 
 def _queue_claim_state(engine: Any, session_id: str, queue_id: str) -> str:
@@ -1984,17 +2009,9 @@ def chat_stream(
         if _queue_id and _queue_store is not None:
             queue_id = str(_queue_id)
             queue_store = _queue_store
-
-            def _mark_queue_terminal(status: str, run_error: str | None = None) -> None:
-                if status == "not_started":
-                    queue_store.release(session_id, queue_id)
-                else:
-                    queue_store.mark_terminal(session_id, queue_id, status, run_error)
-                # M1 事件唤醒：run 终态=会话空闲事件——同会话还有排队项时即时
-                # 派发下一条，不再等 15s tick + 60s min_age（fail-open）。
-                _poke_queue_fallback(request, session_id)
-
-            _queue_terminal = _mark_queue_terminal
+            _queue_terminal = _queue_terminal_callback(
+                queue_store, session_id, queue_id, request
+            )
 
         if runner is not None and runner.enabled:
             yield from _stream_background(

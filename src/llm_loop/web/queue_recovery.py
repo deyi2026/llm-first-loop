@@ -23,7 +23,7 @@ import logging
 import queue as _queue
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from llm_loop.runtime.admission_barrier import task_admission_barrier
 from llm_loop.web.human_turn_queue import HumanTurnQueue
@@ -298,11 +298,15 @@ class QueueServerFallback:
         def _alive(sid: str) -> str | None:
             try:
                 handle = get_handle(sid)
+                # handle 合同为 dict（runner.get_handle）；cast 收窄满足 pyright
+                # （getattr 链产 object），形状不符在下方 Key/AttributeError 由
+                # except 兜底视同探测失败。
+                handle_map = cast(dict[str, Any], handle)
+                if not handle_map:
+                    return None
+                return str(handle_map.get("run_generation") or "")
             except Exception:  # noqa: BLE001 - 探测失败视同无 live run
                 return None
-            if not handle:
-                return None
-            return str(handle.get("run_generation") or "")
 
         requeued = self._hq.reap_orphan_interjects(_alive)
         if requeued:
