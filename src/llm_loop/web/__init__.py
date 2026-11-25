@@ -647,12 +647,16 @@ def main(*, workspace_root: str | None = None) -> None:
     # 引擎的 build_app 路径不经过这里。
     from llm_loop.web.human_turn_queue import HumanTurnQueue
     from llm_loop.web.queue_recovery import QueueServerFallback
-    from llm_loop.web.routes import _queue_claim_state
+    from llm_loop.web.routes import _queue_claim_state, _queue_workspace_options
 
     _data_dir = str(Path(str(getattr(settings, "data_dir", "./data"))).expanduser().resolve())
     _hq = HumanTurnQueue(
         _data_dir,
         claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
+        # M0 workspace 绑定：与请求侧惰性构造同源同构造——盖章 engine.workspace_root
+        # （与 QueueServerFallback 派发身份同源），并注入 legacy 条目 identity
+        # owner 归属证明（未知/歧义 fail-closed HOLD，P1-2 收口）。
+        **_queue_workspace_options(engine),
     )
     app.state.human_turn_queues = {_data_dir: _hq}
     # R2（antidrift_impl 批1）: 收敛回执队列压力 probe 注入（fail-open：读失败→None

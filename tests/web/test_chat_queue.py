@@ -215,14 +215,17 @@ class TestHumanTurnQueueUnit:
         a = hq.enqueue("s1", "first")
         b = hq.enqueue("s1", "second")
         c = hq.enqueue("s1", "third")
-        # FIFO：按入队顺序领取
+        # FIFO：按入队顺序领取；在途队首（claimed 未终态）阻断后续派发
         got1 = hq.dispatch_claim("s1")
-        got2 = hq.dispatch_claim("s1")
         assert got1["queue_id"] == a["queue_id"]
+        assert hq.dispatch_claim("s1") is None  # 在途队首未结算，不越过
+        assert hq.mark_terminal("s1", a["queue_id"], "completed")
+        got2 = hq.dispatch_claim("s1")
         assert got2["queue_id"] == b["queue_id"]
-        # 领取 c 后无更多可派发
+        assert hq.mark_terminal("s1", b["queue_id"], "completed")
         got3 = hq.dispatch_claim("s1")
         assert got3["queue_id"] == c["queue_id"]
+        assert hq.mark_terminal("s1", c["queue_id"], "completed")
         assert hq.dispatch_claim("s1") is None
 
     def test_persist_across_reload(self, tmp_path):
@@ -330,6 +333,8 @@ class TestHumanTurnQueueUnit:
         # 回滚后 first 仍排在前
         again = hq.dispatch_claim("s1")
         assert again["queue_id"] == a["queue_id"]
+        # first 终态后 second 才可派发（在途队首不越过）
+        assert hq.mark_terminal("s1", a["queue_id"], "completed")
         nxt = hq.dispatch_claim("s1")
         assert nxt["queue_id"] == b["queue_id"]
 
@@ -513,11 +518,19 @@ class TestQueueAPI:
 
         r = client.post("/api/v1/chat/queue/dispatch", json={"session_id": sid})
         assert r.status_code == 200
-        assert r.json()["claimed"]["message"] == "A"
+        claimed_a = r.json()["claimed"]
+        assert claimed_a["message"] == "A"
+        # A claimed 在途：B 不得被越过领取（在途队首阻断，与后台同约束）
         r = client.post("/api/v1/chat/queue/dispatch", json={"session_id": sid})
-        assert r.json()["claimed"]["message"] == "B"
+        assert r.json()["claimed"] is None
+        # A 终态后 B 正常派发（走独立实例同一全局互斥路径回写终态）
+        hq = HumanTurnQueue(str(engine.settings.data_dir))
+        assert hq.mark_terminal(sid, claimed_a["queue_id"], "completed")
         r = client.post("/api/v1/chat/queue/dispatch", json={"session_id": sid})
-        assert r.json()["claimed"] is None  # 队列已空
+        claimed_b = r.json()["claimed"]
+        assert claimed_b["message"] == "B"
+        r = client.post("/api/v1/chat/queue/dispatch", json={"session_id": sid})
+        assert r.json()["claimed"] is None  # B 在途，队列无更多可派发
 
     def test_api_release(self, build_test_engine):
         engine, _ = build_test_engine([{"content": "x"}])
@@ -800,3 +813,38 @@ def test_queue_rejects_non_web_ingress_session(build_test_engine):
     assert response.status_code == 409
     assert response.json()["error"] == "session_ingress_mismatch"
     assert client.get("/api/v1/chat/queue", params={"session_id": sid}).json()["items"] == []
+
+
+def test_web_queue_dispatch_passes_workspace_scope(build_test_engine, tmp_path):
+    """P1-1：浏览器 /dispatch 与 server fallback 同约束——engine.workspace_root
+    经统一 dispatch_claim 原子裁决：惰性构造同源盖章、他区条目不派发
+    （hold_reason 可查）、归属修复后浏览器可领取."""
+    engine, _ = build_test_engine([{"content": "unused"}])
+    ws_a = tmp_path / "ws_a"
+    ws_a.mkdir()
+    engine.workspace_root = str(ws_a)  # factory 装配面：进程归属工作区根
+    client = _make_client(engine)
+    sid = engine.session.create()
+    enq = client.post("/api/v1/chat/queue", json={"session_id": sid, "message": "属于本区"})
+    assert enq.status_code == 202
+
+    queue_file = Path(str(engine.settings.data_dir)) / "human_turn_queue.json"
+    payload = json.loads(queue_file.read_text(encoding="utf-8"))
+    assert payload["items"][0]["workspace_scope"] == str(ws_a)  # 入队即盖章
+
+    # 模拟共享 data_dir 下他工作区条目（scope=/elsewhere）
+    payload["items"][0]["workspace_scope"] = "/elsewhere"
+    queue_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    disp = client.post("/api/v1/chat/queue/dispatch", json={"session_id": sid})
+    assert disp.status_code == 200
+    assert disp.json()["claimed"] is None  # 浏览器路径不得绕过 scope 过滤
+    items = client.get("/api/v1/chat/queue", params={"session_id": sid}).json()["items"]
+    assert items[0]["status"] == "queued"
+    assert "hold_reason" not in items[0]  # scope mismatch 原样留队（归属经 workspace_scope 可查）
+
+    # 归属修复后浏览器可领取（与后台领取同一条原子路径）
+    payload["items"][0]["workspace_scope"] = str(ws_a)
+    queue_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    disp = client.post("/api/v1/chat/queue/dispatch", json={"session_id": sid})
+    assert disp.json()["claimed"]["message"] == "属于本区"
