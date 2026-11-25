@@ -30,6 +30,13 @@ _GIT_PUSH_RE = re.compile(
 _PYTEST_CMD_RE = re.compile(r"(?:^|[;&|]{1,2})\s*(?:\S+/)?(python3?\s+-m\s+)?pytest3?\b")
 # 全量 pytest 的收窄形态（出现即视为子集，不触发闸）。
 _NARROWING_RE = re.compile(r"(^|\s)-k\S*|\S*::\S*|\S*\.py\b|(^|\s)tests?/\S*|(^|\s)-m\s+(?!pytest3?\b)\S+")
+# pytest 非执行形态的旗标（EVO-20261125-86a9864e）：只打印版本/帮助或只做收集，
+# 不执行任何测试。须落在该次 pytest 调用所在的命令段内，且文本内全部 pytest
+# 调用均为非执行形态才不归类；--fixtures/--setup-only 会导入并执行 setup，
+# 不在豁免之列。help/version 旗标口径与只读探测面（_READ_ONLY_STANDALONE_FLAGS）
+# 一致。
+_PYTEST_NON_EXEC_RE = re.compile(r"(?:^|\s)(?:-[hV?]|--(?:help|version|co\b|collect-only))(?![\w-])")
+_SHELL_SEGMENT_END_RE = re.compile(r"[;&|\n]")
 # 只读探测的旗标形态（供 execute_command 复用，保持单一定义点）。
 # argv0 允许集（basename 归一后）：只读豁免只对集合内命令生效——
 # rm status / tee diff / ./deploy.sh --dry-run 等 argv0 混淆形态一律不放行
@@ -141,7 +148,18 @@ def classify_review_gate_command(command: str) -> str | None:
         return None
     if _GIT_PUSH_RE.search(text):
         return "git_push"
-    if _PYTEST_CMD_RE.search(text) and not _NARROWING_RE.search(text):
+    pytest_hits = list(_PYTEST_CMD_RE.finditer(text))
+    if pytest_hits and not _NARROWING_RE.search(text):
+        # EVO-20261125-86a9864e：非执行形态不是全量测试闸面——逐个 pytest 调用
+        # 取其所在命令段（到下一个 shell 操作符为止）核对旗标；同串只要有一处
+        # 真实调用，仍归类为全量闸面。
+        if all(
+            _PYTEST_NON_EXEC_RE.search(
+                _SHELL_SEGMENT_END_RE.split(text[hit.end() :], 1)[0]
+            )
+            for hit in pytest_hits
+        ):
+            return None
         return "full_test"
     return None
 

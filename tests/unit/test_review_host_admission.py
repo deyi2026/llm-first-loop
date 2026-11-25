@@ -200,11 +200,44 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("env -u FOO cat <<'EOF'\ngit push origin main\nEOF", None),
     # P2-1：路径形态 argv0（basename 白名单命中）不算裸名白名单——不豁免。
     ("/tmp/cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    # ── EVO-20261125-86a9864e（人工批准 2026-11-25）：豁免 here-doc 数据体不进反引号网 ──
+    # 带引号终止符的体在 shell 中不做展开，Markdown 代码span（一对反引号）不是
+    # 命令替换——修复前反引号网扫原始全文，写文档命令被按受保护动作误拒
+    # （2026-11-25 17:11 实测）。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n## 标题\n\n- `nohup git push origin main 2>&1` 也被误报\nEOF", None),
+    ("tee /tmp/doc.md <<\"EOF\"\nit's `git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n`pytest -q`\nEOF", None),
+    # 同批闭合的漏放：体内撇号使原始全文扫描的引号状态失步，其后的真实反引号
+    # 替换曾被当作单引号内文本而漏判。
+    ("cat > /tmp/doc.md <<'EOF'\nit's fine\nEOF\necho `git push origin main`", "git_push"),
+    # 应拦仍拦：无引号终止符的体会做展开；非数据接收者；豁免体之外的真实动作。
+    ("cat > /tmp/doc.md <<EOF\n示例：`git push origin main`\nEOF", "git_push"),
+    ("bash <<'EOF'\n示例：`git push origin main`\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`\nEOF\ngit push origin main", "git_push"),
+    # opener 落在跨行未闭合引号串内：`<<` 不是 here-doc 引导，体内反引号在 shell
+    # 中真实执行——不得脱敏（前一条骨架词法失败，走原始全文兜底）。
+    ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF", "git_push"),
+    ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF\nend\" ; echo \"\nx\"", "git_push"),
+    # 终止符未配对：体保守保留在反引号网扫描范围内。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`", "git_push"),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
 ) -> None:
     assert classify_host_shell(command) == expected
+
+
+def test_exempt_heredoc_markdown_backtick_span_not_admitted_as_push(tmp_path: Path) -> None:
+    """EVO-20261125-86a9864e：写文档命令的体含 Markdown 代码span，不得按受保护动作拒绝."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    cmd = "cat > /tmp/pr.md <<'PREOF'\n## 说明\n\n- `git push origin main` 仍会被拦\nPREOF"
+    verdict = host.check_shell("author-1", cmd, str(repo))
+    assert verdict.allowed is True
+    # 应拦仍拦：同一入口下，真实 push 仍须有效审查资格。
+    denial = host.check_shell("author-1", "git push origin main", str(repo))
+    assert denial.blocked is True
 
 
 def test_no_durable_log_or_model_text_can_mint_live_child_attestation(tmp_path: Path) -> None:

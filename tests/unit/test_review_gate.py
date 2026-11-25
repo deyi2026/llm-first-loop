@@ -39,6 +39,46 @@ def test_gate_triggers_on_full_pytest_only() -> None:
     assert classify_review_gate_command("pytest -m slow") is None
 
 
+def test_gate_ignores_pytest_non_execution_forms() -> None:
+    """EVO-20261125-86a9864e：pytest 非执行形态不是全量测试闸面.
+
+    2026-11-25 16:05 实测：`python3 -m pytest --version` 与只读探测串联时，观测行
+    把它归为「动作=全量 pytest」。修复后仅当文本内全部 pytest 调用都是非执行形态
+    才不归类；同串只要有一处真实调用，仍是全量闸面。
+    """
+    assert classify_review_gate_command("python3 -m pytest --version") is None
+    assert classify_review_gate_command("pytest --version") is None
+    assert classify_review_gate_command("pytest -V") is None
+    assert classify_review_gate_command("python3 -m pytest --co") is None
+    assert classify_review_gate_command("pytest --collect-only") is None
+    assert classify_review_gate_command("pytest -h") is None
+    assert classify_review_gate_command("pytest --help") is None
+    assert (
+        classify_review_gate_command(
+            'grep -n "pythonpath" pyproject.toml; echo ---PY---; python3 --version; '
+            "python3 -m pytest --version; echo ---WHICH---"
+        )
+        is None
+    )
+    # 应拦仍拦：同串含真实 pytest 调用。
+    assert classify_review_gate_command("pytest --version; pytest") == "full_test"
+    assert classify_review_gate_command("pytest -q; pytest --version") == "full_test"
+    assert classify_review_gate_command("echo --version; pytest") == "full_test"
+    assert classify_review_gate_command("pytest --version | tee log; pytest -q") == "full_test"
+    # 非执行旗标须落在该 pytest 调用所在的命令段内。
+    assert classify_review_gate_command('pytest -q "a" ; echo --version') == "full_test"
+
+
+def test_non_execution_forms_agree_with_host_classifier() -> None:
+    """EVO-20261125-86a9864e：观测行分类器与 Host 准入分类器对非执行形态口径一致."""
+    from llm_loop.tools.review_host_admission import classify_host_shell
+
+    for flag in ("-h", "--help", "--version", "-V", "--co", "--collect-only"):
+        command = f"python3 -m pytest {flag}"
+        assert classify_review_gate_command(command) is None, flag
+        assert classify_host_shell(command) is None, flag
+
+
 def test_gate_non_triggers() -> None:
     assert classify_review_gate_command("git status") is None
     assert classify_review_gate_command("grep push file.txt") is None
@@ -157,12 +197,20 @@ def test_execute_command_full_test_receipt_carries_gate(tmp_path: Path) -> None:
     from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 
     tool = ExecuteCommandTool(timeout_s=30)
-    # 用 echo 模拟 pytest 不行——分类按命令文本。直接跑真 pytest --version？
-    # 该命令含 pytest 且无收窄 → full_test 触发；--version 只打印版本，退出 0。
-    result = tool.execute(command="pytest --version", workdir=str(tmp_path))
+    # 用 echo 模拟 pytest 不行——分类按命令文本。EVO-20261125-86a9864e 起
+    # `pytest --version` 属非执行形态、不再归类全量测试（见下方反向断言），
+    # 故在临时目录里放一个必过用例，跑一次真实但最小的全量 pytest 取证。
+    (tmp_path / "test_ok.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    result = tool.execute(command="pytest -q -p no:cacheprovider", workdir=str(tmp_path))
     assert result.status == ToolResultStatus.SUCCESS
     assert "[RULE-AI-28 闸]" in result.content
     assert "全量 pytest" in result.content
+    # 反向：非执行形态只打印版本，不再产生「动作=全量 pytest」观测行。
+    probed = tool.execute(command="pytest --version", workdir=str(tmp_path))
+    assert probed.status == ToolResultStatus.SUCCESS
+    assert "[RULE-AI-28 闸]" not in probed.content
 
 
 def test_service_control_publish_gate_line() -> None:
