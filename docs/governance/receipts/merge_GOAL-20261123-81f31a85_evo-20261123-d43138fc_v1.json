@@ -1,0 +1,57 @@
+{
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261123-81f31a85",
+  "evolution": "EVO-20261123-d43138fc",
+  "pr": {"number": 119, "url": "https://github.com/deyi2026/llm-first-loop/pull/119", "state": "MERGED"},
+  "branch": "feat/kf-delete-only-push-v2-20261124",
+  "based_on_main": "6349346d8a93cfd98d2ba464fc0dc45a4db84b51",
+  "head_sha": "a6f53357fb86cc5302136d314eca198cca1160c6",
+  "main_sha_after": "0d6e6b51715ed12f5554ae1bc197ab01c7ed4c3c",
+  "main_sha_verification": "gh pr view 119 → state=MERGED, mergeCommit=0d6e6b51715ed12f5554ae1bc197ab01c7ed4c3c；ls-remote refs/heads/main = 0d6e6b517；合并提交父依次为 6349346d（合并前 main）与 a6f53357f（分支 head）；a6f53357f 是 origin/main 的祖先；git diff --stat a6f53357f 0d6e6b517 为空（合并提交的树与已过全量门禁的分支 head 树一致）",
+  "merged_at": "2026-11-25T12:53:35+08:00",
+  "merge_mode": "merge-commit（main 为受保护分支，禁止直接推送 main；经 GitHub PR 合并，保留 5 个提交原 sha，可用一次 revert 合并提交回退）",
+  "conflicts_resolved": [],
+  "commits": [
+    "a7a88470d fix(gates): 死 lane 可回收 + 纯删 ref 的推送豁免知识闸（EVO-20261123-d43138fc）",
+    "a4809e2ef refactor(gates): 消费口知识闸抽成 _consume_knowledge_gate，check_shell 回到函数行数基线内",
+    "cd241c892 fix(gates): 按独立审查 P2 收紧豁免口径（EVO-20261123-d43138fc）",
+    "c090716c4 fix(gates): 二轮审查 P2 收口——注释纠偏 + worktree 读不出按 unknown（EVO-20261123-d43138fc）",
+    "a6f53357f docs(governance): declare knowledge-flush dead-lane + delete-only push A.5 scope (EVO-20261123-d43138fc)"
+  ],
+  "paths": [
+    ".githooks/pre-push",
+    "docs/ai_rules.md",
+    "docs/governance/submissions/20261123-evo-knowledge-flush-dead-lane-delete-only-push.json",
+    "scripts/knowledge_flush.py",
+    "src/llm_loop/tools/review_host_admission.py",
+    "tests/conftest.py",
+    "tests/test_knowledge_push_gate.py",
+    "tests/unit/test_knowledge_flush.py",
+    "tests/unit/test_review_admission_knowledge_flush_gate.py"
+  ],
+  "history": "交付期间 main 三次前进（4f1157055 → 843eeeadf → 6349346d），每次均 rebase（range-diff 全等）并重做全部门禁；早期 PR #113 已关闭并由 #119 取代。",
+  "reviewer": {
+    "merge_review": "宿主 merge_review_start 子代理 subagent_a03b1372c1dc（glm/glm-5.3；工具白名单 read_file+search_files；inherit=false；rounds=5；tokens_out=10342）；verdict PASS p0=0 p1=0（base=6349346d / head=a6f53357f）",
+    "verify_receipt": "verify_receipt_request ESC-20261125-91f50bd0 → 人工 Web 批准 → Host 签发 verify_ref=lane-9801388d:6349346d",
+    "note": "merge_review_start 的 Reviewer 沿用会话当前模型；glm-5.4 上两次 finish_reason=length 无结论，切换到 glm-5.3 后三次均真实 PASS"
+  },
+  "rule28_gates": {
+    "full_test_review": "subagent_aa0f2dd60206 PASS（candidate 4d713499ee4d8856…，tree scope）",
+    "git_push_review": "subagent_981f36c91254 PASS（candidate 1383dae6d6efed7a…，tree scope）",
+    "ci_gate": "bash scripts/ci_gate.sh job-39e646ecd01d4dccbf72 exit=0，结论行「✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）」，head=a6f53357f / base=6349346d",
+    "remote_checks": "gh pr view 119（12:50）mergeStateStatus=CLEAN，远端必需检查通过"
+  },
+  "merge_queue": {
+    "queue_id": "mq-f003b2b5",
+    "s0_preflight": "12:51:32 四条机检全过（base_main_current / merge_tree_clean / paths_disjoint / verify_covers_base）→ ready_for_confirm",
+    "confirm": "12:53:11 → merging（全局串行槽）",
+    "done": "12:54:35 → merged，merge_commit=0d6e6b51715ed12f5554ae1bc197ab01c7ed4c3c（merge_commit_source=reported）",
+    "lane": "lane-9801388d 自动收口为 merged（version 8）"
+  },
+  "post_merge_smoke": "合并后在树等于合并提交的 worktree 上定向回归：294 passed in 110.43s（tests/test_knowledge_push_gate.py、tests/test_privacy_gate.py、tests/unit/test_githooks_exec_bit.py、tests/unit/test_knowledge_flush.py、tests/unit/test_review_admission_knowledge_flush_gate.py、tests/unit/test_lane_main_write_guard.py）；日志 data/kf-run-logs/post-merge-smoke-0d6e6b517.log",
+  "deployment": "未部署：本回执只证明已并入 main；运行中的服务是否切到 0d6e6b517 由主统筹统一部署安排，此处不作声明",
+  "branch_disposition": "retained：远端分支保留（a6f53357f）并以追加提交承载本回执；本地 worktree .worktrees/kf-delete-only-push-20261123 保留证据日志",
+  "findings": []
+}
