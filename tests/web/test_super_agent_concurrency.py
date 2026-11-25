@@ -365,3 +365,99 @@ def test_busy_race_without_backoff_and_terminal_poke_recover(tmp_path: Path) -> 
         assert fb.quarantine_status() == {}
     finally:
         fb.stop()
+
+
+# ---------------------------------------------------------------------------
+# SA-SCOPE-HOTFIX-20261125 动态 scope 回归：A→B→A 单例动态绑定 / provider
+# 异常 fail-closed / 遗留冻结模式如实保留 / fallback 身份实时跟随引擎。
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_scope_provider_a_b_a_no_cross_delivery(tmp_path: Path) -> None:
+    """共享 data_dir 单例跨 workspace 切换 A→B→A：provider 实时盖章（根治
+    实机 q_c8a77451fdfb/q_a26bb24ce757 错章缺陷），各 scope 只领各自条目；
+    同 owner 返回按新快照重验（epoch 仅记账不阻断）。"""
+    data = tmp_path / "data"
+    current = {"scope": "/ws/a", "epoch": 1}
+    q = HumanTurnQueue(data, scope_provider=lambda: (current["scope"], current["epoch"]))
+    item_a = q.enqueue(SIDS[0], "a-时代")  # 章 A@1
+    current.update(scope="/ws/b", epoch=2)
+    item_b = q.enqueue(SIDS[0], "b-时代")  # 同一单例章 B@2（冻结实现会错章 A）
+
+    # B 期领取：expected 实时值 → 会话队首是 A 条目（更早创建）→ 严格 FIFO
+    # 队首阻断，本轮不派发（迁移态正确语义：不越过他 scope 队首）
+    assert q.dispatch_claim(SIDS[0], expected_workspace_scope=current["scope"]) is None
+    # 同 owner 返回 A：旧条目按新快照重验放行（不把旧 epoch 误作永久失效）
+    current.update(scope="/ws/a", epoch=3)
+    got_a = q.dispatch_claim(SIDS[0], expected_workspace_scope=current["scope"])
+    assert got_a is not None and got_a["queue_id"] == item_a["queue_id"]
+    assert got_a["workspace_scope"] == "/ws/a" and got_a["workspace_epoch"] == 1
+    # B 条目留队原样；A 条目终态结算后 B 身份回来领取（跨期不丢不串）
+    snap_b = q.snapshot_items()[1]
+    assert snap_b["queue_id"] == item_b["queue_id"] and snap_b["status"] == "queued"
+    q.mark_terminal(SIDS[0], item_a["queue_id"], "completed")
+    current.update(scope="/ws/b")
+    got_b2 = q.dispatch_claim(SIDS[0], expected_workspace_scope=current["scope"])
+    assert got_b2 is not None and got_b2["queue_id"] == item_b["queue_id"]
+    assert got_b2["workspace_scope"] == "/ws/b" and got_b2["workspace_epoch"] == 2
+
+
+def test_provider_failure_stamps_unbound_fails_closed(tmp_path: Path) -> None:
+    """provider 异常 → 不盖章（无章条目），领取按 legacy resolver 裁决：
+    无证明 → HOLD unresolved（fail-closed，不虚构归属）。"""
+    data = tmp_path / "data"
+
+    def _boom():
+        raise RuntimeError("workspace snapshot race")
+
+    q = HumanTurnQueue(data, scope_provider=_boom)
+    item = q.enqueue(SIDS[0], "provider 挂了")
+    assert "workspace_scope" not in item
+    assert q.dispatch_claim(SIDS[0], expected_workspace_scope="/ws/a") is None
+    snap = q.snapshot_items()[0]
+    assert snap.get("hold_reason") == "queue_hold_legacy_owner_unresolved"
+
+
+def test_stale_frozen_scope_legacy_mode_regression(tmp_path: Path) -> None:
+    """遗留冻结模式（无 provider）如实保留旧语义：错章条目被当前工作区
+    HOLD 留队（不删不改可查询），留归属/人工处置——生产装配必须走 provider."""
+    data = tmp_path / "data"
+    q = HumanTurnQueue(data, workspace_scope="/ws/stale-evo")
+    q.enqueue(SIDS[0], "冻结模式旧值")
+    current = HumanTurnQueue(data, workspace_scope="/ws/root")
+    assert current.dispatch_claim(SIDS[0], expected_workspace_scope="/ws/root") is None
+    snap = HumanTurnQueue(data).snapshot_items()[0]
+    assert snap["status"] == "queued" and snap["workspace_scope"] == "/ws/stale-evo"
+
+
+def test_fallback_current_scope_tracks_engine_switch(tmp_path: Path) -> None:
+    """fallback 派发身份实时跟随 engine.workspace_root：A 期构造 fallback，
+    切换到 B 后旧 scope 条目 HOLD 不错派（冻结实现会按构造值错派）；B 期
+    新条目正常派发（无跨目标阻塞/串线）。"""
+    runner = _MultiRunner()
+    engine = SimpleNamespace(
+        runner=runner,
+        settings=SimpleNamespace(data_dir=str(tmp_path / "data")),
+        workspace_root="/ws/a",
+        _workspace_epoch=1,
+    )
+    hq = HumanTurnQueue(tmp_path / "data", workspace_scope="/ws/a")
+    hq.enqueue(SIDS[0], "A 期条目")
+    fb = QueueServerFallback(engine, hq, tick_s=3600.0, min_age_s=0.0)
+
+    # 引擎切换（真实语义=workspace_root 更新+epoch 递增）；A 条目入队于切换前
+    engine.workspace_root = "/ws/b"
+    engine._workspace_epoch = 2
+    assert fb.tick_once() == 0  # B 身份不派发 A 条目（冻结实现会错派）
+    snap = hq.snapshot_items()[0]
+    # scope mismatch 纯读留队（不落盘 hold_reason——归属经 workspace_scope
+    # 字段即可查询；落盘会引入 stale 实例覆盖风险，见 human_turn_queue 契约）
+    assert snap["status"] == "queued" and snap["workspace_scope"] == "/ws/a"
+    assert "hold_reason" not in snap
+
+    # B 期新条目（provider 生产语义入队）正常派发
+    hq_b = HumanTurnQueue(tmp_path / "data", scope_provider=lambda: ("/ws/b", 2))
+    fb._hq = hq_b
+    hq_b.enqueue(SIDS[1], "B 期条目")
+    assert fb.tick_once() == 1
+    assert runner.starts == [(SIDS[1], "B 期条目")]

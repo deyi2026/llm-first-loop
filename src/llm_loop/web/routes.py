@@ -257,7 +257,23 @@ def _queue_workspace_options(engine: Any) -> dict:
                 return str(getattr(ws, "path", ""))
         return None
 
-    return {"workspace_scope": scope, "legacy_scope_resolver": _legacy_scope_resolver}
+    def _scope_provider() -> tuple[str | None, int | None]:
+        """SA-SCOPE-HOTFIX-20261125：实时读引擎当前工作区（workspace 切换
+        即时生效，队列单例不冻结动态 workspace——根治实机 q_c8a77451fdfb/
+        q_a26bb24ce757 错章 EVO worktree 缺陷）。engine.workspace_root 由
+        引擎在切换提交时更新；epoch 随切换递增，仅供入队记账（审计/追溯，
+        不作领取阻断）。调用方应在 engine.workspace_snapshot 内调用保证
+        scope/epoch 原子一致。"""
+        return (
+            str(getattr(engine, "workspace_root", "") or "") or None,
+            getattr(engine, "_workspace_epoch", None),
+        )
+
+    return {
+        "workspace_scope": scope,  # 兼容字段：provider 缺席时的退化值
+        "scope_provider": _scope_provider,
+        "legacy_scope_resolver": _legacy_scope_resolver,
+    }
 
 
 def _human_turn_queue(request: Request) -> HumanTurnQueue:

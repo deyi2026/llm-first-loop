@@ -126,9 +126,15 @@ class QueueServerFallback:
         # M0 workspace/epoch 绑定（SA-RESUME-20261125）：派发身份=引擎工作区根
         # （engine.workspace_root，与 HumanTurnQueue 盖章同源）；缺省/空=测试
         # 注入或未显式指定 → 不启用绑定过滤（遗留行为不变）。
-        self._workspace_scope = (
-            str(getattr(engine, "workspace_root", "") or "") or None
-        )
+        # SA-SCOPE-HOTFIX-20261125：不再于构造时冻结——fallback 线程长寿，
+        # workspace 切换后冻结值变成"历史工作区"导致错滤/漏派（实机
+        # q_c8a77451fdfb 缺陷同类）。改由 _current_workspace_scope() 每次
+        # 巡检/派发实时读取引擎当前态。
+
+    def _current_workspace_scope(self) -> str | None:
+        """当前可信派发身份（实时）：engine.workspace_root 非空即启用绑定
+        过滤；空/未指定=遗留不过滤。每次调用重读，切换后即时生效。"""
+        return str(getattr(self._engine, "workspace_root", "") or "") or None
 
     # ------------------------------------------------------------------ 生命周期
 
@@ -223,7 +229,7 @@ class QueueServerFallback:
         claimed = self._hq.dispatch_claim(
             sid,
             claimed_by="server-fallback",
-            expected_workspace_scope=self._workspace_scope,
+            expected_workspace_scope=self._current_workspace_scope(),
         )
         if not claimed:
             return 0  # 队首在途/scope HOLD/他人赢（正常收敛）
