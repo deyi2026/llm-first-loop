@@ -7,8 +7,9 @@
 
 本测试固化三条行为契约：
 
-1. 有未入库卡 → 拒（exit 1 + 可操作提示），且不依赖真实 ref 行：知识闸是**工作区**
-   层面的判定，不该因为「这次推的是哪个提交」而改变；
+1. 有未入库卡 → 拒（exit 1 + 可操作提示）。判定是**工作区**层面的，不因「这次推的
+   哪个提交」而改变；唯一例外是「纯删除远端 ref」的推送（不携带任何提交/文件，
+   EVO-20261123-d43138fc）——混入任何内容 refspec 即回到拒推；
 2. 入库后 → 放行：闸不是恒拒，否则会逼出 ``--no-verify`` 这种绕过习惯；
 3. 闸脚本缺失 → fail-closed 拒：看不见的闸等于没有闸（RULE-AI-35）。
 """
@@ -226,6 +227,99 @@ def test_flush_fail_closed_on_corrupt_ledger(repo: Path) -> None:
     out = _run_flush(repo)
     assert out.returncode != 0
     assert "lane 账本" in out.stderr
+
+
+# --- EVO-20261123-d43138fc：死 lane 回收 + 纯删 ref 推送豁免知识闸 ---
+def test_flush_reclaims_lane_with_missing_worktree(repo: Path) -> None:
+    """worktree 已消失（/tmp 被清、worktree 被 prune）→ 物理上已无写者，按失效回收。
+
+    旧行为把 git 失败一律当 live，这种 lane 会永久挡住所有人的 flush 与推送
+    （2026-11-23 实测卡住 4 小时）。
+    """
+    _make_card(repo, "data/methods/card-h/METHOD.md")
+    _ledger(
+        repo,
+        [
+            _lane_row(
+                "active",
+                "sess-gone",
+                minutes_ago=300,
+                worktree="/nonexistent/worktree/gone-20261123",
+            )
+        ],
+    )
+    out = _run_flush(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_flush_reclaims_lane_whose_worktree_is_not_a_git_tree(
+    repo: Path, dir_outside_any_repo: Path
+) -> None:
+    """路径还在但已不是 git 工作树（被复用/清空）→ 同样无可写者，按失效回收。"""
+    _make_card(repo, "data/methods/card-i/METHOD.md")
+    _ledger(
+        repo,
+        [
+            _lane_row(
+                "active", "sess-hollow", minutes_ago=300, worktree=str(dir_outside_any_repo)
+            )
+        ],
+    )
+    out = _run_flush(repo)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_flush_still_blocked_by_stale_dirty_lane(repo: Path, tmp_path: Path) -> None:
+    """应拦输入仍拦：空闲超时但 worktree 有未提交改动 → 可能有人正在写，不得回收。"""
+    dirty = tmp_path / "dirty"
+    dirty.mkdir()
+    _git(dirty, "init", "-q", "-b", "main")
+    _git(dirty, "config", "user.email", "t@example.com")
+    _git(dirty, "config", "user.name", "t")
+    (dirty / "x.txt").write_text("x\n", encoding="utf-8")
+    _git(dirty, "add", ".")
+    _git(dirty, "commit", "-q", "-m", "x")
+    (dirty / "x.txt").write_text("uncommitted\n", encoding="utf-8")
+    _make_card(repo, "data/methods/card-j/METHOD.md")
+    _ledger(repo, [_lane_row("active", "sess-dirty", minutes_ago=300, worktree=str(dirty))])
+    out = _run_flush(repo)
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "他人 live lane" in out.stderr
+
+
+def test_hook_allows_delete_only_push_with_untracked_card(repo: Path) -> None:
+    """纯删远端 ref 的推送不携带任何提交/文件 → 知识闸豁免。"""
+    _make_card(repo, "data/methods/card-k/METHOD.md")
+    delete_refs = (
+        "(delete) 0000000000000000000000000000000000000000 "
+        "refs/heads/gone 1111111111111111111111111111111111111111\n"
+    )
+    out = _run_hook(repo, stdin=delete_refs)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "跳过知识闸" in out.stdout
+
+
+@pytest.mark.parametrize("garbled", ["foo bar\n", "(delete)  refs/heads/gone 1111\n"])
+def test_hook_does_not_exempt_garbled_refspec(repo: Path, garbled: str) -> None:
+    """应拦输入仍拦：refspec 行读不懂（字段缺失/非全零 sha）→ 不豁免。"""
+    _make_card(repo, "data/methods/card-m/METHOD.md")
+    out = _run_hook(repo, stdin=garbled)
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "未入库的知识资产" in out.stderr
+
+
+def test_hook_still_blocks_content_push_with_untracked_card(repo: Path) -> None:
+    """应拦输入仍拦：删除与内容推送混在一起时，知识闸照旧拒推。"""
+    _make_card(repo, "data/methods/card-l/METHOD.md")
+    tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    mixed = (
+        "(delete) 0000000000000000000000000000000000000000 "
+        "refs/heads/gone 1111111111111111111111111111111111111111\n"
+        f"refs/heads/main {tip} refs/heads/main {tip}\n"
+    )
+    out = _run_hook(repo, stdin=mixed)
+    assert out.returncode != 0, out.stdout + out.stderr
+    assert "未入库的知识资产" in out.stderr
 
 
 # --- EVO-20261109-b1dad92e P5: hook 扫描回执占位 ---
