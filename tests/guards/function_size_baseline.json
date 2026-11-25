@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "cbc3813e5",
+    "head_commit": "fcec5bf0b",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -470,6 +470,15 @@
           "src/llm_loop/core/loop/hotcard.py"
         ],
         "rationale": "hotcard 为当前运行状态快照，采用覆盖式文件语义。",
+        "status": "observe",
+        "tier": "T2"
+      },
+      "human_turn_queue": {
+        "owner": "web",
+        "paths": [
+          "src/llm_loop/web/human_turn_queue.py"
+        ],
+        "rationale": "Human Turn 队列 durable 事实源（queued→claimed→终态，JSON 全文件）：tempfile+os.replace 原子替换；写路径 flock+锁内 fresh reload 全局互斥（SA-RESUME-20261125）；持久化错误 D2 二分级（definitely_not_committed/commit_outcome_uncertain）由调用方如实透出，不静默吞；claimed 回滚仅认机械 run/事件事实，超时单独从不重放。本项 observe 仅登记已核实写入面，不宣称完整 tier 合规或生产崩溃注入全谱验证。",
         "status": "observe",
         "tier": "T2"
       },
@@ -1217,13 +1226,13 @@
     "src/llm_loop/tools/review_host_admission.py::start": 99,
     "src/llm_loop/tools/safety.py::_scan_tokens": 230,
     "src/llm_loop/web/__init__.py::build_app": 144,
-    "src/llm_loop/web/__init__.py::main": 147,
+    "src/llm_loop/web/__init__.py::main": 142,
     "src/llm_loop/web/preview_routes.py::preview_file": 215,
     "src/llm_loop/web/routes.py::_stats_for_loaded_session": 138,
     "src/llm_loop/web/routes.py::_stream_background": 235,
     "src/llm_loop/web/routes.py::chat": 174,
     "src/llm_loop/web/routes.py::escalation_review": 207,
-    "src/llm_loop/web/routes.py::event_stream": 196,
+    "src/llm_loop/web/routes.py::event_stream": 191,
     "src/llm_loop/web/routes.py::learning_status": 130,
     "src/llm_loop/web/routes.py::list_models": 148,
     "src/llm_loop/web/routes.py::queue_interject": 124,
@@ -1278,7 +1287,7 @@
     "src/llm_loop/subagent/runner.py::_execute_subagent": 619,
     "src/llm_loop/subagent/runner.py::start": 394,
     "src/llm_loop/tools/builtin/browser_perceive.py::execute": 350,
-    "src/llm_loop/web/routes.py::chat_stream": 378,
+    "src/llm_loop/web/routes.py::chat_stream": 373,
     "src/llm_loop/core/lane_main_write_guard.py::_git_verbs": 459
   },
   "local_imports": {

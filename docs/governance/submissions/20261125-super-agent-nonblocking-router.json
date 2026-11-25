@@ -1,0 +1,34 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-super-agent-nonblocking-router",
+  "summary": "Super-Agent non-blocking router: bounded event wake for queued sessions, queue recovery on startup, concurrency regression coverage; existing 15s tick kept as bounded fallback.",
+  "components": [
+    {
+      "component_id": "super-agent-nonblocking-router",
+      "paths": [
+        "docs/governance/submissions/20261125-super-agent-nonblocking-router.json",
+        "docs/design/DESIGN-20261125-super-agent-nonblocking-router-v1.0.md",
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/human_turn_queue.py",
+        "src/llm_loop/web/queue_recovery.py",
+        "src/llm_loop/web/routes.py",
+        "tests/guards/function_size_baseline.json",
+        "tests/web/test_chat_queue.py",
+        "tests/web/test_queue_recovery.py",
+        "tests/web/test_super_agent_concurrency.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web queue server, human-turn queue and chat stream routes. No new execution authority, no durable schema migration; queue rows stay the authority.",
+      "disposition": "QueueServerFallback.poke_session (bounded queue 64, drop-on-full with tick as fallback) plus two deterministic wake hooks (queue_enqueue success, chat_stream run terminal) dispatch one target via _dispatch_session_now, skipping min_age while preserving barriers/liveness/A05 backoff/epoch/scope head-blocking. Startup recovery materialises live pending from the durable queue once per process with scope guards. All reductions recorded in tests/guards/function_size_baseline.json. Router short-run/role candidates remain with the separate model-routing delivery; global priority queue unchanged.",
+      "evidence": [
+        "Session recorded directed suites: M0 73 passed + M1 new 4 passed (77 total, event wake end-to-end <5s via poke), M3 batch 9 passed; totals consistent with session state task-state:a176e521 records.",
+        "PR CI on ab05f9608: gate pytest+ruff+pyright pass (8m59s), security scan pass, privacy pass, Linux install acceptance aarch64/x86_64 pass, managed-premerge-evidence pass, deploy-env-leak D4 pass.",
+        "Independent review and full R9 re-bound to the final merged head, pending after manifest addition."
+      ],
+      "verification_level": "Directed suites + PR CI green; independent review and full R9 on final merged head pending.",
+      "model_evidence_veto_recovery_exit": "Wake is a scheduling hint only: authoritative state remains the durable queue; drop-on-full falls back to the existing 15s tick; errors never imply task completion and no automatic retry is introduced.",
+      "rollback_route": "Protected revert of the wake hooks and recovery materialisation; the 15s tick path is untouched and remains the bounded fallback. No data migration."
+    }
+  ],
+  "declarations": []
+}
