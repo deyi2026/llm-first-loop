@@ -22,9 +22,15 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar
+
+try:
+    import fcntl  # noqa: F401 — POSIX 跨进程写互斥（Windows 等平台退化为实例内锁）
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +64,13 @@ class QueuePersistError(RuntimeError):
 
 
 class HumanTurnQueue:
-    """会话级 human turn 队列（进程内单实例 + JSON 文件持久化）.
+    """会话级 human turn 队列（JSON 文件持久化为 durable 事实）.
 
-    线程安全：所有公开方法在 _lock 内完成"读改写"，落盘为原子写
-    （tempfile + os.replace），多进程/多实例不保证跨进程互斥（8903 单进程契约）。
+    并发契约：读方法在实例内 _lock 下近似一致；写方法（enqueue/dispatch/
+    release/cancel/interject 域/终态/compact）经 _exclusive_locked 全局互斥
+    ——实例内 threading 锁 + 跨进程 flock + 锁内以磁盘 fresh reload 为起点，
+    共享 data_dir 的多进程写互斥且单赢家（fcntl 不可用平台如实退化为实例
+    内锁）。落盘为原子写（tempfile + os.replace）。
     """
 
     def __init__(
@@ -69,6 +78,8 @@ class HumanTurnQueue:
         data_dir: str | Path,
         claim_timeout_s: float = CLAIM_TIMEOUT_S,
         claim_state_probe: Callable[[str, str], str] | None = None,
+        workspace_scope: str | None = None,
+        legacy_scope_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         self._path = Path(data_dir) / QUEUE_FILENAME
         self._lock = threading.Lock()
@@ -76,11 +87,34 @@ class HumanTurnQueue:
         self._seq = 0
         self._claim_timeout_s = claim_timeout_s
         self._claim_state_probe = claim_state_probe
-        self._load()
+        # M0 workspace/epoch 绑定（SA-RESUME-20261125）：本进程归属工作区根
+        # （与 engine.workspace_root 同源）。非空时 enqueue 给条目盖章
+        # workspace_scope，dispatch_claim 按 expected_workspace_scope 过滤——
+        # 共享 data_dir 的多进程互不派发对方工作区的条目。升级前存量条目无
+        # 盖章，仅在 legacy_scope_resolver（装配方经 SessionStore 既有
+        # identity owner 机制组装）机械证明归属本工作区时可领取；未知/歧义/
+        # 他区一律 HOLD 留队（fail-closed，不自动分配）。缺省 None=遗留行为
+        # 不变（不盖章、不过滤、不解析）。
+        self._workspace_scope = str(workspace_scope) if workspace_scope else None
+        self._legacy_scope_resolver = legacy_scope_resolver
+        # 进程启动期一次性重启恢复（live handoff 死亡 → durable queued 意图）；
+        # 运行期 fresh reload 不做此重排（见 _recover_process_restart）。
+        # P1-1（full_test 审查 subagent_48c95c6191a6）：构造期 load+恢复写
+        # 同样纳入全局互斥——多进程构造竞态下无锁 _save 会以 stale 视图覆盖
+        # 他进程刚写入的条目/领取事实。_exclusive_locked = flock + fresh
+        # reload，恢复写全局单赢家（恢复语义不变：活性证明通过则保留 pending）。
+        with self._exclusive_locked():
+            self._recover_process_restart()
 
     # ------------------------------------------------------------------ 持久化
 
     def _load(self) -> None:
+        """纯磁盘投影（fresh reload 路径）：JSON→内存，无任何语义迁移.
+
+        interject_pending 是进程本地 live-run handoff——fresh reload 若顺带
+        重排会把 live handoff 破坏成 queued（重复派发）。重启/孤儿恢复独立：
+        重启走 _recover_process_restart（仅构造期一次性）；孤儿走既有
+        reap_orphan_interjects 活性证明路径。"""
         if not self._path.exists():
             self._items = []
             return
@@ -92,17 +126,30 @@ class HumanTurnQueue:
             logger.exception("human turn queue 文件损坏，按空队列处理: %s", self._path)
             items = []
         self._items = [it for it in items if isinstance(it, dict)]
-        # interject_pending is a process-local live-run handoff.  After a Web process
-        # restart that mailbox no longer exists, so restore the durable intent to the
-        # ordinary queue instead of pretending it is still pending delivery.
+        self._seq = max((int(it.get("_seq", 0)) for it in self._items), default=0)
+
+    def _recover_process_restart(self) -> None:
+        """进程启动期一次性重启恢复（构造时调用；持调用方锁）.
+
+        interject_pending is a process-local live-run handoff. 恢复前经既有
+        claim_state_probe（runner 活性 + 跨进程 lease 的机械事实）做活性/归属
+        证明：证明 run 仍 active → 保留 live handoff（同进程多实例构造或
+        接管窗口，绝不因刷新重排）；无法证明（not_started/unknown/未注入）
+        → 信箱不可达，恢复 durable queued 意图。运行期 fresh reload 绝不
+        调用此方法；孤儿回收另有 reap_orphan_interjects 活性证明路径。
+        """
         recovered_pending = False
         for it in self._items:
-            if it.get("status") == "interject_pending":
-                it["status"] = "queued"
-                it["requeued_at"] = _now()
-                it["requeued_from"] = "interject_process_restart"
-                recovered_pending = True
-        self._seq = max((int(it.get("_seq", 0)) for it in self._items), default=0)
+            if it.get("status") != "interject_pending":
+                continue
+            if self._probe_claim_state(
+                str(it.get("session_id")), str(it.get("queue_id"))
+            ) == "active":
+                continue  # 活性证明通过：run 仍在，保留 pending 不重排
+            it["status"] = "queued"
+            it["requeued_at"] = _now()
+            it["requeued_from"] = "interject_process_restart"
+            recovered_pending = True
         if recovered_pending:
             self._save()
 
@@ -131,6 +178,37 @@ class HumanTurnQueue:
             raise QueuePersistError("commit_outcome_uncertain", str(exc)) from exc
 
     # ------------------------------------------------------------------ 内部
+
+    @contextmanager
+    def _exclusive_locked(self) -> Iterator[None]:
+        """写侧全局互斥：实例内 threading 锁 + 跨进程 flock + 锁内 fresh reload.
+
+        持久化是全文件覆盖写（tempfile+os.replace），实例内存是全量权威——
+        共享 data_dir 的多进程（如多 workspace web 进程）若各自持 stale 内存
+        视图互相覆盖，会丢他实例刚写入的条目/领取事实；仅靠实例内锁或原子
+        replace 都不构成全局单赢家。写路径统一契约：flock 互斥 → 以磁盘
+        fresh reload 为起点 → 读改写 → 原子替换落盘。锁文件与队列文件同
+        目录（``human_turn_queue.json.lock``）。fcntl 不可用平台退化为实例
+        内锁（契约如实降级，不虚称跨进程安全；8903 单进程部署不受影响）。
+        """
+        with self._lock:
+            # 锁文件先于队列文件创建：新 data_dir 下 os.open 直接 ENOENT，
+            # 故先确保目录存在（_save 自带 mkdir，但锁打开在 _save 之前）。
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            lock_fd = os.open(
+                str(self._path.parent / (QUEUE_FILENAME + ".lock")),
+                os.O_CREAT | os.O_RDWR,
+                0o600,
+            )
+            try:
+                if fcntl is not None:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                self._load()  # fresh reload：磁盘为权威起点，防 stale 视图覆盖
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
 
     def _probe_claim_state(self, session_id: str, queue_id: str) -> str:
         """Return one closed mechanical claim state; uncertainty fails closed."""
@@ -261,7 +339,7 @@ class HumanTurnQueue:
         缺省为空，旧语义不变。
         """
         now = _now()
-        with self._lock:
+        with self._exclusive_locked():
             self._seq += 1
             item = {
                 "queue_id": f"q_{uuid.uuid4().hex[:12]}",
@@ -281,13 +359,15 @@ class HumanTurnQueue:
                 item["origin"] = str(origin)
             if origin_operation_id:
                 item["origin_operation_id"] = str(origin_operation_id)
+            if self._workspace_scope:
+                item["workspace_scope"] = self._workspace_scope
             self._items.append(item)
             self._save()
             return self._public(item)
 
     def list_active(self, session_id: str) -> list[dict[str, Any]]:
         """会话的活跃队列（queued+claimed，FIFO 序）；顺带触发 reaper."""
-        with self._lock:
+        with self._exclusive_locked():
             self._reap_stale_claims_locked(_now())
             return [self._public(it) for it in self._active_items_locked(session_id)]
 
@@ -308,7 +388,7 @@ class HumanTurnQueue:
         cancelled_by（SPEC-20260923-queue-recovery）：机械取消方标记——
         用户主动取消（端点传 "user"）与系统路径取消可区分，恢复重排只认后者。
         """
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "queued":
@@ -329,7 +409,7 @@ class HumanTurnQueue:
         判孤儿（与 queue-interject 端点 CAS 判据同构）；缺省不记录（旧调用
         语义不变）。
         """
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "queued":
@@ -350,7 +430,7 @@ class HumanTurnQueue:
         reason: str = "interject_handoff_rejected",
     ) -> bool:
         """Rollback a mailbox handoff that never reached a live run."""
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "interject_pending":
@@ -402,7 +482,7 @@ class HumanTurnQueue:
         interrupted_for_interjection）→ 分桶由 aggregate 派生，不在标记时判断
         （戳记只记事实，不解释）。
         """
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "interject_pending":
@@ -427,7 +507,7 @@ class HumanTurnQueue:
         仅 interject_pending 可达（与 mark_interject_received 同一 CAS 形态）；
         终态 interject_denied + deny_reason，不回滚排队（守卫拒绝=不可投递）。
         """
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "interject_pending":
@@ -447,7 +527,7 @@ class HumanTurnQueue:
         因插话改变了终答。机械判据（Phase3 §7.1），非状态迁移——在
         interject_received 终态上追加 applied_at/applied_detail（幂等：首个
         事实生效，后续不覆盖）。"""
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "interject_received" or it.get("applied_at"):
@@ -460,7 +540,7 @@ class HumanTurnQueue:
 
     def record_interject_cbf(self, session_id: str, queue_id: str, detail: str = "") -> bool:
         """G1 continued_before_final 事实：终答结算边界拦截到的插话续跑."""
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "interject_received" or it.get("cbf_at"):
@@ -471,24 +551,93 @@ class HumanTurnQueue:
                     return True
             return False
 
-    def dispatch_claim(self, session_id: str, claimed_by: str = "web") -> dict[str, Any] | None:
-        """原子领取队首 queued 项（FIFO）：标记 claimed；无可派发项返回 None."""
-        with self._lock:
+    @staticmethod
+    def _same_workspace_scope(a: str, b: str) -> bool:
+        """workspace_scope 比较统一 realpath 归一（registry path 与 engine
+        workspace_root 可能存在 symlink/尾斜杠差异，字面量比较会误判错投）。"""
+        try:
+            return os.path.realpath(str(a)) == os.path.realpath(str(b))
+        except OSError:
+            return str(a) == str(b)
+
+    def _hold_locked(self, it: dict[str, Any], reason: str) -> None:
+        """队首 HOLD 留队：写可查询原因（幂等——同因不重复落盘）。条目保持
+        queued 原样，快照端点经 hold_reason 查询阻断事实。"""
+        if it.get("hold_reason") != reason:
+            it["hold_reason"] = reason
+            self._save()
+
+    def dispatch_claim(
+        self,
+        session_id: str,
+        claimed_by: str = "web",
+        *,
+        expected_workspace_scope: str | None = None,
+    ) -> dict[str, Any] | None:
+        """原子领取会话队首 queued 项（严格 FIFO）：标记 claimed；无可派发项返回 None.
+
+        expected_workspace_scope（M0 workspace 绑定，P1-1/P1-2/P1-3 收口）：
+        非空时只对会话队首（最早 queued 项）做 scope 裁决——
+        - 队首绑定其他工作区 → 本轮整段不领取（队首阻断，绝不越过队首取
+          后续项；P1-3：continue 越过队首会破坏会话内 FIFO，两个领取方
+          可各领一条造成乱序投递）。条目原样留队（不删不改不落盘：归属
+          经既有 workspace_scope 字段即可查询；落盘会引入 stale 实例覆盖
+          他实例 claimed 事实的风险）；
+        - 队首无 workspace_scope（升级前存量）→ 仅当 legacy_scope_resolver
+          机械证明归属本工作区时可领取（领取时回填盖章防重复解析漂移）；
+          未知/歧义/他区 → HOLD 留队并写 hold_reason 供快照端点查询
+          （P1-2 fail-closed：共享 data_dir 下无绑定条目归属 UNKNOWN，
+          不能自动分配；该原因属运行时证明事实，不落盘不可查）；
+        - 队首匹配或经证明归属 → 领取，清除 hold_reason。
+        队首非 queued（claimed 等在途）同样本轮不领取（FIFO 语义：队首
+        未结算时不越过）。缺省 None=不过滤（遗留调用行为不变）。
+        """
+        with self._exclusive_locked():
             self._reap_stale_claims_locked(_now())
-            pending = sorted(self._active_items_locked(session_id), key=lambda x: (x.get("created_at", 0), int(x.get("_seq", 0))))
-            for it in pending:
-                if it.get("status") == "queued":
-                    it["status"] = "claimed"
-                    it["claimed_at"] = _now()
-                    it["claimed_by"] = claimed_by
-                    self._clear_recovery_fields(it)
-                    self._save()
-                    return self._public(it)
-            return None
+            active = sorted(self._active_items_locked(session_id), key=lambda x: (x.get("created_at", 0), int(x.get("_seq", 0))))
+            if not active:
+                return None
+            head = active[0]
+            if head.get("status") != "queued":
+                # 队首在途（claimed/interject_pending/interject_received 展示
+                # 窗口）：未结算不越过——本轮整段不派发（浏览器与后台同约束），
+                # 队首终态/release 后下轮自然轮到后续条目。
+                return None
+            if expected_workspace_scope:
+                item_scope = str(head.get("workspace_scope") or "")
+                if item_scope:
+                    if not self._same_workspace_scope(item_scope, expected_workspace_scope):
+                        return None  # 队首绑定他区：原样留队（不落盘），不越过
+                else:
+                    owner_scope: str | None = None
+                    resolver = self._legacy_scope_resolver
+                    if resolver is not None:
+                        try:
+                            owner_scope = resolver(session_id) or None
+                        except Exception:  # noqa: BLE001 — 未知/多归属/删除等
+                            # SessionStore 证明失败：fail-closed HOLD，不自动分配
+                            logger.exception(
+                                "legacy scope resolver failed: sid=%s", session_id[:8]
+                            )
+                            owner_scope = None
+                    if owner_scope is None:
+                        self._hold_locked(head, "queue_hold_legacy_owner_unresolved")
+                        return None
+                    if not self._same_workspace_scope(owner_scope, expected_workspace_scope):
+                        self._hold_locked(head, "queue_hold_legacy_owner_other_workspace")
+                        return None
+                    head["workspace_scope"] = expected_workspace_scope
+            head["status"] = "claimed"
+            head["claimed_at"] = _now()
+            head["claimed_by"] = claimed_by
+            head.pop("hold_reason", None)
+            self._clear_recovery_fields(head)
+            self._save()
+            return self._public(head)
 
     def claimed_item(self, session_id: str, queue_id: str) -> dict[str, Any] | None:
         """Return one currently claimed frozen handoff fact without mutating it."""
-        with self._lock:
+        with self._exclusive_locked():
             self._reap_stale_claims_locked(_now())
             for it in self._items:
                 if (
@@ -501,7 +650,7 @@ class HumanTurnQueue:
 
     def release(self, session_id: str, queue_id: str) -> bool:
         """领取方未能发起正式 run（如 session_busy 竞态）→ 回滚 queued 保持 FIFO."""
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "claimed":
@@ -543,7 +692,7 @@ class HumanTurnQueue:
         """run 终态回写：claimed → completed | failed."""
         if status not in ("completed", "failed"):
             raise ValueError(f"unsupported terminal status: {status}")
-        with self._lock:
+        with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "claimed":
@@ -559,7 +708,7 @@ class HumanTurnQueue:
 
     def compact(self, keep_n: int = TERMINAL_HISTORY_KEEP_N) -> None:
         """终态条目滚动清理（保最近 keep_n 条终态历史）."""
-        with self._lock:
+        with self._exclusive_locked():
             if len(self._items) <= keep_n:
                 return
             actives = [

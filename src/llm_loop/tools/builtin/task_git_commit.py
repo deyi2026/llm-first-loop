@@ -52,17 +52,22 @@ class TaskGitCommitTool:
         "additionalProperties": False,
     }
 
-    def _fail(self, reason: str, *, unauthorized: bool = False) -> ToolResult:
+    def _fail(
+        self, reason: str, *, unauthorized: bool = False, hint: str = ""
+    ) -> ToolResult:
+        content = f"[task_git_commit HOLD] {reason}。"
+        if hint:
+            content += f" 指引：{hint} "
+        content += (
+            "未推送、未合并、未发布；若效果未知先核对Git HEAD和Lane回执，"
+            "不得自动重试。"
+        )
         return ToolResult(
             status=(
                 ToolResultStatus.UNAUTHORIZED if unauthorized
                 else ToolResultStatus.FAILURE
             ),
-            content=(
-                f"[task_git_commit HOLD] {reason}。"
-                "未推送、未合并、未发布；若效果未知先核对Git HEAD和Lane回执，"
-                "不得自动重试。"
-            ),
+            content=content,
             tool_call_id="", tool_name=self.name, error_type=reason,
         )
 
@@ -83,7 +88,16 @@ class TaskGitCommitTool:
             return self._fail("task_git_arguments_invalid")
         task = current_task_execution.get()
         if not isinstance(task, TrustedTaskExecution):
-            return self._fail("task_context_not_active", unauthorized=True)
+            return self._fail(
+                "task_context_not_active", unauthorized=True,
+                hint=(
+                    "本工具仅对 Host 已签发 Task lease 的任务运行上下文开放"
+                    "（Web/CLI 任务入口经调度器签发）。普通 Lane 开发会话没有"
+                    "该上下文属预期 fail-closed，非故障；lane 候选提交请走"
+                    " lane 正规提交流程，或由宿主为开发会话签发窄 lease"
+                    "（见 EVO-20261125-28d517b3 验收项），不要重试本调用。"
+                ),
+            )
         worktree = current_workspace_root.get()
         if (
             not isinstance(worktree, str)

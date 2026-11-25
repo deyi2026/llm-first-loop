@@ -1,0 +1,43 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-evo-approval-feedback-bounded-retry",
+  "summary": "EVO 审批反馈缺失专项接续 v2（GOAL-20261125-67ef073b / TASK-67ef073b-001 / lane-5b063995，worktree fix/evo-approval-feedback-20261125；基线 HEAD=4f115705，origin/main=64e64832 已核实前端两文件零改动）。针对 ChatGPT 交叉复核确认的三个实际缺口做最小修正：①有界请求 helper 的 deadline 必须覆盖「响应头+响应体读取/解析」全程（旧实现 finally 在收到响应头后即 clearTimeout，r.json() 无界——头到体悬挂时调用方仍永久挂起；fetchBounded 改返回 BoundedJson{ok,status,body}，body=null=结果不明；review/detail 查询/review-batch/fetchDetail/openViewer 全部切换）；②已处理状态集合补全权威七态（src/llm_loop/introspection/evolution.py EvolutionStatus：pending_review→accepted→executing→executed/rolled_back/failed，旁路 rejected；旧集合漏 executing——正是 EVO-20261125-bb60b1d4 当前真实状态——及 rolled_back/failed），statusStageText 区分审批阶段与执行阶段文案，只读查询 queryStatus 必须核对回执精确 id===请求 id，不把其他条目状态冒充本次核实结果；③删除被证伪的「仍待审批=可安全重试」声明（stale_pending→pending_unverified：超时后查询仍待审批不能证明此前请求已终止、可能仍在服务端处理→锁定提交、仅允许继续只读核实；只有服务端门禁明确 409 拒绝（可证明未生效）才解锁允许用户显式重发一次，绝不自动重放/重试），5xx 与响应体异常一律按结果不明处理（后端 read-then-approve 非原子，不能轻信状态行），「结果不明」锁为模块级 Set 跨确认弹窗关闭/重开保留（重开弹窗静默解锁=修复点），busyRef 同步双击闸保证处理中连点零重复 POST，批量 body 异常/超时不伪装「批量完成：成功 0 / 失败 0」并锁定所选条目。完整保留 CAS expected_status/requires_human/exec_override/prompt surface/拒绝理由/来源会话链接/审批回执复制面。纯前端 2 文件，无 API/契约变更（main 上 routes.py 改动位于 providers/stream 区，evolution 端点契约未变），无控制机械，不重启服务、不代用户批准/拒绝任何生产 EVO。",
+  "components": [
+    {
+      "component_id": "webui-evo-approval-bounded-retry",
+      "paths": [
+        "webui/src/components/sidebar/EvolutionPanel.tsx",
+        "webui/src/evolution-panel.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "webui-frontend",
+      "disposition": "modify",
+      "evidence": [
+        "定向回归：src/evolution-panel.test.tsx 30/30（17 基线 + 13 有界；新增 9 用例——超时后仍待审批锁定且关闭/重开弹窗锁保留、409 门禁拒绝=可证明未生效允许用户显式重发一次、响应头即回但响应体永不结束→deadline 超时锁定、批量响应体悬挂不伪装「成功 0 / 失败 0」且仅 1 次 POST、5xx 按结果不明恢复、executing 如实叙述（复现 bb60b1d4 状态链）、detail 回执 id 不匹配视为查询失败保持锁定、七态标签（执行中/已回滚/执行失败）、同步双击仅 1 次 POST）。",
+        "WebUI 全量 707/707 通过；tsc --noEmit 通过；vite build 通过（source binding bbafa501af79a34e，tracked 161 文件数不变）。后端定向 tests/web/test_evolution_review_batch.py 15/15。",
+        "独立审查（RULE-AI-28 review_admission kind=full_test scope=patch 2 路径）PASS：child_id=subagent_467232d1af32，candidate_sha256=50df61c388671585a7411bc92e0805e32beb6d78e83a6f2df61e42f88791f05b，reviewer=glm-5.3-flash，结论=补丁质量良好无新增问题，三缺口均已正确处理。",
+        "完整 R9 本地全链路通过（bash scripts/ci_gate.sh，job-d9eb022545f54e159beb，exit=0）：ruff PASS(new=0)→env-pin PASS→pyright PASS(new=0)→WebUI 构建+vitest 全量→tier0 预检（6 passed, 2 skipped）→全量门禁并行集+serial_signal 串行补跑全绿。",
+        "未执行事项：受管 commit/push/PR/CI/合入 main/main CI 及统一部署由主统筹 Host 通道执行（沙盒 git index.lock EPERM，不重复尝试、不开沙盒、不手改账本）；webui/.tmp-vitest/ 为本地测试缓存不入提交。"
+      ],
+      "verification_level": "targeted-new-tests-plus-regression-local-plus-independent-review-pass-plus-host-full-r9-local-remote-ci-pending",
+      "model_evidence_veto_recovery_exit": "远端 CI fail 或合入后回归异常即 git revert 该单提交并重走闸链（独审、门禁、push）；线性单提交，回退路径确定。",
+      "rollback_route": "git revert 该提交即恢复两文件至 4f115705 版本：纯前端行为修复，无状态、无迁移、无 API 变更，测试文件独立不影响其他面板。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261125-evo-approval-feedback-bounded-retry.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "add",
+      "evidence": [
+        "本清单即本提交的架构声明文档；加入后以 python scripts/check_architecture_submission.py --base 4f11570557842f4b1f180f3035fa144c6752f5cc --head HEAD 复核（结果记入 PR 描述）。"
+      ],
+      "verification_level": "mechanical-presence-coverage-check-local",
+      "model_evidence_veto_recovery_exit": "校验器机械失败即修正清单或 revert；清单只改文档不触碰被测代码。",
+      "rollback_route": "revert 包含本清单的提交即可移除，无其他影响面。"
+    }
+  ],
+  "declarations": []
+}
