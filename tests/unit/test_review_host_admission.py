@@ -221,11 +221,34 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF\nend\" ; echo \"\nx\"", "git_push"),
     # 终止符未配对：体保守保留在反引号网扫描范围内。
     ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`", "git_push"),
+    # ── 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，2026-11-26）──
+    # opener 行须整行收在 shell 顶层：`<<WORD` 之后的行尾文本留下未闭合引号时，
+    # shell 把后续各行当作该引号串的延续（命令行，不是 here-doc 体；双引号内的
+    # 命令替换真实执行——2026-11-26 bash 实测）。体既不豁免也不脱敏。
+    ('cat > /tmp/doc.md <<\'EOF\' > "note\n`git push origin main` x"\nEOF', "git_push"),
+    ('cat > /tmp/doc.md <<\'EOF\' > "note\n`git push origin main` x"\nEOF\necho "a" "b"', "git_push"),
+    ("cat <<'EOF' 'arg\n`git push origin main`\nEOF\necho 'a' 'b'", "git_push"),
+    # 行尾引号已闭合 / 行尾注释里的撇号 / 无引号重定向：仍是合法数据体，照常豁免。
+    ('cat > /tmp/doc.md <<\'EOF\' > "a b"\n`git push origin main`\nEOF', None),
+    ("cat > /tmp/doc.md <<'EOF' # it's fine\n`git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' 2>/dev/null\n`git push origin main`\nEOF", None),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
 ) -> None:
     assert classify_host_shell(command) == expected
+
+
+def test_heredoc_opener_line_with_unclosed_tail_quote_is_not_desensitized(tmp_path: Path) -> None:
+    """接力修复（独立审查 P1，2026-11-26）：opener 行尾留下未闭合引号时体不得脱敏."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    cmd = 'cat > /tmp/pr.md <<\'PREOF\' > "note\n`git push origin main` x"\nPREOF'
+    verdict = host.check_shell("author-1", cmd, str(repo))
+    assert verdict.blocked is True
+    # 对照：行尾引号闭合的同一写法仍是合法数据体。
+    ok = 'cat > /tmp/pr.md <<\'PREOF\' > "a b"\n`git push origin main` 只是文档\nPREOF'
+    assert host.check_shell("author-1", ok, str(repo)).allowed is True
 
 
 def test_exempt_heredoc_markdown_backtick_span_not_admitted_as_push(tmp_path: Path) -> None:

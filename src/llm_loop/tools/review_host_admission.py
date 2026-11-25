@@ -561,8 +561,9 @@ def _strip_heredoc_units(
     EVO-20261125-86a9864e（人工批准）：``net_out``（可选）镜像收集 shell 实际
     解析的文本——反引号网的扫描面。带引号终止符的体在 shell 中不做展开，
     其中的 Markdown 代码span（一对反引号）不是命令替换；故「终止符已配对 +
-    豁免 + 引导位于顶层」的体不进镜像，其余（无引号终止符/非数据接收者/引导
-    落在跨行引号串内/未配对）照常进镜像。
+    豁免 + 引导位于顶层 + opener 行整行收在顶层」的体不进镜像，其余（无引号
+    终止符/非数据接收者/引导落在跨行引号串内/opener 行尾留下未闭合引号/未配对）
+    照常进镜像。
     """
     lines = text.split("\n")
     out: list[str] = []
@@ -613,6 +614,13 @@ def _strip_heredoc_units(
         # 内；否则 `<<` 不是 here-doc 引导，体内反引号在 shell 中真实执行，不得
         # 从反引号网脱敏。
         at_top_level = quote is None and _advance_quote_state(None, head_txt) is None
+        # 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，
+        # 2026-11-26）：opener 行须整行收在 shell 顶层。`<<WORD` 之后的行尾文本若
+        # 留下未闭合引号，shell 把后续各行当作该引号串的延续——属于命令行而非
+        # here-doc 体，双引号内的命令替换真实执行（2026-11-26 bash 实测）。此时
+        # 「体」既不豁免（内容网照扫）也不脱敏（留在反引号网扫描面）。
+        tail_txt = line[m.end() :]
+        data_body = is_exempt and _advance_quote_state(None, tail_txt) is None
         ph = f"__XPL_{len(payloads)}__"
         body: list[str] = []
         j = i + 1
@@ -631,17 +639,17 @@ def _strip_heredoc_units(
             body.extend(lines[i + 1 :])
             payloads.append("\n".join(body))
             if exempt is not None:
-                exempt.append(is_exempt)
+                exempt.append(data_body)
             out.append((head + " " + ph).strip() if head else ph)
             for _bl in lines[i + 1 :]:
                 _net_keep(_bl + "\n")
             return _finish()
         payloads.append("\n".join(body))
         if exempt is not None:
-            exempt.append(is_exempt)
+            exempt.append(data_body)
         out.append((head + " " + ph).strip() if head else ph)
-        if not (is_exempt and at_top_level):
-            # 未豁免/非顶层：体照常进反引号网扫描面。
+        if not (data_body and at_top_level):
+            # 未豁免 / 非顶层 / opener 行未整行收在顶层：体照常进反引号网扫描面。
             for _bl in body:
                 _net_keep(_bl + "\n")
         i = j + 1
