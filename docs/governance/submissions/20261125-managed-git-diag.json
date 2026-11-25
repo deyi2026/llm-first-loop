@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-managed-git-diag",
+  "summary": "P0: precise rejection guidance for task_git_commit in ordinary lane sessions (fail-closed kept verbatim; diagnostics only).",
+  "components": [
+    {
+      "component_id": "managed-git-rejection-diagnostics",
+      "paths": [
+        "docs/governance/submissions/20261125-managed-git-diag.json",
+        "src/llm_loop/tools/builtin/task_git_commit.py",
+        "tests/unit/test_task_git_commit_diag.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing task_git_commit tool rejection path; no new authority, lease issuance, service or store.",
+      "disposition": "The Host-lease fail-closed gate is unchanged. _fail gains an optional hint so the lane-session rejection (task_context_not_active) states that Host-signed task leases are only issued on the Task scheduling plane, that this is expected fail-closed behaviour rather than a fault, and where the normal lane flow lives (EVO-20261125-28d517b3 acceptance item). No lease issuance, no authority expansion, no sandbox bypass.",
+      "evidence": [
+        "Code-level root cause: current_task_execution only injected on the Task scheduling plane (core/scheduler.py authority.issue); RootOwnedTaskAuthority is verify-only (task_authority.py).",
+        "Offline unit tests tests/unit/test_task_git_commit_diag.py: 2 passed (UNAUTHORIZED + stable reason_code + guidance keywords; invalid-args still FAILURE).",
+        "Full local R9 ci_gate.sh PASS on the first candidate (subagent_2f1ec7390ba2); remote ruff I001 import-order fixed in this revision and re-verified locally via pytest."
+      ],
+      "verification_level": "Local unit + full R9 on first candidate; independent review, verify_ref, remote CI pending on this revision.",
+      "model_evidence_veto_recovery_exit": "Diagnostics cannot grant authority: a hostile or mistaken hint cannot unlock commits; the gate and error_type remain authoritative and unchanged.",
+      "rollback_route": "Revert the two files; gate behaviour identical to main."
+    }
+  ],
+  "declarations": []
+}
