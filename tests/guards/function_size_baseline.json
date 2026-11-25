@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "fcec5bf0b",
+    "head_commit": "8e2cd86c3",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1277,11 +1277,11 @@
   "legacy_super_functions": {
     "src/llm_loop/browser/action.py::execute": 417,
     "src/llm_loop/cli.py::application_main": 323,
-    "src/llm_loop/config.py::load_settings": 363,
+    "src/llm_loop/config.py::load_settings": 349,
     "src/llm_loop/core/history.py::build_history_messages": 745,
     "src/llm_loop/core/loop/engine.py::_run_stream_inner": 2207,
     "src/llm_loop/core/loop/lifecycle.py::run_stream": 316,
-    "src/llm_loop/factory.py::build_engine": 2143,
+    "src/llm_loop/factory.py::build_engine": 2155,
     "src/llm_loop/llm/client.py::_stream_openai": 538,
     "src/llm_loop/runtime/service_control.py::main": 555,
     "src/llm_loop/subagent/runner.py::_execute_subagent": 619,
