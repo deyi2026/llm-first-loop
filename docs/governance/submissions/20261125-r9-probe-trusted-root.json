@@ -6,7 +6,8 @@
     {
       "component_id": "r9-probe-trusted-root",
       "paths": [
-        "scripts/r9_commit.sh"
+        "scripts/r9_commit.sh",
+        "docs/governance/submissions/20261125-r9-probe-trusted-root.json"
       ],
       "control_machinery": false,
       "owning_subsystem": "Dev-facing CI gate script under scripts/. No production runtime path, no execution authority, no durable store, no Run admission change.",
