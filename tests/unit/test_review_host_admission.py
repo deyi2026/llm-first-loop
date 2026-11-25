@@ -252,6 +252,20 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ('cat > /tmp/doc.md <<\'EOF\'; echo "note\n`git push origin main`"\nEOF', "git_push"),
     # 行尾文本进骨架后，合法文档写法（行尾重定向 / 注释）仍放行。
     ("cat > /tmp/doc.md <<'EOF' > out.md\n示例：`git push origin main`\nEOF", None),
+    # ── 接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 不是 here-doc 引导 ──
+    # shell 里 `cat <<<'EOF'` 没有正文，其后直到 `EOF` 行都是普通命令行（bash 实测执行）。
+    # 旧引导正则从第二个 `<` 起命中，把这些行当作已配对豁免体：反引号形态在
+    # EVO-20261125-86a9864e 之后整段移出反引号网而漏放（改动前由原始全文网兜住）；
+    # 裸动词形态则是 main 上既有的内容网旧洞，同处一并闭合。
+    ("cat <<<'EOF'\n`git push origin main`\nEOF", "git_push"),
+    ("cat <<< 'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("cat <<<\"EOF\"\n`git push origin main`\nEOF", "git_push"),
+    ("cat >f <<<'EOF'\ngit push origin main\n", "git_push"),
+    ("cat <<<'EOF'\n`git push origin main`", "git_push"),
+    ("cat <<<'EOF'; git push origin main\nEOF", "git_push"),
+    # 真 here-doc 不受影响：here-string 之后的 `<<'X'` 仍是引导，带引号终止符的体照常豁免。
+    ("cat <<< 'EOF' <<'X'\n`git push origin main` 只是文档\nX", None),
+    ("cat <<'X'\n`git push origin main` 只是文档\nX", None),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
@@ -285,6 +299,23 @@ def test_opener_tail_text_stays_in_skeleton_and_unclosed_tail_quote_blocks(tmp_p
     # 行尾的真实动作对段网可见（66cb3b21 的目标场景）。
     tail_action = "cat > /tmp/pr.md <<'PREOF'; git push origin main\n正文\nPREOF"
     assert host.check_shell("author-1", tail_action, str(repo)).blocked is True
+
+
+def test_here_string_lines_are_not_exempt_heredoc_body(tmp_path: Path) -> None:
+    """接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 之后的行不是 here-doc 体."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    # 应拦：`cat <<<'PREOF'` 没有正文，反引号命令替换与裸 push 都是其后的真实命令。
+    for blocked_cmd in (
+        "cat <<<'PREOF'\n`git push origin main`\nPREOF",
+        "cat <<< 'PREOF'\ngit push origin main\nPREOF",
+        "cat <<<'PREOF'\ngit push origin main\n",
+    ):
+        verdict = host.check_shell("author-1", blocked_cmd, str(repo))
+        assert verdict.blocked is True, blocked_cmd
+    # 应放：真 here-doc 的带引号终止符体仍是数据体（含 Markdown 代码span）。
+    ok = "cat <<< 'PREOF' <<'X'\n`git push origin main` 只是文档\nX"
+    assert host.check_shell("author-1", ok, str(repo)).allowed is True
 
 
 def test_exempt_heredoc_markdown_backtick_span_not_admitted_as_push(tmp_path: Path) -> None:
