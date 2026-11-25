@@ -224,7 +224,28 @@ bash "$CHECK" "$PROBE"
 # Gate 0 日志归档：GATE_LOG 不再即弃，归档 /tmp/r9_gate_last.log（失败指纹审计面）。
 REGISTRY="tests/guards/external_red_registry.json"
 FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
-PROBE_WT="$(mktemp -d /tmp/r9probe.XXXXXX)"
+# PROBE checkout must live under a trusted (non-world-writable) ancestor:
+# rootless canary tests reject any world-writable ancestor chain, and macOS
+# exposes /tmp as /private/tmp (mode 1777). Default to $HOME/.cache/lfl-r9probe:
+# OUTSIDE the repo (the dev-commit flow treats any untracked in-repo file as
+# tree pollution, so an in-repo probe tree breaks minimal test repos without a
+# .gitignore) with a fully trusted ancestor chain ($HOME is never
+# world-writable). R9_PROBE_ROOT lets foreign CI pin its own trusted root;
+# with neither HOME nor R9_PROBE_ROOT we FAIL CLOSED (exit 78) instead of
+# guessing a location that could pollute the repo. mktemp -d still
+# creates the probe dir itself as 0700.
+if [ -z "${HOME:-}" ] && [ -z "${R9_PROBE_ROOT:-}" ]; then
+  echo "[R9_PROBE_REJECTED] no HOME and no R9_PROBE_ROOT: cannot pick a trusted probe root" >&2
+  exit 78
+fi
+if [ -n "${HOME:-}" ]; then
+  R9_PROBE_BASE="$HOME/.cache/lfl-r9probe"
+else
+  R9_PROBE_BASE="$(git rev-parse --show-toplevel)/.cache/lfl-r9probe"
+fi
+R9_PROBE_BASE="${R9_PROBE_ROOT:-$R9_PROBE_BASE}"
+mkdir -p "$R9_PROBE_BASE"
+PROBE_WT="$(mktemp -d "$R9_PROBE_BASE/r9probe.XXXXXX")"
 # Git lists physical paths (e.g. /private/tmp on macOS), not symlink aliases.
 PROBE_WT="$(cd "$PROBE_WT" && pwd -P)"
 r9_cleanup_exit() {

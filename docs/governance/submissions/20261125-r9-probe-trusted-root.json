@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-r9-probe-trusted-root",
+  "summary": "R9 PROBE checkout root moved from world-writable /tmp to $HOME/.cache/lfl-r9probe (outside the repo, fully trusted ancestor chain), fixing 2 environment-only reds in the polkit rootless canaries without polluting any repo tree. Single-file gate-script change; no exemptions, no skips, no guard loosening.",
+  "components": [
+    {
+      "component_id": "r9-probe-trusted-root",
+      "paths": [
+        "scripts/r9_commit.sh",
+        "docs/governance/submissions/20261125-r9-probe-trusted-root.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Dev-facing CI gate script under scripts/. No production runtime path, no execution authority, no durable store, no Run admission change.",
+      "disposition": "PROBE_WT default root changed from mktemp -d /tmp/r9probe.XXXXXX to $HOME/.cache/lfl-r9probe/r9probe.XXXXXX (mkdir -p). Fail-closed: with neither HOME nor R9_PROBE_ROOT the script refuses (exit 78) instead of guessing a location that could pollute the repo; R9_PROBE_ROOT env override kept for foreign CI. Outside-repo placement is deliberate: the dev-commit flow treats ANY untracked in-repo file as tree pollution, so an in-repo probe tree breaks minimal test repos without a .gitignore. mktemp -d still creates the probe checkout itself as 0700. Cleanup trap, parallel flock, fixture-manifest check, external_red_registry semantics, ci_gate full chain and production root-chain guard are byte-for-byte unchanged. The negative canary (test_world_writable_tmp_ancestor_stays_denied) stays in place and still passes; the fixture trusted_tmp_path stays on the 0700 .pytest_cache root.",
+      "evidence": [
+        "Context: model-route R9 sess-10289-1245 real exit=1 with 17011 passed / 3 failed; the env-ratchet pair was fixed by its owner (a3d5f272, separate writer); the polkit pair (test_rootless_private_dir_exact_receipt_and_replay_deny, test_rootless_receipt_limit_is_bounded_and_no_new_file) is environment-only: PROBE tree under /private/tmp (1777) makes the trusted-ancestor chain check fail-closed, while the same two pass inside a normal worktree (2 passed).",
+        "First candidate (in-repo .cache) rejected by evidence: local repro reproduced CI exactly (test_dev_commit_flow.py 4 failed in 3.80s) because an in-repo PROBE tree pollutes minimal fixture repos without a .gitignore; root cause found before merge, no CI-only guesswork.",
+        "Directed verification of the $HOME design (this tree): tests/unit/test_dev_commit_flow.py = 9 passed in 4.29s (regression eliminated) AND tests/unit/test_linux_polkit_probe.py = 22 passed in 0.18s (both formerly env-red cases stay green under ~/.cache/lfl-r9probe trusted ancestors); cleanup trap verified (worktree remove + rm -rf left the probe root empty).",
+        "No provider/model/network calls introduced; probe verification ran offline with the project venv interpreter. Full original R9 (ci_gate.sh, committed PROBE state) and remote CI gated separately."
+      ],
+      "verification_level": "Directed dual verification (dev-flow + polkit) complete; full original R9 (ci_gate.sh, committed PROBE state) and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Gate script only: a protected revert restores the previous /tmp root verbatim; no schema, state, or authority migration; failures never imply success and no auto-retry is introduced.",
+      "rollback_route": "Protected revert of the single file plus coordinated deployment if already merged; no data migration."
+    }
+  ],
+  "declarations": []
+}
