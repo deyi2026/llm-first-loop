@@ -246,6 +246,12 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ('cat > /tmp/doc.md <<\'EOF\' > "a b"\n`git push origin main`\nEOF', None),
     ("cat > /tmp/doc.md <<'EOF' # it's fine\n`git push origin main`\nEOF", None),
     ("cat > /tmp/doc.md <<'EOF' 2>/dev/null\n`git push origin main`\nEOF", None),
+    # ── 66cb3b21 × 86a9864e 合并面（独立审查 subagent_801ecd8bf25d 的原样例）──
+    # 行尾含 `;` 即非豁免（修前修后都拦）；行尾只留下未闭合引号的形态见上一组，
+    # 两者都不依赖骨架词法失败的兜底。
+    ('cat > /tmp/doc.md <<\'EOF\'; echo "note\n`git push origin main`"\nEOF', "git_push"),
+    # 行尾文本进骨架后，合法文档写法（行尾重定向 / 注释）仍放行。
+    ("cat > /tmp/doc.md <<'EOF' > out.md\n示例：`git push origin main`\nEOF", None),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
@@ -263,6 +269,22 @@ def test_heredoc_opener_line_with_unclosed_tail_quote_is_not_desensitized(tmp_pa
     # 对照：行尾引号闭合的同一写法仍是合法数据体。
     ok = 'cat > /tmp/pr.md <<\'PREOF\' > "a b"\n`git push origin main` 只是文档\nPREOF'
     assert host.check_shell("author-1", ok, str(repo)).allowed is True
+
+
+def test_opener_tail_text_stays_in_skeleton_and_unclosed_tail_quote_blocks(tmp_path: Path) -> None:
+    """66cb3b21 × 86a9864e 合并面：行尾文本进骨架后，行尾未闭合引号的体仍被拦.
+
+    行尾文本留在骨架里，会使骨架在该行留下未闭合引号；「opener 行整行收在顶层」
+    条件先于词法判定把体留在内容网与反引号网，不靠 ValueError 兜底碰巧拦住。
+    """
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    # 其后一行把骨架引号配平：骨架可以词法分析，必须由顶层条件本身拦下。
+    cmd = 'cat > /tmp/pr.md <<\'PREOF\' > "note\n`git push origin main` x"\nPREOF\necho "a" "b"'
+    assert host.check_shell("author-1", cmd, str(repo)).blocked is True
+    # 行尾的真实动作对段网可见（66cb3b21 的目标场景）。
+    tail_action = "cat > /tmp/pr.md <<'PREOF'; git push origin main\n正文\nPREOF"
+    assert host.check_shell("author-1", tail_action, str(repo)).blocked is True
 
 
 def test_exempt_heredoc_markdown_backtick_span_not_admitted_as_push(tmp_path: Path) -> None:

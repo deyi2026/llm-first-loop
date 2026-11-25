@@ -935,9 +935,14 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     backtick pair) in a ``cat > file <<'EOF'`` body is not a command
     substitution and is not scanned. Unquoted bodies, bodies whose ``<<``
     lies inside a multi-line quoted string and unterminated bodies stay in
-    the net (backticks there really do execute); the ValueError fallback
-    still scans the raw text because line-based heredoc detection is
-    untrustworthy once the skeleton fails to lex.
+    the net (backticks there really do execute). Relay fix 2026-11-26
+    (independent review P1): an opener line that leaves a quote open after
+    the ``<<WORD`` operator makes bash read the following lines as part of
+    that quoted string (command line, not body), so such bodies stay in the
+    backtick net AND lose the protected-keyword exemption. If the skeleton
+    fails to lex, the ValueError fallback scans the raw command text
+    (``value`` — not the reduced ``net_text``), because line-based heredoc
+    detection is untrustworthy once the skeleton fails to lex.
     """
     value = str(command or "").strip()
     if not value:
