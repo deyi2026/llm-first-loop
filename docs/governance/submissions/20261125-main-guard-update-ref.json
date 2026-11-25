@@ -1,0 +1,123 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-main-guard-update-ref",
+  "summary": "main 直写闸加一条判定：git update-ref 把 main/master 挪到远端跟踪分支上已有的提交 → 拒绝，提示改用 `git -C <主检出> merge --ff-only origin/main`。起因：2026-11-25 共享主检出多次显示成反向“已暂存”（reflog 里 main 当天被挪了七次），成因是会话在 GitHub 合并 PR 后用 update-ref 同步本地 main——它只移指针，不更新被检出工作树的暂存区和工作树，事后补 ff-merge 修不回来；既有闸只认 commit/push 所以放行。用户 2026-11-25 20:21「按建议执行」确认同步规矩并要求写进闸。规则不以他人 live lane 为前提（对既有闸作用范围的有意扩大），拒绝须同时成立：目标是 main/master、该分支正被某工作树检出、新值在远端跟踪分支上；本地独有提交（plumbing 合并）与读不出的新值放行。控制边界：不新增闸进程 / 服务 / 存储，复用命令闸入口与解析器；既有两条规则（他人 live lane 下的 commit/push 判定）未改，回归用例钉住。证据见声明 g3：定向单元 10 passed；对真实仓库状态函数级实测应拦 5/5、应放行 4/4；bash scripts/ci_gate.sh exit 0；RULE-AI-28 的 full_test 与 git_push 审查 PASS（均不含本清单）。如实记录：真实 execute_command 入口的端到端实测、含本清单 head 的远端 CI、独立合并审查、人工 verify_ref 在撰写时均未完成；运行中的宿主要重启后才加载新判定。",
+  "components": [
+    {
+      "component_id": "main-write-guard-update-ref-rule",
+      "paths": [
+        "src/llm_loop/core/lane_main_write_guard.py",
+        "src/llm_loop/tools/builtin/execute_command.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "command-gate / host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-main-guard-update-ref",
+      "evidence": [
+        "判定实现：lane_main_write_guard 新增 check_update_ref_main_move。输入是命令文本与 git 只读查询（worktree list --porcelain、rev-parse --verify、for-each-ref refs/remotes/*/<branch>、merge-base --is-ancestor）。拒绝须同时成立：① git update-ref 的目标是 main/master（含被 main 检出的 HEAD）；② 该分支正被某个工作树检出；③ 新值是某个远端跟踪分支上已有的提交，且与现值不同。任一读不出即放行。",
+        "接线：execute_command._lane_main_write_gate 先调 check_update_ref_main_move，再调既有 check_git_main_write。返回 reason=main_ref_pointer_move、reason_code=main_update_ref_stale_worktree；工具层 error_type 仍是 lane_main_write_denied；文案给出 `git -C <检出> merge --ff-only origin/<branch>`。",
+        "解析器 _git_verbs 认 update-ref（只改认动词那一行的元组，函数行数不变，规模基线未动）；_main_write_targets 对 update-ref 返回空命中；_collect_main_write_hits 对 update-ref continue。既有两条规则（他人 live lane 下的 commit/push 判定）行为不变。",
+        "未覆盖（已知，未修）：reset --soft/--mixed <commit> 在 main 检出里挪 main；update-ref -d 删 main 引用；新值由命令替换给出、尚未 fetch 到本地的 sha、--stdin -z 脚本；-C $VAR 解析不出真实目录时按命令 workdir 判。git branch -f main / fetch origin main:main 在 main 被检出时 git 自己拒绝，不需要收。"
+      ],
+      "verification_level": "unit_10_passed__live_function_level_block_5of5_pass_4of4__ci_gate_exit0__end_to_end_pending_deploy",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是命令文本与 git 只读查询结果，无模型自证输入。recovery：任一审查否决即 revert 本组件提交并重走闸。exit：revert 并重启宿主后，命令闸恢复为只认 commit/push。",
+      "rollback_route": "git revert 本组件所在提交（分支上的 31bb13ea2）并重启宿主服务；无状态、无数据迁移。"
+    },
+    {
+      "component_id": "main-write-guard-update-ref-tests",
+      "paths": [
+        "tests/unit/test_lane_main_write_guard.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "command-gate",
+      "disposition": "modify",
+      "evidence": [
+        "新增 10 条用例（文件尾部新小节）。应拦：test_update_ref_main_to_remote_commit_denied_without_lanes（无他人 lane 也拦）、test_update_ref_main_variants_denied（12 种写法）、test_update_ref_master_denied、test_tool_gate_denies_update_ref_main_via_wiring（经 ExecuteCommandTool._lane_main_write_gate）。应放行：test_update_ref_local_only_commit_allowed、test_update_ref_non_sync_targets_allowed、test_update_ref_main_allowed_when_not_checked_out、test_update_ref_main_allowed_without_remote_tracking。回归：test_update_ref_is_not_a_commit_or_push_hit（同一本账下 git push origin main 仍被拦，update-ref 不被当成 commit/push）、test_ff_merge_updates_index_and_worktree_unlike_update_ref。",
+        "定向命令 pytest tests/unit/test_lane_main_write_guard.py -q -k 'update_ref or ff_merge' → 10 passed, 168 deselected。"
+      ],
+      "verification_level": "10_passed_targeted__covered_by_full_ci_gate",
+      "model_evidence_veto_recovery_exit": "不适用（测试，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "main-guard-update-ref-rule35-receipt",
+      "paths": [
+        "docs/governance/receipts/main-guard-update-ref-rule35-20261125.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "RULE-AI-35 双向实测回执：同步做法实测表（ff-merge 九种本地状态、update-ref 对照）、单元用例清单、对真实仓库状态的函数级实测、未覆盖与残余、两份探针原文（入库副本把本机绝对路径换成 <RUNTIME_ROOT>）与输出。"
+      ],
+      "verification_level": "doc_only_no_behavior_change",
+      "model_evidence_veto_recovery_exit": "不适用（回执文档，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "main-guard-update-ref-full-test-receipt",
+      "paths": [
+        "docs/governance/receipts/full-test-gate-main-guard-update-ref-20261125.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "本地全量门禁回执（schema lfl/full-test-gate-receipt/v1）：bash scripts/ci_gate.sh exit 0，job-0c73379559f84ae0a256；各段计数与 RULE-AI-28 full_test 审查回执（child subagent_7a4c0daf5762，PASS）记在文件里。"
+      ],
+      "verification_level": "doc_only_no_behavior_change",
+      "model_evidence_veto_recovery_exit": "不适用（回执文档，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261125-main-guard-update-ref.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "本清单即 A.5 结构化声明。提交后以 python scripts/check_architecture_submission.py --base 64e64832838696a040a76bec38c33ecdaee5c5d9 --head HEAD 做本机复核，结果记入 PR #128。首推 head adba4cf26 上 A.5 因缺本清单 fail（expected exactly one changed architecture-submission manifest; found 0）。"
+      ],
+      "verification_level": "check_architecture_submission_strict_pass_required_after_commit",
+      "model_evidence_veto_recovery_exit": "不适用（治理清单，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-main-guard-update-ref",
+      "g1": {
+        "necessity": "2026-11-25 共享主检出（同时是 runtime root）多次显示成反向“已暂存”：reflog 里 main 当天被挪了七次（06:37 到 21:22），其中 17:08、20:18 两次在事件流水里有原样命令，都是 GitHub 合并 PR 后用 `git update-ref refs/heads/main <sha>` 同步本地 main。update-ref 只移指针，不更新正被检出 main 的工作树的暂存区和工作树；事后补 ff-merge 回 Already up to date，修不回来（scratch 实测）。既有命令闸只认 commit/push，所以每次放行。用户 2026-11-25 20:21「按建议执行」确认两件事：GitHub 合并后统一用 `git -C <主检出> merge --ff-only origin/main` 同步、被拒即停下问人；把这条规矩写进 main 直写闸。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：execute_command 的 _lane_main_write_gate → check_update_ref_main_move。授权=用户 2026-11-25 20:21 对上述两条建议的确认。判定输入是命令文本与 git 只读查询，无模型 / 会话自证输入。",
+        "relationship": "reuse",
+        "non_duplication": "不新增闸进程、服务或存储，复用既有命令闸入口与命令解析器。与既有两条规则的关系：那两条只在他人 live lane 存在时拒 commit/push；本条不以他人 lane 为前提——这是对既有闸作用范围的一次有意扩大，理由是伤害（被检出的 main 工作树停在旧树）与并行 lane 无关。既有两条规则的判定未被改动。不与 git 自身的拒绝重复：branch -f main、fetch origin main:main 在 main 被检出时 git 自己拒绝。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦 / 应放行单元用例：见两个组件的 evidence；定向 10 passed, 168 deselected。",
+          "对真实仓库状态的函数级实测（回执 docs/governance/receipts/main-guard-update-ref-rule35-20261125.md §2.2，探针原文与 sha256 在 §4.1）：workdir=共享主检出，main=ab05f9608…，origin/main=64e648328…，他人 live lane 30 条。应拦 5/5 BLOCK（含 17:08、20:18 两条原样命令）；应放行 4/4 PASS（用户确认的 ff-merge 同步命令、别的分支的 update-ref、本地 main 现值、带旧值 CAS 的本地独有提交）。首轮探针有一条 PASS 是我把 sha 抄错，判定函数按「读不出 → 放行」处理，换成真实 sha 后 BLOCK。",
+          "同步做法实测（同一回执 §1，scratch 仓库，git 2.50.1）：ff-merge 在干净落后、无关已暂存新文件、无关未暂存修改时完成并更新暂存区和工作树；在会冲突的未提交改动、未跟踪文件同名、本地分支分叉时整体拒绝、什么都不动；update-ref 对照会留下 `M  a.txt`，之后再 ff-merge 回 Already up to date。",
+          "全量门禁 bash scripts/ci_gate.sh：exit 0（job-0c73379559f84ae0a256，2026-11-25 21:12–21:27）；ruff new=0、pyright new=0、tier0 341 passed / 2 skipped、并行集 17022 passed / 206 skipped / 3 xfailed、serial_signal 补跑 1 passed。回执 docs/governance/receipts/full-test-gate-main-guard-update-ref-20261125.json。",
+          "RULE-AI-28 审查回执：full_test 审查 PASS（child subagent_7a4c0daf5762，candidate_sha256 bc2df19e…）；git_push 审查 PASS（child subagent_619e2a50920b，整树，candidate_sha256 a4bce701…）。两次审查的对象都不含本清单。",
+          "未完成项（如实记录）：真实 execute_command 入口的端到端实测——写本清单时宿主进程仍是旧代码，要部署后在 scratch 克隆上补测应拦输入；远端 CI 对含本清单的 head 的结果；独立合并审查；人工签发的 verify_ref。"
+        ],
+        "recovery_or_reason": "应拦 / 应放行输入都有逐条对应用例与对真实仓库的函数级实测，任一审查否决即 revert 并重走闸；置信度来自测试与实测，不是自述。已知残余：新值读不出即放行（命令替换、未 fetch 的 sha、--stdin -z）；reset --soft/--mixed 挪 main 未收；-C $VAR 解析不出时按命令 workdir 判，对别的仓库做 update-ref 会被按本仓库误拒（文案里的检出路径会不对）；本文件属宿主进程内模块，运行中的宿主要重启后才加载新判定。"
+      },
+      "g4": {
+        "rollback": "git revert 本组件所在提交（分支上的 31bb13ea2）并重启宿主服务，命令闸恢复为只认 commit/push；无状态、无数据迁移。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base 64e64832838696a040a76bec38c33ecdaee5c5d9 --head HEAD：提交本清单后本机复核，结果记入 PR #128。",
+          "本机全量门禁 bash scripts/ci_gate.sh exit 0（跑在代码提交 31bb13ea2 之前的工作树上，内容与之相同）；回执见 full-test-gate JSON。",
+          "RULE-AI-28：full_test 与 git_push 审查 PASS（见 g3）；本清单提交的 git_push 审查由宿主强制执行。",
+          "远端 CI（PR #128，2026-11-25 21:41 核对首推 head adba4cf26）：privacy-gate、部署 env 泄漏门禁、Linux 安装验收 x86_64 已 pass；A.5 因缺本清单 fail；其余项当时在跑。含本清单的 head 的远端 CI 待完成。",
+          "独立合并审查与人工签发的 verify_ref：待完成。",
+          "部署后的 RULE-AI-35 活体复验（待做）：在 scratch 克隆上经真实 execute_command 发 `git -C <克隆> update-ref refs/heads/main <origin/main sha>`，应收到 [main 直写拒绝] main_ref_pointer_move 且克隆的 main 不动；对 feat 分支的 update-ref 应照常执行。"
+        ]
+      }
+    }
+  ]
+}
