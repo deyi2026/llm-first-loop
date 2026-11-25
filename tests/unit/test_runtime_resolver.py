@@ -196,3 +196,12 @@ def test_explicit_workspace_root_still_overrides_dual_root_env(monkeypatch, tmp_
     assert ec.workspace_root == str(explicit_root)
     assert ec.values["LLM_MODEL"] == "glm/explicit"
     assert ec.sources["LLM_MODEL"] == "dotenv"
+
+
+def test_model_roles_managed_dotenv_is_authoritative(tmp_path):
+    role_value = '{"execution":["provider/model"]}'
+    _make_env_file(tmp_path, [f"LFL_MODEL_ROLES='{role_value}'"])
+    config = resolve_effective("web", env={"LFL_MODEL_ROLES": "stale"}, workspace_root=tmp_path)
+    assert config.values["LFL_MODEL_ROLES"] == role_value
+    assert config.sources["LFL_MODEL_ROLES"] == "dotenv"
+    assert config.ignored_shell_env["LFL_MODEL_ROLES"] == "stale"

@@ -809,6 +809,37 @@ def test_refresh_executor_keeps_default_route_startup_contract_but_updates_dynam
     assert "默认路由" in msg and "启动快照" in msg and "需重启" in msg
 
 
+def test_refresh_executor_hot_reloads_model_role_candidates_without_restart(tmp_path, monkeypatch):
+    """Role routing is live configuration; invalid edits preserve last-known-good."""
+    _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
+    settings = _make_settings(tmp_path, model_providers_raw="")
+    pool = _make_pool(settings, _FakeLLM())
+    engine = _FakeEngine(pool)
+    install_refresh_executor(engine)
+    _executor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dynamic-key")
+    monkeypatch.delenv("LFL_ENV_FILE", raising=False)
+    monkeypatch.delenv("LFL_RUNTIME_ROOT", raising=False)
+    monkeypatch.setenv("LFL_MODEL_ROLES", json.dumps({"planning": ["deepseek/deepseek-v4-flash"]}))
+
+    msg = engine.correction_ctx.refresh_executor()
+    assert pool.model_roles_raw == os.environ["LFL_MODEL_ROLES"], (msg, pool.model_roles_raw)
+    assert pool.role_candidates("planning") == ["deepseek/deepseek-v4-flash"]
+    assert "模型目录已" in msg or "重载完成" in msg
+
+    role_file = tmp_path / ".env"
+    monkeypatch.setenv("LFL_ENV_FILE", str(role_file))
+    role_file.write_text("LFL_MODEL_ROLES='{invalid'\n", encoding="utf-8")
+    msg = engine.correction_ctx.refresh_executor()
+    assert pool.role_candidates("planning") == ["deepseek/deepseek-v4-flash"]
+    assert "保留上次有效配置" in msg
+    role_file.write_text("LFL_MODEL_ROLES=\n", encoding="utf-8")
+    engine.correction_ctx.refresh_executor()
+    assert pool.role_candidates("planning") == []
+
+
 def test_refresh_config_tool_description_matches_default_route_freeze_contract():
     from llm_loop.introspection.registry_correction import tool_defs
 

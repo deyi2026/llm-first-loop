@@ -715,6 +715,7 @@ class Settings:
     model_fallbacks_raw: str = ""
     # Host-owned independent Reviewer model chain. Never sourced from the parent run.
     reviewer_models_raw: str = ""  # LFL_REVIEWER_MODELS (optional, comma-separated)
+    model_roles_raw: str = ""  # LFL_MODEL_ROLES (JSON role -> ordered provider/model candidates)
 
     # ── 外部 web provider 注册模块（web-carveout M3，D2/D3）──
     # deepseek/chatgpt 页面自动化 client 已剥离至独立项目 lfl-web-providers；
@@ -1316,7 +1317,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成
         model_providers_raw=env_values.get("MODEL_PROVIDERS", "").strip(),
         model_fallbacks_raw=env_values.get("MODEL_FALLBACKS", "").strip(),
-        reviewer_models_raw=env_values.get("LFL_REVIEWER_MODELS", "").strip(),
+        reviewer_models_raw=env_values.get("LFL_REVIEWER_MODELS", "").strip(), model_roles_raw=env_values.get("LFL_MODEL_ROLES", "").strip(),
         # web-carveout M3（D3）：web 通道 18 个内置配置字段随 client 剥离迁出，
         # 中间件仅保留外部注册模块入口（importlib 加载，失败分级见
         # llm/web_provider_registration.py）。通道自身配置见独立项目 .env。
