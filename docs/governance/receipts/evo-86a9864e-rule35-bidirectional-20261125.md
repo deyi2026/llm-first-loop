@@ -192,3 +192,52 @@
 
 Host 准入分类器对 `pytest -- -h` 返回 `None`（`--` 之后的 `-h` 被当作 help 旗标），而真实 pytest 会跑全量。基线与修后一致，属既有缺口，另行提演进建议。
 
+## 9. 接力修复 2（2026-11-26，合并审查 REVISE）
+
+verify 绑定过期后重做独立合并审查（`subagent_30e3d30f3a05`，glm/glm-5.3），终态 REVISE，P0=0 P1=1。合并审查者按设计只回结论 JSON、不附正文，且是隔离子代理（禁续话），P1 的具体内容取不到。处理：不另开一次审查去换结论，先对 base..head 的全部源码改动自查——用「分类器判定 × 真实 bash」差分实测，找出本 lane 相对 main 新增的漏放。
+
+### 9.1 方法
+
+探针原文：同目录 `evo-86a9864e-diffprobe-20261126.py.txt`（114 行）。30 个多行 shell 程序。同一段受保护动词在两种运行里互换：分类器侧是 `git push origin main`，bash 侧换成 `touch m`（无害标记），其余字符逐字相同。bash 侧以 `bash s.sh` 实跑后查标记文件是否出现，判定该动词位置是否被执行；分类器侧分别加载 main（`c6612c7e9`）与本 lane 工作树的模块。「bash 执行 + 分类器 `None`」记为漏放。
+
+### 9.2 结果
+
+「修前」= head `16e4230d3`，「修后」= 本节修复。P 表示受保护动词所在位置；反引号 / `$( )` 表示包在该形态内。
+
+| # | 程序骨架 | 真实 bash | main | 修前 | 修后 |
+|---|---|---|---|---|---|
+| 01 | `cat <<<'EOF'` / `` `P` `` / `EOF` | 执行 | `git_push` | **`None`（新漏放）** | `git_push` |
+| 02–07 | here-string（`<<<'EOF'`、`<<< 'EOF'`、`<<<"EOF"`、`cat -n`、`cat >f`、未闭合）+ P | 执行 | `None`（既有漏放） | `None` | `git_push` |
+| 08 | `cat <<<'EOF'; P`（同一行） | 执行 | `None`（既有漏放） | `None` | `git_push` |
+| 09–12 | 真 here-doc 引导行行尾 `;` / `&` / `&&` / `|` + P，其后接正文与终止符 | 执行 | `None` | `None` | `None`（§6 的 B11，由 lane-ffb64ade 修复） |
+| 13–14 | `# \` 续行后接 `cat > f <<'EOF'`，体内 P / `` `P` `` | 不执行 | 13 `git_push`、14 `None` | `None` | `None` |
+| 15 | `true # cat > f <<'EOF'` / P / `EOF` | 执行 | `git_push` | `git_push` | `git_push` |
+| 16–17 | `$'a\'` 之后、`case` 模式位的引导，体内 `` `P` `` | 不执行 | `git_push` | `git_push` | `git_push`（保守过拦，既有） |
+| 18 | `cat > n.md <<'EOF'` / Markdown 代码span / `EOF` | 不执行 | `None` | `None` | `None` |
+| 19–20 | `cat > f <<'EOF'`，体内 `` `P` `` / `$(P)` | 不执行 | 19 `git_push`（误拒）、20 `None` | `None` | `None` |
+| 21–22 | `cat <<EOF`（无引号终止符），体内 `` `P` `` / `$(P)` | 执行 | `git_push` | `git_push` | `git_push` |
+| 23–24 | `cat \<<'EOF'`、`cat<<<'EOF'`，体内 `` `P` `` | 执行 | `git_push` | `git_push` | `git_push` |
+| 25 | `cat > f <<'EOF' "note`（行尾未闭合引号），体内 `$(P)` | 不执行 | `None` | `git_push` | `git_push`（§8.2 的保守过拦） |
+| 26 | `echo "x` 之后的引导，体内 `` `P` `` | 执行 | `git_push` | `git_push` | `git_push` |
+| 27 | `cat 0<<'EOF'`，体内 `` `P` `` | 不执行 | `git_push`（误拒） | `None` | `None` |
+| 28 | `echo "$(cat <<'EOF'` …，体内 `` `P` `` | 不执行 | `git_push` | `git_push` | `git_push`（保守过拦，既有） |
+| 29–30 | 对照：裸 `` `P` ``、裸 P | 执行 | `git_push` | `git_push` | `git_push` |
+
+相对 main，本 lane 修前唯一「main 拦、修前不拦、bash 执行」的用例是 01。
+
+### 9.3 根因与修法
+
+`_HEREDOC_OPENER_RE` 没有后顾，`cat <<<'EOF'` 会从第二个 `<` 起命中，here-string 被当成带引号终止符的 here-doc 引导；接收者 `cat` 在数据落点白名单内，于是其后的行被当作「已配对 + 豁免」的数据体。shell 里 here-string 没有正文，其后直到同名终止符行都是普通命令行（上表 01–08 的标记均被创建）。裸动词形态（02–08）在 main 上已漏放：内容网对这种「假体」的豁免是既有行为，本 lane 没有改变它。反引号形态（01）在 main 上由扫原始全文的反引号网兜住；本 lane 把该体移出反引号网之后才漏放——属本 lane 新引入的回归。
+
+修法：正则加否定后顾 `(?<![<])`，`<<` 前紧邻 `<` 时不再是引导，该行与其后各行照常进骨架与反引号网。只收紧：应放行用例（13、14、18–20、27）修后仍为 `None`；here-string 之后再接真 here-doc（`cat <<< 'EOF' <<'X'`）照常豁免。
+
+### 9.4 单元测试
+
+两个测试模块修后 336 passed / 0 failed，133.70s（原 327，新增 9 条：参数化 8 条，`check_shell` 级端到端 1 条）。全量门禁见 `full-test-gate-evo-86a9864e-20261125.json` 的最新一次运行。
+
+### 9.5 如实记录
+
+- 合并审查者报的 P1 是否即本节所述，无法核实（审查者不附正文、不可续话）。本节是独立自查的结论，不代表已覆盖审查者的关注点。
+- 用例 09–12（B11）修后仍漏放，由 lane-ffb64ade 承担；本 PR 合入到该 lane 合入之间，main 上这一形态与基线相同。
+- 用例 16、17、25、28 是保守方向的过拦（真实 bash 不执行而分类器拒绝），未改。
+

@@ -1,0 +1,114 @@
+"""Differential probe: classifier verdict vs. what real bash executes.
+
+Each case is a multi-line shell program.  P is the protected verb for the
+classifier; for bash the same token span is replaced by ``touch m`` so the
+question "does bash execute the verb position?" is answered by a marker file.
+"""
+import json
+import os
+import subprocess
+import sys
+
+from llm_loop.tools.review_host_admission import classify_host_shell
+
+P = "git push origin main"
+TREE = sys.argv[1]
+OUT = sys.argv[2]
+os.makedirs(OUT, exist_ok=True)
+
+
+def bt(x):
+    return "`" + x + "`"
+
+
+def dp(x):
+    return "$(" + x + ")"
+
+
+CASES = [
+    ("01 hs_sq_backtick",      ["cat <<<'EOF'", bt(P), "EOF"]),
+    ("02 hs_sq_plain",         ["cat <<<'EOF'", P, "EOF"]),
+    ("03 hs_sp_plain",         ["cat <<< 'EOF'", P, "EOF"]),
+    ("04 hs_dq_plain",         ['cat <<<"EOF"', P, "EOF"]),
+    ("05 hs_n_plain",          ["cat -n <<<'EOF'", P, "EOF"]),
+    ("06 hs_file_plain",       ["cat >f <<<'EOF'", P, "EOF"]),
+    ("07 hs_unclosed",         ["cat <<<'EOF'", P]),
+    ("08 hs_tail_same_line",   ["cat <<<'EOF'; " + P]),
+    ("09 real_tail_semicolon", ["cat <<'EOF'; " + P, "hello", "EOF"]),
+    ("10 real_tail_amp",       ["cat <<'EOF' & " + P, "hello", "EOF"]),
+    ("11 real_tail_andand",    ["cat <<'EOF' && " + P, "hello", "EOF"]),
+    ("12 real_tail_pipe",      ["cat <<'EOF' | " + P, "hello", "EOF"]),
+    ("13 comment_cont_bt",     ["# \\", "cat > f <<'EOF'", bt(P), "EOF"]),
+    ("14 comment_cont_plain",  ["# \\", "cat > f <<'EOF'", P, "EOF"]),
+    ("15 comment_same_line",   ["true # cat > f <<'EOF'", P, "EOF"]),
+    ("16 dollar_quote_bt",     ["echo $'a\\'", "cat > f <<'EOF'", bt(P), "EOF", "'"]),
+    ("17 case_pattern_bt",     ["case x in", "cat <<'EOF')", bt(P), "EOF", ";;", "esac"]),
+    ("18 real_markdown",       ["cat > n.md <<'EOF'", "use `git status` here", "EOF"]),
+    ("19 real_bt",             ["cat > f <<'EOF'", bt(P), "EOF"]),
+    ("20 real_dp",             ["cat > f <<'EOF'", dp(P), "EOF"]),
+    ("21 unquoted_bt",         ["cat <<EOF", bt(P), "EOF"]),
+    ("22 unquoted_dp",         ["cat <<EOF", dp(P), "EOF"]),
+    ("23 escaped_lt_bt",       ["cat \\<<'EOF'", bt(P), "EOF"]),
+    ("24 nospace_bt",          ["cat<<<'EOF'", bt(P), "EOF"]),
+    ("25 opener_tail_dq",      ["cat > f <<'EOF' \"note", dp(P), "EOF"]),
+    ("26 opener_in_dq_ml",     ['echo "x', "cat > f <<'EOF'", bt(P), "EOF", '"']),
+    ("27 fd0_quoted",          ["cat 0<<'EOF'", bt(P), "EOF"]),
+    ("28 subshell_in_dollar",  ['echo "$(cat <<\'EOF\'', bt(P), "EOF", ')"']),
+    ("29 ctrl_bare_bt",        ["echo x", bt(P)]),
+    ("30 ctrl_plain",          ["echo x", P]),
+]
+
+cls = {}
+execd = {}
+for idx, (name, lines) in enumerate(CASES):
+    text = "\n".join(lines) + "\n"
+    try:
+        cls[name] = classify_host_shell(text)
+    except Exception as exc:  # noqa: BLE001
+        cls[name] = "EXC %s: %s" % (type(exc).__name__, exc)
+    case_dir = os.path.join(OUT, "c%02d" % idx)
+    os.makedirs(case_dir, exist_ok=True)
+    marker = os.path.join(case_dir, "m")
+    if os.path.exists(marker):
+        os.remove(marker)
+    script = os.path.join(case_dir, "s.sh")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(text.replace(P, "touch m"))
+    try:
+        subprocess.run(
+            ["bash", "s.sh"], cwd=case_dir, stdin=subprocess.DEVNULL,
+            capture_output=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    execd[name] = os.path.exists(marker)
+
+with open(os.path.join(OUT, "cls_%s.json" % TREE), "w", encoding="utf-8") as fh:
+    json.dump(cls, fh, ensure_ascii=False, indent=1)
+with open(os.path.join(OUT, "exec.json"), "w", encoding="utf-8") as fh:
+    json.dump(execd, fh, ensure_ascii=False, indent=1)
+
+other = "laneA" if TREE == "main" else "main"
+other_path = os.path.join(OUT, "cls_%s.json" % other)
+if not os.path.exists(other_path):
+    print("saved cls_%s.json + exec.json (run the other tree to compare)" % TREE)
+    sys.exit(0)
+with open(other_path, encoding="utf-8") as fh:
+    ocls = json.load(fh)
+print("%-25s %-5s %-9s %-9s %s" % ("case", "bash", "main", "laneA", "verdict"))
+for name, _lines in CASES:
+    ran = execd[name]
+    m = ocls[name] if other == "main" else cls[name]
+    a = cls[name] if other == "main" else ocls[name]
+    if ran and a is None:
+        v = "BYPASS-on-laneA"
+    elif ran:
+        v = "caught-on-laneA"
+    elif not ran and a is not None:
+        v = "false-block(laneA)"
+    else:
+        v = "ok(None)"
+    if ran and m is None:
+        v += " [main-also-bypass]"
+    print("%-25s %-5s %-9s %-9s %s" % (name, "EXEC" if ran else "-", m, a, v))
+

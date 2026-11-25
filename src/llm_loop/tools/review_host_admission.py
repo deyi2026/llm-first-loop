@@ -452,7 +452,12 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 
 # ── EVO-20261029-65f6fe21：自足语法单元剥离 ──
-_HEREDOC_OPENER_RE = re.compile(r"<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
+# here-string（``<<<``）不是 here-doc 引导（接力修复 2，2026-11-26 差分实测）：
+# 旧式无后顾的 ``<<`` 会从第二个 ``<`` 起命中 ``cat <<<'EOF'``，把其后的真实命令
+# 行当作「已配对 + 豁免」的 here-doc 体——EVO-20261125-86a9864e 之后整段移出反引号
+# 网（改动前由扫原始全文的反引号网兜住），受保护动作因此漏放。shell 里 here-string
+# 没有正文：其后直到同名终止符行都是普通命令行。``<<`` 前紧邻 ``<`` 时不再匹配。
+_HEREDOC_OPENER_RE = re.compile(r"(?<![<])<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
 _PAYLOAD_INTERPRETER_RE = (
     r"""\b(?P<interp>python[0-9.]*|(?:b|z|k|d|a)?sh|node|nodejs|ruby|perl|php|osascript|deno|bun|awk)\b"""
     r"""(?P<flags>(?:\s+-{1,2}[A-Za-z0-9][\w=.-]*)*?)"""
