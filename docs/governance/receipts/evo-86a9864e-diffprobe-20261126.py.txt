@@ -85,13 +85,13 @@ for idx, (name, lines) in enumerate(CASES):
 
 with open(os.path.join(OUT, "cls_%s.json" % TREE), "w", encoding="utf-8") as fh:
     json.dump(cls, fh, ensure_ascii=False, indent=1)
-with open(os.path.join(OUT, "exec.json"), "w", encoding="utf-8") as fh:
+with open(os.path.join(OUT, "exec_%s.json" % TREE), "w", encoding="utf-8") as fh:
     json.dump(execd, fh, ensure_ascii=False, indent=1)
 
 other = "laneA" if TREE == "main" else "main"
 other_path = os.path.join(OUT, "cls_%s.json" % other)
 if not os.path.exists(other_path):
-    print("saved cls_%s.json + exec.json (run the other tree to compare)" % TREE)
+    print("saved cls_%s.json + exec_%s.json (run the other tree to compare)" % (TREE, TREE))
     sys.exit(0)
 with open(other_path, encoding="utf-8") as fh:
     ocls = json.load(fh)
