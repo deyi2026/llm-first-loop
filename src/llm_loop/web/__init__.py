@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import RedirectResponse
@@ -582,6 +583,25 @@ def _register_stack_dump_signal() -> None:
         logger.warning("faulthandler SIGUSR1 注册失败（诊断不可用，不影响服务）")
 
 
+def _build_hq(engine: Any, settings: Any):
+    """生产装配队列单例（SA-RESUME-20261125 M0）：与请求侧惰性构造同源同构造.
+
+    盖章 engine.workspace_root（与 QueueServerFallback 派发身份同源），并注入
+    legacy 条目 identity owner 归属证明（未知/歧义 fail-closed HOLD，P1-2
+    收口）；claim_state_probe 以正式 run/EventStore 事实为回滚权威；按
+    resolved data_dir 缓存键与请求侧共享同一实例。
+    """
+    from llm_loop.web.human_turn_queue import HumanTurnQueue
+    from llm_loop.web.routes import _queue_claim_state, _queue_workspace_options
+
+    data_dir = str(Path(str(getattr(settings, "data_dir", "./data"))).expanduser().resolve())
+    return HumanTurnQueue(
+        data_dir,
+        claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
+        **_queue_workspace_options(engine),
+    )
+
+
 def main(*, workspace_root: str | None = None) -> None:
     """服务启动入口（python -m llm_loop.web）."""
     # R1（RUNTIME-SOT-WIRE）: workspace 身份守卫——错配时 shadow 仅告警/enforce 拒绝启动。
@@ -645,15 +665,10 @@ def main(*, workspace_root: str | None = None) -> None:
     # 继续"的承诺不再依赖浏览器派发循环存活。队列单例预置进 app.state
     # （与请求侧 _human_turn_queue 同 key 构造，复用同一实例）；测试注入
     # 引擎的 build_app 路径不经过这里。
-    from llm_loop.web.human_turn_queue import HumanTurnQueue
     from llm_loop.web.queue_recovery import QueueServerFallback
-    from llm_loop.web.routes import _queue_claim_state
 
     _data_dir = str(Path(str(getattr(settings, "data_dir", "./data"))).expanduser().resolve())
-    _hq = HumanTurnQueue(
-        _data_dir,
-        claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
-    )
+    _hq = _build_hq(engine, settings)
     app.state.human_turn_queues = {_data_dir: _hq}
     # R2（antidrift_impl 批1）: 收敛回执队列压力 probe 注入（fail-open：读失败→None
     # →回执段如实 unavailable(queue_read_failed)）；CLI/feishu 装配不经此处=不注入。
