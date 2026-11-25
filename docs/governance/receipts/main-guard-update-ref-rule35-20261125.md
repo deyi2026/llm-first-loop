@@ -9,7 +9,7 @@
   ② 该分支正被某个工作树检出；③ 新值是远端跟踪分支上已有的提交。
 - 基线：`origin/main` = `64e64832838696a040a76bec38c33ecdaee5c5d9`（PR #126 合并提交）。
 - 被测：分支 `fix/main-guard-update-ref-sync-20261125` 的工作树，文件 sha256：
-  - `src/llm_loop/core/lane_main_write_guard.py` = `d1574771992252f3d7f46f34fee28177a6f7fa6198ee071b4181c18081b435d7`
+  - `src/llm_loop/core/lane_main_write_guard.py` = `7ec6b6d3c3b214fa2a136382fe8a13598d802c16b7bc483da9afb836736555fa`
   - `src/llm_loop/tools/builtin/execute_command.py` = `1a6263f5f5f3e8e02ae8226482ee3bb915b7bb71f7c80a746eb168603af6194b`
   - `tests/unit/test_lane_main_write_guard.py` = `cfab6453d145cab91f867890d14a1a9859d4a629600abd2da9d55d22f94c63bf`
 - 解释器：项目 `.venv/bin/python`（3.13.13），`PYTHONPATH=<lane>/src`；git 2.50.1。
@@ -343,6 +343,40 @@ PASS   git -C <RUNTIME_ROOT> update-ref refs/heads/main ab05f960876bd68d350f7761
 
 failures: 0
 ```
+
+### 4.4 `rule35-live-probe-final.py`（定稿复跑的输入，逐字）
+
+sha256 `45597d5ff187bf8a418e97945e6ae7278d473883083150dd434c1552cb45afb5`（脱敏前原文件）。
+除下面两段输入外，与 §4.1 逐行相同；路径同 §4.1 做了脱敏。
+
+```python
+should_block = [
+    "git update-ref refs/heads/main refs/remotes/origin/main~1",
+    "M=<RUNTIME_ROOT>; git -C $M update-ref refs/heads/main"
+    " 1f0601e9d0225bfb66160e9fb2a569eba176cf99",
+    "git fetch origin 2>&1 | tail -2 && git update-ref refs/heads/main"
+    " 717c8def258b725c36042b9c0f22f0575d91c2e6 && echo ok",
+    "cd <RUNTIME_ROOT> && git update-ref refs/heads/main 717c8def2",
+    'git -C <RUNTIME_ROOT> update-ref -m'
+    ' "sync local main to origin/main (PR #119 merged)" refs/heads/main 843eeeadf',
+]
+should_pass = [
+    # 定稿时本地 main 已等于 origin/main：这条没挪动，按设计放行。
+    "git update-ref refs/heads/main origin/main",
+    "git fetch origin && git -C <RUNTIME_ROOT> merge --ff-only"
+    " origin/main",
+    "git -C <RUNTIME_ROOT> update-ref"
+    " refs/heads/feat/model-routing-pluggable-20261125"
+    " origin/feat/model-routing-pluggable-20261125",
+    "git -C <RUNTIME_ROOT> update-ref refs/heads/main"
+    " ab05f960876bd68d350f7761b92638739586fec9",
+    "git -C <RUNTIME_ROOT> update-ref refs/heads/main"
+    " ab05f960876bd68d350f7761b92638739586fec9 717c8def258b725c36042b9c0f22f0575d91c2e6",
+]
+```
+
+输出（上下文：main = origin/main = `64e648328…`，他人 live lane 30 条）：应拦 5 行全是 BLOCK，
+`reason=main_ref_pointer_move code=main_update_ref_stale_worktree`；应放行 5 行全是 PASS；`failures: 0`。
 
 ## 5. 审查记录（补记）
 

@@ -1823,9 +1823,8 @@ def check_push_lane_block(
 # 拨到 origin/main。update-ref 只移指针，不更新正被检出 main 的那个工作树的
 # 暂存区和工作树：旧树显示成反向“已暂存”（几十个文件），运行期工作树停在旧代码；
 # 事后补 ff-merge 回“Already up to date”，修不回来。2026-11-25 一天七次（06:37 到 21:22）。
-# 同一目的由 `git -C <主检出> merge --ff-only origin/main` 安全完成：完成则一并
-# 更新暂存区和工作树，否则整体拒绝、什么都不动（可执行依据见
-# test_ff_merge_updates_index_and_worktree_unlike_update_ref）。
+# 同一目的由 `git -C <主检出> merge --ff-only origin/main` 安全完成：这是 git 自己的
+# 行为——做得到就一并更新暂存区和工作树，做不到就整体拒绝、什么都不动。
 # 不在本规则内（已知、未覆盖）：`git branch -f main` / `fetch origin main:main`
 # （main 被检出时 git 自己拒绝）、`reset --soft/--mixed <commit>` 挪 main（同一类
 # 后果，未收）、`update-ref -d` 删 main 引用、`--stdin -z` 脚本。

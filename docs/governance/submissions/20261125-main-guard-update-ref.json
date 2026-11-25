@@ -63,7 +63,7 @@
       "owning_subsystem": "governance-docs",
       "disposition": "add",
       "evidence": [
-        "本清单即 A.5 结构化声明。提交后以 python scripts/check_architecture_submission.py --base 64e64832838696a040a76bec38c33ecdaee5c5d9 --head HEAD 做本机复核：清单提交 d07f87dae 与其后 e0098760a 上均 PASS（6 路径 / 5 组件 / 1 控制）。这次把全量门禁回执移出分支后应为 5 路径 / 4 组件 / 1 控制，提交后再跑一次，结果记入 PR #128。首推 head adba4cf26 上 A.5 因缺本清单 fail（expected exactly one changed architecture-submission manifest; found 0）。"
+        "本清单即 A.5 结构化声明。全量门禁回执不在分支里，这是已执行的事实：提交 18960a6e2 起分支中没有 docs/governance/receipts/full-test-gate-main-guard-update-ref-20261125.json（git ls-tree -r --name-only <head> -- docs/governance/receipts/ 里不应出现它）。本机复核命令 python scripts/check_architecture_submission.py --base 64e64832838696a040a76bec38c33ecdaee5c5d9 --head HEAD（--root <lane>）已执行并 PASS 的提交：d07f87dae、e0098760a（6 路径 / 5 组件 / 1 控制），18960a6e2（5 路径 / 4 组件 / 1 控制）。本清单这次文字修订所在的提交上再跑一次，结果与全量门禁回执一起贴在 PR #128 评论里。首推 head adba4cf26 上 A.5 因缺本清单 fail（expected exactly one changed architecture-submission manifest; found 0）。"
       ],
       "verification_level": "check_architecture_submission_strict_pass_required_after_commit",
       "model_evidence_veto_recovery_exit": "不适用（治理清单，非控制机器）。",
@@ -99,7 +99,7 @@
       "g4": {
         "rollback": "git revert 本 PR 合入 main 的提交（squash 合并就 revert 那个 squash 提交）并重启宿主服务，命令闸恢复为只认 commit/push；无状态、无数据迁移。",
         "verification": [
-          "python scripts/check_architecture_submission.py --base 64e64832838696a040a76bec38c33ecdaee5c5d9 --head HEAD（--root <lane>）：清单提交 d07f87dae 与 e0098760a 上本机 PASS（changed_paths=6，components=5，controls=1）。这次把全量门禁回执移出分支后应为 5 路径 / 4 组件 / 1 控制，提交后再跑一次，结果记入 PR #128。",
+          "python scripts/check_architecture_submission.py --base 64e64832838696a040a76bec38c33ecdaee5c5d9 --head HEAD（--root <lane>）：已执行并 PASS 的提交：d07f87dae、e0098760a（changed_paths=6，components=5，controls=1），18960a6e2（changed_paths=5，components=4，controls=1）。本清单这次文字修订所在的提交上再跑一次，结果记入 PR #128。",
           "全量门禁：首轮 exit 0（跑在提交 31bb13ea2 之前的工作树上，内容与之相同；并行集 17022 passed）。定稿提交本身上的那次：写本清单时尚未跑；跑完的回执贴在 PR #128 评论里。",
           "绑定：定稿之后分支不再有新的提交；合并审查的 head_sha 应等于全量门禁回执里的 candidate_head。若不等，以远端 CI 对该 head 的门禁结果为准。",
           "RULE-AI-28：截至 e0098760a 的 full_test 与 git_push 审查均 PASS（见 g3）；定稿提交的两次审查由宿主强制执行，写本清单时尚未发起。",
