@@ -1,0 +1,50 @@
+{
+  "schema": "rule28-full-test-gate/v1",
+  "evolution_id": "EVO-20261125-66cb3b21",
+  "goal_id": "GOAL-20261125-0f6d9a2b",
+  "lane_id": "lane-ffb64ade",
+  "branch": "fix/rule28-heredoc-opener-tail-20261125",
+  "worktree": ".worktrees/evo-rule28-heredoc-opener-tail-20261125",
+  "candidate_head": "212792bfb740f627789ad3f3ac7b33b142f48704",
+  "base_main": "717c8def258b725c36042b9c0f22f0575d91c2e6",
+  "stacked_on": {
+    "lane_id": "lane-27aa2dc0",
+    "evolution_id": "EVO-20261125-86a9864e",
+    "head": "cf87b290f70518ca69ca753ba287e8fd7c1ae4bc",
+    "note": "本 lane 的分支自该提交起；必须在其合入 main 之后再合入。"
+  },
+  "reviewer_admission": {
+    "kind": "full_test",
+    "scope": "patch",
+    "command": "bash scripts/ci_gate.sh",
+    "paths": [
+      "src/llm_loop/tools/review_host_admission.py",
+      "tests/unit/test_review_host_admission.py",
+      "docs/governance/receipts/evo-66cb3b21-rule35-bidirectional-20261125.md",
+      "docs/governance/receipts/evo-66cb3b21-probe-20261125.py.txt"
+    ],
+    "candidate_sha256": "11a41ffa187def11a550a7c306af15e36173daa745590cef2be80db83007f523",
+    "reviewer_model": "glm/glm-5.3-flash",
+    "child_id": "subagent_e09e92e1dad8",
+    "qualification": "PASS"
+  },
+  "full_test": {
+    "command": "bash scripts/ci_gate.sh",
+    "job_id": "job-b5163d94327d45fbb56d",
+    "started_at": "2026-11-25T20:15:30+08:00",
+    "terminal_observed_at": "2026-11-25T20:37:00+08:00",
+    "exit_code": 0,
+    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+    "ruff": {"historical": 67, "current": 27, "new": 0, "changed_file_diagnostics": 0},
+    "pyright": {"historical": 45, "current": 8, "new": 0, "changed_file_diagnostics": 0}
+  },
+  "receipts": {
+    "rule35": "docs/governance/receipts/evo-66cb3b21-rule35-bidirectional-20261125.md",
+    "probe": "docs/governance/receipts/evo-66cb3b21-probe-20261125.py.txt"
+  },
+  "notes": [
+    "门禁在候选 head 212792bfb 上运行；该 head 已并入 origin/main 717c8def2（PR #125，与本 lane 文件零重叠）。",
+    "全量测试跑的是叠放后的整棵树，因此同时覆盖了 lane-27aa2dc0 的改动。",
+    "本回执文件是门禁之后追加的提交，不改代码。证据层级：本地全量门禁；真实入口活体验证待部署后进行。"
+  ]
+}
