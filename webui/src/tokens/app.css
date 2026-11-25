@@ -252,6 +252,90 @@
   font-size: 10px;
 }
 
+/* ── 侧栏轻量化（2026-11-25）：低频入口压缩为底部紧凑工具区；运行信息不常驻 ── */
+.v2-sidebar-tools {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  margin: 0 var(--dsw-space-3) var(--dsw-space-2);
+}
+
+.v2-tool-entry {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 30px;
+  padding: 0 4px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.v2-tool-entry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-tool-entry:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.v2-tool-entry.active {
+  border-color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 运行异常紧凑提示（未知/陈旧不冒充正常；全部正常时不渲染） */
+.v2-runtime-alert {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin: var(--dsw-space-2) var(--dsw-space-3);
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-state-warning, #ad6800);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-warning, #ad6800);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.v2-runtime-alert:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-runtime-alert:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.v2-runtime-alert-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-runtime-alert-more {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* EVO-20261013-2 修复：learning 视图改为单一滚动容器（此前 LearningPanel/KnowledgePanel 在
    固定视口壳内互为 flex 兄弟，加载完成后学习面板塌缩 48px、知识面板溢出 17k px 被
    overflow:hidden 裁剪且无滚动路径）。 */
@@ -1418,6 +1502,15 @@
   /* 触屏没有可靠 hover：会话管理动作必须可见且可点。 */
   .v2-session-actions {
     display: inline-flex;
+  }
+
+  /* 侧栏轻量化：工具区与运行提示在手机抽屉内保持 44px 触控目标。 */
+  .v2-tool-entry {
+    height: var(--v2-mobile-touch-target);
+  }
+
+  .v2-runtime-alert {
+    min-height: var(--v2-mobile-touch-target);
   }
 }
 

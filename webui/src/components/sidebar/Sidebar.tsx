@@ -26,7 +26,7 @@ import { InterjectMetricsPanel } from "./InterjectMetricsPanel";
 import { EscalationPanel, EscalationWatcher } from "./EscalationCenter";
 import { LaneBoard } from "./LaneBoard";
 import { CoordinationChannel } from "./CoordinationChannel";
-import { RuntimeConvergenceSubscriber } from "./RuntimeConvergenceStrip";
+import { RuntimeConvergenceAlertSubscriber } from "./RuntimeConvergenceStrip";
 import { zh } from "../../i18n/zh";
 
 // 第 7 tab「协同」view 值，已并入 stores.SidebarView 联合（stores.ts:8）。
@@ -260,47 +260,6 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       <button type="button" className="v2-new-session" data-testid="new-session" onClick={handleNew} disabled={Boolean(busyAction)}>
         ＋ {zh.newSession}
       </button>
-      <button
-        type="button"
-        className={`v2-learning-entry ${mainView === "learning" && learningPage === "knowledge" ? "active" : ""}`}
-        data-testid="knowledge-entry"
-        onClick={() => {
-          mainViewStore.setView("learning");
-          learningPageStore.setPage("knowledge");
-          onNavigate?.();
-        }}
-      >
-        <span>📚 知识管理</span>
-        <small>Experiences · Methods</small>
-      </button>
-      <button
-        type="button"
-        className={`v2-learning-entry ${mainView === "learning" && learningPage === "learning" ? "active" : ""}`}
-        data-testid="learning-entry"
-        onClick={() => {
-          mainViewStore.setView("learning");
-          learningPageStore.setPage("learning");
-          onNavigate?.();
-        }}
-      >
-        <span>🧠 学习通道</span>
-        <small>Reflection · Methods</small>
-      </button>
-      <button
-        type="button"
-        className={`v2-learning-entry ${mainView === "services" ? "active" : ""}`}
-        data-testid="services-entry"
-        onClick={() => {
-          mainViewStore.setView("services");
-          onNavigate?.();
-        }}
-      >
-        <span>🛠 服务身份</span>
-        <small>desired · live · stable</small>
-      </button>
-      {/* 总协调通道栏（常驻条，非 tab）：服务入口之下、tab 区之上 */}
-      <CoordinationChannel collapsed={collapsed} onNavigate={onNavigate} />
-      {!collapsed ? <RuntimeConvergenceSubscriber /> : null}
       <div className="v2-sidebar-tabs">
         <button
           type="button"
@@ -638,6 +597,59 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       </WorkspaceGroups>
       </>
       )}
+      {/* 总协调通道栏（常驻条，非 tab）：会话优先——列表区之下、footer 之上（功能保留） */}
+      <CoordinationChannel collapsed={collapsed} onNavigate={onNavigate} />
+      {/* 运行信息收纳（侧栏轻量化）：左栏不再常驻显示运行版本 gen/SHA/CLI 详情；
+          仅未知/陈旧/异常时显示紧凑可点击提示（复用共享协调快照，不新增轮询），
+          完整信息（四服务工件匹配、CLI 登记进程）在「服务身份」页。 */}
+      {!collapsed ? (
+        <RuntimeConvergenceAlertSubscriber
+          onOpenServices={() => {
+            mainViewStore.setView("services");
+            onNavigate?.();
+          }}
+        />
+      ) : null}
+      {/* 低频入口压缩为紧凑工具区（知识管理/学习通道/服务身份） */}
+      {!collapsed ? (
+        <div className="v2-sidebar-tools" data-testid="sidebar-tools">
+          <button
+            type="button"
+            className={`v2-tool-entry ${mainView === "learning" && learningPage === "knowledge" ? "active" : ""}`}
+            data-testid="knowledge-entry"
+            onClick={() => {
+              mainViewStore.setView("learning");
+              learningPageStore.setPage("knowledge");
+              onNavigate?.();
+            }}
+          >
+            📚 知识
+          </button>
+          <button
+            type="button"
+            className={`v2-tool-entry ${mainView === "learning" && learningPage === "learning" ? "active" : ""}`}
+            data-testid="learning-entry"
+            onClick={() => {
+              mainViewStore.setView("learning");
+              learningPageStore.setPage("learning");
+              onNavigate?.();
+            }}
+          >
+            🧠 学习
+          </button>
+          <button
+            type="button"
+            className={`v2-tool-entry ${mainView === "services" ? "active" : ""}`}
+            data-testid="services-entry"
+            onClick={() => {
+              mainViewStore.setView("services");
+              onNavigate?.();
+            }}
+          >
+            🛠 服务
+          </button>
+        </div>
+      ) : null}
       <div className="v2-sidebar-footer">
         <span>{zh.sessionCount.replace("{n}", String(sessions.length))}</span>
       </div>

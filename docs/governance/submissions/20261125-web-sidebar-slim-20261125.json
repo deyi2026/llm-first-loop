@@ -1,0 +1,45 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-web-sidebar-slim-20261125",
+  "summary": "Web V2 左侧栏轻量化独立专项（GOAL-20261125-2eb6529d / lane-60a5c409，用户 2026-11-25 09:19 批准）：会话优先重组侧栏（新建→标签→搜索→列表），左栏不再常驻显示运行版本 gen/SHA/四服务/CLI 详情，完整信息由既有服务身份页（ServicesPanel，本 PR 未改动）承载；仅当运行信息未知、陈旧或服务/CLI 未确认时渲染紧凑可点击提示并跳转服务身份页；提示复用既有共享协调快照订阅（原订阅逻辑提取为共享 hook），零新增轮询；知识管理/学习通道/服务身份三个低频入口压缩为列表下方紧凑工具区（data-testid 全部保留）；总协调通道栏保留全部功能沉底。≤900px 断点保持 44px 触控目标。未知/陈旧不冒充正常：computeRuntimeAlert 对缺快照、stale、代次缺失、任一服务状态未确认、CLI 状态未确认一律给出需关注原因。纯前端增量，4 文件零重叠，无 API/契约变更，无控制机械。",
+  "components": [
+    {
+      "component_id": "webui-sidebar-slim",
+      "paths": [
+        "webui/src/components/sidebar/Sidebar.tsx",
+        "webui/src/components/sidebar/RuntimeConvergenceStrip.tsx",
+        "webui/src/tokens/app.css",
+        "webui/src/sidebar-slim.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "webui-frontend",
+      "disposition": "modify",
+      "evidence": [
+        "新增回归 sidebar-slim.test.tsx 7 用例：正常快照不渲染运行版本信息；服务异常紧凑提示并可点击跳服务身份页（mainViewStore 断言）；快照缺失/陈旧提示待刷新不冒充正常；CLI 未确认触发提示；新建/搜索/列表位于工具区之前且三个低频入口 testid、七个 tab 与协调通道全部保留；入口点击切换视图。",
+        "定向回归：8 文件 42/42 通过（sidebar-scale/actions/loading、build-identity、RuntimeConvergence x2、App.test、App.knowledge-page、sidebar-slim），既有测试零破坏。",
+        "R9 宿主全链路通过（2026-11-25 15:02 用户终端执行 bash scripts/ci_gate.sh 全链路）；独立旁证 results.json（14:54）75 个测试文件全部 failed:false。同内容候选仅基线重放（976668b0b→24e3f4c8d→15e6679a9），diff 恒 4 files +440/-44。",
+        "新基线 0d58b6d6 静态三闸复核：ruff PASS(new=0)、env-pin PASS、pyright PASS(new=0)、候选 WebUI 构建成功（job-b107f7640c574dc0bdbd）。",
+        "独立审查 review_admission full_test 四轮 PASS（最新 candidate f73cef34，child subagent_7d672ae7885c，reviewer glm-5.3-flash，scope=patch 4 路径）。"
+      ],
+      "verification_level": "targeted-new-tests-plus-regression-local-plus-host-full-gate-remote-ci-pending",
+      "model_evidence_veto_recovery_exit": "任一审查否决或远端 CI fail 即 revert 本分支单提交并重走闸链（独审、门禁、push）；线性单提交，回退路径确定。",
+      "rollback_route": "git revert 15e6679a9 单提交即恢复侧栏原状：组件纯增量（原 RuntimeConvergenceStrip/RuntimeConvergenceSubscriber 签名行为未变），CSS 新增类名不影响既有规则，测试文件独立；无状态、无迁移、无 API 变更。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261125-web-sidebar-slim-20261125.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "add",
+      "evidence": [
+        "本清单即本提交的架构声明文档；加入后以 python scripts/check_architecture_submission.py --base 0d58b6d67af179a880c9f25107b7450ac72dd8a8 --head HEAD 复核（结果记入 PR #124 描述）。"
+      ],
+      "verification_level": "mechanical-presence-coverage-check-local",
+      "model_evidence_veto_recovery_exit": "校验器机械失败即修正清单或 revert；清单只改文档不触碰被测代码。",
+      "rollback_route": "revert 包含本清单的提交即可移除，无其他影响面。"
+    }
+  ],
+  "declarations": []
+}
