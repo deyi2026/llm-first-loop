@@ -29,6 +29,65 @@ export async function api<T = unknown>(
   }
 }
 
+// ── HOTFIX-20261126（gen457 三入口性能回归）：只读拉取默认超时 + 外部取消 ─────
+// 背景：api() 无超时，慢端点挂起会让面板永久等待、请求无限堆积（生产 133% CPU 的放大器）。
+// 约束：仅新增给只读 fetch* 使用；api() 与全部写请求不套默认超时（行为不变）。
+export type ReadFetchError = "timeout" | "aborted" | "network";
+
+export interface ReadFetchOptions {
+  /** 超时毫秒；缺省 12000 */
+  timeoutMs?: number;
+  /** 外部取消信号（面板卸载/隐藏时中止） */
+  signal?: AbortSignal;
+}
+
+export const DEFAULT_READ_TIMEOUT_MS = 12000;
+
+export interface ReadFetchResult<T> {
+  status: number; // 0 = 超时/被取消/网络错误
+  data: T;
+  error?: ReadFetchError;
+}
+
+export async function fetchRead<T>(
+  url: string,
+  opts: ReadFetchOptions = {}
+): Promise<ReadFetchResult<T>> {
+  // 与 api() 同一 auth 门：cookie 被拒后被动轮询不得继续敲服务器。
+  if (url.startsWith("/api/v1/") && isAuthRequired()) {
+    return { status: 401, data: {} as T };
+  }
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const external = opts.signal;
+  const onExternalAbort = () => controller.abort();
+  if (external) {
+    if (external.aborted) onExternalAbort();
+    else external.addEventListener("abort", onExternalAbort);
+  }
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    reportUnauthorized(resp.status);
+    const data = (await resp.json().catch(() => ({}))) as T;
+    return { status: resp.status, data };
+  } catch {
+    const error: ReadFetchError = external?.aborted
+      ? "aborted"
+      : timedOut
+        ? "timeout"
+        : "network";
+    return { status: 0, data: {} as T, error };
+  } finally {
+    clearTimeout(timer);
+    if (external) external.removeEventListener("abort", onExternalAbort);
+  }
+}
+
 export interface BuildIdentityInfo {
   release_version?: string;
   expected_release_tag?: string;
@@ -137,9 +196,13 @@ export interface LearningStatusInfo {
   observability_errors?: string[]; // EVO-20261013-2: journal 读取失败降级信号（缺省/空=正常）
 }
 
-export async function fetchLearningStatus(limit = 50): Promise<LearningStatusInfo | null> {
-  const { status, data } = await api<LearningStatusInfo>(
-    `/api/v1/learning/status?limit=${Math.max(1, Math.min(limit, 200))}`
+export async function fetchLearningStatus(
+  limit = 50,
+  opts: ReadFetchOptions = {}
+): Promise<LearningStatusInfo | null> {
+  const { status, data } = await fetchRead<LearningStatusInfo>(
+    `/api/v1/learning/status?limit=${Math.max(1, Math.min(limit, 200))}`,
+    { timeoutMs: 10000, ...opts }
   );
   return status === 200 && Array.isArray(data.jobs) ? data : null;
 }
@@ -192,16 +255,22 @@ export interface MethodInventory {
 export async function fetchExperienceCatalog(
   query = "",
   status = "",
-  limit = 100
+  limit = 100,
+  opts: ReadFetchOptions = {}
 ): Promise<ExperienceCatalog> {
   const params = new URLSearchParams({ limit: String(Math.min(limit, 500)) });
   if (query) params.set("query", query);
   if (status) params.set("status", status);
-  const { status: code, data } = await api<ExperienceCatalog>(
-    `/api/v1/knowledge/experiences?${params.toString()}`
+  const { status: code, data, error } = await fetchRead<ExperienceCatalog>(
+    `/api/v1/knowledge/experiences?${params.toString()}`,
+    { timeoutMs: 20000, ...opts }
   );
   if (code === 200 && data && Array.isArray(data.records)) return data;
-  throw new Error(code === 0 ? "网络请求失败" : `HTTP ${code}`);
+  if (error === "aborted") throw new Error("已取消");
+  // EVO-20261013-2 契约保持：失败抛错、不伪装空库；超时给可读文案。
+  throw new Error(
+    error === "timeout" ? "读取超时（20s），稍后自动重试" : code === 0 ? "网络请求失败" : `HTTP ${code}`
+  );
 }
 
 export async function fetchExperienceDetail(id: string): Promise<ExperienceRecordInfo | null> {
@@ -225,16 +294,21 @@ export async function setExperienceLifecycle(
 export async function fetchMethodInventory(
   query = "",
   status = "",
-  limit = 100
+  limit = 100,
+  opts: ReadFetchOptions = {}
 ): Promise<MethodInventory> {
   const params = new URLSearchParams({ limit: String(Math.min(limit, 500)) });
   if (query) params.set("query", query);
   if (status) params.set("status", status);
-  const { status: code, data } = await api<MethodInventory>(
-    `/api/v1/knowledge/methods?${params.toString()}`
+  const { status: code, data, error } = await fetchRead<MethodInventory>(
+    `/api/v1/knowledge/methods?${params.toString()}`,
+    { timeoutMs: 20000, ...opts }
   );
   if (code === 200 && data && Array.isArray(data.records)) return data;
-  throw new Error(code === 0 ? "网络请求失败" : `HTTP ${code}`);
+  if (error === "aborted") throw new Error("已取消");
+  throw new Error(
+    error === "timeout" ? "读取超时（20s），稍后自动重试" : code === 0 ? "网络请求失败" : `HTTP ${code}`
+  );
 }
 
 export type MethodTransition = "qualify" | "activate" | "hold" | "invalidate" | "retire" | "reopen";
@@ -303,8 +377,13 @@ export interface KnowledgeScoresResponse {
   runner?: KnowledgeScoreRunnerState | null;
 }
 
-export async function fetchKnowledgeScores(): Promise<KnowledgeScoresResponse> {
-  const { status, data } = await api<KnowledgeScoresResponse>("/api/v1/knowledge/scores");
+export async function fetchKnowledgeScores(
+  opts: ReadFetchOptions = {}
+): Promise<KnowledgeScoresResponse> {
+  const { status, data } = await fetchRead<KnowledgeScoresResponse>("/api/v1/knowledge/scores", {
+    timeoutMs: 12000,
+    ...opts,
+  });
   if (
     status === 200 &&
     data &&
@@ -380,8 +459,13 @@ export interface ServicesStatusInfo {
   server_tz_offset_minutes?: number;
 }
 
-export async function fetchServicesStatus(): Promise<ServicesStatusInfo | null> {
-  const { status, data } = await api<ServicesStatusInfo>("/api/v1/services/status");
+export async function fetchServicesStatus(
+  opts: ReadFetchOptions = {}
+): Promise<ServicesStatusInfo | null> {
+  const { status, data } = await fetchRead<ServicesStatusInfo>("/api/v1/services/status", {
+    timeoutMs: 15000,
+    ...opts,
+  });
   return status === 200 && data.services ? data : null;
 }
 

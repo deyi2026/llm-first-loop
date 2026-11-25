@@ -200,59 +200,126 @@ export function KnowledgePanel() {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [loading, setLoading] = useState(true);
+  // HOTFIX-20261126（三入口性能回归）：
+  // 1) 经验/方法每源独立加载，解除 allSettled 首屏耦合（一个库挂起不再拖死另一库展示）；
+  // 2) 失败保留最近有效数据并标记陈旧（asOf），不再清空成"读取失败"；
+  // 3) 轮询防重入 + 标签隐藏暂停 + 卸载取消在途（慢端点不再堆积请求）；
+  // 4) 首屏有界：默认 50 条，"显示更多"按需加载到 150。
+  const [expLoading, setExpLoading] = useState(true);
+  const [mthLoading, setMthLoading] = useState(true);
   const [expError, setExpError] = useState("");
   const [mthError, setMthError] = useState("");
+  const [expAsOf, setExpAsOf] = useState(0);
+  const [mthAsOf, setMthAsOf] = useState(0);
+  const [expLimit, setExpLimit] = useState(50);
+  const [mthLimit, setMthLimit] = useState(50);
   // 阶段2: 知识打分只读索引（徽标 + 打分明细页签）
   const [scoreData, setScoreData] = useState<KnowledgeScoresResponse | null>(null);
   const [scoresLoading, setScoresLoading] = useState(true);
   const scoreWarned = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const expInFlight = useRef(false);
+  const mthInFlight = useRef(false);
+  const scoreInFlight = useRef(false);
+  const expAbort = useRef<AbortController | null>(null);
+  const mthAbort = useRef<AbortController | null>(null);
+  const scoreAbort = useRef<AbortController | null>(null);
+
+  const loadExperiences = useCallback(async (silent = false) => {
     // EVO-20261013-2: 读取失败与空库分开呈现（fetch 失败抛错），错误不再伪装成"无匹配"
-    const [expRes, mthRes] = await Promise.allSettled([
-      fetchExperienceCatalog(query, expStatus, 150),
-      fetchMethodInventory(query, methodStatus, 150),
-    ]);
-    if (expRes.status === "fulfilled") {
-      setExperiences(expRes.value);
+    if (expInFlight.current) return; // 防重入：慢端点轮询不堆积
+    expInFlight.current = true;
+    const controller = new AbortController();
+    expAbort.current = controller;
+    if (!silent) setExpLoading(true);
+    try {
+      const exp = await fetchExperienceCatalog(query, expStatus, expLimit, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setExperiences(exp); // 保留最近有效数据：成功才覆盖
       setExpError("");
-    } else {
-      setExperiences(null);
-      setExpError(expRes.reason instanceof Error ? expRes.reason.message : String(expRes.reason));
+      setExpAsOf(Date.now());
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      // 失败不清空旧数据：保留最近有效列表，由渲染层标记陈旧
+      setExpError(err instanceof Error ? err.message : String(err));
+    } finally {
+      expInFlight.current = false;
+      if (expAbort.current === controller) expAbort.current = null;
+      if (!silent) setExpLoading(false);
     }
-    if (mthRes.status === "fulfilled") {
-      setMethods(mthRes.value);
+  }, [query, expStatus, expLimit]);
+
+  const loadMethods = useCallback(async (silent = false) => {
+    if (mthInFlight.current) return;
+    mthInFlight.current = true;
+    const controller = new AbortController();
+    mthAbort.current = controller;
+    if (!silent) setMthLoading(true);
+    try {
+      const mth = await fetchMethodInventory(query, methodStatus, mthLimit, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setMethods(mth);
       setMthError("");
-    } else {
-      setMethods(null);
-      setMthError(mthRes.reason instanceof Error ? mthRes.reason.message : String(mthRes.reason));
+      setMthAsOf(Date.now());
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      setMthError(err instanceof Error ? err.message : String(err));
+    } finally {
+      mthInFlight.current = false;
+      if (mthAbort.current === controller) mthAbort.current = null;
+      if (!silent) setMthLoading(false);
     }
-    setLoading(false);
-    // 阶段2: 打分索引独立拉取（不进 allSettled，失败静默降级——不显示徽标、
+  }, [query, methodStatus, mthLimit]);
+
+  const loadScores = useCallback(() => {
+    // 阶段2: 打分索引独立拉取（失败静默降级——不显示徽标、
     // 不阻塞经验/方法列表，仅 console.warn 一次避免 30s 轮询刷屏）
+    if (scoreInFlight.current) return;
+    scoreInFlight.current = true;
+    const controller = new AbortController();
+    scoreAbort.current = controller;
     setScoresLoading(true);
-    fetchKnowledgeScores()
+    fetchKnowledgeScores({ signal: controller.signal })
       .then((res) => {
+        if (controller.signal.aborted) return;
         setScoreData(res);
       })
       .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
         setScoreData(null);
         if (!scoreWarned.current) {
           scoreWarned.current = true;
           console.warn("knowledge scores unavailable:", err);
         }
       })
-      .finally(() => setScoresLoading(false));
-  }, [query, expStatus, methodStatus]);
+      .finally(() => {
+        scoreInFlight.current = false;
+        if (scoreAbort.current === controller) scoreAbort.current = null;
+        setScoresLoading(false);
+      });
+  }, []);
+
+  const refresh = useCallback(() => {
+    void loadExperiences();
+    void loadMethods();
+    loadScores();
+  }, [loadExperiences, loadMethods, loadScores]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => void refresh(), 30000);
-    return () => window.clearInterval(timer);
+    refresh();
+    // 30s 轮询：标签隐藏暂停 + 各 loader 防重入；卸载取消在途请求
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void loadExperiences(true);
+      void loadMethods(true);
+      loadScores();
+    }, 30000);
+    return () => {
+      window.clearInterval(timer);
+      expAbort.current?.abort();
+      mthAbort.current?.abort();
+      scoreAbort.current?.abort();
+    };
   }, [refresh]);
 
   const doExperienceAction = async (id: string, action: "archive" | "invalidate" | "restore") => {
@@ -338,26 +405,40 @@ export function KnowledgePanel() {
         <>
           {experiences ? statusChips(experiences.counts, expStatus, setExpStatus) : null}
           <div className="v2-knowledge-list">
-            {loading ? (
-              <div className="v2-knowledge-empty">读取经验库…</div>
-            ) : expError ? (
+            {expLoading && !experiences ? (
+              <div className="v2-knowledge-empty" data-testid="exp-loading">读取经验库…</div>
+            ) : expError && !experiences ? (
               <div className="v2-knowledge-empty" data-testid="exp-load-error">
                 经验库读取失败（{expError}）— 服务异常或未就绪，非空库；30s 后自动重试
               </div>
-            ) : (experiences?.records.length ?? 0) === 0 ? (
-              <div className="v2-knowledge-empty">无匹配经验</div>
             ) : (
-              experiences?.records.map((record) => (
-                <ExperienceCard
-                  key={record.experience_ref || record.experience_id || record.summary}
-                  record={record}
-                  score={scoreData?.scores[record.experience_ref || record.experience_id || ""]}
-                  onAction={(id, action) => void doExperienceAction(id, action)}
-                  busy={busy}
-                />
-              ))
+              <>
+                {expError ? (
+                  <div className="v2-knowledge-empty" data-testid="exp-stale" style={{ color: "#d46b08" }}>
+                    经验库刷新失败（{expError}）— 下方为 {expAsOf ? new Date(expAsOf).toLocaleTimeString() : "—"} 的最近有效数据，已标记陈旧；30s 后自动重试
+                  </div>
+                ) : null}
+                {(experiences?.records.length ?? 0) === 0 ? (
+                  <div className="v2-knowledge-empty">无匹配经验</div>
+                ) : (
+                  experiences?.records.map((record) => (
+                    <ExperienceCard
+                      key={record.experience_ref || record.experience_id || record.summary}
+                      record={record}
+                      score={scoreData?.scores[record.experience_ref || record.experience_id || ""]}
+                      onAction={(id, action) => void doExperienceAction(id, action)}
+                      busy={busy}
+                    />
+                  ))
+                )}
+              </>
             )}
           </div>
+          {experiences && expLimit < 150 ? (
+            <button style={{ margin: "8px 0", fontSize: 12 }} onClick={() => setExpLimit(150)}>
+              显示更多（当前前 {expLimit} 条 / 共 {Object.values(experiences.counts).reduce((a, b) => a + b, 0)} 条）
+            </button>
+          ) : null}
         </>
       ) : tab === "methods" ? (
         <>
@@ -366,26 +447,40 @@ export function KnowledgePanel() {
           </p>
           {methods ? statusChips(methods.counts, methodStatus, setMethodStatus) : null}
           <div className="v2-knowledge-list">
-            {loading ? (
-              <div className="v2-knowledge-empty">读取方法库…</div>
-            ) : mthError ? (
+            {mthLoading && !methods ? (
+              <div className="v2-knowledge-empty" data-testid="mth-loading">读取方法库…</div>
+            ) : mthError && !methods ? (
               <div className="v2-knowledge-empty" data-testid="mth-load-error">
                 方法库读取失败（{mthError}）— 服务异常或未就绪，非空库；30s 后自动重试
               </div>
-            ) : (methods?.records.length ?? 0) === 0 ? (
-              <div className="v2-knowledge-empty">无匹配方法</div>
             ) : (
-              methods?.records.map((card) => (
-                <MethodCard
-                  key={card.id}
-                  card={card}
-                  score={scoreData?.scores[card.key || ""]}
-                  onTransition={(id, t) => void doMethodTransition(id, t)}
-                  busy={busy}
-                />
-              ))
+              <>
+                {mthError ? (
+                  <div className="v2-knowledge-empty" data-testid="mth-stale" style={{ color: "#d46b08" }}>
+                    方法库刷新失败（{mthError}）— 下方为 {mthAsOf ? new Date(mthAsOf).toLocaleTimeString() : "—"} 的最近有效数据，已标记陈旧；30s 后自动重试
+                  </div>
+                ) : null}
+                {(methods?.records.length ?? 0) === 0 ? (
+                  <div className="v2-knowledge-empty">无匹配方法</div>
+                ) : (
+                  methods?.records.map((card) => (
+                    <MethodCard
+                      key={card.id}
+                      card={card}
+                      score={scoreData?.scores[card.key || ""]}
+                      onTransition={(id, t) => void doMethodTransition(id, t)}
+                      busy={busy}
+                    />
+                  ))
+                )}
+              </>
             )}
           </div>
+          {methods && mthLimit < 150 ? (
+            <button style={{ margin: "8px 0", fontSize: 12 }} onClick={() => setMthLimit(150)}>
+              显示更多（当前前 {mthLimit} 条 / 共 {Object.values(methods.counts).reduce((a, b) => a + b, 0)} 条）
+            </button>
+          ) : null}
         </>
       ) : (
         <>

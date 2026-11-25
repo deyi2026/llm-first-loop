@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   fetchLearningStatus,
@@ -109,28 +109,69 @@ function JobCard({ job }: { job: LearningJobInfo }) {
 export function LearningPanel() {
   const [status, setStatus] = useState<LearningStatusInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  // HOTFIX-20261126（三入口性能回归）：5s 轮询防重入 + 标签隐藏暂停 + 卸载取消在途；
+  // 失败保留最近有效状态并标记陈旧（asOf），不再把降级伪装成正常。
+  const [err, setErr] = useState("");
+  const [asOf, setAsOf] = useState(0);
+  const [tick, setTick] = useState(0);
+  const inFlight = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
-      const next = await fetchLearningStatus(80);
-      if (!mounted) return;
-      setStatus(next);
-      setLoading(false);
+      if (inFlight.current) return; // 防重入：上一次未返回不叠加新请求
+      inFlight.current = true;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        const next = await fetchLearningStatus(80, { signal: controller.signal });
+        if (!mounted || controller.signal.aborted) return;
+        if (next) {
+          setStatus(next); // 保留最近有效状态：成功才覆盖
+          setErr("");
+          setAsOf(Date.now());
+        } else {
+          setErr("学习通道接口暂不可用（超时或网络错误）");
+        }
+        setLoading(false);
+      } finally {
+        inFlight.current = false;
+        if (abortRef.current === controller) abortRef.current = null;
+      }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
+    const timer = window.setInterval(() => {
+      if (document.hidden) return; // 离开页面（标签隐藏）停止刷新
+      void refresh();
+    }, 5000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
+      abortRef.current?.abort();
     };
-  }, []);
+  }, [tick]);
 
-  if (loading) {
+  const retryNow = () => {
+    setErr("");
+    setLoading(true);
+    setTick((t) => t + 1);
+  };
+
+  if (loading && !status) {
     return <main className="v2-learning-panel"><div className="v2-learning-empty">读取学习通道…</div></main>;
   }
   if (!status) {
-    return <main className="v2-learning-panel"><div className="v2-learning-empty">学习通道状态暂不可用</div></main>;
+    return (
+      <main className="v2-learning-panel">
+        <div className="v2-learning-empty">
+          学习通道状态暂不可用
+          <div style={{ marginTop: 8 }}>
+            <button onClick={retryNow}>重试</button>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   const worker = status.worker ?? {};
@@ -162,6 +203,12 @@ export function LearningPanel() {
           {worker.running ? "● Worker 运行中" : "○ Worker 未运行"}
         </span>
       </header>
+      {err ? (
+        <div className="v2-learning-reason" data-testid="learning-stale" style={{ color: "#d46b08" }}>
+          ⚠ 刷新失败（{err}）— 以下为 {asOf ? new Date(asOf).toLocaleTimeString() : "—"} 最近有效数据，已标记陈旧；
+          <button style={{ marginLeft: 8 }} onClick={retryNow}>重试</button>
+        </div>
+      ) : null}
       <section className="v2-learning-summary">
         <div><span>模型</span><strong>{worker.model_ref || "—"}</strong></div>
         <div title="全 journal 口径：当前排队中的任务总数"><span>排队</span><strong>{status.counts.queued ?? 0}</strong></div>
