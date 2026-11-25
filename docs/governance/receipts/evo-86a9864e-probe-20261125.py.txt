@@ -1,0 +1,101 @@
+"""EVO-20261125-86a9864e probe: RULE-AI-28 action classification before/after fix.
+
+usage: python3 lfl_evo_86a9864e_probe.py <absolute-src-dir-to-import>
+"""
+import sys
+
+SRC = sys.argv[1]
+assert SRC.startswith("/"), "pass an absolute src path"
+sys.path.insert(0, SRC)
+import llm_loop  # noqa: E402
+
+assert llm_loop.__file__.startswith(SRC), llm_loop.__file__
+from llm_loop.tools.review_host_admission import classify_host_shell  # noqa: E402
+from llm_loop.tools.review_gate import classify_review_gate_command  # noqa: E402
+
+BT = chr(96)  # backtick, built here so the probe file itself carries no literal one
+DOC = "cat > /tmp/doc.md <<'EOF'\n"
+PUSH = "git push origin main"
+TICKED = BT + PUSH + BT
+
+# Pre-existing fail-open on main, unchanged by this EVO and filed separately:
+# text after the heredoc operator on the opener line is dropped from the skeleton.
+KNOWN_GAPS = {"B11_real_push_on_opener_line"}
+
+HOST_CASES = [
+    # target scenarios: exempt here-doc data bodies are not command text
+    ("A1_md_code_span_in_exempt_body", DOC + "示例：" + TICKED + "\nEOF", None),
+    ("A2_md_bullet_nohup_push",
+     DOC + "## 标题\n\n- " + BT + "nohup " + PUSH + " 2>&1" + BT + " 也被误报\nEOF", None),
+    ("A3_apostrophe_then_code_span", DOC + "it's " + TICKED + "\nEOF", None),
+    ("A4_pytest_literal_in_exempt_body", DOC + BT + "pytest -q" + BT + "\nEOF", None),
+    # must still block
+    ("B1_real_push", PUSH, "git_push"),
+    ("B2_real_backtick_substitution", "echo " + TICKED, "git_push"),
+    ("B3_unquoted_delimiter_body_expands",
+     "cat > /tmp/doc.md <<EOF\n示例：" + TICKED + "\nEOF", "git_push"),
+    ("B4_non_sink_receiver", "bash <<'EOF'\n示例：" + TICKED + "\nEOF", "git_push"),
+    ("B5_real_push_after_exempt_body", DOC + "示例：" + TICKED + "\nEOF\n" + PUSH, "git_push"),
+    ("B6_opener_inside_open_string_lex_fallback",
+     'echo "start\n' + DOC + TICKED + "\nEOF", "git_push"),
+    ("B7_opener_inside_multiline_string_balanced",
+     'echo "start\n' + DOC + TICKED + '\nEOF\nend" ; echo "\nx"', "git_push"),
+    ("B8_unterminated_body_kept", DOC + "示例：" + TICKED, "git_push"),
+    ("B9_apostrophe_desync_then_real_backtick",
+     DOC + "it's fine\nEOF\necho " + TICKED, "git_push"),
+    ("B10_piped_opener_line", "cat <<'EOF' | bash\n" + PUSH + "\nEOF", "git_push"),
+    ("B11_real_push_on_opener_line",
+     "cat > /tmp/doc.md <<'EOF'; " + PUSH + "\n示例\nEOF", "git_push"),
+    ("B12_real_full_pytest", "pytest -q", "full_test"),
+    ("B13_python_dash_m_pytest", "python3 -m pytest", "full_test"),
+    ("B14_python_payload_shell_call",
+     "python3 -c \"import subprocess; subprocess.run('" + PUSH + "', shell=True)\"",
+     "git_push"),
+]
+
+GATE_CASES = [
+    ("C01_pytest_version_python_m", "python3 -m pytest --version", None),
+    ("C02_pytest_version", "pytest --version", None),
+    ("C03_pytest_capital_v", "pytest -V", None),
+    ("C04_pytest_co", "pytest --co", None),
+    ("C05_pytest_collect_only", "python3 -m pytest --collect-only", None),
+    ("C06_pytest_h", "pytest -h", None),
+    ("C07_pytest_help", "pytest --help", None),
+    ("C08_observed_1605_chain",
+     'grep -n "pythonpath\\|testpaths\\|tool.pytest" pyproject.toml; '
+     "echo ---PY---; python3 --version; python3 -m pytest --version; echo ---WHICH---",
+     None),
+    ("C09_version_then_real", "pytest --version; pytest", "full_test"),
+    ("C10_real_then_version", "pytest -q; pytest --version", "full_test"),
+    ("C11_echo_version_then_real", "echo --version; pytest", "full_test"),
+    ("C12_version_piped_then_real", "pytest --version | tee log; pytest -q", "full_test"),
+    ("C13_flag_in_other_segment", 'pytest -q "a" ; echo --version', "full_test"),
+    ("C14_real_full_pytest", "pytest -q", "full_test"),
+    ("C15_real_push", PUSH, "git_push"),
+]
+
+
+def run(fn, cases, label):
+    bad = 0
+    gaps = 0
+    print("== " + label + " ==")
+    for cid, cmd, expected in cases:
+        actual = fn(cmd)
+        if actual == expected:
+            mark = "OK        "
+        elif cid in KNOWN_GAPS:
+            mark = "KNOWN_GAP "
+            gaps += 1
+        else:
+            mark = "MISMATCH  "
+            bad += 1
+        print(mark + cid + " | expected=" + repr(expected) + " actual=" + repr(actual))
+    return bad, gaps
+
+
+print("module =", llm_loop.__file__)
+bad_host, gap_host = run(classify_host_shell, HOST_CASES, "classify_host_shell")
+bad_gate, gap_gate = run(classify_review_gate_command, GATE_CASES, "classify_review_gate_command")
+print("mismatches =", bad_host + bad_gate, "known_gaps_open =", gap_host + gap_gate,
+      "of", len(HOST_CASES) + len(GATE_CASES))
+sys.exit(1 if (bad_host + bad_gate) else 0)
