@@ -433,7 +433,7 @@ export function KnowledgePanel() {
               <>
                 {expError ? (
                   <div className="v2-knowledge-empty" data-testid="exp-stale" style={{ color: "#d46b08" }}>
-                    经验库刷新失败（{expError}）— 下方为 {expAsOf ? new Date(expAsOf).toLocaleTimeString() : "—"} 的最近有效数据，已标记陈旧；30s 后自动重试
+                    经验库刷新失败（{expError}）— 下方为 {expAsOf ? new Date(expAsOf).toLocaleTimeString() : "—"} 的最近有效数据，已标记陈旧（如刚修改搜索/筛选，列表可能对应上一次条件）；30s 后自动重试
                   </div>
                 ) : null}
                 {(experiences?.records.length ?? 0) === 0 ? (
@@ -454,7 +454,7 @@ export function KnowledgePanel() {
           </div>
           {experiences && expLimit < 150 ? (
             <button style={{ margin: "8px 0", fontSize: 12 }} onClick={() => setExpLimit(150)}>
-              显示更多（当前前 {expLimit} 条 / 共 {Object.values(experiences.counts).reduce((a, b) => a + b, 0)} 条）
+              显示更多（当前前 {expLimit} 条，点击加载至 150）
             </button>
           ) : null}
         </>
@@ -475,7 +475,7 @@ export function KnowledgePanel() {
               <>
                 {mthError ? (
                   <div className="v2-knowledge-empty" data-testid="mth-stale" style={{ color: "#d46b08" }}>
-                    方法库刷新失败（{mthError}）— 下方为 {mthAsOf ? new Date(mthAsOf).toLocaleTimeString() : "—"} 的最近有效数据，已标记陈旧；30s 后自动重试
+                    方法库刷新失败（{mthError}）— 下方为 {mthAsOf ? new Date(mthAsOf).toLocaleTimeString() : "—"} 的最近有效数据，已标记陈旧（如刚修改搜索/筛选，列表可能对应上一次条件）；30s 后自动重试
                   </div>
                 ) : null}
                 {(methods?.records.length ?? 0) === 0 ? (
@@ -496,7 +496,7 @@ export function KnowledgePanel() {
           </div>
           {methods && mthLimit < 150 ? (
             <button style={{ margin: "8px 0", fontSize: 12 }} onClick={() => setMthLimit(150)}>
-              显示更多（当前前 {mthLimit} 条 / 共 {Object.values(methods.counts).reduce((a, b) => a + b, 0)} 条）
+              显示更多（当前前 {mthLimit} 条，点击加载至 150）
             </button>
           ) : null}
         </>

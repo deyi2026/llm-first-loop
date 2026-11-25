@@ -269,6 +269,8 @@ export async function fetchExperienceCatalog(
   if (code === 200 && data && Array.isArray(data.records)) return data;
   if (error === "aborted") throw new Error("已取消");
   // EVO-20261013-2 契约保持：失败抛错、不伪装空库；超时给可读文案。
+  // push 独审 F2：200 但响应体不可读单独成文，不再误报 "HTTP 200"。
+  if (code === 200) throw new Error("响应体不可读（非预期格式）");
   throw new Error(
     error === "timeout" ? "读取超时（20s），稍后自动重试" : code === 0 ? "网络请求失败" : `HTTP ${code}`
   );
@@ -307,6 +309,7 @@ export async function fetchMethodInventory(
   );
   if (code === 200 && data && Array.isArray(data.records)) return data;
   if (error === "aborted") throw new Error("已取消");
+  if (code === 200) throw new Error("响应体不可读（非预期格式）");
   throw new Error(
     error === "timeout" ? "读取超时（20s），稍后自动重试" : code === 0 ? "网络请求失败" : `HTTP ${code}`
   );
