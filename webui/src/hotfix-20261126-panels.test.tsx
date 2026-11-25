@@ -111,6 +111,29 @@ describe("KnowledgePanel（HOTFIX-20261126）", () => {
     expect(screen.queryByTestId("exp-loading")).toBeNull();
   });
 
+  it("在途请求被参数变化取消后，新查询立即接手（独审 P1-1 回归）", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/knowledge/experiences")) return new Promise<Response>(() => {});
+      if (url.includes("/api/v1/knowledge/scores")) return jsonResponse(scoresBody);
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await act(async () => {
+      render(<KnowledgePanel />);
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3)); // 挂载：experiences(挂起)+methods(挂起)+scores
+    // 输入新查询 → effect 清理 abort 旧请求 → 新 loader 必须立即接手并发起新查询请求
+    await act(async () => {
+      fireEvent.change(screen.getByRole("searchbox"), { target: { value: "新词" } });
+    });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some((c) => String(c[0]).includes("query=") && String(c[0]).includes("%E6%96%B0%E8%AF%8D"))
+      ).toBeTruthy()
+    );
+  });
+
   it("刷新失败保留最近有效数据并标记陈旧（不清空旧数据）", async () => {
     let mthFails = false;
     vi.stubGlobal(

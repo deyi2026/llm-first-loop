@@ -227,7 +227,12 @@ export function KnowledgePanel() {
 
   const loadExperiences = useCallback(async (silent = false) => {
     // EVO-20261013-2: 读取失败与空库分开呈现（fetch 失败抛错），错误不再伪装成"无匹配"
-    if (expInFlight.current) return; // 防重入：慢端点轮询不堆积
+    if (expInFlight.current) {
+      // 独审 P1-1：参数变化已由 effect 清理 abort 在途请求时，新 loader 立即接手，
+      // 不被旧请求的防重入旗标吞掉到下一个轮询周期；同参数真在途才防重入。
+      const prev = expAbort.current;
+      if (!prev || !prev.signal.aborted) return; // 防重入：慢端点轮询不堆积
+    }
     expInFlight.current = true;
     const controller = new AbortController();
     expAbort.current = controller;
@@ -243,14 +248,20 @@ export function KnowledgePanel() {
       // 失败不清空旧数据：保留最近有效列表，由渲染层标记陈旧
       setExpError(err instanceof Error ? err.message : String(err));
     } finally {
-      expInFlight.current = false;
-      if (expAbort.current === controller) expAbort.current = null;
-      if (!silent) setExpLoading(false);
+      // 仅当仍是本次请求（未被新一轮接手）才释放旗标，旧 finally 不得覆盖新请求
+      if (expAbort.current === controller) {
+        expInFlight.current = false;
+        expAbort.current = null;
+        if (!silent) setExpLoading(false);
+      }
     }
   }, [query, expStatus, expLimit]);
 
   const loadMethods = useCallback(async (silent = false) => {
-    if (mthInFlight.current) return;
+    if (mthInFlight.current) {
+      const prev = mthAbort.current; // 独审 P1-1 同 loadExperiences
+      if (!prev || !prev.signal.aborted) return;
+    }
     mthInFlight.current = true;
     const controller = new AbortController();
     mthAbort.current = controller;
@@ -265,16 +276,21 @@ export function KnowledgePanel() {
       if (controller.signal.aborted) return;
       setMthError(err instanceof Error ? err.message : String(err));
     } finally {
-      mthInFlight.current = false;
-      if (mthAbort.current === controller) mthAbort.current = null;
-      if (!silent) setMthLoading(false);
+      if (mthAbort.current === controller) {
+        mthInFlight.current = false;
+        mthAbort.current = null;
+        if (!silent) setMthLoading(false);
+      }
     }
   }, [query, methodStatus, mthLimit]);
 
   const loadScores = useCallback(() => {
     // 阶段2: 打分索引独立拉取（失败静默降级——不显示徽标、
     // 不阻塞经验/方法列表，仅 console.warn 一次避免 30s 轮询刷屏）
-    if (scoreInFlight.current) return;
+    if (scoreInFlight.current) {
+      const prev = scoreAbort.current; // 同 loadExperiences：被取消的在途立即接手
+      if (!prev || !prev.signal.aborted) return;
+    }
     scoreInFlight.current = true;
     const controller = new AbortController();
     scoreAbort.current = controller;
@@ -293,9 +309,11 @@ export function KnowledgePanel() {
         }
       })
       .finally(() => {
-        scoreInFlight.current = false;
-        if (scoreAbort.current === controller) scoreAbort.current = null;
-        setScoresLoading(false);
+        if (scoreAbort.current === controller) {
+          scoreInFlight.current = false;
+          scoreAbort.current = null;
+          setScoresLoading(false);
+        }
       });
   }, []);
 

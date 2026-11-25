@@ -55,6 +55,7 @@ export async function fetchRead<T>(
 ): Promise<ReadFetchResult<T>> {
   // 与 api() 同一 auth 门：cookie 被拒后被动轮询不得继续敲服务器。
   if (url.startsWith("/api/v1/") && isAuthRequired()) {
+    reportUnauthorized(401); // 独审 P2-1：与 api() 同路径，触发认证恢复流而非静默
     return { status: 401, data: {} as T };
   }
   const timeoutMs = opts.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS;

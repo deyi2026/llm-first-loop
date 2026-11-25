@@ -60,7 +60,11 @@ export function ServicesPanel() {
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
-      if (inFlight.current) return; // 防重入：慢端点轮询不堆积
+      if (inFlight.current) {
+        const prev = abortRef.current;
+        if (!prev || !prev.signal.aborted) return; // 防重入：慢端点轮询不堆积
+        // 独审 P2-2：tick 重启已取消旧请求 → 立即接手，不等下一个 15s 周期
+      }
       inFlight.current = true;
       const controller = new AbortController();
       abortRef.current = controller;
@@ -72,13 +76,16 @@ export function ServicesPanel() {
           setErr("");
           setAsOf(Date.now());
         } else {
-          setErr("服务身份接口暂不可用（超时或网络错误）");
+          // 独审 P2-1：null 可能来自认证被拒/超时/网络，文案不再误诊单一原因
+          setErr("服务身份接口暂不可用（认证被拒、超时或网络异常，将自动重试）");
         }
         setLoaded(true);
         setLoading(false);
       } finally {
-        inFlight.current = false;
-        if (abortRef.current === controller) abortRef.current = null;
+        if (abortRef.current === controller) {
+          inFlight.current = false;
+          abortRef.current = null;
+        }
       }
     };
     void refresh();
