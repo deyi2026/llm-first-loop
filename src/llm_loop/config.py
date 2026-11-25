@@ -152,7 +152,9 @@ def _strip_quotes(val: str) -> str:
     return val
 
 
-def _raw_env(name: str, env: Mapping[str, str] | None = None, *, preserve_raw: bool = False) -> str:
+def _raw_env(
+    name: str, env: Mapping[str, str] | None = None, *, preserve_raw: bool = False
+) -> str:
     """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
 
     防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
@@ -451,9 +453,7 @@ class Settings:
     # 压力路径候选年龄（0=按占用率调候选年龄；不再触发 under-budget 改写）
     # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
     # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
-    mcp_servers_raw: str = (
-        ""  # P3-1/P1-B: MCP_SERVERS JSON（stdio 与 http(Streamable HTTP) 服务器列表）
-    )
+    mcp_servers_raw: str = ""  # P3-1/P1-B: MCP_SERVERS JSON（stdio 与 http(Streamable HTTP) 服务器列表）
     # P0-1 文件配置开关：空/auto=读 ~/.lfl/mcp.json + 项目根 .mcp.json 两层；
     # user=仅用户级；off=均不读（clone 不可信仓库时防其 .mcp.json 拉起任意进程）
     mcp_file_config: str = ""
@@ -563,9 +563,7 @@ class Settings:
     cog_runtime_state_version: str = "v0.1"
     # HOT/WARM/COLD 分级总闸（0 回退平铺聚合原行为；spec 5.2.3-1）
     cog_runtime_tier_enabled: bool = True
-    cog_runtime_mode: str = (
-        "shadow"  # CR-R1: off|shadow|enforce（与 _env_cog_mode 缺省及镜像 fc45590 同源）
-    )
+    cog_runtime_mode: str = "shadow"  # CR-R1: off|shadow|enforce（与 _env_cog_mode 缺省及镜像 fc45590 同源）
     # Stage 2 allowlist（DESIGN-20260901 rev2 P0-1/P0-2）: operator-owned 控制面文件
     # 绝对路径（仅绝对路径生效，相对=配置无效→fail-closed shadow）；空=名单禁用。
     # 不做存在性校验——读取方每轮 fail-closed 求值（P0-2 全语义在 build._cog_allowlist_hit）。
@@ -972,7 +970,6 @@ def _env_optional_true_set(name: str, env_values: Mapping[str, str]) -> bool | N
         return None
     return str(env_values.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
-
 def _env_optional_hit_telemetry(name: str, env_values: Mapping[str, str]) -> bool | None:
     """Preserve CACHE_GUARD_HIT_TELEMETRY's historical explicit-value rule."""
     if name not in env_values:
@@ -996,14 +993,15 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     def env_one(fn, name: str):
         return fn(name, env_values)
-
     api_key = env_values.get("LLM_API_KEY", "").strip()
     base_url = env_values.get("LLM_BASE_URL", "").strip()
     # M20 CFG-01/02: LLM_MODEL 缺省 → OPENSYGAI_DEEPSEEK_DEFAULT_MODEL → 内置 deepseek-flash
     # （2026-09-10 起官方模型名为 deepseek-flash / V4.1-Flash；旧名 deepseek-v4-flash 仅剩临时路由层）
     model = env_values.get("LLM_MODEL", "").strip()
     if not model:
-        model = env_values.get("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "").strip() or "deepseek-flash"
+        model = (
+            env_values.get("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "").strip() or "deepseek-flash"
+        )
 
     missing: list[str] = []
     if not api_key:
@@ -1022,7 +1020,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     # an unisolated Engine can create durable sessions and contaminate Web history.
     if api_key == "local-eval" and not env_values.get("DATA_DIR", "").strip():
         raise ValueError(
-            "local-eval 资格化/探测必须显式设置 DATA_DIR 到隔离目录；拒绝使用默认生产数据目录。"
+            "local-eval 资格化/探测必须显式设置 DATA_DIR 到隔离目录；"
+            "拒绝使用默认生产数据目录。"
         )
 
     # T3: 记录 env 未显式设置的可自适应配置项（消费方据此走自适应，env 显式设置时走固定值）
@@ -1054,7 +1053,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             or _CODE_ROOT
         ).strip()
         try:
-            _path_dotenv = parse_env_file(Path(_runtime_root_hint).expanduser().resolve() / ".env")
+            _path_dotenv = parse_env_file(
+                Path(_runtime_root_hint).expanduser().resolve() / ".env"
+            )
         except Exception:  # noqa: BLE001 - path fallback is compatibility-only
             _path_dotenv = {}
         for _key in (
@@ -1076,7 +1077,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         data_dir_explicit=bool(_data_dir_raw),
     )
     _ws_soft = max(1, min(env_int("LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP", 12), 1024))
-    _ws_hard = max(_ws_soft, min(env_int("LFL_TOOL_WORKING_SET_HARD_RESULT_CAP", 32), 4096))
+    _ws_hard = max(
+        _ws_soft, min(env_int("LFL_TOOL_WORKING_SET_HARD_RESULT_CAP", 32), 4096)
+    )
     _compress_target = _env_float("COMPRESS_TARGET_RATIO", 0.6, env_values)
     if not 0.0 < _compress_target < 1.0:
         _compress_target = 0.6
@@ -1085,7 +1088,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         working_set_batch_chars=max(
             4096, min(env_int("LFL_TOOL_WORKING_SET_BATCH_CHARS", 32768), 1_048_576)
         ),
-        working_set_grace_groups=max(0, min(env_int("LFL_TOOL_WORKING_SET_GRACE_GROUPS", 0), 64)),
+        working_set_grace_groups=max(
+            0, min(env_int("LFL_TOOL_WORKING_SET_GRACE_GROUPS", 0), 64)
+        ),
         working_set_soft_result_cap=_ws_soft,
         working_set_hard_result_cap=_ws_hard,
         working_set_min_net_gain_chars=max(
@@ -1106,7 +1111,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         head_keep_force_ratio=_env_float_or_none("HEAD_KEEP_FORCE_RATIO", env_values),
         head_keep_target_ratio=_env_float_or_none("HEAD_KEEP_TARGET_RATIO", env_values),
     )
-
     def _mode(name: str, default: str, allowed: set[str]) -> str:
         raw = str(env_values.get(name, default) or default).strip().lower()
         return raw if raw in allowed else default
@@ -1121,21 +1125,34 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tool_octet=env_bool("LFL_TOOL_OCTET", False),
         dsh_home=str(env_values.get("DSH_HOME", "") or "").strip(),
         job_max_concurrent=max(1, env_int("JOB_MAX_CONCURRENT", 5)),
-        evidence_capsule=_mode("LFL_EVIDENCE_CAPSULE", "off", {"on", "shadow", "off"}),
-        tool_guidance=_mode("LFL_TOOL_GUIDANCE", "off", {"on", "shadow", "off"}),
-        knowledge_advisor_mode=_mode("LFL_KNOWLEDGE_ADVISOR", "off", {"off", "shadow", "canary"}),
-        knowledge_advisor_sessions=str(env_values.get("LFL_KNOWLEDGE_ADVISOR_SESSIONS", "") or ""),
+        evidence_capsule=_mode(
+            "LFL_EVIDENCE_CAPSULE", "off", {"on", "shadow", "off"}
+        ),
+        tool_guidance=_mode(
+            "LFL_TOOL_GUIDANCE", "off", {"on", "shadow", "off"}
+        ),
+        knowledge_advisor_mode=_mode(
+            "LFL_KNOWLEDGE_ADVISOR", "off", {"off", "shadow", "canary"}
+        ),
+        knowledge_advisor_sessions=str(
+            env_values.get("LFL_KNOWLEDGE_ADVISOR_SESSIONS", "") or ""
+        ),
         exec_sandbox=_mode(
             "EXEC_SANDBOX", "auto", {"auto", "none", "bwrap", "docker", "sandbox-exec"}
         ),
         exec_sandbox_image=str(
-            env_values.get("EXEC_SANDBOX_IMAGE", "python:3.13-slim") or "python:3.13-slim"
+            env_values.get("EXEC_SANDBOX_IMAGE", "python:3.13-slim")
+            or "python:3.13-slim"
         ).strip(),
         nonconvergence_fuse_windows=env_int("LFL_NONCONV_FUSE_WINDOWS", 3),
         nonconvergence_fuse_jaccard=_nonconvergence_jaccard,
         nonconvergence_fuse_min_delta=env_int("LFL_NONCONV_FUSE_MIN_DELTA", 16),
-        llm_stream_interject_checkpoint=_env_bool("LLM_STREAM_INTERJECT_CHECKPOINT", True),
-        sync_chat_interject_checkpoint=_env_bool("LFL_SYNC_CHAT_INTERJECT_CHECKPOINT", True),
+        llm_stream_interject_checkpoint=_env_bool(
+            "LLM_STREAM_INTERJECT_CHECKPOINT", True
+        ),
+        sync_chat_interject_checkpoint=_env_bool(
+            "LFL_SYNC_CHAT_INTERJECT_CHECKPOINT", True
+        ),
     )
     settings = Settings(
         llm_api_key=api_key,
@@ -1155,9 +1172,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         llm_trust_env=_env_optional_true_set("LLM_TRUST_ENV", env_values),
         llm_retry_disconnect=env_int("LLM_RETRY_DISCONNECT", 1),
         anthropic_cache_control=_env_optional_true_set("ANTHROPIC_CACHE_CONTROL", env_values),
-        cache_guard_hit_telemetry=_env_optional_hit_telemetry(
-            "CACHE_GUARD_HIT_TELEMETRY", env_values
-        ),
+        cache_guard_hit_telemetry=_env_optional_hit_telemetry("CACHE_GUARD_HIT_TELEMETRY", env_values),
         data_dir=str(_resolved_paths.data_dir),
         history_policy=_history_policy,
         tool_runtime=_tool_runtime,
@@ -1175,23 +1190,25 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tool_max_output_chars=env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         mcp_servers_raw=env_values.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
         mcp_file_config=env_values.get("MCP_FILE_CONFIG", "").strip(),  # P0-1 MCP 文件配置开关
-        smx_perceive_path=env_values.get(
-            "LFL_SMX_PERCEIVE", ""
-        ).strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
+        smx_perceive_path=env_values.get("LFL_SMX_PERCEIVE", "").strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
         # fleet slice 4 (G1): LFL_FLEET_WORKSPACE_ROOT 空=关闭（缺省），非空=接线
         fleet_workspace_root=env_values.get("LFL_FLEET_WORKSPACE_ROOT", "").strip(),
         fleet_project_id=env_values.get("LFL_FLEET_PROJECT_ID", "").strip(),
         fleet_state_dir=env_values.get("LFL_FLEET_STATE_DIR", "").strip(),
         fleet_repo_head=env_values.get("LFL_FLEET_REPO_HEAD", "").strip(),
         **_peer_settings(env_values),
-        browser_perception_cdp_url=env_values.get("LFL_BROWSER_PERCEPTION_CDP_URL", "").strip(),
-        browser_perception_target_id=env_values.get("LFL_BROWSER_PERCEPTION_TARGET_ID", "").strip(),
+        browser_perception_cdp_url=env_values.get(
+            "LFL_BROWSER_PERCEPTION_CDP_URL", ""
+        ).strip(),
+        browser_perception_target_id=env_values.get(
+            "LFL_BROWSER_PERCEPTION_TARGET_ID", ""
+        ).strip(),
         browser_profile_class=env_values.get("LFL_BROWSER_PROFILE_CLASS", "").strip().lower(),
         browser_real_profile_ack=env_values.get("LFL_BROWSER_REAL_PROFILE_ACK", "").strip(),
         browser_real_profile_paths=env_values.get("LFL_BROWSER_REAL_PROFILE_PATHS", "").strip(),
-        browser_attestation_mode=env_values.get("LFL_BROWSER_ATTESTATION_MODE", "enforce")
-        .strip()
-        .lower(),
+        browser_attestation_mode=env_values.get(
+            "LFL_BROWSER_ATTESTATION_MODE", "enforce"
+        ).strip().lower(),
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_semantic_guard_enabled=env_bool("LFL_BROWSER_SEMANTIC_GUARD_ENABLED", False),
         browser_dispatch_settle_enabled=env_bool("LFL_BROWSER_DISPATCH_SETTLE_ENABLED", False),
@@ -1199,9 +1216,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
         # M3/M4 desktop 设置项（R4 抽出至 _desktop_settings；键名/默认值不变）
         **_desktop_settings(env_values),
-        browser_receipt_diff_summary_enabled=env_bool(
-            "LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False
-        ),
+        browser_receipt_diff_summary_enabled=env_bool("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=env_one(_env_run_mode, "RUN_MODE"),
@@ -1237,15 +1252,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         experiences_dir=str(_resolved_paths.experiences_dir),
         methods_dir=str(_resolved_paths.methods_dir),
         method_seed_dir=str(_resolved_paths.method_seed_dir),
-        learning_plane_enabled=env_values.get("LEARNING_PLANE_ENABLED", "1").strip()
-        in {"1", "true", "yes", "on"},
+        learning_plane_enabled=env_values.get("LEARNING_PLANE_ENABLED", "1").strip() in {"1", "true", "yes", "on"},
         learning_model=env_values.get("LEARNING_MODEL", "").strip(),
-        learning_independent_cloud_hosts=env_values.get(
-            "LEARNING_INDEPENDENT_CLOUD_HOSTS", ""
-        ).strip(),
-        skills_dir=str(
-            _resolved_paths.skills_dir
-        ),  # primary worktree when linked sidecar, else CODE_ROOT (2026-10-12)
+        learning_independent_cloud_hosts=env_values.get("LEARNING_INDEPENDENT_CLOUD_HOSTS", "").strip(),
+        skills_dir=str(_resolved_paths.skills_dir),  # primary worktree when linked sidecar, else CODE_ROOT (2026-10-12)
         docs_dir=str(_resolved_paths.docs_dir),
         archive_max_entries=env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=env_int("ARCHIVE_TTL_DAYS", 0),
@@ -1307,13 +1317,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成
         model_providers_raw=env_values.get("MODEL_PROVIDERS", "").strip(),
         model_fallbacks_raw=env_values.get("MODEL_FALLBACKS", "").strip(),
-        reviewer_models_raw=env_values.get("LFL_REVIEWER_MODELS", "").strip(),
-        model_roles_raw=env_values.get("LFL_MODEL_ROLES", "").strip(),
+        reviewer_models_raw=env_values.get("LFL_REVIEWER_MODELS", "").strip(), model_roles_raw=env_values.get("LFL_MODEL_ROLES", "").strip(),
         # web-carveout M3（D3）：web 通道 18 个内置配置字段随 client 剥离迁出，
         # 中间件仅保留外部注册模块入口（importlib 加载，失败分级见
         # llm/web_provider_registration.py）。通道自身配置见独立项目 .env。
         web_providers_module=env_values.get("LFL_WEB_PROVIDERS_MODULE", "").strip(),
-        web_providers_module_path=env_values.get("LFL_WEB_PROVIDERS_MODULE_PATH", "").strip(),
+        web_providers_module_path=env_values.get(
+            "LFL_WEB_PROVIDERS_MODULE_PATH", ""
+        ).strip(),
         # 旧字段解析删除点（deepseek/chatgpt_web_* 18 项，2026-10-14 M3）
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
         # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）

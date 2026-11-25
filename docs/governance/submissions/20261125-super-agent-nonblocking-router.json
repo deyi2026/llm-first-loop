@@ -8,9 +8,6 @@
       "paths": [
         "docs/governance/submissions/20261125-super-agent-nonblocking-router.json",
         "docs/design/DESIGN-20261125-super-agent-nonblocking-router-v1.0.md",
-        "src/llm_loop/config.py",
-        "src/llm_loop/factory.py",
-        "src/llm_loop/llm/pool.py",
         "src/llm_loop/web/__init__.py",
         "src/llm_loop/web/human_turn_queue.py",
         "src/llm_loop/web/queue_recovery.py",
