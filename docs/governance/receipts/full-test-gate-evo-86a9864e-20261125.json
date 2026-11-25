@@ -5,8 +5,8 @@
   "lane_id": "lane-27aa2dc0",
   "branch": "fix/rule28-heredoc-data-region-classify-20261125",
   "worktree": ".worktrees/evo-rule28-heredoc-data-region-20261125",
-  "candidate_head": "c995cbb74422d745495be54948bf28a5f72afb1b",
-  "base_main": "1f0601e9d0225bfb66160e9fb2a569eba176cf99",
+  "candidate_head": "830e8240a27fea505ff1554a70b27796c394b10b",
+  "base_main": "c6612c7e99a5b6b58c1fdcf66a6c19f559b22211",
   "reviewer_admission": {
     "kind": "full_test",
     "scope": "patch",
@@ -19,28 +19,71 @@
       "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
       "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt"
     ],
-    "candidate_sha256": "5969aac0613486418696cb1cfae01dc113e1774a43ddfea9d60f5959938e32d0",
+    "candidate_sha256": "f93466972ac842439e27320bef87b0d51010f2c456312e9e03e531fe89d2647c",
     "reviewer_model": "glm/glm-5.3-flash",
-    "child_id": "subagent_d469f82235c4",
+    "child_id": "subagent_d2d76c515b67",
     "qualification": "PASS",
-    "pass_observed_at": "2026-11-25T19:21:52+08:00"
+    "pass_observed_at": "2026-11-26T01:13+08:00"
   },
   "full_test": {
     "command": "bash scripts/ci_gate.sh",
-    "job_id": "job-279e6765c8594ca5880a",
-    "started_at": "2026-11-25T19:22:07+08:00",
-    "terminal_observed_at": "2026-11-25T19:39+08:00",
+    "job_id": "job-915ad2f9590142faab67",
+    "started_at": "2026-11-26T01:14+08:00",
+    "terminal_observed_at": "2026-11-26T01:29+08:00",
     "exit_code": 0,
     "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
-    "ruff": {"historical": 67, "current": 27, "new": 0, "changed_file_diagnostics": 0},
-    "pyright": {"historical": 45, "current": 8, "new": 0, "changed_file_diagnostics": 0}
+    "ruff": {
+      "historical": 67,
+      "current": 27,
+      "new": 0,
+      "changed_file_diagnostics": 0
+    },
+    "pyright": {
+      "historical": 45,
+      "current": 7,
+      "new": 0,
+      "changed_file_diagnostics": 0
+    },
+    "tier0_precheck": {
+      "passed": 341,
+      "skipped": 2,
+      "deselected": 16959,
+      "duration_s": 28.14
+    },
+    "xdist_full": {
+      "passed": 17062,
+      "skipped": 206,
+      "xfailed": 3,
+      "duration_s": 762.44
+    },
+    "serial_signal": {
+      "passed": 6,
+      "skipped": 2,
+      "deselected": 17294,
+      "duration_s": 61.72
+    },
+    "webui": {
+      "test_files_passed": 74,
+      "tests_passed": 725
+    },
+    "evidence_ref": "evidence://v1/59268ea9141c24eb22d9fea0c5b4b686f326cfb9a641b4c9d81bd15596b35b3e"
   },
   "receipts": {
     "rule35": "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
     "probe": "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt"
   },
   "notes": [
-    "门禁在候选 head c995cbb74 上运行；本回执文件是其之后追加的提交，不改代码。",
-    "证据层级：本地全量门禁。真实入口活体验证待部署后进行。"
-  ]
+    "门禁在候选 head 830e8240a 上运行；本回执文件是其之后追加的提交，不改代码。",
+    "证据层级：本地全量门禁。真实入口活体验证待部署后进行。",
+    "重定基说明：首次回执在 c995cbb74@1f0601e9d 上取得（见 previous_run，exit 0）；main 前进到 c6612c7e9 后本地 merge origin/main 得到 830e8240a，重新取得 full_test 资格并在新候选 head 上复跑全量门禁。",
+    "执行者：接力会话（用户 2026-11-26T00:53 指令「按建议执行」）；lane owner 会话为 a01b2fac。"
+  ],
+  "previous_run": {
+    "candidate_head": "c995cbb74422d745495be54948bf28a5f72afb1b",
+    "base_main": "1f0601e9d0225bfb66160e9fb2a569eba176cf99",
+    "child_id": "subagent_d469f82235c4",
+    "candidate_sha256": "5969aac0613486418696cb1cfae01dc113e1774a43ddfea9d60f5959938e32d0",
+    "job_id": "job-279e6765c8594ca5880a",
+    "exit_code": 0
+  }
 }
