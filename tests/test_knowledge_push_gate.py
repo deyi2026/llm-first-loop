@@ -143,6 +143,39 @@ def test_warning_disappears_after_flush(repo: Path) -> None:
     assert "[pre-push][warn]" not in after.stderr, "入库后仍告警：告警清不掉"
 
 
+def test_check_json_emitter_contract_for_hook_fields(repo: Path) -> None:
+    """钩子↔发射端字段契约：钩子用正则从 --check --json 的单行回执取四个整数字段。
+
+    用真实发射端把字段名与整数类型钉死：发射端改名或改类型时先红在这里，而不是让
+    钩子静默打出 '?'（本文件其它用例断言的精确告警行也依赖同一契约）。
+    """
+    _make_card(repo, "data/methods/card-j/METHOD.md")
+    _make_card(repo, "experiences/EXPERIENCE-20261125-contract.md")
+    emitter = subprocess.run(
+        ["python3", str(FLUSH), "--check", "--json"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert emitter.returncode == 3, emitter.stdout + emitter.stderr
+    lines = emitter.stdout.strip().splitlines()
+    assert len(lines) == 1, emitter.stdout
+    receipt = json.loads(lines[0])
+    assert (receipt["cards"], receipt["experiences"], receipt["other"], receipt["pending"]) == (
+        1, 1, 0, 2,
+    )
+    for field in ("cards", "experiences", "other", "pending"):
+        assert type(receipt[field]) is int, field
+    hooked = _run_hook(repo)
+    assert (
+        "[pre-push][warn] knowledge_flush_pending blocking=false "
+        "cards=1 experiences=1 other=0 pending=2"
+    ) in hooked.stderr, hooked.stdout + hooked.stderr
+
+
 def test_warns_when_gate_script_missing(repo: Path) -> None:
     """闸脚本缺失：放行 + scan_unavailable 告警——不伪报干净，也不把工具缺失变成推送故障。"""
     (repo / "scripts" / "knowledge_flush.py").unlink()
