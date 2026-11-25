@@ -63,6 +63,8 @@ class ModelClientPool:
     # M49（design §5.4）: MODEL_FALLBACKS env 原始字符串（构造时由 builder 注入）
     # 解析在 fallback_candidates() 中按调用执行（每次取最新值，避免启动时缓存过期）
     model_fallbacks_raw: str = ""
+    model_roles_raw: str = ""
+    _roles_generation: int = field(default=0, init=False, repr=False)
     transport_observer: Any | None = None
     guard_audit_file: str | Path | None = None
     # Non-HTTP built-in model transports are injected as exact provider/model
@@ -83,6 +85,62 @@ class ModelClientPool:
         """返回当前不可变 ProviderRegistry 快照（与replace_registry互斥读取）."""
         with self._guard:
             return self.registry
+
+    def roles_generation(self) -> int:
+        """Model-role configuration generation (observability only)."""
+        with self._guard:
+            return self._roles_generation
+
+    def replace_model_roles(self, raw: str) -> None:
+        """Atomically replace role candidate mappings without restarting clients."""
+        from llm_loop.llm.model_roles import parse_model_roles
+
+        roles, error = parse_model_roles(raw)
+        if error:
+            raise ValueError(error)
+        registry = self.registry_snapshot()
+        for role, refs in roles.items():
+            available = False
+            for ref in refs:
+                try:
+                    provider_id, model_id = registry.resolve(ref)
+                    registry.client_params(provider_id, model_id)
+                    available = True
+                    break
+                except ValueError:
+                    continue
+            if not available:
+                raise ValueError(f"model_roles_role_unavailable:{role}")
+        with self._guard:
+            self.model_roles_raw = str(raw or "").strip()
+            self._roles_generation += 1
+
+    def role_candidates(
+        self, role: str, *, registry: ProviderRegistry | None = None
+    ) -> list[str]:
+        """Resolve one operator-defined role against the current ProviderRegistry."""
+        from llm_loop.llm.model_roles import parse_model_roles
+
+        with self._guard:
+            raw = self.model_roles_raw
+            selected_registry = registry if registry is not None else self.registry
+        roles, error = parse_model_roles(raw)
+        if error or not role or role not in roles:
+            if error:
+                logger.warning("LFL_MODEL_ROLES invalid; role routing disabled: %s", error)
+            return []
+        out: list[str] = []
+        for ref in roles[role]:
+            try:
+                provider_id, model_id = selected_registry.resolve(ref)
+                selected_registry.client_params(provider_id, model_id)
+            except ValueError as exc:
+                logger.warning("LFL_MODEL_ROLES role=%s skips unavailable candidate=%s: %s", role, ref, exc)
+                continue
+            canonical = f"{provider_id}/{model_id}"
+            if canonical not in out:
+                out.append(canonical)
+        return out
 
     def registry_generation(self) -> int:
         """Registry 热重载代数（每次 replace_registry +1；观测用，不参与路由）."""
@@ -462,26 +520,18 @@ class ModelClientPool:
             raw = (self.model_fallbacks_raw or "").strip()
             selected_registry = registry if registry is not None else self.registry
         if not raw:
+            # A configured execution role supplies the ordinary availability chain
+            # only when the legacy explicit fallback policy is absent. The default
+            # client and user-selected model semantics remain unchanged.
+            raw = ",".join(self.role_candidates("execution", registry=selected_registry))
+        if not raw:
             return []
 
         # Operator config is the fallback policy. Runtime only canonicalizes it:
         # resolve refs, validate credentials, drop duplicates and never "fallback"
         # to the already-active default model under a second spelling. Model quality
         # metadata (capability_tier) has zero routing authority.
-        default_provider = str(getattr(self.default_client, "provider", "") or "").strip()
-        default_model = str(getattr(self.default_client, "model", "") or "").strip()
-        if default_provider and default_model.startswith(default_provider + "/"):
-            default_ref = default_model
-        elif default_provider and default_model:
-            default_ref = f"{default_provider}/{default_model}"
-        else:
-            default_ref = ""
-            if default_model:
-                try:
-                    dp, dm = self._default_registry.resolve(default_model)
-                    default_ref = f"{dp}/{dm}"
-                except ValueError:
-                    pass
+        default_ref = self.get_default_ref()
 
         out: list[str] = []
         seen: set[str] = set()

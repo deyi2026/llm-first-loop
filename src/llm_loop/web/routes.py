@@ -213,6 +213,53 @@ def _barrier_queued_response(
     return UTF8JSONResponse(status_code=status_code, content=content)
 
 
+def _queue_workspace_options(engine: Any) -> dict:
+    """M0 workspace 绑定的队列构造选项（web 生产装配与请求侧惰性构造同源）.
+
+    - workspace_scope：进程归属工作区根（engine.workspace_root），enqueue
+      盖章用；空 → 遗留行为（不盖章、不过滤、不注入 resolver）。
+    - legacy_scope_resolver：升级前无盖章条目的归属证明——复用 SessionStore
+      既有 identity owner 机制（_identity_owner_for_background_read）：
+      durable owner 记录或唯一 legacy owner → 分区 id → WorkspaceStore 反查
+      workspace path；未知/多归属/历史占用/删除（异常）→ None（fail-closed
+      HOLD，快照端点经 hold_reason 查询，留人工恢复）。
+    """
+    scope = str(getattr(engine, "workspace_root", "") or "") or None
+    if not scope:
+        return {}
+    session_store = getattr(engine, "session", None)
+    workspace_store = getattr(engine, "workspace_store", None)
+    # 二审 P2-1 记录（SA-REVIEW-FIX-20261125）：identity owner 解析复用
+    # SessionStore 既有私有方法 `_identity_owner_for_background_read`（设计
+    # §9 曾建议公开只读 facade；SessionStore 属共享文件，本 lane 不扩面改
+    # 动其他 owner 正在演进的模块，改以 getattr 防御 + 本记录承接）。脆弱性
+    # 已被 fail-closed 契约兜底：方法缺失/改名/移动时 owner_fn=None 或调用
+    # 抛错 → resolver 返回 None → legacy 条目一律 HOLD（queue_hold_legacy_
+    # owner_unresolved），绝不产生错误派发；人工恢复路径不受影响。
+    owner_fn = getattr(session_store, "_identity_owner_for_background_read", None)
+    ws_get = getattr(workspace_store, "get", None)
+
+    def _legacy_scope_resolver(session_id: str) -> str | None:
+        if not callable(owner_fn):
+            return None
+        try:
+            owner = str(owner_fn(str(session_id)) or "")
+        except Exception:  # noqa: BLE001 — 未知/多归属/历史占用/删除：证明失败即 HOLD
+            return None
+        if not owner or owner == ".":
+            return None  # legacy flat 分区无法映射到具体 workspace 根
+        if callable(ws_get):
+            try:
+                ws = ws_get(owner)
+            except Exception:  # noqa: BLE001
+                return None
+            if ws is not None and getattr(ws, "path", ""):
+                return str(getattr(ws, "path", ""))
+        return None
+
+    return {"workspace_scope": scope, "legacy_scope_resolver": _legacy_scope_resolver}
+
+
 def _human_turn_queue(request: Request) -> HumanTurnQueue:
     """Human Turn 队列单例（按 data_dir 缓存在 app.state；JSON 落盘为 durable 事实）."""
     engine = _engine_from(request)
@@ -227,9 +274,57 @@ def _human_turn_queue(request: Request) -> HumanTurnQueue:
         q = HumanTurnQueue(
             data_dir,
             claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
+            # M0 workspace 绑定：惰性构造与生产装配同源同构造（盖章+legacy 证明）
+            **_queue_workspace_options(engine),
         )
         store[key] = q
     return q
+
+
+def _poke_queue_fallback(request: Request, session_id: str) -> None:
+    """M1 事件唤醒挂点（SA-M1M3-20261125-1236，fail-open）：入队/run 终态后
+    请兜底线程即时派发该目标，不等 15s tick + 60s min_age（正常空闲路径
+    P95≤5s，兜底不再是正常路径）。fallback 未装配（测试注入引擎路径）或
+    唤醒队列满时静默跳过——条目已持久，tick 兜底不丢。
+    二审 P2-3 装配核对（SA-REVIEW-FIX-20261125）：生产装配点在
+    web/__init__.py serve 流程（app.state.queue_server_fallback =
+    QueueServerFallback(...) 预置后 start()），与请求侧共享同一实例；测试
+    注入引擎的 build_app 路径不装配属既有契约，fail-open 时 M1 ≤5s 目标
+    如实退化为 15s tick + 60s min_age 兜底口径（不虚称达标）。"""
+    fb = getattr(request.app.state, "queue_server_fallback", None)
+    poke = getattr(fb, "poke_session", None)
+    if callable(poke):
+        try:
+            poke(session_id)
+        except Exception:  # noqa: BLE001 - 唤醒失败不影响请求响应与队列事实
+            logger.debug("queue fallback poke failed: sid=%s", session_id[:8])
+
+
+def _queue_terminal_callback(
+    queue_store: HumanTurnQueue,
+    session_id: str,
+    queue_id: str,
+    request: Request,
+) -> Callable[[str, str | None], None]:
+    """run 终态→队列事实回写回调（chat_stream 外层与其内嵌 event_stream 生成器
+    共用同一回调实例；event_stream 是 chat_stream 的内嵌函数、非独立模块级
+    函数——其重构随 chat_stream 同一 hunk 生效，基线 event_stream=191 即此口径）.
+
+    语义与原内嵌闭包逐行等价：not_started 原子回滚 release（保持 FIFO 队位），
+    其余 mark_terminal 终态回写；M1 事件唤醒——run 终态=会话空闲事件，同会话
+    还有排队项时经 poke 即时派发下一条（fail-open，满丢由 tick 兜底），不等
+    15s tick + 60s min_age。派发仍走 dispatch_claim 单一原子裁决（严格 FIFO：
+    在途队首不越过、scope 队首阻断）。
+    """
+
+    def _on_terminal(status: str, run_error: str | None = None) -> None:
+        if status == "not_started":
+            queue_store.release(session_id, queue_id)
+        else:
+            queue_store.mark_terminal(session_id, queue_id, status, run_error)
+        _poke_queue_fallback(request, session_id)
+
+    return _on_terminal
 
 
 def _queue_claim_state(engine: Any, session_id: str, queue_id: str) -> str:
@@ -1916,14 +2011,9 @@ def chat_stream(
         if _queue_id and _queue_store is not None:
             queue_id = str(_queue_id)
             queue_store = _queue_store
-
-            def _mark_queue_terminal(status: str, run_error: str | None = None) -> None:
-                if status == "not_started":
-                    queue_store.release(session_id, queue_id)
-                    return
-                queue_store.mark_terminal(session_id, queue_id, status, run_error)
-
-            _queue_terminal = _mark_queue_terminal
+            _queue_terminal = _queue_terminal_callback(
+                queue_store, session_id, queue_id, request
+            )
 
         if runner is not None and runner.enabled:
             yield from _stream_background(
@@ -2266,6 +2356,9 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
         )
     active = hq.list_active(payload.session_id)
     position = sum(1 for it in active if it.get("status") == "queued")
+    # M1 事件唤醒：入队即请兜底线程直达该目标（会话忙时安全留队，busy 由
+    # _dispatch_session_now 检查；浏览器正常领取不受影响——同一原子路径单赢家）
+    _poke_queue_fallback(request, payload.session_id)
     return UTF8JSONResponse(
         status_code=202,
         content={"queue_id": item["queue_id"], "position": position, "item": item},
@@ -2544,7 +2637,15 @@ def queue_dispatch(payload: QueueDispatchRequest, request: Request) -> Response:
                 "restart_barrier": _barrier.to_view(),
             }
         )
-    claimed = hq.dispatch_claim(payload.session_id, claimed_by="web")
+    # M0 workspace 绑定（P1-1）：浏览器路径与 server fallback 同约束——以
+    # engine.workspace_root 作为 expected_workspace_scope 参与统一原子裁决
+    # （scope mismatch 队首阻断 + legacy 条目 identity owner 证明），不得
+    # 绕过后台领取约束。
+    claimed = hq.dispatch_claim(
+        payload.session_id,
+        claimed_by="web",
+        expected_workspace_scope=str(getattr(_engine_from(request), "workspace_root", "") or "") or None,
+    )
     return UTF8JSONResponse(content={"claimed": claimed})
 
 

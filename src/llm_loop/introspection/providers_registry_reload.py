@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from llm_loop.config import Settings
+from llm_loop.llm.model_roles import model_roles_for_refresh
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.llm.providers import ProviderRegistry
 
@@ -59,9 +60,7 @@ def refresh_provider_registry(
             new_settings = settings
         new_registry = _load_registry(new_settings)
         new_provider_count = len(new_registry.providers)
-        new_model_count = sum(
-            len(spec.models) for spec in new_registry.providers.values()
-        )
+        new_model_count = sum(len(spec.models) for spec in new_registry.providers.values())
         if new_registry.degraded:
             msg = (
                 f"[重载部分完成] 模型目录已重载, 但 providers.json 加载失败: {new_registry.degraded_reason}。"
@@ -127,7 +126,9 @@ def install_refresh_executor(engine: object) -> None:
             load_env_file()  # 环境优先（不覆盖已存在值）、文件缺失 fail-open
             new_settings = load_settings()
         except Exception as exc:  # noqa: BLE001 — env/settings 读取失败如实回执，不动 registry
-            return f"[重载失败] 配置读取失败: {type(exc).__name__}: {exc}。当前保持旧注册表与旧凭据。"
+            return (
+                f"[重载失败] 配置读取失败: {type(exc).__name__}: {exc}。当前保持旧注册表与旧凭据。"
+            )
 
         snapshot_fn = getattr(model_pool, "registry_snapshot", None)
         old_registry = snapshot_fn() if callable(snapshot_fn) else model_pool.registry
@@ -167,6 +168,15 @@ def install_refresh_executor(engine: object) -> None:
                     for summarizer in summarizers:
                         summarizer.llm = summary_client
                     summary_note = f" 独立摘要模型 {summary_model} client 已切换到新注册表。"
+
+        # Role mappings are independent of Provider Registry identity. Refresh them
+        # even when providers.json itself is unchanged, so operator role edits take
+        # effect without restarting the service. Validate against the active registry;
+        # invalid or wholly unavailable roles retain the last-known-good mapping.
+        try:
+            model_pool.replace_model_roles(model_roles_for_refresh(new_settings.model_roles_raw))
+        except ValueError as exc:
+            summary_note += f" 模型角色配置未应用（保留上次有效配置）：{exc}。"
 
         # default_client 同时被 engine/extractor/summarizer 等长期共享。逐字段原地热改会让
         # 并发请求观察到半新半旧配置，且底层 httpx transport 仍是启动时配置。
