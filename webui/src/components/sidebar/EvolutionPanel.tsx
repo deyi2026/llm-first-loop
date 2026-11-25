@@ -63,16 +63,46 @@ interface EvoDiff {
 const STATUS_LABEL: Record<string, string> = {
   pending_review: "待审批",
   accepted: "已接受",
+  executing: "执行中",
   executed: "已执行",
+  rolled_back: "已回滚",
+  failed: "执行失败",
   rejected: "已拒绝",
 };
 
 const STATUS_COLOR: Record<string, string> = {
   pending_review: "var(--dsw-alias-state-warning, #d97706)",
   accepted: "var(--dsw-alias-state-success, #16a34a)",
+  executing: "var(--dsw-alias-state-info, #2563eb)",
   executed: "var(--dsw-alias-state-info, #2563eb)",
+  rolled_back: "var(--dsw-alias-state-error, #dc2626)",
+  failed: "var(--dsw-alias-state-error, #dc2626)",
   rejected: "var(--dsw-alias-label-tertiary, #888)",
 };
+
+// 状态→阶段文案：区分「审批结果」与「执行结果」。权威枚举为七态状态机
+// （src/llm_loop/introspection/evolution.py EvolutionStatus）：pending_review → accepted →
+// executing → executed / rolled_back / failed，旁路 rejected。EVO-20261125 修复②。
+function statusStageText(status: string): string {
+  switch (status) {
+    case "pending_review":
+      return "待审批";
+    case "accepted":
+      return "已接受（待执行）";
+    case "executing":
+      return "已接受，正在执行";
+    case "executed":
+      return "已接受且执行完成";
+    case "rolled_back":
+      return "已接受，但已回滚";
+    case "failed":
+      return "已接受，但执行失败";
+    case "rejected":
+      return "已拒绝";
+    default:
+      return `未知状态(${status || "空"})`;
+  }
+}
 
 const TABS: { key: string; label: string }[] = [
   { key: "pending_review", label: "🔔 待审批" },
@@ -89,8 +119,51 @@ function fmtTs(ts: string | undefined | null): string {
   return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+// EVO-20261125 热修复：审批请求有界等待（覆盖连接建立与响应体读取全过程）。
+// 高负载（web 进程 CPU 饱和）时无界 fetch 会让"处理中…"永久悬挂——用户感知"点了没反应"。
+const REVIEW_TIMEOUT_MS = 15000;
+const VERIFY_TIMEOUT_MS = 10000;
+// 已处理状态集合：超时后只读查询到这些状态 = 此前请求已生效（含执行中与执行终态）。
+// 权威枚举为七态（src/llm_loop/introspection/evolution.py EvolutionStatus）：
+// pending_review → accepted → executing → executed / rolled_back / failed，旁路 rejected。
+//（真实案例 EVO-20261125-bb60b1d4：audit 已 accepted 且进入 executing 而前端仍无反馈。）EVO-20261125 修复②。
+const HANDLED_STATUS = new Set(["accepted", "rejected", "executing", "executed", "rolled_back", "failed"]);
+
+interface BoundedJson {
+  ok: boolean;
+  status: number;
+  /** 解析成功的 JSON 响应体；体读取超时/中断/非 JSON 时为 null（=结果不明） */
+  body: unknown;
+}
+
+// 有界请求 helper：deadline 必须覆盖「响应头 + 响应体读取/解析」全程（EVO-20261125 修复①）。
+// 旧实现 finally 在收到响应头后即 clearTimeout，r.json() 无界——头到了但体悬挂时调用方仍会永久挂起。
+// body 解析失败/中断统一折叠为 body=null，由调用方按「结果不明」处理，绝不伪装成功。
+async function fetchBounded(url: string, init: RequestInit, timeoutMs: number): Promise<BoundedJson> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { ...init, signal: ac.signal });
+    let body: unknown = null;
+    try {
+      body = await r.json();
+    } catch {
+      body = null; // 响应体读取被 abort（超时）或非 JSON：一律视为结果不明
+    }
+    return { ok: r.ok, status: r.status, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 「结果不明」锁定（EVO-20261125 修复③）：模块级保存，跨确认弹窗关闭/重开、跨面板重挂载保留，
+// 直到获得权威核实（已处理 / 服务端 409 明确拒绝 + 核实仍待审批）才解除。防止重开弹窗静默解锁重发。
+const indeterminateLocks = new Set<string>();
+
 export function EvolutionPanel() {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [, setLockVersion] = useState(0); // 仅用于锁定集合变化时触发重渲染
+  const busyRef = useRef(false); // 同步双击闸：处理中重复点击不重发（修复③）
   const [items, setItems] = useState<EvoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("pending_review");
@@ -112,6 +185,11 @@ export function EvolutionPanel() {
   // EVO-20260923-6fe23c9b: provider prompt 面硬检查勾选（所有批准必勾）
   const [promptSurfaceChecked, setPromptSurfaceChecked] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // EVO-20261125 热修复：单条审批结果不明时的状态机
+  // idle=正常；verifying=正在只读查询真实状态；unknown=查询失败/状态不明（禁止再次提交）；
+  // pending_unverified=后端仍待审批且无服务端明确拒绝凭证（无法证明此前请求已终止、可能仍在
+  // 服务端处理，禁止再次提交，仅继续只读核实——修复③；旧文案"可安全重试"已被证伪删除）
+  const [verifyState, setVerifyState] = useState<"idle" | "verifying" | "unknown" | "pending_unverified">("idle");
 
   const load = (keepTab = true) => {
     setLoading(true);
@@ -132,8 +210,8 @@ export function EvolutionPanel() {
 
   const fetchDetail = (id: string) => {
     if (detail[id]) return;
-    void fetch(`/api/v1/evolution/detail?id=${encodeURIComponent(id)}`)
-      .then((r) => (r.ok ? r.json() : null))
+    void fetchBounded(`/api/v1/evolution/detail?id=${encodeURIComponent(id)}`, {}, VERIFY_TIMEOUT_MS)
+      .then((res) => (res.ok ? (res.body as EvoDetail | null) : null))
       .then((d) => d && setDetail((prev) => ({ ...prev, [id]: d })))
       .catch(() => undefined);
   };
@@ -148,20 +226,29 @@ export function EvolutionPanel() {
 
     void (async () => {
       try {
-        const detailResp = await fetch(`/api/v1/evolution/detail?id=${encodeURIComponent(item.id)}`);
-        const detailBody = await detailResp.json().catch(() => ({}));
-        if (!detailResp.ok) {
-          throw new Error(String(detailBody.detail || detailBody.message || `详情读取失败(${detailResp.status})`));
+        // EVO-20261125 修复①：详情/改动摘要读取也走有界 helper（deadline 覆盖响应头+响应体）
+        const detailRes = await fetchBounded(
+          `/api/v1/evolution/detail?id=${encodeURIComponent(item.id)}`,
+          {},
+          VERIFY_TIMEOUT_MS
+        );
+        const detailBody = (detailRes.body ?? {}) as { detail?: string; message?: string };
+        if (!detailRes.ok) {
+          throw new Error(String(detailBody.detail || detailBody.message || `详情读取失败(${detailRes.status})`));
         }
-        const fullDetail = detailBody as EvoDetail;
+        const fullDetail = detailRes.body as EvoDetail;
         setViewerDetail(fullDetail);
         setDetail((prev) => ({ ...prev, [item.id]: fullDetail }));
 
         try {
-          const diffResp = await fetch(`/api/v1/evolution/diff?id=${encodeURIComponent(item.id)}`);
-          const diffBody = await diffResp.json().catch(() => ({}));
-          if (diffResp.ok) {
-            setViewerDiff(diffBody as EvoDiff);
+          const diffRes = await fetchBounded(
+            `/api/v1/evolution/diff?id=${encodeURIComponent(item.id)}`,
+            {},
+            VERIFY_TIMEOUT_MS
+          );
+          const diffBody = (diffRes.body ?? {}) as { detail?: string; message?: string };
+          if (diffRes.ok) {
+            setViewerDiff(diffRes.body as EvoDiff);
           } else {
             setViewerDiffMessage(String(diffBody.detail || diffBody.message || "暂无关联改动摘要。"));
           }
@@ -339,50 +426,161 @@ export function EvolutionPanel() {
     }
   };
 
+  // EVO-20261125 热修复：只读查询单条建议的真实状态（超时/网络不明时的唯一恢复手段，绝不自动重复 POST）。
+  // 必须核对回执的精确 id 与请求一致——不把查询到的其他条目状态冒充本次核实结果（修复②）。
+  const queryStatus = async (id: string): Promise<{ status: string; sessionId: string } | null> => {
+    try {
+      const res = await fetchBounded(`/api/v1/evolution/detail?id=${encodeURIComponent(id)}`, {}, VERIFY_TIMEOUT_MS);
+      const d = res.body as { id?: unknown; status?: unknown; session_id?: unknown } | null;
+      if (!res.ok || !d || d.id !== id) return null;
+      return { status: String(d.status || ""), sessionId: String(d.session_id || "") };
+    } catch {
+      return null;
+    }
+  };
+
+  // POST 结果不明（超时/网络中断/响应体读取中断）：只读查询精确 EVO 状态并按真实状态恢复。
+  // 禁止自动重复 POST——查询确认已处理则按已处理展示（含执行中/执行终态，修复②）；
+  // 仍待审批时无法证明此前请求已终止（可能仍在服务端处理）→ 锁定提交、仅继续只读核实（修复③）；
+  // 状态不明则锁定提交。
+  const handleIndeterminate = async (id: string, decision: string, reason: string): Promise<boolean> => {
+    setConfirmMsg("请求超时或网络异常，正在查询后端真实状态…");
+    setVerifyState("verifying");
+    const st = await queryStatus(id);
+    if (st && HANDLED_STATUS.has(st.status)) {
+      setVerifyState("idle");
+      indeterminateLocks.delete(id);
+      setLockVersion((v) => v + 1);
+      const label = statusStageText(st.status);
+      setActionMsg(`ℹ️ 请求超时，但查询确认 ${id} 已被处理（状态：${label}）`);
+      setConfirmMsg("");
+      showReceipt({
+        text: buildReceipt([id], decision, reason, st.status),
+        hint: `请求曾超时，但查询确认后端状态已为「${label}」（查询核实，非本次响应回执）。AI 会话不会自动收到推送，请复制发给当前 AI 会话：`,
+        origins: buildOrigins([{ evoId: id, sessionId: st.sessionId }]),
+      });
+      load();
+      return true;
+    }
+    if (st && st.status === "pending_review") {
+      setVerifyState("pending_unverified");
+      indeterminateLocks.add(id);
+      setLockVersion((v) => v + 1);
+      const message =
+        "请求超时后查询：后端仍为「待审批」。这不能证明此前请求已终止（可能仍在服务端处理），禁止重复提交；请稍后点「查询状态」继续核实。";
+      setActionMsg(`⚠️ ${message}`);
+      setConfirmMsg(message);
+      return false;
+    }
+    setVerifyState("unknown");
+    indeterminateLocks.add(id);
+    setLockVersion((v) => v + 1);
+    const message = "请求超时且无法确认后端状态：结果不明。已禁止重复提交，请点「查询状态」核实后再操作。";
+    setActionMsg(`⚠️ ${message}`);
+    setConfirmMsg(message);
+    return false;
+  };
+
+  // 「查询状态」按钮：状态不明/待核实时的唯一入口（只读查询，按真实状态更新界面）
+  const manualQuery = async (): Promise<string> => {
+    if (!confirm) return "no_confirm";
+    setVerifyState("verifying");
+    setConfirmMsg("正在查询后端真实状态…");
+    const st = await queryStatus(confirm.id);
+    if (st && HANDLED_STATUS.has(st.status)) {
+      setVerifyState("idle");
+      indeterminateLocks.delete(confirm.id);
+      setLockVersion((v) => v + 1);
+      const label = statusStageText(st.status);
+      setActionMsg(`ℹ️ 查询确认：${confirm.id} 当前状态「${label}」（已处理，无需重复操作）`);
+      setConfirmMsg("");
+      showReceipt({
+        text: `【查询确认】${confirm.id} 当前状态「${label}」（web 面板 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 查询核实，非本次提交回执）。AI 会话不会自动收到本操作，请复制发给当前 AI 会话：`,
+        hint: "状态已核实。AI 会话不会自动收到推送，请复制发给当前 AI 会话：",
+        origins: buildOrigins([{ evoId: confirm.id, sessionId: st.sessionId }]),
+      });
+      load();
+      return "handled";
+    }
+    if (st && st.status === "pending_review") {
+      setVerifyState("pending_unverified");
+      indeterminateLocks.add(confirm.id);
+      setLockVersion((v) => v + 1);
+      setConfirmMsg(
+        "后端仍为「待审批」：不能证明此前请求已终止（可能仍在服务端处理）。禁止重复提交，请稍后再次查询核实。"
+      );
+      return "pending_unverified";
+    }
+    setVerifyState("unknown");
+    indeterminateLocks.add(confirm.id);
+    setLockVersion((v) => v + 1);
+    setConfirmMsg("查询仍失败或状态不明：重复提交已被禁止。请稍后再点「查询状态」，或稍后刷新列表核实。");
+    return "unknown";
+  };
+
   const review = (id: string, decision: string, reason: string, extraConfirm = false, execOverride = false) => {
+    if (indeterminateLocks.has(id)) return Promise.resolve(false); // 结果不明锁：绝不重发（修复③）
+    if (busyRef.current) return Promise.resolve(false); // 同步双击闸：处理中重复点击不重发（修复③）
+    busyRef.current = true;
     setBusy(true);
     setActionMsg("");
     setConfirmMsg("");
-    return fetch("/api/v1/evolution/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id,
-        decision,
-        reason,
-        expected_status: "pending_review", // CAS：仅待审批可操作
-        extra_confirm: extraConfirm, // 涉边界项单条批准额外确认（Approval UX v2 批 1）
-        exec_override: execOverride, // 方案A EVO-20260929: 人工显式授权自动执行
-      }),
-    })
-      .then(async (r) => {
-        const d = await r.json().catch(() => ({ message: r.statusText }));
-        const message = r.ok
+    return fetchBounded(
+      "/api/v1/evolution/review",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          decision,
+          reason,
+          expected_status: "pending_review", // CAS：仅待审批可操作
+          extra_confirm: extraConfirm, // 涉边界项单条批准额外确认（Approval UX v2 批 1）
+          exec_override: execOverride, // 方案A EVO-20260929: 人工显式授权自动执行
+        }),
+      },
+      REVIEW_TIMEOUT_MS
+    )
+      .then((res) => {
+        // 有界 helper 覆盖「响应头 + 响应体」（修复①）：body=null 表示体读取超时/中断/非 JSON
+        if (!res.body) return handleIndeterminate(id, decision, reason);
+        if (res.status >= 500) {
+          // 服务端错误：后端 read-then-approve 非原子，无法证明变更未生效 → 按结果不明处理（修复③）
+          return handleIndeterminate(id, decision, reason);
+        }
+        const d = res.body as { message?: string; detail?: string; new_status?: string; session_id?: string };
+        if (res.ok || (res.status >= 400 && res.status < 500)) {
+          // 明确回执（成功 / 409 门禁拒绝 / 其他 4xx 权威拒绝）都可证明本次提交结果——解除结果不明锁。
+          // 409 = 服务端门禁明确拒绝本次提交（未生效）：可证明条件下允许用户显式重发（修复③）
+          indeterminateLocks.delete(id);
+          setLockVersion((v) => v + 1);
+        }
+        const message = res.ok
           ? String(d.message || "已处理")
-          : `⚠️ ${String(d.detail || d.message || `失败(${r.status})`)}`;
+          : `⚠️ ${String(d.detail || d.message || `失败(${res.status})`)}`;
         setActionMsg(message);
         setConfirmMsg(message);
-        if (r.ok) {
+        if (res.ok) {
           showReceipt({
             text: buildReceipt([id], decision, reason, d.new_status ? String(d.new_status) : undefined),
             hint: "审批已生效。AI 会话不会自动收到推送，请复制回执发给当前 AI 会话：",
             origins: buildOrigins([{ evoId: id, sessionId: d.session_id ? String(d.session_id) : "" }]),
           });
         }
-        if (r.status === 409 || r.ok) load();
-        return r.ok; // 成功才关闭；失败原因必须留在当前弹窗内可见
+        if (res.status === 409 || res.ok) load();
+        return res.ok; // 成功才关闭；失败原因必须留在当前弹窗内可见
       })
-      .catch((err) => {
-        const message = `请求失败: ${String(err)}`;
-        setActionMsg(message);
-        setConfirmMsg(message);
-        return false;
-      })
-      .finally(() => setBusy(false));
+      .catch(() => handleIndeterminate(id, decision, reason))
+      .finally(() => {
+        busyRef.current = false;
+        setBusy(false);
+      });
   };
 
   const batchApprove = () => {
     if (selected.size === 0) return;
+    if (busyRef.current) return; // 同步双击闸：处理中重复点击不重发（修复③）
+    busyRef.current = true;
     setBusy(true);
     setActionMsg("");
     const itemsReq = Array.from(selected).map((id) => ({
@@ -390,13 +588,40 @@ export function EvolutionPanel() {
       decision: "accepted",
       expected_status: "pending_review",
     }));
-    return fetch("/api/v1/evolution/review-batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: itemsReq, decision: "accepted" }),
-    })
-      .then(async (r) => {
-        const d = await r.json().catch(() => ({ results: [] }));
+    return fetchBounded(
+      "/api/v1/evolution/review-batch",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: itemsReq, decision: "accepted" }),
+      },
+      REVIEW_TIMEOUT_MS
+    )
+      .then((res) => {
+        if (!res.body || res.status >= 500) {
+          // 响应体读取超时/中断/非 JSON，或服务端 5xx（修复①/③）：逐条结果不明——绝不伪装
+          // 「成功 0 / 失败 0」式完成，也绝不自动重发。锁定全部所选条目，防单条弹窗静默重发。
+          for (const id of Array.from(selected)) indeterminateLocks.add(id);
+          setLockVersion((v) => v + 1);
+          const message =
+            "⚠️ 批量请求超时/网络异常/响应异常：提交结果不明。已锁定所选条目（禁止重复提交），请以「查询状态」或刷新核实真实状态后再决定后续操作。";
+          setActionMsg(message);
+          setSelected(new Set());
+          load();
+          return;
+        }
+        const d = res.body as {
+          ok_count?: number;
+          fail_count?: number;
+          results?: { id?: string; ok?: boolean; session_id?: string }[];
+          detail?: string;
+          message?: string;
+        };
+        if (!res.ok) {
+          // 服务端权威拒绝（如 400 参数/开关）：未生效，可安全修正后重试；保留勾选便于修正
+          setActionMsg(`⚠️ 批量提交失败(${res.status})：${String(d.detail || d.message || "")}`);
+          return;
+        }
         const ok = d.ok_count ?? 0;
         const fail = d.fail_count ?? 0;
         setActionMsg(`批量完成：成功 ${ok} / 失败 ${fail}`);
@@ -407,19 +632,35 @@ export function EvolutionPanel() {
             hint: `批量批准已生效（成功 ${ok} 条）。AI 会话不会自动收到推送，请复制回执发给当前 AI 会话：`,
             origins: buildOrigins(
               rows
-                .filter((row: { ok?: boolean }) => row.ok)
-                .map((row: { id?: string; session_id?: string }) => ({
+                .filter((row) => row.ok)
+                .map((row) => ({
                   evoId: String(row.id || ""),
                   sessionId: String(row.session_id || ""),
                 }))
             ),
           });
         }
+        for (const id of Array.from(selected)) indeterminateLocks.delete(id); // 明确回执=可证明结果，解锁
+        setLockVersion((v) => v + 1);
         setSelected(new Set());
         load();
       })
-      .catch((err) => setActionMsg(`批量请求失败: ${String(err)}`))
-      .finally(() => setBusy(false));
+      .catch(() => {
+        // 批量超时/网络中断（EVO-20261125 修复①③）：逐条结果不明——绝不自动重发 POST（防重复执行）；
+        // 锁定所选条目 + 只读刷新列表呈现真实状态。仍显示「待审批」的条目可能仍在服务端处理，
+        // 需查询核实确认未生效后才可人工决定重试（不得依据"仍待审批"直接断言未生效）。
+        for (const id of Array.from(selected)) indeterminateLocks.add(id);
+        setLockVersion((v) => v + 1);
+        const message =
+          "⚠️ 批量请求超时/网络异常：提交结果不明。已锁定所选条目并刷新列表——已生效条目重复提交会被服务端拒绝（不会重复执行）；仍显示「待审批」的条目可能仍在服务端处理，请先查询核实，确认未生效后再人工决定是否重试。";
+        setActionMsg(message);
+        setSelected(new Set());
+        load();
+      })
+      .finally(() => {
+        busyRef.current = false;
+        setBusy(false);
+      });
   };
 
   const pendingCount = items.filter((i) => i.status === "pending_review").length;
@@ -471,7 +712,7 @@ export function EvolutionPanel() {
         <div className="v2-evo-batchbar" data-testid="evo-batchbar">
           <span>已选 {selected.size} 条</span>
           <button type="button" className="v2-evo-btn approve" disabled={busy} onClick={batchApprove}>
-            批量批准
+            {busy ? "处理中…" : "批量批准"}
           </button>
           <button
             type="button"
@@ -652,7 +893,9 @@ export function EvolutionPanel() {
                           setExtraConfirmChecked(false);
                           setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
-                          setConfirmMsg("");
+                          const locked = indeterminateLocks.has(it.id);
+                          setVerifyState(locked ? "unknown" : "idle"); // 结果不明锁跨弹窗关闭/重开保留（修复③）
+                          setConfirmMsg(locked ? "此条此前一次提交结果不明，已锁定提交；请先点「查询状态」核实真实状态。" : "");
                           setConfirm({ id: it.id, decision: "accepted", requires_human: it.requires_human });
                         }}
                       >
@@ -668,7 +911,9 @@ export function EvolutionPanel() {
                           setExtraConfirmChecked(false);
                           setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
-                          setConfirmMsg("");
+                          const locked = indeterminateLocks.has(it.id);
+                          setVerifyState(locked ? "unknown" : "idle"); // 结果不明锁跨弹窗关闭/重开保留（修复③）
+                          setConfirmMsg(locked ? "此条此前一次提交结果不明，已锁定提交；请先点「查询状态」核实真实状态。" : "");
                           setConfirm({ id: it.id, decision: "rejected", requires_human: it.requires_human });
                         }}
                       >
@@ -806,7 +1051,9 @@ export function EvolutionPanel() {
                       setExtraConfirmChecked(false);
                       setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
-                      setConfirmMsg("");
+                      const locked = indeterminateLocks.has(viewerDetail.id);
+                      setVerifyState(locked ? "unknown" : "idle"); // 结果不明锁跨弹窗关闭/重开保留（修复③）
+                      setConfirmMsg(locked ? "此条此前一次提交结果不明，已锁定提交；请先点「查询状态」核实真实状态。" : "");
                       setConfirm({ id: viewerDetail.id, decision: "accepted", requires_human: viewerDetail.requires_human });
                     }}
                   >
@@ -822,7 +1069,9 @@ export function EvolutionPanel() {
                       setExtraConfirmChecked(false);
                       setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
-                      setConfirmMsg("");
+                      const locked = indeterminateLocks.has(viewerDetail.id);
+                      setVerifyState(locked ? "unknown" : "idle"); // 结果不明锁跨弹窗关闭/重开保留（修复③）
+                      setConfirmMsg(locked ? "此条此前一次提交结果不明，已锁定提交；请先点「查询状态」核实真实状态。" : "");
                       setConfirm({ id: viewerDetail.id, decision: "rejected", requires_human: viewerDetail.requires_human });
                     }}
                   >
@@ -908,6 +1157,10 @@ export function EvolutionPanel() {
                 className="v2-evo-btn approve"
                 disabled={
                   busy ||
+                  indeterminateLocks.has(confirm.id) || // 结果不明锁：跨弹窗关闭/重开保留（修复③）
+                  verifyState === "unknown" ||
+                  verifyState === "pending_unverified" ||
+                  verifyState === "verifying" ||
                   (confirm.decision === "rejected" && !rejectReason.trim()) ||
                   (confirm.decision === "accepted" && !promptSurfaceChecked) ||
                   (confirm.decision === "accepted" && confirm.requires_human && !extraConfirmChecked && !authorizeExecChecked)
@@ -933,10 +1186,28 @@ export function EvolutionPanel() {
                   });
                 }}
               >
-                {busy ? "处理中…" : "确定"}
+                {busy
+                  ? "处理中…"
+                  : verifyState === "verifying"
+                    ? "查询中…"
+                    : verifyState === "unknown" || verifyState === "pending_unverified"
+                      ? "禁止重复提交"
+                      : "确定"}
               </button>
+              {verifyState !== "idle" ? (
+                <button
+                  type="button"
+                  className="v2-evo-btn ghost"
+                  data-testid="evo-query-status"
+                  disabled={verifyState === "verifying"}
+                  onClick={() => void manualQuery()}
+                >
+                  {verifyState === "verifying" ? "查询中…" : "查询状态"}
+                </button>
+              ) : null}
               <button
                 className="v2-evo-btn ghost"
+                disabled={busy}
                 onClick={() => {
                   setConfirm(null);
                   setRejectReason("");
@@ -944,6 +1215,7 @@ export function EvolutionPanel() {
                   setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                   setConfirmMsg("");
+                  setVerifyState("idle");
                 }}
               >
                 取消
