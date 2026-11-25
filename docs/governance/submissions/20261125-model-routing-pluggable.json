@@ -1,0 +1,37 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-model-routing-pluggable",
+  "summary": "Pluggable model role routing with dynamic fallback: role table + bounded failover in pool/resolver, env/config wiring, admin reload integration; SA task-routing stays separate.",
+  "components": [
+    {
+      "component_id": "pluggable-model-role-routing",
+      "paths": [
+        "docs/governance/submissions/20261125-model-routing-pluggable.json",
+        "docs/DESIGN-20261125-pluggable-model-roles.md",
+        ".env.example",
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/introspection/providers_registry_reload.py",
+        "src/llm_loop/llm/model_roles.py",
+        "src/llm_loop/llm/pool.py",
+        "src/llm_loop/runtime/resolver.py",
+        "tests/unit/test_fallback_integration.py",
+        "tests/unit/test_m50_three_end.py",
+        "tests/unit/test_model_roles.py",
+        "tests/unit/test_runtime_resolver.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing LLM client pool, runtime resolver, provider registry reload path. No new service, no execution authority change, no durable store.",
+      "disposition": "Declarative model role table (primary/candidates per role) resolved at engine build; bounded dynamic failover in pool when primary is unavailable; resolver exposes resolved roles as mechanical facts; admin reload re-reads role config through existing providers_registry_reload path; env example documents the keys. No hardcoded model names; no knowledge-base coupling; no gate changes.",
+      "evidence": [
+        "Work consolidated from two prior working trees: model-routing-20261125 (commit 651ee21e0, 9 staged files, base 6349346d8) and model-routing-final (12 items uncommitted, base 1f0601e9d). All 9 common files byte-identical across trees (diff -q verified); final tree is strict superset with extra config/factory/env wiring.",
+        "Directed tests green on final tree: test_model_roles / test_fallback_integration / test_m50_three_end / test_runtime_resolver (results recorded at delivery time).",
+        "Independent review and full R9 bound to the final frozen SHA, pending after this submission."
+      ],
+      "verification_level": "Local directed tests + tree-consolidation verification; independent review, full R9, remote CI and production acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Role resolution and failover are mechanical provider facts; no tool/authority semantics change. Failover errors surface as provider errors, never as task success.",
+      "rollback_route": "Protected revert of the role table wiring; pool/resolver fall back to existing single-model behaviour when role config absent. No schema or durable-state migration."
+    }
+  ],
+  "declarations": []
+}

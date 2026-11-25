@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import LLMResponse
-from llm_loop.llm.errors import LLMHTTPError
+from llm_loop.llm.errors import LLMHTTPError, LLMNetworkError, LLMTimeoutError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.llm.providers import load_registry
 from tests.conftest import FakeLLM
@@ -59,6 +61,7 @@ def _wire_fallback_pool(engine, fake_primary, fake_settings, monkeypatch):
 
 def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, monkeypatch):
     """主模型 500 → 降级链成功：回答来自降级模型 + 回执/状态/配置计数三可见."""
+
     def raise_500(calls):  # noqa: ARG001
         raise LLMHTTPError("upstream boom", status_code=500, provider="fake")
 
@@ -72,7 +75,9 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
     assert result.final_answer == "降级模型回答"
     assert fake_fb.calls, "降级候选未被调用"
     assert result.fallback_receipt == {
-        "from": "primary/fake-model", "to": "fb/fb-model", "reason": "HTTP 500 上游错误"
+        "from": "primary/fake-model",
+        "to": "fb/fb-model",
+        "reason": "HTTP 500 上游错误",
     }
     # ② R8.9: fallback call 已经完成后不再把 notice 写进未来 prompt history。
     sess = engine.session.load(sid)
@@ -94,6 +99,7 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
 
 def test_fallback_400_not_eligible(build_test_engine, fake_settings, monkeypatch):
     """零回归：4xx（非 429）不降级——如实反馈路径，降级候选不被调用."""
+
     def raise_400(calls):  # noqa: ARG001
         raise LLMHTTPError("bad request", status_code=400, provider="fake")
 
@@ -109,6 +115,7 @@ def test_fallback_400_not_eligible(build_test_engine, fake_settings, monkeypatch
 
 def test_fallback_chain_all_failed_summary(build_test_engine, fake_settings, monkeypatch):
     """链全失败：注入汇总消息（含各候选失败原因），回答走原异常如实反馈."""
+
     def raise_500(calls):  # noqa: ARG001
         raise LLMHTTPError("upstream boom", status_code=500, provider="fake")
 
@@ -122,8 +129,7 @@ def test_fallback_chain_all_failed_summary(build_test_engine, fake_settings, mon
 
     sess = engine.session.load(sid)
     assert not any(
-        m.role == "system" and "[模型降级] 事实" in (m.content or "")
-        for m in sess.messages
+        m.role == "system" and "[模型降级] 事实" in (m.content or "") for m in sess.messages
     )
     assert "[LLM 调用异常]" in result.final_answer
     assert "降级链全部失败" in result.final_answer
@@ -161,9 +167,7 @@ def test_cross_provider_fallback_rebuilds_reasoning_projection(
     engine.settings = settings
     registry = load_registry(settings)
     primary.model = "glm-primary"
-    backup = FakeLLM(
-        [LLMResponse(content="fallback-ok", tool_calls=[], provider="fake")]
-    )
+    backup = FakeLLM([LLMResponse(content="fallback-ok", tool_calls=[], provider="fake")])
     pool = ModelClientPool(  # type: ignore[arg-type]
         registry=registry,
         default_client=primary,
@@ -207,3 +211,52 @@ def test_cross_provider_fallback_rebuilds_reasoning_projection(
     assert fallback_assistant["reasoning_content"] == "OLD-NON-TOOL-REASONING", (
         "DeepSeek fallback must rebuild from session truth rather than reuse GLM-projected messages"
     )
+
+
+def test_fallback_availability_classifier_covers_429_timeout_and_network():
+    from llm_loop.core.loop.engine_services.fallback import FallbackService
+    from llm_loop.llm.errors import LLMNetworkError, LLMTimeoutError
+
+    assert FallbackService._is_fallback_eligible_error(
+        LLMHTTPError("rate limited", status_code=429, provider="primary")
+    )
+    assert FallbackService._is_fallback_eligible_error(LLMTimeoutError("timed out"))
+    assert FallbackService._is_fallback_eligible_error(LLMNetworkError("connection reset"))
+    assert not FallbackService._is_fallback_eligible_error(
+        LLMHTTPError("invalid request", status_code=400, provider="primary")
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lambda: LLMHTTPError("rate limited", status_code=429, provider="primary"),
+        lambda: LLMTimeoutError("provider timed out", provider="primary"),
+        lambda: LLMNetworkError("TLS connection closed", provider="primary"),
+    ],
+    ids=["http-429", "timeout", "network"],
+)
+@pytest.mark.parametrize("policy", ["legacy", "execution_role"])
+def test_default_model_availability_failover_returns_truthful_receipt(
+    build_test_engine,
+    fake_settings,
+    monkeypatch,
+    failure,
+    policy,
+):
+    def fail_primary(_calls):
+        raise failure()
+
+    engine, primary = build_test_engine([fail_primary])
+    backup, _settings = _wire_fallback_pool(engine, primary, fake_settings, monkeypatch)
+    if policy == "execution_role":
+        engine.llm_pool.model_fallbacks_raw = ""
+        engine.llm_pool.replace_model_roles(json.dumps({
+            "execution": ["primary/fake-model", "fb/fb-model"],
+        }))
+    result = engine.run(engine.session.create(), "hello")
+    assert result.final_answer == "降级模型回答"
+    assert result.model_used == "fb/fb-model"
+    assert result.fallback_receipt["from"] == "primary/fake-model"
+    assert result.fallback_receipt["to"] == "fb/fb-model"
+    assert backup.calls

@@ -84,6 +84,7 @@ from llm_loop.introspection.settlement import (
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
+from llm_loop.llm.model_roles import reviewer_models_configured
 from llm_loop.llm.providers import dial_target_observation, public_url
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.attachments import AttachmentStore
@@ -252,7 +253,11 @@ def review_terminal_predicate(child_id: str, *, _authority: Any = None) -> bool:
 
 def _configure_review_admission(registry: Any, event_store: Any, settings: Settings) -> HostReviewAdmission:
     """Attach the existing Host authority without expanding the factory body."""
-    authority = HostReviewAdmission(reviewer_models_raw=settings.reviewer_models_raw)
+    authority = HostReviewAdmission(
+        reviewer_models_raw=reviewer_models_configured(
+            settings.model_roles_raw, settings.reviewer_models_raw
+        )
+    )
     authority.attach_event_store(event_store)
     registry.set_review_admission(authority)
     HostReviewAdmission.set_authority(authority)
@@ -1097,7 +1102,7 @@ def build_engine(
     model_pool = ModelClientPool(
         registry=registry,
         default_client=llm,
-        model_fallbacks_raw=settings.model_fallbacks_raw,
+        model_fallbacks_raw=settings.model_fallbacks_raw, model_roles_raw=settings.model_roles_raw,
         base_timeout_s=settings.llm_timeout_s,
         base_max_tokens=settings.llm_max_tokens,
         transport_observer=transport_observer,

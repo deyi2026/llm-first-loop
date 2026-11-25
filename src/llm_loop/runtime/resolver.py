@@ -212,6 +212,7 @@ _TOML_ENV_KEYS = tuple(
 _LEGACY_GOVERNED_KEYS = (
     "MODEL_PROVIDERS",
     "MODEL_FALLBACKS",
+    "LFL_MODEL_ROLES",
     # R2: 从 restart_system.sh shell 默认值等价迁移（.env 未定义时兜底），
     # schema 迁移前暂列 legacy 治理
     "SUMMARY_MODE",
