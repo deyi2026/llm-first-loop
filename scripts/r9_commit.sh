@@ -231,8 +231,13 @@ FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
 # tree pollution, so an in-repo probe tree breaks minimal test repos without a
 # .gitignore) with a fully trusted ancestor chain ($HOME is never
 # world-writable). R9_PROBE_ROOT lets foreign CI pin its own trusted root;
-# without HOME we fall back to the repo-ignored .cache/ root. mktemp -d still
+# with neither HOME nor R9_PROBE_ROOT we FAIL CLOSED (exit 78) instead of
+# guessing a location that could pollute the repo. mktemp -d still
 # creates the probe dir itself as 0700.
+if [ -z "${HOME:-}" ] && [ -z "${R9_PROBE_ROOT:-}" ]; then
+  echo "[R9_PROBE_REJECTED] no HOME and no R9_PROBE_ROOT: cannot pick a trusted probe root" >&2
+  exit 78
+fi
 if [ -n "${HOME:-}" ]; then
   R9_PROBE_BASE="$HOME/.cache/lfl-r9probe"
 else
