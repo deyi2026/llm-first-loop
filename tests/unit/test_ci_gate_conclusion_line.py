@@ -15,6 +15,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GATE_SCRIPT = REPO_ROOT / "scripts" / "ci_gate.sh"
 
@@ -212,3 +214,64 @@ def test_node_tmp_is_private_without_rebinding_python_tmp(tmp_path: Path, monkey
     expected = tmp_path / "root" / "data" / ".ci-test-home" / "tmp"
     assert {Path(value).resolve() for value in node_tmp} == {expected.resolve()}
     assert not caller_tmp.is_relative_to(tmp_path / "root")
+
+
+def test_gate_clears_inherited_git_common_dir(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    monkeypatch.setenv("GIT_COMMON_DIR", str(source / ".git"))
+    monkeypatch.setenv("GIT_DIR", str(source / ".git"))
+    python_script = """#!/bin/sh
+if [ -n "${GIT_COMMON_DIR:-}${GIT_DIR:-}" ]; then exit 99; fi
+case "$*" in
+  *"--tool pyright"*) echo 'R9 pyright status=complete' ;;
+  *"-c"*) git init -q --bare "$PWD/fixture-remote" ;;
+esac
+exit 0
+"""
+    result = _run_gate(tmp_path, "R9 pyright status=complete", python_script=python_script)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert subprocess.check_output(
+        ["git", "config", "--file", str(source / ".git" / "config"), "--get", "core.bare"],
+        text=True,
+    ).strip() == "false"
+
+
+def test_bare_config_is_classified_without_automatic_repair(tmp_path: Path) -> None:
+    root = tmp_path / "bare"
+    subprocess.run(["git", "init", "-q", "--bare", str(root)], check=True)
+    scripts = root / "scripts"
+    scripts.mkdir()
+    config = root / "config"
+    before = config.read_bytes()
+    for name in ("ci_gate.sh", "r9_commit.sh"):
+        shutil.copy2(REPO_ROOT / "scripts" / name, scripts / name)
+        result = subprocess.run(
+            ["bash", str(scripts / name)], cwd=root, capture_output=True,
+            text=True, timeout=10, check=False,
+        )
+        assert result.returncode == 78, result.stdout + result.stderr
+        assert "GIT_WORKSPACE_ENVIRONMENT_ERROR" in result.stderr
+        assert config.read_bytes() == before
+
+
+@pytest.mark.parametrize("variable", ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"])
+def test_gate_clears_inherited_git_config_override(tmp_path: Path, monkeypatch, variable: str) -> None:
+    foreign = tmp_path / "foreign"
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True)
+    override = tmp_path / "foreign.gitconfig"
+    for key, value in (("core.worktree", foreign), ("core.hooksPath", foreign / "hooks")):
+        subprocess.run(["git", "config", "--file", str(override), key, str(value)], check=True)
+    before = (foreign / ".git" / "config").read_bytes()
+    monkeypatch.setenv(variable, str(override))
+    python_script = """#!/bin/sh
+if [ -n "${GIT_CONFIG_GLOBAL:-}${GIT_CONFIG_SYSTEM:-}" ]; then exit 99; fi
+case "$*" in
+  *"--tool pyright"*) echo 'R9 pyright status=complete' ;;
+  *"-c"*) git init -q --bare "$PWD/fixture-remote" ;;
+esac
+exit 0
+"""
+    result = _run_gate(tmp_path, "R9 pyright status=complete", python_script=python_script)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (foreign / ".git" / "config").read_bytes() == before

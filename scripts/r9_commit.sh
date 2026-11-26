@@ -19,6 +19,20 @@
 # 机检/门禁，暂存触碰面与前驱重叠即中止（stale 暂存基线防线）。锁超时
 # R9_COMMIT_LOCK_TIMEOUT（默认 900s）+ trap 释放防死锁。
 set -euo pipefail
+# A commit wrapper must reject inherited repository redirection, not silently
+# clear it: the caller might have intended a different index or object store.
+# Check before any repository lookup, lock, staging inspection or mutation.
+_git_local_vars="$(git rev-parse --local-env-vars)"
+for _git_var in $_git_local_vars GIT_NAMESPACE GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM; do
+  if [[ -n "${!_git_var:-}" ]]; then
+    echo "[GIT_WORKSPACE_ENVIRONMENT_ERROR] inherited Git repository variable: $_git_var; unsafe Git/shell environment: $_git_var; retry from the intended checkout with a clean Git environment" >&2
+    exit 78
+  fi
+done
+if [[ "$(git config --local --bool --get core.bare 2>/dev/null || true)" == true ]]; then
+  echo "[GIT_WORKSPACE_ENVIRONMENT_ERROR] shared core.bare=true; preserve config and investigate its writer before retrying" >&2
+  exit 78
+fi
 cd "$(git rev-parse --show-toplevel)"
 source scripts/r9_probe_cleanup.sh
 
@@ -62,7 +76,7 @@ if [[ "${1:-}" == --dev ]]; then
     { echo "[DEV_COMMIT_DISABLED] independent Host authority not installed" >&2; exit 78; }
   [[ -n "${R9_STAGED_ALLOW:-}" ]] ||
     { echo "[DEV_COMMIT_DISABLED] R9_STAGED_ALLOW is mandatory" >&2; exit 78; }
-  for _unsafe_git_var in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_NAMESPACE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS BASH_ENV; do
+  for _unsafe_git_var in GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_NAMESPACE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS BASH_ENV; do
     [[ -z "${!_unsafe_git_var:-}" ]] ||
       { echo "[DEV_COMMIT_DISABLED] unsafe Git/shell environment: $_unsafe_git_var" >&2; exit 78; }
   done

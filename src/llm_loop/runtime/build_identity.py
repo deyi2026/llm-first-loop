@@ -16,6 +16,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.git_repository_env import git_repository_env
 from llm_loop.runtime.wheel_identity import installed_build_identity
 
 _GIT_TIMEOUT_S = 5
@@ -35,6 +36,7 @@ def _git(workspace: Path, *args: str) -> tuple[bool, str]:
         proc = subprocess.run(
             ["git", "-C", str(workspace), *args],
             check=False,
+            env=git_repository_env(),
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT_S,
@@ -61,8 +63,9 @@ def compute_build_identity(workspace_root: str | Path) -> dict[str, Any]:
     release_version = _release_version(workspace)
     expected_release_tag = f"v{release_version}" if release_version else ""
 
-    head_ok, git_head = _git(workspace, "rev-parse", "HEAD")
-    if not head_ok:
+    head_ok, identity = _git(workspace, "rev-parse", "--show-toplevel", "HEAD")
+    lines = identity.splitlines()
+    if not head_ok or len(lines) != 2 or Path(lines[0]).resolve() != workspace:
         display = (
             f"v{release_version}-dev+gunknown" if release_version else "unversioned-dev+gunknown"
         )
@@ -80,6 +83,7 @@ def compute_build_identity(workspace_root: str | Path) -> dict[str, Any]:
             "display": display,
         }
 
+    git_head = lines[1]
     git_short = git_head[:8]
     _, dirty_text = _git(workspace, "status", "--porcelain", "--untracked-files=no")
     git_dirty = bool(dirty_text.strip())

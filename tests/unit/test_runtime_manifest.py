@@ -6,7 +6,10 @@
 """
 import json
 import os
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from llm_loop.runtime.identity import compute_identity
 from llm_loop.runtime.manifest import (
@@ -272,6 +275,46 @@ def test_launch_writes_manifest_end_to_end(tmp_path, monkeypatch, capsys):
     # stderr 应有 manifest 路径回显
     err = capsys.readouterr().err
     assert "runtime_manifest.json" in err
+
+
+@pytest.mark.parametrize("placement", ["inherited_git_dir", "ancestor_repository"])
+def test_launch_manifest_stays_in_fixture(tmp_path, monkeypatch, placement):
+    """A non-repository fixture must never inherit another repository's data or SHA."""
+    from llm_loop.runtime import launch as launch_mod
+
+    repo = tmp_path / "simulated-production"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=Fixture", "-c",
+         "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "base"],
+        check=True,
+    )
+    fixture = (repo if placement == "ancestor_repository" else tmp_path) / "fixture"
+    fixture.mkdir()
+    _mk(fixture, ["LLM_MODEL=glm/glm-5.3"])
+    production_runtime = repo / "data" / "runtime"
+    production_runtime.mkdir(parents=True)
+    sentinel = '{"sentinel":true}'
+    manifests = [production_runtime / name for name in (
+        "runtime_manifest.json", "runtime_manifest.web.json",
+    )]
+    for path in manifests:
+        path.write_text(sentinel)
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(fixture))
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(fixture))
+    monkeypatch.setenv("DATA_DIR", str(fixture / "data"))
+    monkeypatch.setenv("LFL_DATA_DIR", str(fixture / "data"))
+    monkeypatch.delenv("LFL_ALLOW_RUNTIME_OVERRIDE", raising=False)
+    if placement == "inherited_git_dir":
+        monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
+    monkeypatch.setattr(launch_mod.runpy, "run_module", lambda *args, **kwargs: None)
+    assert launch_mod.main(["web"]) == 0
+    assert all(path.read_text() == sentinel for path in manifests)
+    manifest = read_manifest(fixture / "data")
+    assert manifest is not None
+    assert manifest["git_head"] == "unknown"
+    assert manifest["build_identity"]["git_available"] is False
 
 
 def test_dry_run_does_not_write_manifest(tmp_path, monkeypatch, capsys):

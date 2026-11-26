@@ -195,6 +195,11 @@ def isolate_process_environment():
     其他键。环境恢复属于测试沙箱边界，不改变生产配置加载语义。
     """
     before = os.environ.copy()
+    # A fixture's git init/config must never inherit the caller's repository identity.
+    from llm_loop.runtime.git_repository_env import GIT_REPO_ENV_VARS
+
+    for key in GIT_REPO_ENV_VARS:
+        os.environ.pop(key, None)
     try:
         yield
     finally:
