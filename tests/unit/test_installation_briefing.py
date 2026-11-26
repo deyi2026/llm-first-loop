@@ -10,7 +10,10 @@ import pytest
 
 from llm_loop.core.prompt import INSTALLATION_INDEX_HEADING, build_system_prompt
 from llm_loop.runtime import briefing
-from llm_loop.runtime.briefing import build_installation_briefing
+from llm_loop.runtime.briefing import (
+    build_installation_briefing,
+    build_stable_installation_briefing,
+)
 from llm_loop.timekeeping import system_local_now
 
 
@@ -418,3 +421,114 @@ def test_real_installation_method_omission_is_visible():
     if count <= briefing._MAX_METHODS:
         pytest.skip(f"当前安装方法数 {count} 未超上限 {briefing._MAX_METHODS}，本断言无覆盖面")
     assert "未列出" in briefing._method_index_line(names)
+
+
+# ── 缓存稳定性专项 P0（GOAL-20261126-dce0cc32）──────────────────────────────
+# 会话 306b5704：54 轮 GLM-5.4 加权 76.29%，4 次 system_fp 漂移同时打穿 provider
+# 前缀缓存（其中两次直接对应 ledger 14:09:03 / experiences 14:31:51 更新）。
+# 根因：动态知识内容（评分/数量/方法索引）进入常驻 system 前缀。修复：装配
+# （ingress_resolution.run_ingress_prelude）改用稳定视图——签名只键 rules+skills；
+# 完整诊断口径（数量/方法索引/结算概况）原样保留在 build_installation_briefing。
+
+
+def test_stable_view_ignores_knowledge_updates(tmp_path, monkeypatch):
+    """P0 核心：ledger/经验/方法三类知识更新后稳定视图逐字节不变。
+
+    完整诊断视图在同一 fixture 下必须漂移（fixture 活性证明——若完整视图也
+    不变，说明知识更新没真正触发重建，本测试失去覆盖面）。
+    """
+    _bind_paths(tmp_path, monkeypatch)
+    now = system_local_now()
+    _append_score(tmp_path, 0.79, now.isoformat())
+    stable_before = build_stable_installation_briefing()
+    full_before = build_installation_briefing()
+
+    # ① ledger append（复刻 306b5704 14:09:03 ledger 更新 → 14:09:33 漂移）
+    _append_score(tmp_path, 0.82, now.isoformat(), ref="ref-b")
+    assert build_stable_installation_briefing() == stable_before, (
+        "ledger 落账不得改写稳定 provider 前缀"
+    )
+    assert build_installation_briefing() != full_before, (
+        "fixture 活性：完整诊断视图应随 ledger 更新变化（否则断言无覆盖面）"
+    )
+
+    # ② 经验新增（复刻 14:31:51 experiences 更新 → 14:32:17 漂移）
+    _write(tmp_path / "experiences" / "EXPERIENCE-20261126-999.md", "# 新经验\n")
+    assert build_stable_installation_briefing() == stable_before, (
+        "经验新增不得改写稳定 provider 前缀"
+    )
+
+    # ③ 方法新增（数量/方法索引行变化源）
+    _write(tmp_path / "methods" / "method-new" / "METHOD.md", "---\nname: 新方法\n---\n")
+    assert build_stable_installation_briefing() == stable_before, (
+        "方法新增不得改写稳定 provider 前缀"
+    )
+    assert build_installation_briefing() != full_before, (
+        "fixture 活性：完整诊断视图应随方法新增变化"
+    )
+
+
+def test_stable_view_tracks_rule_changes(tmp_path, monkeypatch):
+    """规则/授权/安全更新必须及时生效：ai_rules.md 变更 → 稳定视图随之更新."""
+    _bind_paths(tmp_path, monkeypatch)
+    before = build_stable_installation_briefing()
+    assert "RULE-AI-99" in before, "fixture 活性：规则索引应包含边缘规则"
+    _write(
+        tmp_path / "docs" / "ai_rules.md",
+        "## 规则零：AI 优先总纲（RULE-AI-00，2026-08-12 确立）\n\n正文\n"
+        "## 规则一：事实诚实与完成诚实（RULE-AI-01，2026-08-12 确立）\n\n正文\n"
+        "## 规则九十九：边缘规则（RULE-AI-99，2026-08-12 确立）\n\n正文\n"
+        "## 规则一百：缓存稳定性（RULE-AI-38，2026-11-26 确立）\n\n正文\n",
+    )
+    after = build_stable_installation_briefing()
+    assert after != before, "规则更新必须及时生效（签名含 rules mtime）"
+    assert "RULE-AI-38" in after, "新规则必须出现在稳定视图规则导航中"
+
+
+def test_stable_view_tracks_skill_changes(tmp_path, monkeypatch):
+    """技能安装/卸载仍反映到稳定视图（技能发现保真，属预期及时生效）."""
+    _bind_paths(tmp_path, monkeypatch)
+    before = build_stable_installation_briefing()
+    assert "long-task-research" in before, "fixture 活性：技能清单应包含既有技能"
+    _write(tmp_path / "skills" / "cache-probe" / "SKILL.md", "# 新技能\n")
+    after = build_stable_installation_briefing()
+    assert after != before, "技能目录变化必须反映到稳定视图"
+    assert "cache-probe" in after, "新技能必须进入技能发现清单"
+
+
+def test_stable_view_shape_and_full_view_parity(tmp_path, monkeypatch):
+    """稳定视图内容形状：无数量/方法索引/结算概况；共享段与完整视图字节一致."""
+    _bind_paths(tmp_path, monkeypatch)
+    now = system_local_now()
+    _append_score(tmp_path, 0.79, now.isoformat())
+    stable = build_stable_installation_briefing()
+    full = build_installation_briefing()
+
+    # 共享段（规则导航）两视图字节一致；技能发现与实时检索指引保留
+    assert stable.split("### 经验", 1)[0] == full.split("### 经验", 1)[0], (
+        "规则导航段两视图必须字节一致"
+    )
+    assert "### 工具与技能" in stable and "已安装技能 2 个" in stable, "技能发现保留"
+    assert "long-task-research" in stable
+    assert "search_records" in stable, "实时检索指引保留"
+    assert "skill_load" in stable
+    assert len(stable) <= 4000, "稳定视图须守 4000 字符上限（与合并截断上限一致）"
+
+    # 动态内容只允许出现在完整诊断视图（按需读取），不得进入稳定前缀
+    for token in ("知识结算概况", "最近结算卡评分", "本安装已有", "方法索引："):
+        assert token not in stable, f"动态内容不得进入稳定前缀: {token}"
+        assert token in full, f"完整诊断口径必须保留: {token}"
+
+
+def test_ingress_assembly_uses_stable_view():
+    """实际装配路径回归：常驻前缀装配点必须用稳定视图，不得回退完整视图."""
+    import inspect
+
+    import llm_loop.core.prompt_build.stages.ingress_resolution as ingress
+
+    assert ingress.build_stable_installation_briefing is (
+        briefing.build_stable_installation_briefing
+    ), "装配模块必须绑定 briefing.build_stable_installation_briefing"
+    src = inspect.getsource(ingress.run_ingress_prelude)
+    assert "build_stable_installation_briefing()" in src, "装配点必须调用稳定视图"
+    assert "build_installation_briefing()" not in src, "常驻前缀不得回退到完整诊断视图"

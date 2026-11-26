@@ -367,7 +367,12 @@ def test_two_call_group_projects_all_refs_or_none(tmp_path):
 
 @pytest.mark.parametrize(
     ("schema_tokens", "expect_recovery"),
-    [(26000, True), (28659, False)],
+    # hold 边界 = (allowed_input_tokens − schema_tokens) × cpt 字符（含 system
+    # 前缀的 exact-ref 胶囊实测 ~3.5k 字符）。缓存稳定性专项（GOAL-20261126-
+    # dce0cc32）把常驻前缀缩短 ~400 字符后，28659 档边界 3689 只剩 ~175 字符
+    # 冗余且已翻到恢复侧；30000 档边界 2412 保持 hold 侧并留 ~1050 字符冗余。
+    # 恢复档 26000（边界 6091）不动。
+    [(26000, True), (30000, False)],
 )
 def test_real_loop_enforced_evidence_projects_ref_or_holds_at_physical_limit(
     build_test_engine, tmp_path, monkeypatch, schema_tokens, expect_recovery
