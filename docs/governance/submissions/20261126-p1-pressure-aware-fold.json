@@ -1,0 +1,72 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-p1-pressure-aware-fold",
+  "summary": "P1 cache stability follow-up: make the append-only tool-history resource-safety valve pressure-aware. The static byte valve (batch_chars) folded already-sent mid-history tool results without real provider-visible pressure, zeroing the prefix cache for nothing; the valve now folds on measured anchored-view pressure (chars >= budget * 0.95) with the static threshold kept as the no-signal fallback. The cache-gate stable fp is composed with fold facts so it stops mistaking a rewritten view for an untouched prefix. Hard byte bound, tool pairing, recoverable receipts and rule/authorization freshness unchanged.",
+  "components": [
+    {
+      "component_id": "pressure-aware-fold-valve",
+      "paths": [
+        "docs/governance/submissions/20261126-p1-pressure-aware-fold.json",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
+        "src/llm_loop/core/loop/build.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-pressure-aware-fold",
+      "owning_subsystem": "Existing episode-history projection, ingress prelude assembly and prompt build cache-gate fingerprint.",
+      "disposition": "Add FoldPressureSignal (measured anchored-view chars vs effective budget, 0.95 safety ratio) and thread it from the ingress prelude (measured locally with the same provider-visible scope as build) through the projection valve; fold only under real measured pressure in append-only mode, keep the static byte valve as the None-signal fallback; carry measured chars/budget scope inside the fold trigger string. Compose cache_gate_stable_fp with fold boundaries/triggers via fold_aware_stable_fp so mid-history rewrites are reflected in the fingerprint. No new assembly entry, no tool removed, no receipt deleted.",
+      "evidence": [
+        "306b5704 attribution: static 32k valve rewrote mid-history messages without real pressure; r10 hit -> r11 fold -> cache zeroed within 2 minutes (rules out provider cold cache); r20->r21 same chain.",
+        "TDD red-green: 8 new tests cover no-pressure append-only, real-pressure fold, legacy static fallback anchor, zero-budget no-invented-pressure, measured scope in trigger string, opportunistic-mode regression, tool pairing invariant and fold-aware fp composition.",
+        "Directed verification: 59 unit tests green (new 8 + projection 22 + briefing 29) plus ruff clean on all four changed files.",
+        "306b5704 design: pressure measurement reuses the existing provider-visible chars scope and the engine-refreshed last_budget_info.effective_budget; unparseable budget yields None (legacy fallback), never invented pressure."
+      ],
+      "verification_level": "Directed local verification green; original full gate (ci_gate.sh) on the frozen tree plus R9 independent review pending at manifest writing; real-provider acceptance (mid-history fold trigger count, weighted hit rate) planned with the unified deployment.",
+      "model_evidence_veto_recovery_exit": "Hard resource bound preserved (static valve as fallback, hard result cap untouched); receipts remain recoverable (fold trigger string carries measured scope); model evidence stays live (no briefing/freshness change in this lane); single-line reverts per site.",
+      "rollback_route": "Revert the pressure parameter threading in episode_history.py/ingress_resolution.py/build.py; each site is a localized hunk; the static valve behavior is the fallback and remains the default without budget info."
+    },
+    {
+      "component_id": "pressure-aware-fold-tests",
+      "paths": [
+        "tests/unit/test_fold_pressure_awareness.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing unit test suite for episode-history projection and prompt build.",
+      "disposition": "Add permanent tests: pressure-aware valve semantics (no-pressure append-only, real-pressure fold, None-signal legacy anchor, zero-budget guard), measured scope evidence in triggers, opportunistic-mode regression, tool pairing invariant, and fold-aware stable fp composition.",
+      "evidence": [
+        "8 tests green locally; existing 22 projection tests stay green as regression anchors."
+      ],
+      "verification_level": "Directed local verification green; R9 full-tree review covers the same tree.",
+      "model_evidence_veto_recovery_exit": "Tests only observe; no runtime authority; no evidence deletion.",
+      "rollback_route": "Revert the test file."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-pressure-aware-fold",
+      "g1": {
+        "necessity": "Without real pressure the static valve still rewrote sent mid-history messages and zeroed the provider prefix cache; measured attribution (306b5704 r10->r11 within 2 minutes) shows the fold itself was the cache-killer in append-only runs."
+      },
+      "g2": {
+        "authority_owner": "Host runtime prompt-build ingress assembly and episode-history projection subsystems; budget authority stays with the engine-refreshed last_budget_info.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses the existing provider-visible chars measurement scope and existing budget source; no new measurement pipeline, no duplicate valve, no new assembly entry."
+      },
+      "g3": {
+        "model_evidence": [
+          "306b5704 attribution chain: static-valve fold coincides exactly with cache zeroing within a 2-minute window, twice (r10->r11, r20->r21).",
+          "TDD: red (ImportError) then green (8/8) on the new valve semantics; 22 projection regressions stay green."
+        ],
+        "recovery_or_reason": "Fallback is the unchanged static valve when no budget signal exists; fold receipts keep recovery refs and now carry measured chars/budget scope."
+      },
+      "g4": {
+        "rollback": "Revert the three localized hunks (valve gate, ingress threading, fp composition); no data migration.",
+        "verification": [
+          "Directed: 59 unit tests green plus ruff clean on changed files.",
+          "Original full gate and R9 independent review on the frozen tree, then push gate before any push.",
+          "Real-provider acceptance (fold trigger count under load, weighted cache hit rate) planned with the unified deployment; 90 percent is a measured target not a promise."
+        ]
+      }
+    }
+  ]
+}
