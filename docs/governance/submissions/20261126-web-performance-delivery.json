@@ -13,6 +13,7 @@
         "src/llm_loop/web/session_stats_cache.py",
         "tests/unit/test_session_stats_cache.py",
         "tests/unit/test_usage_event_projection.py",
+        "tests/unit/test_panel_by_model.py",
         "tests/web/test_session_stats.py",
         "src/llm_loop/web/human_turn_queue.py",
         "src/llm_loop/web/queue_recovery.py",
