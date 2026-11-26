@@ -19,15 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import (
-    current_model_label,
-    current_session_id,
-    current_workspace_root,
-)
+from llm_loop.core.run_context import current_session_id, current_workspace_root
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.merge_queue import issue_verify_receipt
 from llm_loop.security_guard import has_strong_secret, sensitive_path_reason
 from llm_loop.tools.escalation import EscalationStore
+from llm_loop.tools.review_host_admission import _configured_reviewer_models
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _LANE = re.compile(r"lane-[0-9a-f]{8}\Z")
@@ -142,11 +139,18 @@ class HostVerifyAuthority:
     def __init__(
         self, *, audit_dir: str | Path, repo_root: str | Path,
         runner: Any, escalation_store: EscalationStore,
+        reviewer_models_raw: str = "",
     ) -> None:
         self.audit_dir = Path(audit_dir).resolve()
         self.repo_root = Path(repo_root).resolve()
         self.runner = runner
         self.escalation_store = escalation_store
+        # The reviewer's model identity is operator configuration (the same
+        # LFL_REVIEWER_MODELS the RULE-AI-28 reviewer uses): never the parent
+        # session's current model, and never a built-in default.
+        self._reviewer_models, self._reviewer_models_reason = _configured_reviewer_models(
+            reviewer_models_raw
+        )
         self._lock = threading.RLock()
         self._reviews: dict[str, _FrozenReview] = {}
 
@@ -200,9 +204,12 @@ class HostVerifyAuthority:
         if len(changed) > 12_000:
             raise HostVerifyError("review_scope_too_large")
         base, head = str(lane["base_main_sha"]), str(lane["head_sha"])
-        requested_model = str(current_model_label.get() or "").strip()
-        if not requested_model:
-            raise HostVerifyError("review_model_required")
+        if not self._reviewer_models:
+            # Refuse before any reviewer is spawned. An unconfigured Host must not
+            # silently run the merge gate on whichever model the parent session
+            # happens to be using.
+            raise HostVerifyError(self._reviewer_models_reason)
+        requested_model = self._reviewer_models[0]
         task = (
             "You are an independent, read-only merge reviewer. Do not write or "
             "call shell tools. Inspect the candidate files using read_file and "
@@ -288,9 +295,14 @@ class HostVerifyAuthority:
             f"[host-verify-receipt] lane={lane_id} base={frozen.base} "
             f"head={frozen.head} child={child_id} review_sha256={digest} scope={scope}"
         )
+        # The Web approval card shows only command and justification text: name
+        # the reviewer model the human is actually being asked to rely on.
         return self.escalation_store.create(
             tool_name="verify_receipt_issue", command=command,
-            justification="独立只读 merge Reviewer 已 PASS；请求浏览器人工批准 Host 签发验证凭证，不授予审计账本通用写权限。",
+            justification=(
+                f"独立只读 merge Reviewer（模型 {frozen.model}）已 PASS；"
+                "请求浏览器人工批准 Host 签发验证凭证，不授予审计账本通用写权限。"
+            ),
             session_id=parent, kind="verify_receipt",
             extra={
                 "host_lane_id": lane_id, "host_base_sha": frozen.base,
@@ -340,7 +352,11 @@ def _result(tool: str, content: str, success: bool) -> ToolResult:
 
 class MergeReviewStartTool:
     name = "merge_review_start"
-    description = "由 Host 冻结 lane/base/head，启动独立只读 Reviewer；完成后使用 verify_receipt_request 请求人工签发。"
+    description = (
+        "由 Host 冻结 lane/base/head，启动独立只读 Reviewer（模型取自运营者配置 "
+        "LFL_REVIEWER_MODELS，未配置即拒绝、不派子代理）；完成后使用 "
+        "verify_receipt_request 请求人工签发。"
+    )
     parameters = {
         "type": "object", "properties": {"lane_id": {"type": "string"}},
         "required": ["lane_id"],

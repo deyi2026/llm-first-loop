@@ -8,6 +8,7 @@ from llm_loop.llm.model_roles import (
     model_roles_for_refresh,
     parse_model_roles,
     reviewer_models_configured,
+    reviewer_models_for_refresh,
 )
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -230,3 +231,44 @@ def test_execution_role_hot_reload_never_touches_reviewer_resolution(monkeypatch
     pool.replace_model_roles(json.dumps({"execution": ["primary/planner"]}))
     assert pool.role_candidates("execution") == ["primary/planner"]
     assert pool.role_candidates("reviewer") == []
+
+
+def test_reviewer_refresh_prefers_legacy_dotenv_over_stale_process_copy(tmp_path, monkeypatch):
+    """Legacy reviewer variable is re-read from the managed dotenv, not the startup copy."""
+    path = tmp_path / ".env"
+    monkeypatch.setenv("LFL_ENV_FILE", str(path))
+    roles = json.dumps({"reviewer": ["backup/reviewer"]})
+    path.write_text("LFL_REVIEWER_MODELS='primary/reviewer'\n", encoding="utf-8")
+    # The process still holds a stale legacy value; the file wins.
+    assert reviewer_models_for_refresh(roles, "stale/model") == ("primary/reviewer", "")
+    # Same precedence as the startup wiring (reviewer_models_configured).
+    assert reviewer_models_for_refresh(roles, "primary/reviewer") == (
+        reviewer_models_configured(roles, "primary/reviewer"), ""
+    )
+    # Legacy emptied in the file => the explicit reviewer role is used instead.
+    path.write_text("LFL_REVIEWER_MODELS=\n", encoding="utf-8")
+    assert reviewer_models_for_refresh(roles, "stale/model") == ("backup/reviewer", "")
+    # Role mapping disabled (empty key) and legacy empty => authoritative "" = explicit revocation.
+    assert reviewer_models_for_refresh("", "stale/model") == ("", "")
+    # An empty roles object is invalid configuration (same rule as replace_model_roles),
+    # so it is reported as a reason and never mistaken for a revocation.
+    assert reviewer_models_for_refresh("{}", "") == ("", "model_roles_invalid_shape")
+
+
+def test_reviewer_refresh_keeps_policy_when_roles_are_invalid_or_unreadable(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    monkeypatch.setenv("LFL_ENV_FILE", str(path))
+    path.write_text("# legacy key removed\n", encoding="utf-8")
+    # An invalid role mapping must never be mistaken for a revocation.
+    assert reviewer_models_for_refresh("{bad", "") == ("", "model_roles_invalid_json")
+    path.unlink()
+    assert reviewer_models_for_refresh("{}", "") == ("", "model_roles_config_unreadable")
+
+
+def test_reviewer_refresh_without_managed_dotenv_uses_process_values(monkeypatch):
+    monkeypatch.delenv("LFL_ENV_FILE", raising=False)
+    monkeypatch.delenv("LFL_RUNTIME_ROOT", raising=False)
+    assert reviewer_models_for_refresh("{}", "glm/glm-5.3-flash") == ("glm/glm-5.3-flash", "")
+    assert reviewer_models_for_refresh(json.dumps({"reviewer": ["backup/reviewer"]}), "") == (
+        "backup/reviewer", ""
+    )

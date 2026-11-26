@@ -90,9 +90,12 @@ def host(tmp_path):
     runner.facts = {"lane_id": lane.lane_id, "base_sha": base, "head_sha": head}
     authority = HostVerifyAuthority(
         audit_dir=audit, repo_root=repo, runner=runner, escalation_store=escalation,
+        reviewer_models_raw="glm/glm-5.3-flash",
     )
     tok = current_session_id.set("owner-session")
-    mtok = current_model_label.set("glm/glm-5.3-flash")
+    # The parent session runs the model that once exhausted the reviewer's output
+    # budget; the reviewer must still come from operator configuration above.
+    mtok = current_model_label.set("glm/glm-5.4")
     try:
         yield authority, runner, escalation, lane.lane_id, repo, audit
     finally:
@@ -258,6 +261,66 @@ def test_reviewer_must_be_independent_pass(host, verdict, p0, p1, independent):
     with pytest.raises(HostVerifyError):
         authority.request(lane_id=lane_id, child_id="subagent-test-review")
     assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_reviewer_model_comes_from_operator_config_not_session_model(host):
+    # EVO-20261125-120c7dd9: the reviewer inherited the parent session's glm-5.4
+    # and exhausted its whole output budget on reasoning, with no verdict.
+    authority, runner, escalation, lane_id, _, _ = host
+    assert current_model_label.get() == "glm/glm-5.4"
+    started = authority.start_review(lane_id)
+    assert runner.started["model"] == started["model"] == "glm/glm-5.3-flash"
+    rec = authority.request(lane_id=lane_id, child_id=started["child_id"])
+    # The Web approval card shows only command and justification text: the human
+    # must see which reviewer model the PASS actually came from.
+    assert "模型 glm/glm-5.3-flash" in escalation.get(rec["id"])["justification"]
+
+
+@pytest.mark.parametrize("configured,reason", [
+    ("", "reviewer_models_unconfigured"),
+    ("   ", "reviewer_models_unconfigured"),
+    ("glm/glm-5.3-flash,,", "reviewer_models_invalid"),
+    ("no-slash", "reviewer_models_invalid"),
+])
+def test_unconfigured_reviewer_models_refuse_before_spawn(host, configured, reason):
+    authority, runner, _, lane_id, _, audit = host
+    unconfigured = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw=configured,
+    )
+    with pytest.raises(HostVerifyError) as excinfo:
+        unconfigured.start_review(lane_id)
+    assert str(excinfo.value) == reason
+    # The parent session's model is set, and it is still never a fallback.
+    assert current_model_label.get() == "glm/glm-5.4"
+    assert runner.started == {}
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_first_operator_configured_model_is_used(host):
+    authority, runner, _, lane_id, _, _ = host
+    ordered = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw="glm/glm-5.3-flash, glm/backup",
+    )
+    assert ordered.start_review(lane_id)["model"] == "glm/glm-5.3-flash"
+    assert runner.started["model"] == "glm/glm-5.3-flash"
+
+
+def test_start_tool_reports_unconfigured_reviewer_models_without_spawn(host):
+    from llm_loop.introspection.host_verify_issuer import MergeReviewStartTool
+
+    authority, runner, _, lane_id, _, _ = host
+    unconfigured = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw="",
+    )
+    result = MergeReviewStartTool(unconfigured).execute(lane_id=lane_id)
+    assert "[拒绝] reviewer_models_unconfigured" in result.content
+    assert runner.started == {}
 
 
 def test_base_advance_between_request_and_approval_fails_closed(host):
