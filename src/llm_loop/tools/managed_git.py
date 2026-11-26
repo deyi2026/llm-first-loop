@@ -74,6 +74,12 @@ def _safe_env() -> dict[str, str]:
         GIT_ATTR_NOSYSTEM="1",
         GIT_TERMINAL_PROMPT="0",
         GIT_NO_REPLACE_OBJECTS="1",
+        # COMMITidentity must not depend on ambient ~/.gitconfig: production
+        # hosts (CI runners, bare deployments) often have none.
+        GIT_AUTHOR_NAME="LFL Lane Lease",
+        GIT_AUTHOR_EMAIL="lane-lease@lfl.local",
+        GIT_COMMITTER_NAME="LFL Lane Lease",
+        GIT_COMMITTER_EMAIL="lane-lease@lfl.local",
     )
     return env
 
@@ -231,6 +237,12 @@ class ManagedGitAdapter:
             or lane.get("version") != item.expected_lane_version
         ):
             raise ManagedGitError("git_lane_cas_conflict")
+        branch = lane.get("branch")
+        if (
+            not isinstance(branch, str) or not branch or branch in ("main", "master")
+            or _git_line(worktree, "symbolic-ref", "HEAD") != f"refs/heads/{branch}"
+        ):
+            raise ManagedGitError("git_lane_branch_conflict")
         checked = _paths_checked(worktree, item.paths, lane.get("paths") or [])
         parent_scope = current_write_scope.get()
         parent_allows = all(
