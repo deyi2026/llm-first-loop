@@ -74,6 +74,12 @@ def _safe_env() -> dict[str, str]:
         GIT_ATTR_NOSYSTEM="1",
         GIT_TERMINAL_PROMPT="0",
         GIT_NO_REPLACE_OBJECTS="1",
+        # COMMITidentity must not depend on ambient ~/.gitconfig: production
+        # hosts (CI runners, bare deployments) often have none.
+        GIT_AUTHOR_NAME="LFL Lane Lease",
+        GIT_AUTHOR_EMAIL="lane-lease@lfl.local",
+        GIT_COMMITTER_NAME="LFL Lane Lease",
+        GIT_COMMITTER_EMAIL="lane-lease@lfl.local",
     )
     return env
 
