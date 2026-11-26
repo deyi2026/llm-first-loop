@@ -317,8 +317,93 @@ def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> d
     }
 
 
+def _rule_section_lines(rules: list[str]) -> list[str]:
+    """规则段（完整诊断视图与稳定 provider 视图共用，两视图字节一致）."""
+    if rules:
+        return [
+            "### 规则",
+            "长期约束（规则标题索引；完整真值源 docs/ai_rules.md，正文按需水合）：",
+            *rules,
+        ]
+    return [
+        "### 规则",
+        "规则真值源：docs/ai_rules.md（当前安装未找到，按 SOUL 与通用核心认知执行）。",
+    ]
+
+
+def _tool_skill_section_lines(skill_count: int, skill_names: list[str]) -> list[str]:
+    """工具与技能段（两视图共用）：技能发现保持真实安装可加载清单."""
+    lines = [
+        "### 工具与技能",
+        "工具参数以 API schema 为真值；参数语义不明时先读该工具的完整 Schema 再调用，不猜参数。"
+        "常用类别：文件读写、代码/内容搜索、命令执行、浏览器感知与操作、"
+        "证据/记录检索、任务与子代理。技能用 skill_list 发现、skill_load 加载。",
+    ]
+    if skill_count:
+        lines.append(
+            f"已安装技能 {skill_count} 个："
+            + "、".join(skill_names[:_MAX_SKILLS])
+            + ("…" if skill_count > _MAX_SKILLS else "")
+        )
+    return lines
+
+
+# 稳定视图的经验段：固定一句话，刻意不含数量/方法名/结算概况——这些随每次
+# 知识更新变化，进入 provider 常驻前缀会让每次 ledger/经验/方法落库都把前缀
+# 缓存打穿（会话 306b5704：4 次 system_fp 漂移中两次直接对应 ledger 14:09:03
+# 与 experiences 14:31:51 更新，隔离复现 repro_drift.py 同机制）。实时检索
+# 指引保留：search_records/skill_load 语义不变。
+_STABLE_EXPERIENCE_LINE = (
+    "本安装内置方法与经验库（规模与索引动态变化，不进常驻前缀）。任务相关时用 "
+    "search_records(kind=method|experience|lesson, query=任务词) 检索；"
+    "命中后按返回的 stable ref 精确水合，不凭标题猜内容。"
+)
+
+
+def build_stable_installation_briefing() -> str:
+    """Provider 常驻前缀的稳定视图（缓存稳定性专项 P0）。
+
+    与完整诊断视图（build_installation_briefing）共享规则导航与技能发现，
+    但排除所有随知识更新变化的动态内容：经验/方法数量行、方法索引行、D8
+    知识结算概况段。签名只键 ai_rules.md 与技能目录——ledger/experiences/
+    methods 更新不再触发重建，provider 前缀在知识更新前后逐字节稳定。
+    规则/技能变更仍及时生效（其 mtime 仍在签名内）；实时检索指引不变；
+    完整口径（数量/方法索引/结算概况）保留在 build_installation_briefing
+    供诊断按需读取（doctor/inspect_installation_assets/introspection）。
+    """
+    paths = _paths()
+    docs_dir = paths["docs"]
+    skills_dir = paths["skills"]
+    signature = _signature(docs_dir, skills_dir)
+    try:
+        signature += "|rules:" + str((docs_dir / "ai_rules.md").stat().st_mtime_ns)
+    except OSError:
+        signature += "|rules:missing"
+    if _CACHE.get("stable:signature") == signature:
+        return _CACHE.get("stable:text", "")
+
+    rules = _rule_index(docs_dir)
+    skill_count, skill_names = _skill_index(skills_dir)
+
+    lines = [INSTALLATION_INDEX_HEADING, ""]
+    lines.extend(_rule_section_lines(rules))
+    lines += ["", "### 经验", _STABLE_EXPERIENCE_LINE]
+    lines += [""] + _tool_skill_section_lines(skill_count, skill_names)
+
+    text = "\n".join(lines).strip()
+    if len(text) > 4000:
+        text = text[:3900].rstrip() + "\n…（索引已截断，完整内容见对应文件）"
+    _CACHE["stable:signature"] = signature
+    _CACHE["stable:text"] = text
+    return text
+
+
 def build_installation_briefing() -> str:
     """Return a bounded, deterministic installation index (empty on failure).
+
+    完整诊断口径（缓存稳定性专项 P0 保留）：含经验/方法数量行、方法索引行
+    与 D8 知识结算概况段——随知识更新变化，不进 provider 常驻前缀；provider
+    前缀装配用 build_stable_installation_briefing，本视图供诊断按需读取。
 
     The cache lives for the process lifetime: the signature keys on directory
     mtimes (plus ai_rules.md's own mtime), so an in-place edit of a METHOD.md
@@ -356,12 +441,7 @@ def build_installation_briefing() -> str:
     skill_count, skill_names = _skill_index(skills_dir)
 
     lines = [INSTALLATION_INDEX_HEADING, ""]
-    lines.append("### 规则")
-    if rules:
-        lines.append("长期约束（规则标题索引；完整真值源 docs/ai_rules.md，正文按需水合）：")
-        lines.extend(rules)
-    else:
-        lines.append("规则真值源：docs/ai_rules.md（当前安装未找到，按 SOUL 与通用核心认知执行）。")
+    lines.extend(_rule_section_lines(rules))
 
     lines += ["", "### 经验"]
     if method_count or experience_count:
@@ -379,13 +459,7 @@ def build_installation_briefing() -> str:
         lines.append("经验库当前为空。用 search_records 检索；没有命中就按通用推理执行，"
                      "完成后可用 save_experience 沉淀可复用结论。")
 
-    lines += ["", "### 工具与技能"]
-    lines.append("工具参数以 API schema 为真值；参数语义不明时先读该工具的完整 Schema 再调用，不猜参数。"
-                 "常用类别：文件读写、代码/内容搜索、命令执行、浏览器感知与操作、"
-                 "证据/记录检索、任务与子代理。技能用 skill_list 发现、skill_load 加载。")
-    if skill_count:
-        lines.append(f"已安装技能 {skill_count} 个：" + "、".join(skill_names[:_MAX_SKILLS]) +
-                     ("…" if skill_count > _MAX_SKILLS else ""))
+    lines += [""] + _tool_skill_section_lines(skill_count, skill_names)
 
     # D8：知识结算概况段（method/skill 段之后）——ledger 缺失/为空/TTL 过期整段省略。
     # EVO-20261029-80820d50：标题从「知识健康度」改为「知识结算概况」；行内单卡
