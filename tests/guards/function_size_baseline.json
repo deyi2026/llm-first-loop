@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "head_commit": "fcec5bf0b",
+    "head_commit": "dbbfecd0e",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
-    "生成时间": "2026-11-25",
+    "生成时间": "2026-11-26",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
     "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升；实测更高时按实测重定＝抬高，属 EVO-20261025-e0bff8ee 批准的红线放宽，须随 guard(r9) 提交逐条可见，不是静默放宽）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
@@ -1107,9 +1107,9 @@
     "src/llm_loop/core/cache_health.py::record": 140,
     "src/llm_loop/core/command_scope_guard.py::_write_targets": 118,
     "src/llm_loop/core/episode_history.py::backfill_closed_tool_attempts": 127,
-    "src/llm_loop/core/episode_history.py::project_active_tool_working_set_with_stats": 236,
+    "src/llm_loop/core/episode_history.py::project_active_tool_working_set_with_stats": 254,
     "src/llm_loop/core/history.py::build_conservative_active_run_projection": 168,
-    "src/llm_loop/core/loop/build.py::_build_llm_messages": 197,
+    "src/llm_loop/core/loop/build.py::_build_llm_messages": 203,
     "src/llm_loop/core/loop/build.py::_run_cognitive_packet_stage": 230,
     "src/llm_loop/core/loop/engine.py::__init__": 128,
     "src/llm_loop/core/loop/engine_services/archive.py::_archive_sink": 138,
@@ -1132,7 +1132,7 @@
     "src/llm_loop/core/prompt_build/stages/history_postprocess.py::run_history_postprocess": 183,
     "src/llm_loop/core/prompt_build/stages/history_projection.py::run_history_projection": 166,
     "src/llm_loop/core/prompt_build/stages/ingress_resolution.py::resolve_ingress": 133,
-    "src/llm_loop/core/prompt_build/stages/ingress_resolution.py::run_ingress_prelude": 197,
+    "src/llm_loop/core/prompt_build/stages/ingress_resolution.py::run_ingress_prelude": 210,
     "src/llm_loop/core/prompt_build/stages/tail_assembly.py::run_tail_assembly": 114,
     "src/llm_loop/core/prompt_build/stages/trace_isolation.py::run_trace_isolation": 131,
     "src/llm_loop/core/provider_transport_usage_stats.py::summarize_physical_provider_usage": 142,

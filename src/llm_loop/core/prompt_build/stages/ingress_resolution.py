@@ -16,13 +16,16 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.episode_history import (
+    FoldPressureSignal,
     collect_active_evidence_groups,
     evidence_candidate_set_digest,
     project_active_tool_working_set_with_stats,
+    provider_message_visible,
     provider_view_without_resolved_episodes,
     resolve_working_state_checkpoint,
     superseded_human_attempt_spans,
 )
+from llm_loop.core.history import is_cache_compacted_for
 from llm_loop.core.prefix_stability import observe_checkpoint
 from llm_loop.core.program_recovery import is_program_recovery_message
 from llm_loop.core.prompt import build_system_prompt
@@ -186,7 +189,23 @@ class IngressPreludeOutcome:
     base_original_indices: list
     r6_ingress_truth: Any
     working_state_text: str | None = None
+    working_set_stats: Any = None
     influence: dict[str, Any] | None = None
+
+
+def _fold_pressure_visible_chars(messages: list[Any], provider_id: str) -> int:
+    """Measured chars of the provider view used by the pressure-aware valve.
+
+    Same scope as ``build._provider_visible_chars`` (mid-compaction aware),
+    kept local to avoid a cross-package private import.
+    """
+
+    return sum(
+        len(m.content)
+        for m in messages
+        if not is_cache_compacted_for(m, provider_id)
+        and provider_message_visible(m)
+    )
 
 
 def run_ingress_prelude(
@@ -202,6 +221,7 @@ def run_ingress_prelude(
     event_append: Any,
     data_dir: str | Path | None = None,
     history_policy: Any | None = None,
+    effective_budget: int | None = None,
 ) -> IngressPreludeOutcome:
     """入口解析 → 泄漏隔离 → provider 预清洗（语义原样迁自 build.py 步D）.
 
@@ -311,11 +331,22 @@ def run_ingress_prelude(
     # The projector always keeps its hard result-count and resource-safety byte
     # valves; only the opportunistic rewrites are deferred for same-run rounds.
     _opportunistic_fold_allowed = logical_round is None or logical_round <= 1
+    # P1 pressure-aware valve: measure the real anchored provider view before
+    # projection and pass it in, so the append-only resource-safety valve folds
+    # only under real pressure instead of a static byte count. Without a usable
+    # budget the signal stays None (legacy static fallback, hard bound kept).
+    _fold_pressure: FoldPressureSignal | None = None
+    if effective_budget and int(effective_budget) > 0:
+        _fold_pressure = FoldPressureSignal(
+            chars_total=int(_fold_pressure_visible_chars(_scrub.base, provider_id)),
+            budget=int(effective_budget),
+        )
     _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(
         _scrub.base,
         preserve_group_digests=_preserve_digests,
         policy=history_policy,
         allow_opportunistic_fold=_opportunistic_fold_allowed,
+        pressure=_fold_pressure,
     )
     # 阶段A working_set 检查点（工具 working-set 投影后的 provider 视图；纯测量 fail-open）。
     observe_checkpoint(sess.session_id, provider_id, "working_set", _provider_base)
@@ -373,6 +404,7 @@ def run_ingress_prelude(
         base_original_indices=_scrub.base_original_indices,
         r6_ingress_truth=_r6_ingress_truth,
         working_state_text=_working_state_text,
+        working_set_stats=_working_set_stats,
         influence={
             "storage_messages": len(_raw_base),
             "trace_messages": len(_trace_base),
