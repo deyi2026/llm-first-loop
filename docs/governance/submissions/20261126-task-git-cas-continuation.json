@@ -8,6 +8,7 @@
       "paths": [
         "docs/governance/submissions/20261126-task-git-cas-continuation.json",
         "src/llm_loop/tools/builtin/task_git_commit.py",
+        "src/llm_loop/tools/managed_git.py",
         "src/llm_loop/tools/task_execution.py",
         "tests/unit/test_task_git_commit_tool.py",
         "tests/unit/test_task_runtime.py"
