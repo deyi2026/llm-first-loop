@@ -39,6 +39,52 @@ _WORKING_SET_PENDING_RESULT_HARD_CAP = 32
 _WORKING_SET_MIN_NET_GAIN_CHARS = 16_384
 
 
+@dataclass(frozen=True)
+class FoldPressureSignal:
+    """Measured provider-visible pressure at projection time.
+
+    Carries the caller's real byte measurement of the anchored provider view
+    (``chars_total``) against the effective context budget (``budget``). The
+    pressure-aware resource-safety valve folds pending mid-history tool results
+    only when this real pressure holds; with no signal (``None``) the static
+    byte valve keeps its legacy fallback semantics so the hard resource bound
+    is never lost.
+    """
+
+    chars_total: int
+    budget: int
+    safety_ratio: float = 0.95
+
+    @property
+    def overloaded(self) -> bool:
+        if self.budget <= 0:
+            return False
+        return self.chars_total >= int(self.budget * self.safety_ratio)
+
+
+def fold_aware_stable_fp(stable_fp: str, stats: Any) -> str:
+    """Compose the cache-gate stable fp with mid-history fold facts.
+
+    ``stable_fp`` covers only the resident prefix segment; a mid-history fold
+    rewrites already-sent messages without touching it. Composing the fold
+    boundaries/triggers into the fingerprint keeps the fp honest about the
+    actual provider view: after any fold the fp changes, so consumers no
+    longer mistake a rewritten view for an untouched stable prefix.
+    """
+
+    if stats is None:
+        return stable_fp
+    boundaries = tuple(getattr(stats, "fold_boundaries", ()) or ())
+    triggers = tuple(getattr(stats, "fold_triggers", ()) or ())
+    if not boundaries and not triggers:
+        return stable_fp
+    digest = hashlib.sha256()
+    digest.update(stable_fp.encode("utf-8"))
+    digest.update(repr(boundaries).encode("utf-8"))
+    digest.update(repr(triggers).encode("utf-8"))
+    return digest.hexdigest()
+
+
 RESOLVED_EPISODE_REF_KEY = "resolved_episode_ref"
 EPISODE_STATE_KEY = "episode_state"
 EPISODE_STATE_RESOLVED = "resolved"
@@ -820,6 +866,7 @@ def project_active_tool_working_set_with_stats(
     preserve_group_digests: tuple[str, ...] | list[str] | set[str] | frozenset[str] = (),
     policy: Any | None = None,
     allow_opportunistic_fold: bool = True,
+    pressure: FoldPressureSignal | None = None,
 ) -> tuple[list[Message], ToolWorkingSetProjectionStats]:
     """Project active-run tool results and return factual, non-prompt telemetry.
 
@@ -1001,7 +1048,24 @@ def project_active_tool_working_set_with_stats(
                     # append-only preference. Without it, a same-run prefix can
                     # grow unbounded (e.g. a few very large results) far past any
                     # provider budget long before the result-count cap fires.
-                    fold_trigger = "resource_safety_bytes"
+                    #
+                    # P1 pressure-aware gate: with a measured pressure signal the
+                    # valve folds only on real provider-visible pressure
+                    # (anchored view bytes >= budget * safety ratio). Rewriting
+                    # already-sent mid-history messages without real pressure
+                    # zeroes the provider prefix cache for nothing, so the
+                    # static byte threshold stays as the fallback only when no
+                    # budget signal is available (legacy behavior). The trigger
+                    # string carries the measured scope for recoverable evidence.
+                    if pressure is None or pressure.overloaded:
+                        if pressure is None:
+                            fold_trigger = "resource_safety_bytes"
+                        else:
+                            fold_trigger = (
+                                "resource_safety_bytes:"
+                                f"chars={pressure.chars_total};"
+                                f"budget={pressure.budget}"
+                            )
                 elif len(pending) >= hard_result_cap:
                     # Same-run tool follow-ups keep the already-sent provider prefix
                     # append-only whenever resource bounds permit. The hard result

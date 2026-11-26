@@ -19,7 +19,10 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from llm_loop.core.episode_history import provider_message_visible
+from llm_loop.core.episode_history import (
+    fold_aware_stable_fp,
+    provider_message_visible,
+)
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
@@ -47,6 +50,22 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _ingress_effective_budget(run_state: Any) -> int | None:
+    """Last measured effective context budget for the pressure-aware fold valve.
+
+    ``last_budget_info`` is refreshed per round by the engine; a missing or
+    unparseable budget yields ``None`` so the fold valve keeps its legacy
+    static fallback instead of inventing pressure.
+    """
+
+    info = getattr(run_state, "last_budget_info", None) or {}
+    try:
+        value = int(info.get("effective_budget") or 0)
+    except (TypeError, ValueError):
+        return None
+    return value or None
 
 
 def _provider_visible_chars(messages: list[Message], provider_id: str, start: int = 0) -> int:
@@ -451,6 +470,7 @@ class _BuildMixin:
             event_append=lambda *_args, **_kwargs: None,
             data_dir=self.settings.data_dir,
             history_policy=self.settings.history_policy,
+            effective_budget=_ingress_effective_budget(self._run_state()),
         )
         return build_conservative_active_run_projection(
             base=_pre.base,
@@ -491,6 +511,7 @@ class _BuildMixin:
             event_append=self._event_append,
             data_dir=self.settings.data_dir,
             history_policy=self.settings.history_policy,
+            effective_budget=_ingress_effective_budget(self._run_state()),
         )
         resolved_label = _pre.resolved_label
         provider_id = _pre.provider_id
@@ -514,7 +535,12 @@ class _BuildMixin:
         prefix_len = _asm.prefix_len
         _state = self._run_state()
         decision.budget = dict(_state.last_budget_info or {})
-        _state.cache_gate_stable_fp = _asm.stable_fp
+        # P1: the stable fp covers only the resident prefix; a mid-history fold
+        # rewrites already-sent messages. Compose fold facts into the fp so the
+        # cache gate stops mistaking a rewritten view for an untouched prefix.
+        _state.cache_gate_stable_fp = fold_aware_stable_fp(
+            _asm.stable_fp, getattr(_pre, "working_set_stats", None)
+        )
         _state.cache_gate_system_fp = _asm.system_fp
         _cache_protected_messages, _cache_protected_chars = _cache_boundary_protection(
             _state,
