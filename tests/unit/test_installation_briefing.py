@@ -532,3 +532,49 @@ def test_ingress_assembly_uses_stable_view():
     src = inspect.getsource(ingress.run_ingress_prelude)
     assert "build_stable_installation_briefing()" in src, "装配点必须调用稳定视图"
     assert "build_installation_briefing()" not in src, "常驻前缀不得回退到完整诊断视图"
+
+
+def test_multi_run_knowledge_updates_never_change_provider_prefix(tmp_path, monkeypatch):
+    """T4 隔离回归（GOAL-20261126-dce0cc32）：4–8 Run 知识更新循环，provider
+    前缀字节零漂移（目标「零知识更新导致前缀归零」的因果等价断言：provider
+    仅在前缀字节变化时打穿缓存，字节不变 ⇔ 零归零）。稳定连续调用与加权
+    命中率的 provider 实测值在统一部署验收（T7）回报，此处不承诺数字。"""
+    import hashlib
+
+    _bind_paths(tmp_path, monkeypatch)
+    now = system_local_now()
+    _append_score(tmp_path, 0.79, now.isoformat())
+    briefing._CACHE.clear()
+
+    def provider_prefix() -> str:
+        return build_system_prompt(installation_index=build_stable_installation_briefing())
+
+    run_prefixes = [hashlib.sha256(provider_prefix().encode("utf-8")).hexdigest()]
+    run_diagnostic_hashes = [hashlib.sha256(build_installation_briefing().encode("utf-8")).hexdigest()]
+
+    # 8 个 Run：交替注入知识更新（ledger/经验/方法），provider 前缀必须逐字节不变
+    for run_index in range(8):
+        if run_index % 3 == 0:
+            _append_score(tmp_path, 0.8 + 0.01 * run_index, now.isoformat(), ref=f"ref-t4-{run_index}")
+        elif run_index % 3 == 1:
+            _write(
+                tmp_path / "experiences" / f"EXPERIENCE-20261126-{run_index:03d}.md",
+                f"# 经验 {run_index}\n",
+            )
+        else:
+            _write(
+                tmp_path / "methods" / f"method-t4-{run_index}" / "METHOD.md",
+                f"---\nname: 方法 {run_index}\n---\n",
+            )
+        briefing._CACHE.clear()
+        run_prefixes.append(hashlib.sha256(provider_prefix().encode("utf-8")).hexdigest())
+        run_diagnostic_hashes.append(
+            hashlib.sha256(build_installation_briefing().encode("utf-8")).hexdigest()
+        )
+
+    assert len(set(run_prefixes)) == 1, (
+        f"知识更新 8 Run 后 provider 前缀出现字节漂移：{run_prefixes}"
+    )
+    assert len(set(run_diagnostic_hashes)) == 9, (
+        "fixture 活性：完整诊断视图应随每类知识更新变化（否则本测试无覆盖面）"
+    )
