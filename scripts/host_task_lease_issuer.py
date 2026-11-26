@@ -283,6 +283,25 @@ def _ensure_lane_gitconfig(worktree: Path) -> None:
         pass
 
 
+def _remove_lane_gitconfig_entry(worktree: Path) -> None:
+    """Roll back a freshly added allowlist entry when issuance fails or the
+    Owner declines; keeps the file format intact and re-asserts issuer-owned
+    0644. Best-effort: a missing file or IO error leaves the state as-is (the
+    next issuance deduplicates)."""
+    allowlist = _BASE / "gitconfig-safe-directories"
+    entry = f"\tdirectory = {worktree}\n"
+    try:
+        if not allowlist.is_file():
+            return
+        lines = allowlist.read_text(encoding="utf-8").splitlines(keepends=True)
+        kept = [line for line in lines if line != entry]
+        if len(kept) != len(lines):
+            allowlist.write_text("".join(kept), encoding="utf-8")
+        allowlist.chmod(0o644)
+    except OSError:
+        pass
+
+
 def _lane_snapshot(
     repo: str, workspace: str, lane_id: str, task_id: str, session_id: str,
 ) -> dict[str, Any]:
@@ -839,19 +858,23 @@ def _issue_lane_request(raw: bytes, digest: str, key: Any, eddsa: Any) -> dict[s
         _require_no_active_binding(request["owner_session_id"], datetime.now(UTC))
         return _owner_confirm(request, fingerprint)
 
-    approval = _owner_lane_approval(raw, digest, confirm)
+    # The UID462 live git re-checks inside _owner_lane_approval need a
+    # safe.directory allowlist entry (modern git ignores -c / env for
+    # safe.directory), so allowlist maintenance must precede them. The Owner's
+    # live TTY confirmation remains the trust anchor: if confirmation or any
+    # later step fails, the freshly added entry is rolled back.
+    approval_workspace = Path(str(json.loads(raw)["workspace"]))
+    _ensure_lane_gitconfig(approval_workspace)
+    try:
+        approval = _owner_lane_approval(raw, digest, confirm)
+    except (IssuerHoldError, SystemExit, OSError):
+        _remove_lane_gitconfig_entry(approval_workspace)
+        raise
     with _session_issue_lock(approval["owner_session_id"]):
         _require_no_active_binding(approval["owner_session_id"], datetime.now(UTC))
         # Check again under the publication lock; no silent adoption of a new Lane.
         _check_lane_request(json.loads(raw), datetime.now(UTC))
-        # Live snapshot as UID462 needs a protected-config trust entry for the
-        # owner-owned worktree; the ineffective -c form was removed (git >=
-        # 2.35.2 ignores safe.directory from command line and environment).
-        # The workspace path was explicitly confirmed by the Owner over the
-        # local TTY (issuance trust anchor); _ensure_lane_gitconfig additionally
-        # machine-validates it (exists, not root-owned, not world-writable)
-        # before it may enter the protected config consumed by UID462 git.
-        _ensure_lane_gitconfig(Path(str(json.loads(raw)["workspace"])))
+        _ensure_lane_gitconfig(approval_workspace)
         _create(_BASE / "private" / "approvals" / f"{approval['approval_id']}.json",
                 canonical(approval), 0o600)
         return _issue_approved(approval, key, eddsa)
