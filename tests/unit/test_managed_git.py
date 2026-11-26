@@ -193,6 +193,15 @@ def test_stale_head_and_lane_version_denied(setup_git):
     assert not git(linked, "diff", "--cached", "--name-only")
 
 
+def test_branch_drift_denied_before_git_write(setup_git):
+    _main, linked, _audit, _store, _authority, adapter, item = setup_git
+    git(linked, "switch", "-qc", "other-branch")
+    with pytest.raises(ManagedGitError, match="git_lane_branch_conflict"):
+        adapter.commit_paths(item)
+    assert git(linked, "rev-parse", "HEAD") == item.expected_head
+    assert not git(linked, "diff", "--cached", "--name-only")
+
+
 def test_git_metadata_binding_denies_retargeting(setup_git):
     _main, linked, _audit, _store, _authority, adapter, item = setup_git
     changed = GitCommitRequest(**{**item.__dict__, "expected_gitdir": str(linked / ".git")})

@@ -47,6 +47,10 @@ def active_binding(tmp_path, monkeypatch):
     (host / "trust.json").write_text("test-only fake trust")
     (host / "bindings").mkdir()
     _git(a, "init", "-q")
+    # The Lane is registered with branch="task"; modern managed_git hard-checks
+    # refs/heads/<branch> == HEAD before any write, so the fixture repo must
+    # actually sit on that branch (CI default branch differs across runners).
+    _git(a, "checkout", "-q", "-b", "task")
     (a / "source.txt").write_text("version one")
     _git(a, "add", "source.txt")
     _git(
