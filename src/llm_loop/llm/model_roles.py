@@ -61,12 +61,13 @@ def reviewer_models_configured(raw: str, legacy_raw: str = "") -> str:
     return ",".join(roles.get("reviewer", ()))
 
 
-def model_roles_for_refresh(process_raw: str) -> str:
-    """Read the operator's managed dotenv role value, not a stale startup copy.
+def _managed_dotenv_value(key: str, process_raw: str) -> str:
+    """Read one non-secret operator setting from the managed dotenv.
 
-    Only this non-secret setting is re-read; no global environment is mutated.
-    An empty or removed key disables the managed mapping. A read error leaves
-    the old mapping active. Unmanaged callers retain process-env semantics.
+    Only the named setting is re-read; no global environment is mutated. An
+    empty or removed key returns "" (the operator disabled it). A read error
+    raises so callers keep the last effective value. Unmanaged callers (neither
+    locator set) retain process-env semantics.
     """
     explicit = _raw_env("LFL_ENV_FILE").strip()
     runtime = _raw_env("LFL_RUNTIME_ROOT").strip()
@@ -76,6 +77,43 @@ def model_roles_for_refresh(process_raw: str) -> str:
     try:
         if not path.is_file():
             raise OSError("managed dotenv missing")
-        return parse_env_file(path).get("LFL_MODEL_ROLES", "")
+        return parse_env_file(path).get(key, "")
     except (OSError, UnicodeError) as exc:
         raise ValueError("model_roles_config_unreadable") from exc
+
+
+def model_roles_for_refresh(process_raw: str) -> str:
+    """Read the operator's managed dotenv role value, not a stale startup copy.
+
+    Only this non-secret setting is re-read; no global environment is mutated.
+    An empty or removed key disables the managed mapping. A read error leaves
+    the old mapping active. Unmanaged callers retain process-env semantics.
+    """
+    return _managed_dotenv_value("LFL_MODEL_ROLES", process_raw)
+
+
+def reviewer_models_for_refresh(roles_raw: str, legacy_process_raw: str) -> tuple[str, str]:
+    """Resolve the reviewer candidates for a runtime refresh.
+
+    Same precedence as :func:`reviewer_models_configured` -- the dedicated legacy
+    variable (``LFL_REVIEWER_MODELS``) wins, otherwise the explicit ``reviewer``
+    role -- but the legacy value is re-read from the operator's managed dotenv
+    exactly like the role mapping, so an edit is not shadowed by its startup copy.
+
+    Returns ``(reviewer_raw, reason)``:
+
+    * ``reason == ""``: ``reviewer_raw`` is authoritative, including ``""``,
+      which is an explicit operator revocation (nothing may review).
+    * ``reason != ""``: the configuration could not be read safely; the caller
+      must keep the last effective reviewer policy rather than revoke it.
+    """
+    try:
+        legacy = _managed_dotenv_value("LFL_REVIEWER_MODELS", legacy_process_raw)
+    except ValueError:
+        return "", "model_roles_config_unreadable"
+    if legacy.strip():
+        return legacy, ""
+    roles, error = parse_model_roles(roles_raw)
+    if error:
+        return "", error
+    return ",".join(roles.get("reviewer", ())), ""
