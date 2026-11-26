@@ -67,21 +67,45 @@ export function SessionStats({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     let alive = true;
+    let pending: AbortController | null = null;
+    let refreshAfterPending = false;
+    setStats(null);
     const load = async () => {
+      if (!alive || document.hidden || pending) return;
+      const controller = new AbortController();
+      pending = controller;
+      const deadline = window.setTimeout(() => controller.abort(), 15_000);
       try {
-        const resp = await fetch(`/api/v1/sessions/${sessionId}/stats`);
+        const resp = await fetch(`/api/v1/sessions/${sessionId}/stats`, {
+          signal: controller.signal,
+        });
         if (!resp.ok) return;
         const next = normalizeSessionStats(await resp.json());
-        if (alive) setStats(next);
+        if (alive && !controller.signal.aborted) setStats(next);
       } catch {
-        /* 端点不可用 → 静默隐藏 */
+        /* Keep the last successful statistics for this session. */
+      } finally {
+        window.clearTimeout(deadline);
+        if (pending === controller) pending = null;
+        if (refreshAfterPending) {
+          refreshAfterPending = false;
+          void load();
+        }
       }
     };
-    load();
-    const timer = window.setInterval(load, 60_000); // 60s 轮询（会话进行中刷新）
+    const visibilityChanged = () => {
+      if (document.hidden) pending?.abort();
+      else if (pending?.signal.aborted) refreshAfterPending = true;
+      else void load();
+    };
+    void load();
+    const timer = window.setInterval(load, 60_000);
+    document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
       alive = false;
+      pending?.abort();
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", visibilityChanged);
     };
   }, [sessionId]);
 

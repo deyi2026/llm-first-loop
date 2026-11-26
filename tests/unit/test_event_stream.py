@@ -169,3 +169,26 @@ def test_event_stream_reads_actual_self_eval_and_declaration_files(tmp_path):
     assert "DC-1" in decl[0]["summary"]
     assert len(ev) == 1 and ev[0]["stream"] == "self_eval"
     assert "SE-1" in ev[0]["summary"]
+
+def test_event_stream_bounded_selection_preserves_out_of_order_and_ties(tmp_path):
+    """Top-N must match the old stable two-sort behavior, not file-tail order."""
+    rows = [
+        {"ts": "2026-09-03T10:00:03", "phase": "first-tie", "session_id": "a"},
+        {"ts": "2026-09-03T10:00:01", "phase": "older", "session_id": "a"},
+        {"ts": "2026-09-03T10:00:03", "phase": "second-tie", "session_id": "a"},
+        {"ts": "2026-09-03T10:00:04", "phase": "newest", "session_id": "a"},
+        {"ts": "2026-09-03T10:00:05", "phase": "other-session", "session_id": "b"},
+    ]
+    (tmp_path / "action_trace.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8",
+    )
+    searcher = RecordSearcher(audit_dir=tmp_path)
+    selected = searcher.event_stream(streams="action_trace", session_id="a", limit=2)
+    assert [row["summary"].split()[0] for row in selected] == ["first-tie", "newest"]
+    selected = searcher.event_stream(streams="action_trace", session_id="a", limit=3)
+    assert [row["summary"].split()[0] for row in selected] == [
+        "first-tie", "second-tie", "newest",
+    ]
+    assert searcher.event_stream(streams="action_trace", limit=0) == []
+    selected = searcher.event_stream(streams="action_trace", query="second-tie", limit=1)
+    assert len(selected) == 1 and "second-tie" in selected[0]["summary"]

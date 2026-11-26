@@ -257,7 +257,23 @@ def _queue_workspace_options(engine: Any) -> dict:
                 return str(getattr(ws, "path", ""))
         return None
 
-    return {"workspace_scope": scope, "legacy_scope_resolver": _legacy_scope_resolver}
+    def _scope_provider() -> tuple[str | None, int | None]:
+        """SA-SCOPE-HOTFIX-20261125：实时读引擎当前工作区（workspace 切换
+        即时生效，队列单例不冻结动态 workspace——根治实机 q_c8a77451fdfb/
+        q_a26bb24ce757 错章 EVO worktree 缺陷）。engine.workspace_root 由
+        引擎在切换提交时更新；epoch 随切换递增，仅供入队记账（审计/追溯，
+        不作领取阻断）。调用方应在 engine.workspace_snapshot 内调用保证
+        scope/epoch 原子一致。"""
+        return (
+            str(getattr(engine, "workspace_root", "") or "") or None,
+            getattr(engine, "_workspace_epoch", None),
+        )
+
+    return {
+        "workspace_scope": scope,  # 兼容字段：provider 缺席时的退化值
+        "scope_provider": _scope_provider,
+        "legacy_scope_resolver": _legacy_scope_resolver,
+    }
 
 
 def _human_turn_queue(request: Request) -> HumanTurnQueue:
@@ -3803,7 +3819,7 @@ def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[s
     event_store = getattr(engine.session, "_event_store", None)
     if event_store is not None and getattr(event_store, "enabled", False):
         try:
-            events = event_store.read(session_id)
+            events = getattr(event_store, "read_usage_events", event_store.read)(session_id)
             for e in events:
                 if e.type != "request.usage":
                     continue
@@ -3928,8 +3944,17 @@ def session_stats(
             status_code=404,
             content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"},
         )
-    sess = engine.session.load(session_id)
-    result = _stats_for_loaded_session(engine, session_id, sess)
+    # P0 CPU fix (2026-11-26): 60s UI polling must not re-load the session and
+    # re-parse the full event history every time. Serve from the bounded scalar
+    # projection when the durable fingerprint is unchanged; recompute (single
+    # flight) only when it moved. No parsed-event list is ever retained.
+    from llm_loop.web.session_stats_cache import projection_for_engine
+
+    projection = projection_for_engine(engine)
+    result = projection.compute_and_store(
+        engine, session_id,
+        lambda: _stats_for_loaded_session(engine, session_id, engine.session.load(session_id)),
+    )
     if child_id is not None:
         if (
             not child_id.startswith("subagent_")
@@ -3938,12 +3963,15 @@ def session_stats(
             return UTF8JSONResponse(
                 status_code=404, content={"error": "child_session_not_found"},
             )
-        child = engine.session.load(child_id)
-        if child.parent_id != session_id:
+        child_stats = projection.compute_and_store(
+            engine, child_id,
+            lambda: _stats_for_loaded_session(engine, child_id, engine.session.load(child_id)),
+        )
+        # Validate parentage from the same snapshot as the returned accounting.
+        if child_stats["agent_scope"]["parent_session_id"] != session_id:
             return UTF8JSONResponse(
                 status_code=404, content={"error": "child_session_not_found"},
             )
-        child_stats = _stats_for_loaded_session(engine, child_id, child)
         result["agent_comparison"] = {
             "parent": dict(result),
             "child": child_stats,
