@@ -1,0 +1,88 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-web-performance-delivery",
+  "summary": "Prospective consolidated delivery candidate based on 0056babfc. Integrates PR131 queue scope, bounded statistics/audit reads and existing three-entry panel responsiveness fixes. No release or deployment claim.",
+  "components": [
+    {
+      "component_id": "web-runtime-and-session-statistics",
+      "paths": [
+        "docs/governance/submissions/20261126-web-performance-delivery.json",
+        "src/llm_loop/event_log/store.py",
+        "src/llm_loop/event_log/usage_projection.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/session_stats_cache.py",
+        "tests/unit/test_session_stats_cache.py",
+        "tests/unit/test_usage_event_projection.py",
+        "tests/web/test_session_stats.py",
+        "src/llm_loop/web/human_turn_queue.py",
+        "src/llm_loop/web/queue_recovery.py",
+        "tests/web/test_super_agent_concurrency.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing EventStore, session history revision and Web session statistics endpoint.",
+      "disposition": "Bound accounting-only segment cache by segment count and retained source bytes. Reuse unchanged segments, fall back to canonical reads on uncertain layouts. Cache stable scalar statistics per engine and session; isolate response decoration, single-flight cold builds, reclaim inactive locks and invalidate on transcript or event-source changes. Reuse live workspace scope stamping and dispatch checks from PR131 without altering queue ordering or idempotence. Parentage validation uses the returned statistics snapshot.",
+      "evidence": [
+        "Isolated integration: 134 Python tests passed including architecture guards, accounting, source invalidation, concurrent reads, and endpoint regressions.",
+        "Directed Pyright: 0 errors, 0 warnings; Ruff passed.",
+        "Synthetic eight-request comparison: 101.15 ms full-read baseline, 49.95 ms cold projection, 0.81 ms warm projection; not a production acceptance result.",
+        "Integrated Python regression: 76 passed on base 0056babfc, including queue concurrency and statistics/accounting."
+      ],
+      "verification_level": "Directed local verification passed; final candidate independent review, full R9, remote CI and production acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Canonical files and authorization remain unchanged. Revision failure or unstable source does not certify a cache entry; fallback is canonical accounting read. No execution or completion authority is introduced.",
+      "rollback_route": "Protected revert of the integrated runtime changes; no data migration."
+    },
+    {
+      "component_id": "bounded-audit-query-results",
+      "paths": [
+        "src/llm_loop/introspection/search.py",
+        "tests/unit/test_event_stream.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing RecordSearcher.event_stream.",
+      "disposition": "Keep only newest requested rows with stable timestamp tie order; retain canonical files and full scan/filter semantics.",
+      "evidence": [
+        "Directed event-stream tests passed, including out-of-order timestamps and ties.",
+        "Synthetic 100000-row query: identical result, peak traced Python allocations 58.67 MiB to 0.06 MiB. Full audit scan remains."
+      ],
+      "verification_level": "Directed tests and synthetic comparison passed; full R9 and production acceptance pending.",
+      "model_evidence_veto_recovery_exit": "No deletion, truncation of source records, or change to audit authority. Result limit and query semantics preserved.",
+      "rollback_route": "Revert RecordSearcher and associated test changes."
+    },
+    {
+      "component_id": "bounded-statistics-polling",
+      "paths": [
+        "webui/src/components/conversation/SessionStats.tsx",
+        "webui/src/session-stats.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web SessionStats component.",
+      "disposition": "Stop hidden-tab polling, cancel obsolete or timed-out requests, prevent overlap, retain last successful stats for current session.",
+      "evidence": [
+        "Web directed regression 5/5 passed; TypeScript passed."
+      ],
+      "verification_level": "Directed Web tests passed; full R9, CI and real browser acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Display-only polling; no write requests or execution-state decisions affected.",
+      "rollback_route": "Revert component and test changes."
+    },
+    {
+      "component_id": "three-entry-panel-responsiveness",
+      "paths": [
+        "webui/src/components/learning/KnowledgePanel.tsx",
+        "webui/src/components/learning/LearningPanel.tsx",
+        "webui/src/components/services/ServicesPanel.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/hotfix-20261126-panels.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Web API read helper and knowledge, learning, services panels.",
+      "disposition": "Compose the existing 72e5cbaf4 read timeout, cancellation, independent progressive display and polling fixes.",
+      "evidence": [
+        "Integrated Web regression: 15 passed (10 panel tests and 5 statistics tests); TypeScript passed."
+      ],
+      "verification_level": "Directed integration passed; independent review, full R9, remote CI and real browser acceptance pending.",
+      "model_evidence_veto_recovery_exit": "No write request retries or authority changes; preserve read failures and last successful data as stale.",
+      "rollback_route": "Protected revert of the five panel paths."
+    }
+  ],
+  "declarations": []
+}

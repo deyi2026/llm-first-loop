@@ -80,6 +80,7 @@ class HumanTurnQueue:
         claim_state_probe: Callable[[str, str], str] | None = None,
         workspace_scope: str | None = None,
         legacy_scope_resolver: Callable[[str], str | None] | None = None,
+        scope_provider: Callable[[], tuple[str | None, int | None]] | None = None,
     ) -> None:
         self._path = Path(data_dir) / QUEUE_FILENAME
         self._lock = threading.Lock()
@@ -97,6 +98,14 @@ class HumanTurnQueue:
         # 不变（不盖章、不过滤、不解析）。
         self._workspace_scope = str(workspace_scope) if workspace_scope else None
         self._legacy_scope_resolver = legacy_scope_resolver
+        # SA-SCOPE-HOTFIX-20261125（实机 q_c8a77451fdfb/q_a26bb24ce757 错章
+        # EVO worktree 缺陷根治）：队列单例按 data_dir 缓存可跨 workspace 切换
+        # 长寿命——构造时冻结 scope 在切换后成为"历史工作区"导致错章/错滤。
+        # scope_provider 每次盖章实时读引擎当前 (workspace_root, epoch)，单例
+        # 不再冻结动态 workspace；provider 异常 fail-closed（返回无章 → 领取
+        # 侧按 legacy/无章路径裁决）。缺省退化为构造时冻结值（遗留兼容）。
+        self._scope_provider = scope_provider
+
         # 进程启动期一次性重启恢复（live handoff 死亡 → durable queued 意图）；
         # 运行期 fresh reload 不做此重排（见 _recover_process_restart）。
         # P1-1（full_test 审查 subagent_48c95c6191a6）：构造期 load+恢复写
@@ -105,6 +114,23 @@ class HumanTurnQueue:
         # reload，恢复写全局单赢家（恢复语义不变：活性证明通过则保留 pending）。
         with self._exclusive_locked():
             self._recover_process_restart()
+
+    def _current_scope_epoch(self) -> tuple[str | None, int | None]:
+        """当前可信 (workspace_scope, epoch)：优先 scope_provider 实时读取，
+        调用方应在 engine.workspace_snapshot 内调用保证原子一致；provider
+        异常 → (None, None)（fail-closed：不盖章，交由领取侧裁决）；无
+        provider → 构造时冻结值（遗留行为不变）。"""
+        if self._scope_provider is not None:
+            try:
+                scope, epoch = self._scope_provider()
+                return (
+                    str(scope) if scope else None,
+                    int(epoch) if epoch is not None else None,
+                )
+            except Exception:  # noqa: BLE001 — 读取失败不虚构归属
+                logger.exception("queue scope_provider failed; treat as unbound")
+                return (None, None)
+        return (self._workspace_scope, None)
 
     # ------------------------------------------------------------------ 持久化
 
@@ -359,8 +385,15 @@ class HumanTurnQueue:
                 item["origin"] = str(origin)
             if origin_operation_id:
                 item["origin_operation_id"] = str(origin_operation_id)
-            if self._workspace_scope:
-                item["workspace_scope"] = self._workspace_scope
+            # SA-SCOPE-HOTFIX-20261125：动态盖章——每次入队实时取当前
+            # (scope, epoch)（provider 模式），单例跨 workspace 切换不再
+            # 错章；无 provider 退化为构造冻结值（遗留兼容）。epoch 仅记账
+            # （审计/追溯），不作领取阻断——同 owner 返回按新执行快照重验。
+            _stamp_scope, _stamp_epoch = self._current_scope_epoch()
+            if _stamp_scope:
+                item["workspace_scope"] = _stamp_scope
+            if _stamp_epoch is not None:
+                item["workspace_epoch"] = _stamp_epoch
             self._items.append(item)
             self._save()
             return self._public(item)

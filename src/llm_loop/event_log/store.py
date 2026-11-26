@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED, Event, serialize_event
+from llm_loop.event_log.usage_projection import UsageEventProjection
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class EventStore:
         self._retraction_cache: OrderedDict[str, tuple[tuple[object, ...], int, tuple[Event, ...]]] = OrderedDict()
         self._retraction_cache_max_sessions = 16
         self._retraction_cache_max_bytes = 1024 * 1024
+        self._usage_projection = UsageEventProjection()
 
     def set_rotate_manager(self, manager: Any | None) -> None:
         """接线滚动管理器（P1-1：append/run 末自动检查滚动；None 解除接线）."""
@@ -622,6 +624,7 @@ class EventStore:
         return event
 
     def _invalidate_read_cache(self, session_id: str) -> None:
+        self._usage_projection.invalidate(session_id)
         with self._read_cache_lock:
             self._read_cache.pop(session_id, None)
             self._retraction_cache.pop(session_id, None)
@@ -701,6 +704,31 @@ class EventStore:
             if (events[-1].seq if events else 0) == after_last:
                 self._store_read_cache(session_id, events, skipped=skipped)
             return events
+
+    def read_usage_events(self, session_id: str) -> list[Event]:
+        """Read only accounting events; reuse unchanged segments, not full transcripts.
+
+        The canonical replay remains the fallback for unstable/unknown layouts.
+        This projection is for display statistics, never an authorization proof.
+        """
+        session_id = _validate_session_id(session_id)
+        with self._read_cache_build_lock(session_id):
+            # One bounded retry handles a concurrent append/rotation without
+            # throwing away the already verified sealed-segment projections.
+            for _ in range(2):
+                before = self.history_source_stamp(session_id)
+                if before is None:
+                    break
+                try:
+                    paths = (self._all_segment_paths(session_id)
+                             if self._is_multi_segment(session_id) else [self._path(session_id)])
+                    events = self._usage_projection.read(session_id, paths, self._parse_line)
+                    if before == self.history_source_stamp(session_id):
+                        return events
+                except (OSError, ValueError):
+                    continue
+            return [event for event in self.read(session_id)
+                    if self._usage_projection.includes(event.type)]
 
     def read_message_retractions(self, session_id: str) -> list[Event]:
         """Read exact retraction declarations for Web pages without full replay.

@@ -1,7 +1,7 @@
 // Web V2：受管服务身份面板（desired/live/stable 三层身份可见性；TASK-005）
 // 数据源与 service_control 工具共用同一后端 composer（/api/v1/services/status）。
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchServicesStatus, type ServicesStatusInfo } from "../../core/api";
 
 function shortHead(head: string | null | undefined): string {
@@ -48,24 +48,57 @@ const cardStyle: React.CSSProperties = {
 export function ServicesPanel() {
   const [info, setInfo] = useState<ServicesStatusInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // HOTFIX-20261126（三入口性能回归）：15s 轮询防重入 + 标签隐藏暂停 + 卸载取消在途；
+  // 首屏明确 loading；失败保留最近有效身份并标记陈旧（asOf），不再冒充正常。
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [asOf, setAsOf] = useState(0);
+  const [tick, setTick] = useState(0);
+  const inFlight = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const refresh = () => {
-      void fetchServicesStatus().then((data) => {
-        if (!cancelled) {
-          setInfo(data);
-          setLoaded(true);
+    const refresh = async () => {
+      if (inFlight.current) {
+        const prev = abortRef.current;
+        if (!prev || !prev.signal.aborted) return; // 防重入：慢端点轮询不堆积
+        // 独审 P2-2：tick 重启已取消旧请求 → 立即接手，不等下一个 15s 周期
+      }
+      inFlight.current = true;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        const data = await fetchServicesStatus({ signal: controller.signal });
+        if (cancelled || controller.signal.aborted) return;
+        if (data) {
+          setInfo(data); // 保留最近有效身份：成功才覆盖
+          setErr("");
+          setAsOf(Date.now());
+        } else {
+          // 独审 P2-1：null 可能来自认证被拒/超时/网络，文案不再误诊单一原因
+          setErr("服务身份接口暂不可用（认证被拒、超时或网络异常，将自动重试）");
         }
-      });
+        setLoaded(true);
+        setLoading(false);
+      } finally {
+        if (abortRef.current === controller) {
+          inFlight.current = false;
+          abortRef.current = null;
+        }
+      }
     };
-    refresh();
-    const timer = window.setInterval(refresh, 15000);
+    void refresh();
+    const timer = window.setInterval(() => {
+      if (document.hidden) return; // 离开页面（标签隐藏）停止刷新
+      void refresh();
+    }, 15000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      abortRef.current?.abort();
     };
-  }, []);
+  }, [tick]);
 
   const deployment = info?.deployment ?? null;
   const wheel = deployment?.artifact_kind === "wheel_release";
@@ -78,6 +111,29 @@ export function ServicesPanel() {
         desired = operator 发布的期望部署 · live = 服务进程 startup manifest · stable =
         最近一次受控重启成功回执
       </p>
+      {loading && !info ? (
+        <div style={cardStyle} data-testid="services-loading">读取服务身份…</div>
+      ) : null}
+      {err ? (
+        <div style={{ ...cardStyle, color: "#d46b08" }} data-testid="services-stale">
+          ⚠ 刷新失败（{err}）
+          {info
+            ? ` — 以下为 ${asOf ? new Date(asOf).toLocaleTimeString() : "—"} 最近有效数据，已标记陈旧`
+            : " — 未获取到过有效数据"}
+          ；15s 后自动重试
+          <div style={{ marginTop: 6 }}>
+            <button
+              onClick={() => {
+                setErr("");
+                setLoading(true);
+                setTick((t) => t + 1);
+              }}
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      ) : null}
       {deployment ? (
         <div style={cardStyle}>
           <strong>desired deployment</strong>
@@ -177,7 +233,7 @@ export function ServicesPanel() {
           {info.cli_processes.uncertain > 0 ? <div>另有 {info.cli_processes.uncertain} 条身份待核验。</div> : null}
         </div>
       ) : null}
-      {loaded && !info ? <div style={cardStyle}>（服务身份接口暂不可用）</div> : null}
+      {loaded && !info && !err ? <div style={cardStyle}>（服务身份接口暂不可用）</div> : null}
     </div>
   );
 }
