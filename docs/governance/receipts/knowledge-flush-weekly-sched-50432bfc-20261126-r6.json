@@ -1,0 +1,34 @@
+{
+  "gate": "knowledge_flush",
+  "task": "定期知识资产入库（每周）",
+  "effect_id": "schedule:sched-50432bfc:6",
+  "execution_no": "6/13",
+  "repo": "~/Project/llm-first-loop-mirror",
+  "branch": "main",
+  "status": "partial_flush",
+  "flush_commit": "14a2778ad（豁免通道：docs/governance/receipts/RECEIPT-20261125-runtime-version-convergence-merge.json）",
+  "pending_flush": {
+    "reason": "lane_main_write_guard 拒绝 main 直写：3 条他人 live lane（lane-0072effa/lane-b3fd94f7/lane-68f9d936，对应 GOAL-20261126-7aa7ee3e/f5186702/74a9667b 均活跃，最近 checkpoint 2026-11-26 18:40~20:36 +0800）；主 checkout 共享，并发会话下直写有落错分支风险。豁免前缀为硬编码窄清单（lane_main_write_guard.py _EVIDENCE_COMMIT_PREFIXES：docs/governance/receipts/、docs/governance/review-receipts/、docs/verification/），知识资产路径不在内；护栏不自行放宽。",
+    "staged_and_ready": "165 张新方法卡（data/methods/*/METHOD.md）+ 57 张新经验卡 + 1 张经验卡状态修订（EXPERIENCE-20261027 active→invalid）+ 3 份 docs/receipts JSON（issue-110/111/112 review），共 226 文件已在暂存区（165+58+3；初版误写 222，勘误）且安全扫描通过",
+    "ready_command": "窗口打开后执行：git commit data/methods experiences docs/receipts -m \"knowledge: 入库 165 张方法卡与 58 条经验卡及 3 份审计回执（knowledge_flush 2026-11-26 sched-50432bfc r6，4 文件路径脱敏）\"（pathspec 提交，避开他人 staged 代码）"
+  },
+  "desensitization": {
+    "trigger": "scripts/git_security_scan.sh --staged 本地用户目录绝对路径正则拦截（逐个暴露，共 4 文件）",
+    "files": [
+      "experiences/EXPERIENCE-20261125-execute-command-通道挂死期纪律-timeout-未执行-恢复后验证产物-长任务走原生.md",
+      "experiences/EXPERIENCE-20261125-主检出暂存区停在旧树的成因-会话在-github-合并-pr-后用-git-c-镜像-update.md",
+      "experiences/EXPERIENCE-20261125-子代理与-dsh-在本会话不可用时-独立内容审稿改走-rule-ai-28-的-review-adm.md",
+      "experiences/EXPERIENCE-20261126-sandbox-跑-webui-vitest-现行姿势-tmpdir-重定向为主修复-vitest.md"
+    ],
+    "action": "正文/evidence 中的本地用户绝对路径前缀改写为 ~/（仓库既有惯例）",
+    "verified": "重跑扫描通过（262 个文件无敏感/错误内容），豁免提交另过扫描（1 文件）"
+  },
+  "excluded_from_commit": {
+    "reason": "他人 staged 在途代码与当日在途文件不属于知识资产批次（沿用 r4 口径，禁用 git add -A）",
+    "paths_summary": "他人 staged：.env.example、scripts/host_task_lease_issuer.py、src/ 20 文件、tests/ 19 文件、webui/ 2 文件、docs/ 9 份 staged 删除（DESIGN-20261125、governance LANE-TASK-LEASE-ENTRY、submissions 7 份）；未跟踪在途：.ctp-scratch/、.local/、examples/workbuddy-agent-teams/、scripts/verify_evo_20261126_gate.py、src/llm_loop/introspection/session_wake.py、tests/unit/test_session_wake.py"
+  },
+  "external_side_effects": "无（仅本地 git；未 push、未发布；批次随下一次 publish 进入 release 的约定待主体合并 main 后生效）",
+  "precheck": "本次执行前核对：r5 无入库 commit 与回执（当期无新批次，仅核对）；本批次全部为 r4（2026-11-12）之后新增，动作未重复执行",
+  "followups": "已提交演进建议：为纯新增知识资产路径（data/methods/、experiences/ 的纯新增提交形态）申请窄豁免，供人工审批；后续定时执行（第 7 次）将检查 pending_flush 批次并重试",
+  "recorded_at": "2026-11-26T21:00:20+0800"
+}

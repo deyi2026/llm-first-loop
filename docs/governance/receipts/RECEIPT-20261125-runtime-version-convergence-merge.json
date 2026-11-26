@@ -1,0 +1,59 @@
+{
+  "gate": "merge",
+  "goal_id": "3be163df-8bec-4d03-adce-178336c3f9a4",
+  "goal_note": "external MCP-side goal id; not present in LFL data/audit/goals.jsonl (recorded verbatim as instructed)",
+  "branch": "feat/runtime-version-convergence-20261124",
+  "worktree": ".worktrees/runtime-version-convergence-20261124",
+  "base_main_sha": "4f11570557842f4b1f180f3035fa144c6752f5cc",
+  "head_sha": "16364c96fc72e864355c6f49c7cc38479251fb50",
+  "merge_mode": "merge",
+  "merge_commit": "843eeeadfaff0fd0a0ededd33da44b7fab1709b4",
+  "main_sha_after": "843eeeadfaff0fd0a0ededd33da44b7fab1709b4",
+  "branch_disposition": "retained on origin (PR 120 merged; branch not deleted)",
+  "pull_request": "https://github.com/deyi2026/llm-first-loop/pull/120",
+  "commits": [
+    "49a25b2874386c0e52cf57c531b8ea28c20b8df3",
+    "d6bf7a9ad5dd5ffbca54714bc5003e8711107599",
+    "7b140cc3f2a132fafda7d5694a5ac6a461bcc4d9",
+    "b8679966eb1bc7879638ac5f64cf3d533f1cdded",
+    "83773b066748f89255db60f3a2f9b679cf47c6dc",
+    "80e73a278747d99ff798d06111ebb470593704d1",
+    "3e15ea05e27ea4d58613f92acd1d7f05dacd8349",
+    "8effd543ac73ab1eff2d6d803e1751e66a3e36be",
+    "cbc3813e5edeb78e750f068e699ed23c9c4eb552",
+    "b9fc51508183141d546b22ef6f6c7ebf23957ffc",
+    "b1fb5d4e07e62b14ce3968d34b5b7ffff7b7c4c7",
+    "e96512028c05458bdadcd7fdd2fc02ec58f66fcc",
+    "7848334ef2b947cf41354e4ec6818378dfd3fef6",
+    "42df34f44826404bf5a0d3763a10e3b92ea10c97",
+    "16364c96fc72e864355c6f49c7cc38479251fb50"
+  ],
+  "verification": {
+    "independent_merge_reviews": [
+      {"child_id": "subagent_c0a5b80a5916", "model": "glm/glm-5.4", "head": "42df34f44826404bf5a0d3763a10e3b92ea10c97", "verdict": "REVISE", "p0": 0, "p1": 1, "p1_summary": "manifest frozen in the candidate still declared the final review and full gate as pending"},
+      {"child_id": "subagent_f777e99646b8", "model": "glm/glm-5.4", "head": "16364c96fc72e864355c6f49c7cc38479251fb50", "verdict": "failed_no_verdict", "detail": "output budget exhausted (finish_reason=length); no verdict"},
+      {"child_id": "subagent_70a6a11cfd94", "model": "glm/glm-5.3-flash", "head": "16364c96fc72e864355c6f49c7cc38479251fb50", "verdict": "PASS", "p0": 0, "p1": 0}
+    ],
+    "code_gate": {"kind": "full_test", "child_id": "subagent_cbc9c2a81af6", "head": "42df34f44826404bf5a0d3763a10e3b92ea10c97", "verdict": "PASS", "reviewer_model": "glm/glm-5.3-flash", "candidate_sha256": "39cd798d4bed76e576e6347480cf21cdffb55eb4a90087651670a2741e2ec8eb"},
+    "push_gate": [
+      {"kind": "git_push", "child_id": "subagent_1b01c5cbc327", "head": "42df34f44826404bf5a0d3763a10e3b92ea10c97", "verdict": "PASS"},
+      {"kind": "git_push", "child_id": "subagent_be5744a49aec", "head": "16364c96fc72e864355c6f49c7cc38479251fb50", "verdict": "PASS"}
+    ],
+    "original_full_gate": {"command": "bash scripts/ci_gate.sh", "job_id": "job-328a587e80b349f6ad3d", "head": "42df34f44826404bf5a0d3763a10e3b92ea10c97", "exit": 0, "conclusion": "clean pass", "xdist": "16944 passed, 0 failed, 206 skipped, 3 xfailed", "log_sha256": "c92673d600f2d70e01754b7c50e9337fb5c0d16091e3e3dedf9c2c0f59348ed9", "earlier_failed_runs": [{"job_id": "job-bb78ab9f3df4432daf82", "head": "8effd543ac73ab1eff2d6d803e1751e66a3e36be", "exit": 1}, {"job_id": "job-2e780747088b4cd7b97d", "head": "b1fb5d4e07e62b14ce3968d34b5b7ffff7b7c4c7", "exit": 1}]},
+    "remote_ci": {"pull_request": 120, "run_42df34f44": 45461717283, "run_16364c96f": 45465450841, "result": "all required checks passed", "main_ci_after_merge": {"run": 45501951417, "head": "843eeeadfaff0fd0a0ededd33da44b7fab1709b4", "conclusion": "success"}},
+    "architecture_submission": {"manifest": "docs/governance/submissions/20261124-runtime-version-convergence.json", "a5_local": "PASS changed_paths=29", "a5_remote": "pass"},
+    "privacy_scan": "scripts/git_security_scan.sh --range origin/main HEAD exit 0 (115 files)",
+    "verify_receipt": {"request_id": "ESC-20261125-37474920", "verify_ref": "lane-5e376294:4f115705", "issued_by": "Host after human approval in the logged-in LFL web panel"},
+    "queue": {"queue_id": "mq-0ce66466", "s0": "pass (base_main_current, merge_tree_clean, paths_disjoint, verify_covers_base)", "status": "merged"}
+  },
+  "guard_ledger_relaxations": [
+    {"file": "tests/guards/function_size_baseline.json", "commit": "b9fc51508183141d546b22ef6f6c7ebf23957ffc", "detail": "raise compose_service_identity_view 91->94 and run_stream 311->316; register cli.py::main 139 and terminal/shell.py::interactive_session 181; tighten two stale PR118 values"},
+    {"file": "tests/fixtures/runtime_env_access_baseline.json", "commit": "7848334ef2b947cf41354e4ec6818378dfd3fef6", "detail": "two signatures in cli_reentry.py::reentry_argv (bulk env copy; read LFL_CLI_REENTRY_ATTEMPT), relaxations=true"}
+  ],
+  "known_p2": [
+    "RuntimeConvergenceStrip.tsx single-fetch fallback never clears its stale flag (live only when the shared coordination poller is absent)",
+    "cli_reentry.reentry_argv wheel_release branch has no dedicated test (source_checkout covered)"
+  ],
+  "receipt_pending_origin_push": "this receipt is committed on local main; origin/main push is gated by the workspace knowledge-flush check (85 method cards and 17 experiences pending from other sessions) and by the RULE-AI-28(3) push review; bundle with the next main push window",
+  "deployment": "not requested by this receipt; unified deployment is coordinated with the main coordinator (60178c68-fce2-4139-ab20-8de4cd35fa3c)"
+}
