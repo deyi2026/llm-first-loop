@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""EVO-20261126-549f940c: score reviewer probes from the persisted child sessions.
+
+Usage: eval_probes.py label=child_id ...
+Arm and candidate are derived from the task file the child was told to read
+(authoritative), never from the caller's label. The host-side gate column is
+the production _parse_review of the findings-contract source.
+"""
+import json
+import pathlib
+import sys
+
+W = pathlib.Path.cwd()  # run from the workspace root
+D = W / ".tmp-ci" / "review-549f940c"
+SESS = W / "data" / "sessions" / ("--" + str(W)[1:].replace("/", "-") + "--")  # workspace slug
+sys.path.insert(0, str(W / ".worktrees/evo-549f940c-merge-review-findings-20261126/src"))
+from llm_loop.introspection.host_verify_issuer import HostVerifyError, _parse_review  # noqa: E402
+
+FENCE = "```"
+
+
+def extract(raw):
+    raw = raw.strip()
+    try:
+        return json.loads(raw)
+    except ValueError:
+        pass
+    marker = FENCE + "json\n"
+    if raw.startswith(marker) and raw.count(FENCE) == 2 and raw.endswith("\n" + FENCE):
+        try:
+            return json.loads(raw[len(marker): -len(FENCE) - 1].strip())
+        except ValueError:
+            return None
+    return None
+
+
+def host_gate(text, meta):
+    try:
+        _parse_review(text, lane_id=meta["lane_id"], base=meta["base"], head=meta["head"])
+    except HostVerifyError as exc:
+        return str(exc)
+    return "accept"
+
+
+def covers(finding, keys):
+    text = " ".join(str(finding.get(k, "")) for k in ("summary", "evidence")).lower()
+    return any(key in text for key in keys)
+
+
+def score(label, child_id):
+    path = SESS / f"{child_id}.json"
+    if not path.exists():
+        return {"label": label, "child_id": child_id, "error": "session_file_missing"}
+    sess = json.loads(path.read_text(encoding="utf-8"))
+    msgs = sess.get("messages") or []
+    first_user = next((m for m in msgs if m.get("role") == "user"), {})
+    task_text = str(first_user.get("content") or "")
+    arm = candidate = None
+    for name in ("task_A_revise", "task_B_revise", "task_A_pass", "task_B_pass"):
+        if name + ".txt" in task_text:
+            arm, candidate = name[5], name[7:]
+            break
+    tools = [tc["function"]["name"] for m in msgs for tc in (m.get("tool_calls") or [])]
+    last = next((m for m in reversed(msgs) if m.get("role") == "assistant"), {})
+    final = str(last.get("content") or "")
+    row = {
+        "label": label, "child_id": child_id, "session_status": sess.get("status"),
+        "model": sess.get("model_override"), "arm": arm, "candidate": candidate,
+        "messages": len(msgs), "tool_calls": len(tools), "tools": sorted(set(tools)),
+        "final_chars": len(final),
+    }
+    if arm is None:
+        row["error"] = "task_file_not_identified"
+        return row
+    meta = json.loads((D / "candidates.json").read_text(encoding="utf-8"))[f"{arm}_{candidate}"]
+    payload = extract(final)
+    row["json_ok"] = isinstance(payload, dict)
+    if not isinstance(payload, dict):
+        row["final_head"] = final[:300]
+        return row
+    findings = payload.get("findings", [])
+    row.update({
+        "identity_ok": all(payload.get(k) == v for k, v in (
+            ("gate", "merge"), ("lane_id", meta["lane_id"]),
+            ("base_sha", meta["base"]), ("head_sha", meta["head"]))),
+        "verdict": payload.get("verdict"), "p0": payload.get("p0"), "p1": payload.get("p1"),
+        "has_findings_key": "findings" in payload, "findings_n": len(findings) if isinstance(findings, list) else None,
+        "findings_present": isinstance(findings, list) and bool(findings),
+    })
+    expected = "REVISE" if candidate == "revise" else "PASS"
+    row["verdict_correct"] = payload.get("verdict") == expected
+    if isinstance(findings, list):
+        sev = [str(f.get("severity")) for f in findings if isinstance(f, dict)]
+        row["p0_entries"], row["p1_entries"] = sev.count("P0"), sev.count("P1")
+        row["counts_ok"] = (
+            row["p0_entries"] == payload.get("p0") and row["p1_entries"] == payload.get("p1")
+            and (payload.get("verdict") != "PASS" or not findings)
+        )
+        row["fields_ok"] = all(
+            isinstance(f, dict) and isinstance(f.get("path"), str) and f.get("path")
+            and (f.get("line") is None or type(f.get("line")) is int)
+            and isinstance(f.get("summary"), str) and f.get("summary").strip()
+            and isinstance(f.get("evidence"), str) and f.get("evidence").strip()
+            for f in findings
+        )
+        if candidate == "revise":
+            auth = [f for f in findings if isinstance(f, dict) and str(f.get("path", "")).endswith("auth.py")]
+            row["covers_auth_bypass"] = any(
+                covers(f, ("or true", "always", "bypass", "恒真", "绕过", "compare_digest")) for f in auth)
+            row["covers_path_traversal"] = any(
+                covers(f, ("commonpath", "traversal", "escape", "realpath", "permission", "越界", "目录穿越", "路径"))
+                or f.get("line") in range(13, 19) for f in auth)
+            row["covers_removed_tests"] = any(
+                str(f.get("path", "")).endswith("test_auth.py") or covers(f, ("test", "测试")) for f in findings)
+    else:
+        row["counts_ok"] = row["fields_ok"] = False
+    row["host_gate_new_code"] = host_gate(final, meta)
+    row["final_text"] = final
+    return row
+
+
+def main(argv):
+    rows = [score(*arg.split("=", 1)) for arg in argv]
+    (D / "probe_results.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    keys = ("label", "model", "arm", "candidate", "session_status", "tool_calls", "json_ok", "identity_ok",
+            "verdict", "verdict_correct", "p0", "p1", "findings_n", "counts_ok", "fields_ok", "host_gate_new_code",
+            "covers_auth_bypass", "covers_path_traversal", "covers_removed_tests", "error")
+    for r in rows:
+        print(json.dumps({k: r[k] for k in keys if k in r}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

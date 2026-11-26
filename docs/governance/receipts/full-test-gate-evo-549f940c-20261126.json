@@ -1,0 +1,85 @@
+{
+  "schema": "rule28-full-test-gate/v1",
+  "evolution_id": "EVO-20261126-549f940c",
+  "goal_id": "GOAL-20261126-282a0162",
+  "lane_id": "lane-782fa22d",
+  "branch": "fix/merge-review-findings-549f940c-20261126",
+  "worktree": ".worktrees/evo-549f940c-merge-review-findings-20261126",
+  "candidate_head": "262ebcaea92648cd1f34e8bb2995738a94957fea",
+  "base_main": "2f1d680964cb20aab9cc2b1bc25076825e8941f1",
+  "stacked_on": {
+    "lane_id": "lane-ffb64ade",
+    "evo_id": "EVO-20261125-66cb3b21",
+    "head": "f8e9f5a3de7b6423f64ecd197529ce510a2d4e16",
+    "merged_via": "PR #132，合并提交 2f1d680964cb20aab9cc2b1bc25076825e8941f1（2026-11-26 10:01）"
+  },
+  "reviewer_admission": {
+    "kind": "full_test",
+    "scope": "tree",
+    "command": "bash scripts/ci_gate.sh",
+    "candidate_sha256": "8d163a128060f133b552a85ea3d88bc36819ffcec72f6ee53c4605d1014dfe55",
+    "reviewer_model": "glm/glm-5.3-flash",
+    "child_id": "subagent_5bdbf011955c",
+    "qualification": "PASS",
+    "pass_observed_at": "2026-11-26T10:05:27+08:00",
+    "note": "合并 origin/main 之前对 b8c8a48c1 的另一轮审查 subagent_769dc9547e9b 也 PASS，但合并后树已变化，未使用其资格"
+  },
+  "full_test": {
+    "command": "bash scripts/ci_gate.sh",
+    "job_id": "job-097b4c55c1af43c4a01b",
+    "started_at": "2026-11-26T10:05:27+08:00",
+    "terminal_observed_at": "2026-11-26T10:21:11+08:00",
+    "exit_code": 0,
+    "ruff": {
+      "status": "PASS",
+      "historical": 67,
+      "current": 27,
+      "new": 0,
+      "resolved": 40,
+      "changed_file_diagnostics": 0
+    },
+    "pyright": {
+      "status": "PASS",
+      "historical": 45,
+      "current": 7,
+      "new": 0,
+      "resolved": 38,
+      "changed_file_diagnostics": 0
+    },
+    "tier0": {
+      "passed": 341,
+      "skipped": 2,
+      "deselected": 17004,
+      "warnings": 7,
+      "seconds": 41.96
+    },
+    "xdist_parallel": {
+      "passed": 17107,
+      "skipped": 206,
+      "xfailed": 3,
+      "warnings": 33,
+      "seconds": 737.28
+    },
+    "serial_signal": {
+      "passed": 1,
+      "deselected": 51,
+      "seconds": 14.22
+    },
+    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+    "evidence_ref": "evidence://v1/6717a74e8ea04046ff5ade4f7d0e20c6a0136a17832e7f73e228a56b7b6d1e08"
+  },
+  "receipts": {
+    "rule35": "docs/governance/receipts/evo-549f940c-rule35-bidirectional-20261126.md",
+    "probe_results": "docs/governance/receipts/evo-549f940c-probe-results-20261126.json",
+    "gen_tasks": "docs/governance/receipts/evo-549f940c-gen-tasks-20261126.py.txt",
+    "eval_probes": "docs/governance/receipts/evo-549f940c-eval-probes-20261126.py.txt"
+  },
+  "notes": [
+    "候选 262ebcaea = b8c8a48c1（ecc9d64fd 代码+测试、b8c8a48c1 回执）合入 origin/main 2f1d6809；相对 b8c8a48c1 只多 lane-ffb64ade 的两份文档。",
+    "本 lane 叠在 lane-ffb64ade（EVO-20261125-66cb3b21）之上；该 lane 已于 PR #132 合入 main。",
+    "全量门禁启动时另一会话的门禁处于 retry 阶段，两者有短时并发；本次 exit 0，没有出现 lane-ffb64ade 第一次门禁那类 git 128 红条。",
+    "单元层：tests/unit/test_host_verify_issuer.py 83 passed（新增 14 个参数化用例）；审查任务契约探针与弱模型对照见 evo-549f940c-rule35-bidirectional-20261126.md。",
+    "push 审查、独立合并审查、人工签发 verify_ref、远端 CI、受管部署与宿主重启后的活体验证：未完成。"
+  ],
+  "previous_runs": []
+}

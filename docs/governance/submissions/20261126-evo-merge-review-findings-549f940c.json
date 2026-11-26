@@ -1,0 +1,66 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-evo-merge-review-findings-549f940c",
+  "summary": "EVO-20261126-549f940c（GOAL-20261126-282a0162 / lane-782fa22d；人工 2026-11-26 08:07 经 web 面板批准，human_exec_override=true、executor=ai）：合并审查 REVISE 无正文的缺口。merge_review_start 的审查子代理只答一次且不可追问，旧任务契约只要求 gate/verdict/p0/p1/lane_id/base_sha/head_sha 七个键，REVISE 时工程侧只拿到计数。修法：(1) 审查任务文本加 findings 契约（REVISE 每条 P0/P1 一个对象：severity/path/line/summary/evidence，条数须等于 p0/p1；PASS 省略或空数组）；(2) 宿主签发路径 _parse_review 新增一条：PASS 携带任何 findings 或非数组值一律拒（review_pass_with_findings），既有错误码与判定顺序不变；(3) merge_review_start 回执加一句提示。不新增闸、不放宽任何闸、不改人工授权环节、不开放追问通道、不新增工具。未采纳建议中的方案 1（审查者只读、没有写工具）与方案 3（续话会改变 review_isolated 语义）；方案 2 的宿主侧校验只落在签发路径，REVISE 的 findings 不经宿主解析。叠放关系：基于 lane-ffb64ade 的 a749d101b，已合入其 PR #132 之后的 origin/main。实施=a414aed7。如实记录：push 审查、独立合并审查终态、人工签发的 verify_ref、合入 main、远端 CI 终态、受管部署与宿主重启后的活体验证在本清单撰写时均未完成，以后续回执为准，不在此声称通过。",
+  "components": [
+    {
+      "component_id": "host-verify-issuer-merge-review-findings",
+      "paths": [
+        "src/llm_loop/introspection/host_verify_issuer.py",
+        "tests/unit/test_host_verify_issuer.py",
+        "docs/governance/receipts/evo-549f940c-rule35-bidirectional-20261126.md",
+        "docs/governance/receipts/evo-549f940c-gen-tasks-20261126.py.txt",
+        "docs/governance/receipts/evo-549f940c-eval-probes-20261126.py.txt",
+        "docs/governance/receipts/evo-549f940c-probe-results-20261126.json",
+        "docs/governance/receipts/full-test-gate-evo-549f940c-20261126.json",
+        "docs/governance/submissions/20261126-evo-merge-review-findings-549f940c.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-merge-review-findings-549f940c",
+      "evidence": [
+        "判定实现：start_review 的审查任务文本加 findings 契约——verdict 为 REVISE 时必须附 findings 数组，每条 P0、每条 P1 一个对象（severity、path、line、summary、evidence），'P0' 条数等于 p0、'P1' 条数等于 p1，P2 可选不计数；PASS 省略 findings 或给空数组。_parse_review 在原有校验之后新增一条：findings 缺省或为空数组才接受，否则 HostVerifyError(review_pass_with_findings)。既有错误码与判定顺序不变。merge_review_start 的回执加一句提示。",
+        "RULE-AI-35 实测（代码终态 ecc9d64fd，回执 docs/governance/receipts/evo-549f940c-rule35-bidirectional-20261126.md §3）：应拦=PASS 携带 findings（P0/P1/P2 条目、字符串条目、字符串、null、对象）在请求签发与人工批准两处都被拒且无回执文件；应放=PASS 缺省或 findings=[] 照常签发；REVISE 带 findings 仍不可签发。tests/unit/test_host_verify_issuer.py 83 passed（原有 69 条不变，新增 14 条）。",
+        "审查任务契约探针（回执 §4，结论原文与评分见 docs/governance/receipts/evo-549f940c-probe-results-20261126.json）：glm-5.3 在旧任务文本下对必 REVISE 候选给 REVISE p0=2 p1=1、无 findings；在新任务文本下给 REVISE p0=2 p1=1 加 3 条 findings，逐条定位三处埋点；新任务文本下干净候选给 PASS、findings=[]，新宿主码接受。弱模型 qwen3.8-flash-next：A 臂 3 个、B 臂 4 个，JSON 有效与结论全对，B 臂 findings 4/4 齐全；身份字段 A 3/3、B 3/4。"
+      ],
+      "verification_level": "unit_83_passed_in_test_host_verify_issuer_including_14_new_parametrized_cases_plus_reviewer_prompt_probes_on_glm_5_3_and_weak_model_plus_full_ci_gate_exit0_at_head_262ebcaea_after_merging_main_2f1d6809__push_and_merge_review_and_host_restart_live_verification_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：有——审查子代理的结论本身就是模型输出；宿主只机械校验结构与计数，不判定 finding 文本的对错。recovery：任一审查发现否决即回退本组件提交并重走闸链；exit：revert 并重启宿主后，审查任务文本回到不带 findings 契约的旧版（REVISE 又只剩计数），签发路径回到不检查 findings 的旧行为。本文件是宿主进程内模块，运行中的宿主须重启后才加载新任务文本。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务；审查子代理无状态，无数据迁移。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-merge-review-findings-549f940c",
+      "g1": {
+        "necessity": "合并审查子代理只答一次且不可追问，旧任务契约不要求 findings，REVISE 时工程侧只拿到 P0/P1 计数，只能靠自查去猜审查者的关注点；2026-11-26 lane-27aa2dc0 的一次 REVISE 就是这样（P1=1 无正文）。人工批准的 EVO-20261126-549f940c 范围：让 REVISE 带回每条 P0/P1 的位置与依据，不放宽任何闸、不改人工授权环节。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：HostVerifyAuthority.start_review（审查任务文本）与 _parse_review（签发路径校验）；人工授权=EVO-20261126-549f940c 的 web 面板批准（2026-11-26 08:07，human_exec_override=true）。",
+        "relationship": "reuse",
+        "non_duplication": "不新增闸、不新增工具、不新增放行通道：只给既有审查任务加一项输出契约，并让签发路径多拒一种自相矛盾的结论（PASS 带 findings）。人工签发 verify_ref、ESC 审批、review_isolated 隔离、TTL、lane/base/head 绑定均不变。与 lane-0072effa（EVO-20261125-120c7dd9，改审查者模型选择）同文件但职责不重叠。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦 / 应放实测（代码终态 ecc9d64fd）：应拦=PASS 携带 findings 在请求签发与人工批准两处都被拒且无回执文件；应放=PASS 缺省或 findings=[] 照常签发；REVISE 带 findings 仍不可签发。83 passed。用例见 docs/governance/receipts/evo-549f940c-rule35-bidirectional-20261126.md §3。",
+          "审查任务契约探针：glm-5.3 旧任务文本 REVISE 无 findings；新任务文本 REVISE 加 3 条 findings 定位全部埋点；新任务文本 PASS 候选 findings=[]。弱模型 A/B 无劣化。见 docs/governance/receipts/evo-549f940c-rule35-bidirectional-20261126.md §4、§5。",
+          "本机全量门禁：bash scripts/ci_gate.sh 在 262ebcaea926 上（10:05–10:21，job-097b4c55c1af43c4a01b）exit 0；xdist 17107 passed / 206 skipped / 3 xfailed in 737.28s，serial_perf 通过（门禁终判行为全链路通过；该阶段逐项计数未从输出中摘录，完整输出见 evidence_ref），serial_signal 1 passed，tier0 341 passed / 2 skipped，R9 ruff 与 pyright 均 PASS（new=0）。门禁之后到 PR head 之间只有文档提交（本回执与 A.5 清单），不再动源码与测试。",
+          "RULE-AI-28 审查回执：full_test 审查 PASS（child subagent_5bdbf011955c，candidate 8d163a12…，tree scope，10:05）；push 审查与独立合并审查待完成。",
+          "未完成项（如实记录）：push 审查、PR 与远端 CI 终态、独立合并审查终态、人工签发的 verify_ref、合入 main、受管部署与宿主重启后的活体验证——以后续回执为准，不在此声称通过。"
+        ],
+        "recovery_or_reason": "应拦输入有逐条对应用例，任一审查发现否决即 revert 对应组件提交并重走闸链；置信度来自定向测试、全量门禁与独立审查，而非自述。已知边界：证据层级是宿主签发路径的本地实测加探针，真实入口（merge_review_start）的活体验证待部署后进行；REVISE 的 findings 不经宿主解析，审查者若不附 findings 只能由父代理从结论 JSON 直接看出。host_verify_issuer.py 属宿主进程内模块，运行中的宿主须重启后才加载新任务文本。"
+      },
+      "g4": {
+        "rollback": "git revert 控制组件提交并重启宿主服务，即恢复『审查任务不带 findings 契约、签发路径不检查 findings』的旧行为。无状态、无数据迁移。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base 2f1d680964cb20aab9cc2b1bc25076825e8941f1 --head HEAD 严格 PASS（本清单落盘后本机复核，结果记入 PR 描述）",
+          "本机全量门禁：bash scripts/ci_gate.sh 在 262ebcaea926 上（10:05–10:21，job-097b4c55c1af43c4a01b）exit 0；xdist 17107 passed / 206 skipped / 3 xfailed in 737.28s，serial_perf 通过（门禁终判行为全链路通过；该阶段逐项计数未从输出中摘录，完整输出见 evidence_ref），serial_signal 1 passed，tier0 341 passed / 2 skipped，R9 ruff 与 pyright 均 PASS（new=0）。门禁之后到 PR head 之间只有文档提交（本回执与 A.5 清单），不再动源码与测试。",
+          "RULE-AI-28：full_test 审查 PASS；push 审查与独立合并审查待完成",
+          "远端 CI（含 A.5）：待完成（lane-ffb64ade 已于 PR #132 合入 main 后，本 PR 区间只剩本 lane 的改动）",
+          "独立合并审查终态与人工签发的 verify_ref：待完成",
+          "宿主重启后活体验证（待做）：必 REVISE 的真实 lane 候选经 merge_review_start 后，子代理结论 JSON 的 findings 逐条给出 P0/P1 的位置与依据；干净候选 PASS 且 findings 为空或缺省，verify_receipt_request 与人工签发流程不变"
+        ]
+      }
+    }
+  ]
+}
