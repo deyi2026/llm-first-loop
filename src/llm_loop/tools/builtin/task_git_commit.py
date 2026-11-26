@@ -24,7 +24,7 @@ from llm_loop.tools.managed_git import (
     ManagedGitError,
     _git_metadata,
 )
-from llm_loop.tools.task_execution import TrustedTaskExecution
+from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
 
 
 class TaskGitCommitTool:
@@ -126,20 +126,24 @@ class TaskGitCommitTool:
                 lock_dir=lock_dir,
                 protected_roots=task.protected_roots,
             )
+            git_cas = task.git_cas
             receipt = adapter.commit_paths(
                 GitCommitRequest(
                     lease_id=task.lease_id,
                     capability=request,
                     worktree=worktree,
-                    expected_head=task.expected_head,
-                    expected_lane_version=task.lane_version,
+                    expected_head=git_cas[1],
+                    expected_lane_version=git_cas[0],
                     expected_gitdir=gitdir,
                     expected_common_dir=common,
                     paths=tuple(paths),
                     message=message,
                 )
             )
-        except ManagedGitError as exc:
+            task._advance_git_cas(
+                git_cas, new_version=receipt.lane_version, new_head=receipt.new_head,
+            )
+        except (ManagedGitError, TaskExecutionError) as exc:
             return self._fail(exc.reason_code)
         except (OSError, ValueError) as exc:
             return self._fail(f"task_git_preflight_unavailable:{type(exc).__name__}")

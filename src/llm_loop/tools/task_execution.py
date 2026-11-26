@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from llm_loop.core.run_context import (
     current_session_id,
@@ -59,6 +59,37 @@ class TrustedTaskExecution:
     expected_head: str
     protected_roots: tuple[str, ...]
     task_state_validator: Callable[[], None]
+    _git_cas: tuple[int, str] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_git_cas", (self.lane_version, self.expected_head))
+
+    @property
+    def git_cas(self) -> tuple[int, str]:
+        """One immutable CAS snapshot shared by copied tool contexts in this Run."""
+        return self._git_cas
+
+    def _advance_git_cas(
+        self, previous: tuple[int, str], *, new_version: int, new_head: str,
+    ) -> None:
+        """Advance only from this Run's successful managed Git receipt.
+
+        Never refresh from an arbitrary Lane or Git HEAD. The adapter serializes
+        commits and updates the Lane with CAS before returning its receipt. A
+        single tuple replacement preserves the pair across copied ContextVars.
+        Signed identity, resources and revision remain frozen.
+        """
+        if (
+            current_task_execution.get() is not self
+            or current_session_id.get() != self.owner_session_id
+            or self._git_cas != previous
+            or new_version != previous[0] + 1
+            or new_head == previous[1]
+            or len(new_head) != 40
+            or any(char not in "0123456789abcdef" for char in new_head)
+        ):
+            raise TaskExecutionError("git_effect_committed_context_sync_failed")
+        object.__setattr__(self, "_git_cas", (new_version, new_head))
 
     def authorize_app(
         self,
@@ -88,14 +119,14 @@ class TrustedTaskExecution:
             parent_scope = current_write_scope.get()
             if parent_scope is not None and parent_scope.declared:
                 raise TaskExecutionError("task_parent_scope_requires_precise_compilation")
+        git_cas = self.git_cas
         lane = self.lanes.get(self.lane_id)
         if (
             not lane
             or lane.get("status") != "active"
             or lane.get("goal_id") != self.goal_id
             or lane.get("owner_session_id") != self.owner_session_id
-            or lane.get("version") != self.lane_version
-            or lane.get("head_sha") != self.expected_head
+            or (lane.get("version"), lane.get("head_sha")) != git_cas
         ):
             raise TaskExecutionError("task_lane_cas_conflict")
         worktree = os.path.realpath(str(lane.get("worktree") or ""))
@@ -118,7 +149,7 @@ class TrustedTaskExecution:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise TaskExecutionError("task_git_head_unavailable") from exc
-        if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+        if observed.returncode != 0 or observed.stdout.strip() != git_cas[1]:
             raise TaskExecutionError("task_git_head_cas_conflict")
         protected = tuple(os.path.realpath(p) for p in self.protected_roots)
         if (
@@ -181,14 +212,14 @@ class TrustedTaskExecution:
         parent_scope = current_write_scope.get()
         if parent_scope is not None and parent_scope.declared:
             raise TaskExecutionError("task_parent_scope_requires_precise_compilation")
+        git_cas = self.git_cas
         lane = self.lanes.get(self.lane_id)
         if (
             not lane
             or lane.get("status") != "active"
             or lane.get("goal_id") != self.goal_id
             or lane.get("owner_session_id") != self.owner_session_id
-            or lane.get("version") != self.lane_version
-            or lane.get("head_sha") != self.expected_head
+            or (lane.get("version"), lane.get("head_sha")) != git_cas
         ):
             raise TaskExecutionError("task_lane_cas_conflict")
         worktree = os.path.realpath(str(lane.get("worktree") or ""))
@@ -203,7 +234,7 @@ class TrustedTaskExecution:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise TaskExecutionError("task_git_head_unavailable") from exc
-        if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+        if observed.returncode != 0 or observed.stdout.strip() != git_cas[1]:
             raise TaskExecutionError("task_git_head_cas_conflict")
         protected = tuple(os.path.realpath(path) for path in self.protected_roots)
         if (
@@ -248,14 +279,14 @@ class TrustedTaskExecution:
         ):
             raise TaskExecutionError("task_file_identity_or_path_invalid")
         self.task_state_validator()
+        git_cas = self.git_cas
         lane = self.lanes.get(self.lane_id)
         if (
             not lane
             or lane.get("status") != "active"
             or lane.get("goal_id") != self.goal_id
             or lane.get("owner_session_id") != self.owner_session_id
-            or lane.get("version") != self.lane_version
-            or lane.get("head_sha") != self.expected_head
+            or (lane.get("version"), lane.get("head_sha")) != git_cas
         ):
             raise TaskExecutionError("task_lane_cas_conflict")
         worktree = os.path.realpath(str(lane.get("worktree") or ""))
@@ -273,7 +304,7 @@ class TrustedTaskExecution:
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise TaskExecutionError("task_git_head_unavailable") from exc
-            if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+            if observed.returncode != 0 or observed.stdout.strip() != git_cas[1]:
                 raise TaskExecutionError("task_git_head_cas_conflict")
         for other in self.lanes.list():
             if other.get("lane_id") == self.lane_id or not other.get("worktree"):
@@ -366,14 +397,14 @@ class TrustedTaskExecution:
             raise TaskExecutionError("task_parent_scope_requires_precise_compilation")
         if not os.path.isabs(workdir) or os.path.realpath(workdir) != workdir:
             raise TaskExecutionError("task_workdir_not_canonical")
+        git_cas = self.git_cas
         lane = self.lanes.get(self.lane_id)
         if (
             not lane
             or lane.get("status") != "active"
             or lane.get("goal_id") != self.goal_id
             or lane.get("owner_session_id") != self.owner_session_id
-            or lane.get("version") != self.lane_version
-            or lane.get("head_sha") != self.expected_head
+            or (lane.get("version"), lane.get("head_sha")) != git_cas
             or os.path.realpath(str(lane.get("worktree") or "")) != workdir
         ):
             raise TaskExecutionError("task_lane_cas_conflict")
@@ -430,7 +461,7 @@ class TrustedTaskExecution:
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise TaskExecutionError("task_git_head_unavailable") from exc
-            if observed.returncode != 0 or observed.stdout.strip() != self.expected_head:
+            if observed.returncode != 0 or observed.stdout.strip() != git_cas[1]:
                 raise TaskExecutionError("task_git_head_cas_conflict")
         for root in roots:
             root_request = CapabilityRequest(
