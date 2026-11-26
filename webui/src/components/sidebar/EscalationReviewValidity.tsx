@@ -54,3 +54,18 @@ export function EscalationReviewValidity({ expiresAt }: { expiresAt?: string }) 
     </div>
   );
 }
+
+// Host 在人工批准时给出的原因码 → 给人看的说明。镜像自 Python 侧的单一来源
+// tools/escalation.py 的 ISSUE_FAIL_REASON_HINTS（AI 侧 wait 工具与审批路由用同一份）。
+// 原因码本身是稳定标识，这里只在它后面补一句人读说明；未知的码不给说明、不猜测。
+const ISSUE_FAIL_REASON_HINTS: Record<string, string> = {
+  review_not_host_owned_or_expired: "独立审查已超过有效期（自审查发起起 60 分钟），或不属于当前 Host 进程（服务可能已重启）",
+  lane_not_verifying: "lane 已不在 verifying/merging 状态",
+  lane_changed_after_review: "审查之后 lane 的 base/head/分支/工作树已变化",
+  lane_base_or_head_stale: "main 已前进，或 lane 的 base/head 与审查时不一致（需先基于当前 main 更新 lane）",
+};
+
+/** 已知原因码 → 人读说明；未知码返回空串（调用方自行给通用说明）。 */
+export function issueFailureHint(code: string): string {
+  return ISSUE_FAIL_REASON_HINTS[code] ?? "";
+}

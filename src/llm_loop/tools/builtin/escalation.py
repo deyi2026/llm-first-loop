@@ -13,7 +13,12 @@ from datetime import datetime
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
 from llm_loop.timekeeping import system_local_now
-from llm_loop.tools.escalation import EscalationStore
+from llm_loop.tools.escalation import (
+    ISSUE_FAIL_REASON_DEFAULT_HINT,
+    ISSUE_FAIL_REASON_HINTS,
+    ISSUE_FAILED_REASON_PREFIX,
+    EscalationStore,
+)
 from llm_loop.tools.safety import CatastrophicGuard
 
 _MAX_WAIT_S = 300
@@ -24,16 +29,8 @@ _RETRY_HINT = (
     "必须取得新 request_id 并重新人工审批；不得复活旧凭证或重做已完成操作。"
 )
 # EVO-20261127-dd37be50: 人工批准验证凭证时 Host 判定签发材料不可成立（HostVerifyError
-# 的原因码）。记录已落为终态 failed，这里把它翻成 AI 能据以行动的说明。
-_ISSUE_FAIL_REASONS = {
-    "review_not_host_owned_or_expired": (
-        "独立审查已超过有效期（自审查发起起 60 分钟），或不属于当前 Host 进程（服务可能已重启）"
-    ),
-    "lane_not_verifying": "lane 已不在 verifying/merging 状态",
-    "lane_changed_after_review": "审查之后 lane 的 base/head/分支/工作树已变化",
-    "lane_base_or_head_stale": "main 已前进，或 lane 的 base/head 与审查时不一致（需先基于当前 main 更新 lane）",
-}
-_ISSUE_FAIL_CODE = "host_verify_issue_failed"
+# 的原因码）。记录已落为终态 failed，这里把它翻成 AI 能据以行动的说明；原因码→说明的
+# 映射与审批路由共用同一份（tools.escalation.ISSUE_FAIL_REASON_HINTS）。
 _ISSUE_RETRY_HINT = (
     "该申请已终态、不可复用：不要再 escalation_wait，也不要请人工重批同一申请。"
     "若合并仍有必要：先核对 lane 状态与 main 是否前进并据此更新 lane，"
@@ -226,8 +223,8 @@ class EscalationWaitTool:
             failed_at = str(rec.get("issue_failed_at") or "")
             lines = [
                 f"[签发失败] request_id={rid}",
-                f"失败码: {_ISSUE_FAIL_CODE}（{code}）",
-                f"原因: {_ISSUE_FAIL_REASONS.get(code, 'Host 判定该申请的签发材料不可成立')}",
+                f"失败码: {ISSUE_FAILED_REASON_PREFIX}（{code}）",
+                f"原因: {ISSUE_FAIL_REASON_HINTS.get(code, ISSUE_FAIL_REASON_DEFAULT_HINT)}",
             ]
             if failed_at:
                 lines.append(f"失败时间: {failed_at}")

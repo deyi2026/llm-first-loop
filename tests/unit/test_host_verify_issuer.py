@@ -540,6 +540,7 @@ def test_web_approval_of_expired_review_fails_visibly_and_leaves_the_pending_que
     assert response.json()["error"] == "host_verify_issue_failed"
     assert response.json()["detail"] == "review_not_host_owned_or_expired"
     assert response.json()["status"] == "failed"
+    assert "独立审查已超过有效期" in response.json()["reason_hint"]  # human-readable, code stays the key
     _assert_settled_failed(store, rec, "review_not_host_owned_or_expired")
     # What the panel reads: no longer pending, and history carries the reason.
     queue = client.get("/api/v1/escalation/list?status=pending&limit=50").json()
@@ -559,6 +560,51 @@ def test_web_approval_of_expired_review_fails_visibly_and_leaves_the_pending_que
     assert again.status_code == 409
     assert again.json()["error"] == "请求当前状态为 failed，仅 pending 可审批"
     assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_issue_failure_is_logged_once_in_each_audit_sink(
+    host, build_test_engine, isolated_data_dir, monkeypatch,
+):
+    # One failed approval writes two records on purpose: a state transition in the
+    # store ledger and the attempt outcome in the web review log. Not duplicates.
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    _expire_review(authority)
+    client = _signed_in_client(authority, audit, build_test_engine, monkeypatch)
+    body = {"id": rec["id"], "decision": "approved", "expected_sha256": rec["command_sha256"]}
+    assert client.post("/api/v1/escalation/review", json=body).status_code == 409
+    events = [json.loads(line) for line in (audit / "escalation_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(e["event"], e["status"]) for e in events if e["id"] == rec["id"]] == [
+        ("request_created", "pending"),
+        ("issue_failed", "failed"),
+    ]
+    trail = [json.loads(line) for line in (audit / "escalation_review_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [entry["outcome"] for entry in trail] == ["host_verify_issue_failed"]
+
+
+def test_web_approval_environment_error_keeps_the_request_pending(
+    host, build_test_engine, isolated_data_dir, monkeypatch,
+):
+    # The other branch of the same route: an unsafe receipts target raises OSError
+    # inside the Host issuer. Nothing is decided, the request stays pending, and the
+    # response says so instead of claiming a terminal failure.
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    victim = audit / "victim.txt"
+    victim.write_text("do not touch", encoding="utf-8")
+    (audit / "verify_receipts.jsonl").symlink_to(victim)
+    client = _signed_in_client(authority, audit, build_test_engine, monkeypatch)
+    body = {"id": rec["id"], "decision": "approved", "expected_sha256": rec["command_sha256"]}
+    response = client.post("/api/v1/escalation/review", json=body)
+    assert response.status_code == 409, response.text
+    payload = response.json()
+    assert payload["error"] == "host_verify_issue_failed" and payload["status"] == "pending"
+    assert "reason_hint" not in payload  # no Host verdict was given
+    kept = store.get(rec["id"])
+    assert kept["status"] == "pending" and kept["decided_at"] == "" and "last_issue_error" not in kept
+    assert store.pending_count() == 1
+    assert victim.read_text(encoding="utf-8") == "do not touch"
+    assert (audit / "verify_receipts.jsonl").is_symlink()  # untouched, not replaced
 
 
 FENCE = "```"

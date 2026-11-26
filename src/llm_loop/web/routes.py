@@ -3071,7 +3071,11 @@ def _decide_escalation_with_host_verify(
     base: Any, audit: Any, command_sha256: str,
 ) -> tuple[dict | None, str] | Response:
     """Keep protected Host issuance separate from the existing review route."""
-    from llm_loop.tools.escalation import ISSUE_FAILED_REASON_PREFIX
+    from llm_loop.tools.escalation import (
+        ISSUE_FAIL_REASON_DEFAULT_HINT,
+        ISSUE_FAIL_REASON_HINTS,
+        ISSUE_FAILED_REASON_PREFIX,
+    )
 
     issue_verify = None
     if record.get("request_kind") == "verify_receipt" and payload.decision == "approved":
@@ -3092,17 +3096,28 @@ def _decide_escalation_with_host_verify(
             issue_verify=issue_verify,
         )
     except (OSError, ValueError, RuntimeError) as exc:
+        # 非终态分支。Host 的 IssueVerifyError 已由 store 在锁内转成终态 failed 并以
+        # 返回值表达，不会走到这里；这里只剩环境类异常——账本不可读写、凭证目标不安全
+        # 等 OSError，或状态文件损坏的 ValueError。异常发生在落盘之前，记录未被改写，
+        # 申请仍是 pending；审计 outcome 沿用历史名称以保持日志连续性。
         logger.warning("Host verify receipt issue rejected: %s", exc)
         audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
               command_sha256=command_sha256, detail=str(exc)[:200])
         return JSONResponse(
-            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            {
+                "error": "host_verify_issue_failed",
+                "detail": str(exc)[:200],
+                "status": "pending",
+                "retry_hint": "签发未完成，记录未被改写，申请仍是待审批：可稍后重试批准，或拒绝该申请。",
+            },
             status_code=409,
         )
     if decided is None and reason.startswith(ISSUE_FAILED_REASON_PREFIX):
-        # EVO-20261127-dd37be50: Host 判定该申请的签发材料不可成立。store 已在同一把
-        # 锁内把申请落为终态 failed（原因可见、离开待审队列、未签发任何凭证），这里
+        # 终态分支（EVO-20261127-dd37be50）: Host 判定该申请的签发材料不可成立。store 已在
+        # 同一把锁内把申请落为终态 failed（原因可见、离开待审队列、未签发任何凭证），这里
         # 如实回执原因与去向——人工不必再批同一申请，AI 侧 escalation_wait 同步拿到失败。
+        # 审计：此处 host_verify_issue_failed（escalation_review_log.jsonl）记人工批准的
+        # 尝试结果；store 另写 issue_failed（escalation_log.jsonl）记状态迁移，两处勿相加。
         detail = reason[len(ISSUE_FAILED_REASON_PREFIX):].lstrip(": ").strip()
         audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
               command_sha256=command_sha256, detail=detail)
@@ -3110,6 +3125,7 @@ def _decide_escalation_with_host_verify(
             {
                 "error": ISSUE_FAILED_REASON_PREFIX,
                 "detail": detail,
+                "reason_hint": ISSUE_FAIL_REASON_HINTS.get(detail, ISSUE_FAIL_REASON_DEFAULT_HINT),
                 "status": "failed",
                 "retry_hint": (
                     "该申请已标记为签发失败，AI 侧会收到原因，请不要重复批准。"

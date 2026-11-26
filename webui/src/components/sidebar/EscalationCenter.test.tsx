@@ -486,8 +486,9 @@ describe("签发失败的终态展示与审查有效期提示（EVO-20261127-dd3
     expect(screen.getByText("待审批 (0)")).toBeInTheDocument();
     // 历史区：原因 + 时刻
     expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toHaveTextContent(
-      "签发失败原因：review_not_host_owned_or_expired（2026-11-27T03:43:03+08:00）",
+      "签发失败原因：review_not_host_owned_or_expired——独立审查已超过有效期",
     );
+    expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toHaveTextContent("2026-11-27T03:43:03+08:00");
     // 终态只能重新发起，不是「返回会话继续处理」
     expect(screen.getByRole("button", { name: "重新发起审批" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "返回会话继续处理" })).toBeNull();
@@ -499,6 +500,15 @@ describe("签发失败的终态展示与审查有效期提示（EVO-20261127-dd3
     render(<EscalationWatcher />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(screen.queryByTestId("esc-modal")).toBeNull();
+  });
+
+  it("历史区不认识的原因码：保留原码并给通用说明，不猜测", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([], [{ ...failed, last_issue_error: "some_new_code" }])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toBeInTheDocument());
+    expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toHaveTextContent(
+      "签发失败原因：some_new_code——Host 判定该申请的签发材料不可成立",
+    );
   });
 
   it("验证凭证类待审卡显示审查剩余有效期，临期给出提醒", async () => {

@@ -1,7 +1,7 @@
 // EVO-20261127-dd37be50: 审查剩余有效期只做展示——三种状态 + 不可信数据不展示 + 不控制任何按钮。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import { EscalationReviewValidity, reviewValidity } from "./EscalationReviewValidity";
+import { EscalationReviewValidity, issueFailureHint, reviewValidity } from "./EscalationReviewValidity";
 
 const NOW = Date.parse("2026-11-27T05:00:00+08:00");
 const at = (minutesFromNow: number) => new Date(NOW + minutesFromNow * 60_000).toISOString();
@@ -64,5 +64,15 @@ describe("EscalationReviewValidity（展示）", () => {
     cleanup();
     const broken = render(<EscalationReviewValidity expiresAt="not-a-timestamp" />);
     expect(broken.container).toBeEmptyDOMElement();
+  });
+});
+
+describe("issueFailureHint（原因码 → 人读说明）", () => {
+  it("已知原因码给出说明；未知原因码返回空串，不猜测", () => {
+    expect(issueFailureHint("review_not_host_owned_or_expired")).toMatch(/独立审查已超过有效期/);
+    expect(issueFailureHint("lane_not_verifying")).toBe("lane 已不在 verifying/merging 状态");
+    expect(issueFailureHint("lane_changed_after_review")).not.toBe("");
+    expect(issueFailureHint("lane_base_or_head_stale")).toMatch(/main 已前进/);
+    expect(issueFailureHint("some_new_code")).toBe("");
   });
 });

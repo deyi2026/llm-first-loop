@@ -9,7 +9,7 @@ import { isAuthRequired, reportUnauthorized } from "../../core/authSession";
 import { mainViewStore, sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { prefillComposer } from "../../core/conversation";
 import { switchWorkspace } from "../../core/api";
-import { EscalationReviewValidity } from "./EscalationReviewValidity";
+import { EscalationReviewValidity, issueFailureHint } from "./EscalationReviewValidity";
 
 export interface EscalationRequest {
   id: string;
@@ -659,7 +659,7 @@ export function EscalationPanel({ onNavigate }: { onNavigate?: () => void } = {}
               {r.decision_note && <div className="v2-esc-just">备注: {r.decision_note}</div>}
               {r.status === "failed" && r.last_issue_error && (
                 <div className="v2-esc-hash warn" data-testid={`esc-issue-error-${r.id}`}>
-                  签发失败原因：{r.last_issue_error}（{r.issue_failed_at || r.decided_at}）。未授予任何凭证，AI 侧已收到该原因。
+                  签发失败原因：{r.last_issue_error}——{issueFailureHint(r.last_issue_error) || "Host 判定该申请的签发材料不可成立"}（{r.issue_failed_at || r.decided_at}）。未授予任何凭证，AI 侧已收到该原因。
                 </div>
               )}
             </div>
