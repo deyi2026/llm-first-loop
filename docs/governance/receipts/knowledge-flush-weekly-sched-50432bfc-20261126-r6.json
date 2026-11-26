@@ -9,7 +9,7 @@
   "flush_commit": "14a2778ad（豁免通道：docs/governance/receipts/RECEIPT-20261125-runtime-version-convergence-merge.json）",
   "pending_flush": {
     "reason": "lane_main_write_guard 拒绝 main 直写：3 条他人 live lane（lane-0072effa/lane-b3fd94f7/lane-68f9d936，对应 GOAL-20261126-7aa7ee3e/f5186702/74a9667b 均活跃，最近 checkpoint 2026-11-26 18:40~20:36 +0800）；主 checkout 共享，并发会话下直写有落错分支风险。豁免前缀为硬编码窄清单（lane_main_write_guard.py _EVIDENCE_COMMIT_PREFIXES：docs/governance/receipts/、docs/governance/review-receipts/、docs/verification/），知识资产路径不在内；护栏不自行放宽。",
-    "staged_and_ready": "165 张新方法卡（data/methods/*/METHOD.md）+ 57 张新经验卡 + 1 张经验卡状态修订（EXPERIENCE-20261027 active→invalid）+ 3 份 docs/receipts JSON（issue-110/111/112 review），共 222 文件已在暂存区且安全扫描通过",
+    "staged_and_ready": "165 张新方法卡（data/methods/*/METHOD.md）+ 57 张新经验卡 + 1 张经验卡状态修订（EXPERIENCE-20261027 active→invalid）+ 3 份 docs/receipts JSON（issue-110/111/112 review），共 226 文件已在暂存区（165+58+3；初版误写 222，勘误）且安全扫描通过",
     "ready_command": "窗口打开后执行：git commit data/methods experiences docs/receipts -m \"knowledge: 入库 165 张方法卡与 58 条经验卡及 3 份审计回执（knowledge_flush 2026-11-26 sched-50432bfc r6，4 文件路径脱敏）\"（pathspec 提交，避开他人 staged 代码）"
   },
   "desensitization": {
