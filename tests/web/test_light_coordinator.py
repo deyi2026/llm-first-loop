@@ -667,3 +667,20 @@ def test_resume_on_approval_requires_binding_never_default_wake(tmp_path: Path) 
     ok = resume_on_approval(store, "ESC-b", poke=poke,
                             require_binding={"workspace_scope": "/ws/x"})
     assert ok["poked"] is True and poke.pokes == ["sess-origin"]
+
+
+def test_derive_receipt_rejects_missing_scope_stamp(tmp_path: Path) -> None:
+    """expected_scope 存在但条目无 workspace 盖章（遗留构造）→ 归属不明拒绝
+    （SA-LIGHT-FINAL-ACCEPTANCE 边界 b：缺失 scope 不得静默通过）."""
+    hq = HumanTurnQueue(tmp_path / "data")  # 遗留构造：无盖章
+    dispatch_task_card(
+        _card("sess-nos", "op-nos"),
+        inbox_dir=tmp_path / "inbox",
+        poke=_PokeRecorder(),
+        settings={"coordinator_light_role": "orchestrator"},
+        queue=hq,
+    )
+    qid = hq.snapshot_items()[0]["queue_id"]
+    assert hq.snapshot_items()[0].get("workspace_scope") is None
+    r = derive_job_receipt(hq, qid, expected_workspace_scope="/ws/a")
+    assert r["found"] is False and "missing workspace_scope" in str(r.get("reason"))

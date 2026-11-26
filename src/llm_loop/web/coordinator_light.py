@@ -335,6 +335,12 @@ def derive_job_receipt(
                 "reason": "origin mismatch（非 coordinator_light 派工项，不可派生 Job 回执）",
             }
         item_scope = str(it.get("workspace_scope") or "") or None
+        if expected_workspace_scope and not item_scope:
+            return {
+                "found": False,
+                "job_record": None,
+                "reason": "missing workspace_scope（条目无盖章，归属不明不可采信）",
+            }
         if expected_workspace_scope and item_scope:
             try:
                 _same = os.path.realpath(item_scope) == os.path.realpath(
@@ -414,6 +420,39 @@ def verify_coordinator_access(settings: Any, token_header: Any) -> dict[str, Any
     if not isinstance(token_header, str) or not _secrets.compare_digest(token_header, token_expected):
         return {"allowed": False, "status": 401, "reason": "invalid coordinator token"}
     return {"allowed": True, "role": role}
+
+
+def _resume_binding_or_rejection(
+    request: Any, body: Any
+) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    """resume-approval 绑定构造与强制核验（自 build_coordinator_light_router 抽出）.
+
+    SA-LIVE-RECEIPT-AUTHORITY 边界②（主筹 2026-11-26 21:32 收紧）：可信
+    workspace_scope **强制覆盖**请求值（请求不得指定他区 scope——单例陈旧
+    盖章缺陷的运行面约束）；必需绑定键（owner/goal/代次/待办）缺失 →
+    rejection（fail-closed：审批接续无完整上下文本就不应发生）。
+    """
+    binding = dict(getattr(body, "require_binding", None) or {})
+    engine = getattr(request.app.state, "engine", None)
+    trusted_scope = str(getattr(engine, "workspace_root", "") or "")
+    if trusted_scope:
+        binding["workspace_scope"] = trusted_scope
+    missing_required = [
+        k
+        for k in ("owner_session", "goal_id", "bound_run_generation", "card_id")
+        if k not in binding
+    ]
+    if missing_required:
+        return None, JSONResponse(content={
+            "ok": False,
+            "verified": True,
+            "poked": False,
+            "reason": (
+                f"missing required binding keys: {missing_required}"
+                "（审批接续须显式 owner/goal/代次/待办绑定，fail-closed）"
+            ),
+        })
+    return binding, None
 
 
 def build_coordinator_light_router(
@@ -511,15 +550,10 @@ def build_coordinator_light_router(
                 status_code=503,
             )
 
+        binding, rejection = _resume_binding_or_rejection(request, body)
+        if rejection is not None:
+            return rejection
         store = EscalationStore(Path(_data_dir(request)) / "audit" / "escalation_requests.json")
-        # SA-LIVE-RECEIPT-AUTHORITY 边界②：require_binding 缺省/空=不唤醒
-        # （fail-closed，须显式受信绑定）；端点层在请求绑定之外强制追加当前
-        # 进程可信 workspace_scope 绑定（单例盖章/切换陈旧缺陷的运行面约束）。
-        binding = dict(body.require_binding or {})
-        engine = getattr(request.app.state, "engine", None)
-        trusted_scope = str(getattr(engine, "workspace_root", "") or "")
-        if trusted_scope:
-            binding.setdefault("workspace_scope", trusted_scope)
         result = resume_on_approval(
             store,
             body.request_id,
