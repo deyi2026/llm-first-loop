@@ -183,6 +183,15 @@
         "status": "observe",
         "tier": "T1"
       },
+      "coordinator_light_cards": {
+        "owner": "web",
+        "paths": [
+          "src/llm_loop/web/coordinator_light.py"
+        ],
+        "rationale": "轻量主统筹任务卡 durable 落盘（R32 确定性派工）：tempfile+os.replace 原子替换，幂等键 operation_id（同键重复派工不重复落盘/唤醒）；无 fsync 栅栏，写失败异常上抛由调用方如实处置，保持 observe 不宣称完整 tier 合规。依据 durable-run-contract §10 以 guard(r9): 可见提交。",
+        "status": "observe",
+        "tier": "T2"
+      },
       "compaction_recovery_gate": {
         "owner": "core",
         "paths": [
