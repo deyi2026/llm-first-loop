@@ -9,12 +9,13 @@
         "docs/governance/submissions/20261126-p1-pressure-aware-fold.json",
         "src/llm_loop/core/episode_history.py",
         "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
-        "src/llm_loop/core/loop/build.py"
+        "src/llm_loop/core/loop/build.py",
+        "tests/guards/function_size_baseline.json"
       ],
       "control_machinery": true,
       "declaration_id": "decl-pressure-aware-fold",
       "owning_subsystem": "Existing episode-history projection, ingress prelude assembly and prompt build cache-gate fingerprint.",
-      "disposition": "Add FoldPressureSignal (measured anchored-view chars vs effective budget, 0.95 safety ratio) and thread it from the ingress prelude (measured locally with the same provider-visible scope as build) through the projection valve; fold only under real measured pressure in append-only mode, keep the static byte valve as the None-signal fallback; carry measured chars/budget scope inside the fold trigger string. Compose cache_gate_stable_fp with fold boundaries/triggers via fold_aware_stable_fp so mid-history rewrites are reflected in the fingerprint. No new assembly entry, no tool removed, no receipt deleted.",
+      "disposition": "Add FoldPressureSignal (measured anchored-view chars vs effective budget, 0.95 safety ratio) and thread it from the ingress prelude (measured locally with the same provider-visible scope as build) through the projection valve; fold only under real measured pressure in append-only mode, keep the static byte valve as the None-signal fallback; carry measured chars/budget scope inside the fold trigger string. Compose cache_gate_stable_fp with fold boundaries/triggers via fold_aware_stable_fp so mid-history rewrites are reflected in the fingerprint. Function-size baseline re-registered per EVO-20261025-e0bff8ee for the three touched functions (236->254, 197->203, 197->210). No new assembly entry, no tool removed, no receipt deleted.",
       "evidence": [
         "306b5704 attribution: static 32k valve rewrote mid-history messages without real pressure; r10 hit -> r11 fold -> cache zeroed within 2 minutes (rules out provider cold cache); r20->r21 same chain.",
         "TDD red-green: 8 new tests cover no-pressure append-only, real-pressure fold, legacy static fallback anchor, zero-budget no-invented-pressure, measured scope in trigger string, opportunistic-mode regression, tool pairing invariant and fold-aware fp composition.",
