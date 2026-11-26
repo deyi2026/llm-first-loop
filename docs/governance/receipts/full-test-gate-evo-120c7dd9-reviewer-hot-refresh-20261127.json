@@ -1,0 +1,130 @@
+{
+  "schema": "rule28-full-test-gate/v1",
+  "evolution_id": "EVO-20261125-120c7dd9",
+  "goal_id": "GOAL-20261126-7aa7ee3e",
+  "lane_id": "lane-0072effa",
+  "branch": "fix/merge-reviewer-operator-model-and-contract",
+  "worktree": ".worktrees/merge-reviewer-contract-20261126",
+  "candidate_head": "6fee0b759df3c1bd2e54f8745dd69197603e9e4d",
+  "base_main": "279c8ce6bd2f8c63692129b7b680a80946e036b1",
+  "help_request": {
+    "id": "498c929ed983",
+    "from_session": "60178c68-fce2-4139-ab20-8de4cd35fa3c",
+    "posted_at": "2026-11-26T21:58:05+08:00",
+    "topic": "Reviewer 原子刷新缺口规格移交（lane-0072effa 唯一 owner）"
+  },
+  "reviewer_admission": {
+    "kind": "full_test",
+    "scope": "patch",
+    "paths": [
+      "src/llm_loop/factory.py",
+      "src/llm_loop/introspection/host_verify_issuer.py",
+      "tests/unit/test_host_verify_issuer.py",
+      "src/llm_loop/tools/review_host_admission.py",
+      "src/llm_loop/introspection/providers_registry_reload.py",
+      "src/llm_loop/llm/model_roles.py",
+      "tests/unit/test_reviewer_policy_hot_refresh.py",
+      "tests/unit/test_model_roles.py"
+    ],
+    "command": "bash scripts/ci_gate.sh",
+    "workdir": "lane 工作树（仓库相对路径 .worktrees/merge-reviewer-contract-20261126）",
+    "candidate_sha256": "3db9faea7415cce5dceb10fe28ce769d682c55a4d8a72f9730ec9463187899a7",
+    "material_chars": 75966,
+    "reviewer_model": "glm/glm-5.3-flash",
+    "child_id": "subagent_497638ba8f0f",
+    "qualification": "PASS",
+    "artifact_reviewed": true,
+    "started_at": "2026-11-27T00:29:22+08:00",
+    "pass_observed_at": "2026-11-27T00:32:24+08:00",
+    "note": "审查对象是未提交的工作树增量（scope=patch，8 条声明路径，切片外 tracked=0 untracked=0）。审查 PASS 之后只做了提交与两个文档文件的追加，源码与测试未再改动。"
+  },
+  "full_test": {
+    "chain": "原版完整 R9：bash scripts/r9_commit.sh（r9_commit_check 机检 → PROBE 隔离检出上跑全量 ci_gate → git commit）",
+    "job_id": "job-e620cecd04144495bc0f",
+    "lock_acquired_at": "2026-11-27T00:33:22+08:00",
+    "gate_receipt_archived_at": "2026-11-27T00:48+08:00",
+    "exit_code": 0,
+    "probe_commit": "ff3f7e8f043c0571a4d483441b3d68118690d20c",
+    "committed_head": "6fee0b759df3c1bd2e54f8745dd69197603e9e4d",
+    "r9_commit_check": "PASS（对 PROBE ff3f7e8f0 与 HEAD 各一次，五规则全过）",
+    "fixture_manifest": "OK",
+    "ruff": {
+      "status": "PASS",
+      "historical": 67,
+      "current": 27,
+      "new": 0,
+      "resolved": 40,
+      "changed_file_diagnostics": 0
+    },
+    "pyright": {
+      "status": "PASS",
+      "historical": 45,
+      "current": 7,
+      "new": 0,
+      "resolved": 38,
+      "changed_file_diagnostics": 0
+    },
+    "webui_vitest": {
+      "files_passed": 75,
+      "tests_passed": 737
+    },
+    "tier0": {
+      "passed": 341,
+      "skipped": 2,
+      "deselected": 17105,
+      "warnings": 7,
+      "seconds": 38.80
+    },
+    "xdist_parallel": {
+      "passed": 17208,
+      "skipped": 206,
+      "xfailed": 3,
+      "warnings": 31,
+      "seconds": 735.85
+    },
+    "serial_signal": {
+      "passed": 8,
+      "skipped": 2,
+      "deselected": 17438,
+      "seconds": 5.33
+    },
+    "serial_perf": {
+      "passed": 6,
+      "skipped": 2,
+      "deselected": 17440,
+      "seconds": 60.04
+    },
+    "closing_run": {
+      "passed": 1,
+      "deselected": 51,
+      "seconds": 15.57,
+      "note": "门禁日志末尾一次 1 用例的 pytest 调用，归属步骤未逐行核对"
+    },
+    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+    "gate_receipt_sha256": "f3e9f8e80a8bb39acba643437eeac6c8712af154000ced45931ae29a78dc8b79",
+    "gate_receipt_note": "门禁日志归档副本保存在本机 artifacts/lane-0072effa-backup/r9-gate-receipt-ff3f7e8f0.log（该目录不入库）"
+  },
+  "directed_tests": {
+    "files": 21,
+    "passed": 754,
+    "failed": 0,
+    "seconds": 165.26,
+    "scope": "审查准入、模型角色、refresh 执行器、工厂、合并审查员、架构守卫与静态诊断门相关的 21 个测试文件；属定向测试，不作为全量结论"
+  },
+  "pre_gate": {
+    "ci_gate_quick_exit_code": 0,
+    "tier0_passed": 341,
+    "tier0_skipped": 2,
+    "webui_tests_passed": 737
+  },
+  "staged_security_scan": "git_security_scan 通过（8 个文件无敏感或错误内容）",
+  "notes": [
+    "旧增量核对：main 279c8ce6 的 host_verify_issuer.py 在 start_review 里仍以 current_model_label 取审查员模型，对齐前的 3 文件增量没有被其他 PR 覆盖；分支从 a46238959 快进到 279c8ce6 后三方合并干净。",
+    "全量门禁之后到 PR head 之间只有两个文档文件（本回执与 A.5 清单），源码与测试未再改动。",
+    "沙盒说明：本轮 R9 在宿主沙盒内运行，日志里有 xcrun 缓存文件不可写的提示行（Operation not permitted），不影响门禁判定。"
+  ],
+  "pending": [
+    "push 审查、PR 与远端 CI（含 A.5）、独立合并审查、人工签发的 verify_ref、合入 main、统一部署与宿主重启后的活体验证：未完成。"
+  ],
+  "previous_runs": []
+}

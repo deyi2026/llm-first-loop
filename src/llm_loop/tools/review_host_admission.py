@@ -126,6 +126,21 @@ class _Frozen:
     batch_plan_id: str = ""
     batch_index: int = -1
     batch_paths: tuple[str, ...] = ()
+    # ---- reviewer policy hot refresh ----
+    # reviewer_models：本次审查**被接纳时**冻结的 operator 候选链。异步重试只在这条
+    # 冻结链上推进，不再读 authority 的实时链——否则一次 refresh 会让在途重试的身份
+    # 相对其被接纳时的策略漂移。是否仍允许重试由 policy_digest 与当前策略的比对决定
+    # （撤销/漂移 ⇒ fail closed，见 _reserve_respawn）。
+    reviewer_models: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ReviewerPolicy:
+    """One consistent read of the reviewer policy (candidates, diagnostic, digest)."""
+
+    models: tuple[str, ...]
+    error: str
+    digest: str
 
 
 _ALLOWED = AdmissionDecision(True, "")
@@ -3870,7 +3885,12 @@ class HostReviewAdmission:
         """参与授权语义的策略面（只取影响"能否放行/放行给谁"的字段）。"""
         return {
             "reviewer_models": list(self._reviewer_models),
-            "reviewer_model_error": str(self._reviewer_model_error or ""),
+            # 诊断与阻断分离：候选链非空时，error 只是「上一次刷新被拒」的诊断，不
+            # 参与授权语义 ⇒ 不计入 digest（否则一次无效刷新会作废全部在途 grant）。
+            # 候选链为空（未配置/已撤销）时照旧计入。
+            "reviewer_model_error": (
+                str(self._reviewer_model_error or "") if not self._reviewer_models else ""
+            ),
             "async_retry_max": int(_REVIEWER_ASYNC_RETRY_MAX),
             "retry_min_remaining_s": float(_REVIEWER_RETRY_MIN_REMAINING_S),
             "retry_max": int(_REVIEWER_RETRY_MAX),
@@ -3885,6 +3905,91 @@ class HostReviewAdmission:
     def _compute_policy_digest(self) -> str:
         blob = json.dumps(self._policy_snapshot(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _reviewer_policy(self) -> _ReviewerPolicy:
+        """Read candidates and digest together under the guard (one consistent view)."""
+        with self._guard:
+            return _ReviewerPolicy(
+                models=self._reviewer_models,
+                error=str(self._reviewer_model_error or ""),
+                digest=self._policy_digest,
+            )
+
+    def refresh_reviewer_models(self, raw: str) -> dict[str, Any]:
+        """Runtime refresh of the operator's reviewer candidates (``refresh_config``).
+
+        The effective policy and the error diagnostic are handled apart on purpose:
+
+        * a valid list becomes the policy for NEW reviews at once and the
+          diagnostic is cleared;
+        * an empty list is an explicit operator revocation: the chain is emptied,
+          new reviews are refused and nothing is used as a fallback;
+        * an invalid list is NOT applied: the last effective chain keeps serving
+          new reviews and the error stays a diagnostic only.
+
+        Refreshing by itself never touches an already accepted review: each record
+        carries the candidates and the digest it was accepted under. Only a real
+        change of the effective policy (revocation or drift) fails them closed by
+        the existing rule (``review_policy_changed`` at mint/consume, no re-spawn).
+        The return value is the resulting policy snapshot, for honest receipts.
+        """
+        models, error = _configured_reviewer_models(raw)
+        revoked = not models and error == "reviewer_models_unconfigured"
+        with self._guard:
+            previous_models = self._reviewer_models
+            previous_digest = self._policy_digest
+            if models or revoked:
+                self._reviewer_models, self._reviewer_model_error = models, error
+            else:
+                # Invalid refresh: the effective chain is retained untouched.
+                self._reviewer_model_error = error
+            self._policy_digest = self._compute_policy_digest()
+            result: dict[str, Any] = {
+                "applied": bool(models) or revoked,
+                "changed": self._policy_digest != previous_digest,
+                "revoked": revoked,
+                "models": list(self._reviewer_models),
+                "previous_models": list(previous_models),
+                "reviewer_model_error": str(self._reviewer_model_error or ""),
+                "policy_digest": self._policy_digest,
+            }
+            result["note"] = self._refresh_note(result)
+        # Observability only: a revocation or drift invalidates in-flight grants and
+        # must stay explainable afterwards. A failed write never changes the policy.
+        caller = str(current_session_id.get() or "").strip()
+        if caller:
+            self._audit(
+                caller, "review_admission_reviewer_policy_refreshed",
+                {key: value for key, value in result.items() if key != "note"},
+            )
+        return result
+
+    @staticmethod
+    def _refresh_note(result: dict[str, Any]) -> str:
+        """Receipt text of refresh_reviewer_models: applied / unchanged / invalid / revoked."""
+        if result["revoked"]:
+            return (
+                "审查员候选已被运营者撤销（未配置）：新审查将被拒绝，不回退任何模型；"
+                "在途审查资格按既有规则不可签发/消费（需重新 start）。"
+            )
+        current = "、".join(result["models"])
+        if result["applied"]:
+            if result["changed"]:
+                return (
+                    "审查员候选已热更新："
+                    f"{'、'.join(result['previous_models']) or '（无）'} → {current}；"
+                    "仅新审查使用新候选，策略已漂移，在途审查资格按既有规则"
+                    "不可签发/消费（需重新 start）。"
+                )
+            return f"审查员候选已核验未变（{current}）。"
+        return (
+            f"审查员候选配置无效，未应用（{result['reviewer_model_error']}）；"
+            + (
+                f"保留上次有效候选 {current} 继续服务新审查。"
+                if current
+                else "此前无有效候选，新审查仍被拒绝。"
+            )
+        )
 
     def attach_runner(self, runner: Any) -> None:
         self._runner = runner
@@ -4185,8 +4290,11 @@ class HostReviewAdmission:
         scope: str = "patch", paths: Sequence[str] | None = None,
         previous_child_id: str = "",
     ) -> dict[str, Any]:
-        if not parent or self._runner is None or self._reviewer_model_error:
-            return {"accepted": False, "reason": self._reviewer_model_error or "review_host_unavailable"}
+        # 每次接纳只取一次策略快照：下面的输入预算、spawn、冻结记录与回执全部用这
+        # 一份候选链，不再回头读实时链——并发 refresh 不得让同一次 start 混入两个身份。
+        policy = self._reviewer_policy()
+        if not parent or self._runner is None or not policy.models:
+            return {"accepted": False, "reason": policy.error or "review_host_unavailable"}
         scope_receipt, scope_paths, denial, knowledge = _start_preconditions(kind, scope, paths, workdir, command)
         if denial is not None:
             return denial
@@ -4212,37 +4320,16 @@ class HostReviewAdmission:
         if isinstance(prepared, dict):
             return prepared
         task, previous_row, coverage, out_scope, tier_counts = prepared
-        task_chars, model_budget, effective_cap = self._input_budget(task)
+        task_chars, model_budget, effective_cap = self._input_budget(task, policy.models)
         if task_chars > effective_cap:
             return self._refuse_too_large(
                 parent, kind, task_chars, effective_cap, model_budget, sections
             )
-        batch_meta = push_extra.get("push_batch") if kind == "git_push" else None
-        if batch_meta:
-            # EVO-20261115-34ae7c99(A)：分批资格判据——只有**全量增量本身确超
-            # duration 预算**才允许分批（不得借分批回避整量审查）。估算口径与
-            # _duration_gate 对齐：实测 wrapper + 全量材料字符数 + 安全余量。
-            wrapper = max(0, task_chars - len(material))
-            est_full = (
-                int(batch_meta["full_material_chars"])
-                + wrapper + _PUSH_BATCH_WRAPPER_ALLOWANCE_CHARS
-            ) / _REVIEWER_EST_CHARS_PER_SECOND
-            if est_full <= _REVIEWER_MAX_ESTIMATED_S:
-                self._audit(
-                    parent, "review_admission_push_batch_refused",
-                    {"kind": kind, "reason": "push_batch_full_review_required",
-                     "est_full_seconds": round(est_full, 1),
-                     "budget_seconds": _REVIEWER_MAX_ESTIMATED_S},
-                )
-                return {
-                    "accepted": False,
-                    "reason": (
-                        "push_batch_full_review_required: 全量增量估算 "
-                        f"{est_full:.0f}s ≤ 预算 {_REVIEWER_MAX_ESTIMATED_S:.0f}s，"
-                        "整量受审可行，不得分批（移除 paths 整量 start）"
-                    ),
-                    "kind": kind,
-                }
+        batch_refusal = self._push_batch_full_review_refusal(
+            parent, kind, push_extra, task_chars, len(material)
+        )
+        if batch_refusal is not None:
+            return batch_refusal
         estimated, review_deadline, refusal = self._duration_gate(
             parent, kind, task_chars, sections
         )
@@ -4252,10 +4339,14 @@ class HostReviewAdmission:
             self._reclaim_records(parent, kind)
             if self._active_records() >= self._max_records:
                 return {"accepted": False, "reason": "review_host_capacity"}
+            # 准备期间（材料冻结与预算定价都在锁外）策略被刷新/撤销 ⇒ 不再按已不是
+            # 当前的候选链 spawn（材料是按旧候选定价的）：如实拒绝，由调用方重新 start。
+            if policy.digest != self._policy_digest or not policy.models:
+                return self._policy_raced_refusal(parent, kind)
             # 已知代价（P2-5，接受）：首投 spawn 在锁内，有界重试最多 sleep
             # ~90s，期间其它调用方被串行化；换来"记录与子代理一一对应"的简单
             # 不变量。respawn 已改成锁内预占 + 锁外 spawn。
-            spawned = self._spawn_reviewer(parent, task, kind)
+            spawned = self._spawn_reviewer(parent, task, kind, policy.models)
             if not spawned.get("accepted"):
                 return spawned
             child = str(spawned["child_id"])
@@ -4266,6 +4357,7 @@ class HostReviewAdmission:
                 scope_paths=scope_paths, out_scope=out_scope, tier_counts=tier_counts,
                 review_deadline=review_deadline, previous_row=previous_row,
                 push_extra=push_extra, task_chars=task_chars, workdir=workdir,
+                reviewer_models=policy.models, policy_digest=policy.digest,
             ), reviewer_model=str(spawned["model"]))
             self._remember_material(child, task, material)
         return self._attach_prior_attempts(
@@ -4274,10 +4366,63 @@ class HostReviewAdmission:
                 scope_receipt=scope_receipt, task_chars=task_chars,
                 review_deadline=review_deadline, estimated=estimated,
                 coverage=coverage, push_remote_commit=push_remote_commit,
-                push_extra=push_extra, reviewer_model=str(spawned["model"]), warnings=knowledge,
+                push_extra=push_extra, reviewer_model=str(spawned["model"]),
+                reviewer_models=policy.models, warnings=knowledge,
             ),
             parent, kind, sha, target,
         )
+
+    def _push_batch_full_review_refusal(
+        self, parent: str, kind: str, push_extra: dict[str, Any],
+        task_chars: int, material_chars: int,
+    ) -> dict[str, Any] | None:
+        """分批资格判据（EVO-20261115-34ae7c99(A)；2026-11-26 自 ``start`` 抽出，行为不变）。
+
+        只有**全量增量本身确超 duration 预算**才允许分批（不得借分批回避整量审查）。
+        估算口径与 _duration_gate 对齐：实测 wrapper + 全量材料字符数 + 安全余量。
+        返回 None = 非分批请求或允许分批；否则为拒绝回执。
+        """
+        batch_meta = push_extra.get("push_batch") if kind == "git_push" else None
+        if not batch_meta:
+            return None
+        wrapper = max(0, task_chars - material_chars)
+        est_full = (
+            int(batch_meta["full_material_chars"])
+            + wrapper + _PUSH_BATCH_WRAPPER_ALLOWANCE_CHARS
+        ) / _REVIEWER_EST_CHARS_PER_SECOND
+        if est_full > _REVIEWER_MAX_ESTIMATED_S:
+            return None
+        self._audit(
+            parent, "review_admission_push_batch_refused",
+            {"kind": kind, "reason": "push_batch_full_review_required",
+             "est_full_seconds": round(est_full, 1),
+             "budget_seconds": _REVIEWER_MAX_ESTIMATED_S},
+        )
+        return {
+            "accepted": False,
+            "reason": (
+                "push_batch_full_review_required: 全量增量估算 "
+                f"{est_full:.0f}s ≤ 预算 {_REVIEWER_MAX_ESTIMATED_S:.0f}s，"
+                "整量受审可行，不得分批（移除 paths 整量 start）"
+            ),
+            "kind": kind,
+        }
+
+    def _policy_raced_refusal(self, parent: str, kind: str) -> dict[str, Any]:
+        """start 准备期间策略被刷新/撤销的拒绝回执：不 spawn、不登记记录。"""
+        self._audit_reviewer_unavailable(
+            parent, kind, "review_policy_changed",
+            "reviewer policy refreshed while this review was being prepared",
+        )
+        return {
+            "accepted": False,
+            "reason": "review_policy_changed",
+            "detail": (
+                "reviewer policy changed while this review was being prepared; "
+                "start again under the current policy"
+            ),
+            "kind": kind,
+        }
 
     def _start_target_failure(
         self, parent: str, kind: str, workdir: str, command: str, exc: Exception,
@@ -4295,7 +4440,8 @@ class HostReviewAdmission:
         scope_receipt: dict[str, Any], scope_paths: tuple[str, ...], out_scope: str,
         tier_counts: tuple[int, int] | None, review_deadline: float,
         previous_row: _Frozen | None, push_extra: dict[str, Any], task_chars: int,
-        workdir: str = "",
+        workdir: str = "", reviewer_models: Sequence[str] = (),
+        policy_digest: str = "",
     ) -> _Frozen:
         """构造 admission 冻结记录（2026-11-03 自 ``start`` 抽出，行为不变）。
 
@@ -4312,8 +4458,9 @@ class HostReviewAdmission:
             bound_unreviewed_untracked=untracked,
             deadline_at=now + review_deadline,
             estimated_s=_review_estimate_seconds(task_chars),
-            reviewer_model=self._reviewer_models[0],
-            policy_digest=self._policy_digest,
+            reviewer_model=tuple(reviewer_models)[0],
+            policy_digest=policy_digest,
+            reviewer_models=tuple(reviewer_models),
             previous_sha=previous_row.sha if previous_row is not None else "",
             previous_child_id=previous_row.child_id if previous_row is not None else "",
             content_fingerprint=push_extra.get("content_fingerprint", ""),
@@ -4342,6 +4489,7 @@ class HostReviewAdmission:
         estimated: float, coverage: dict[str, Any] | None,
         push_remote_commit: str, push_extra: dict[str, Any], reviewer_model: str,
         warnings: list[dict[str, Any]] | None = None,
+        reviewer_models: Sequence[str] = (),
     ) -> dict[str, Any]:
         """签发回执组装（2026-11-02 自 ``start`` 抽出，行为不变，只为棘轮归零）。"""
         receipt: dict[str, Any] = {
@@ -4353,7 +4501,8 @@ class HostReviewAdmission:
                 "deadline_seconds": round(review_deadline, 1),
                 "estimated_seconds": round(estimated, 1),
                 "over_deadline_estimate": estimated > review_deadline,
-                "models": list(self._reviewer_models),
+                # 被接纳时的候选链快照（与冻结记录同源），不是组装回执时的实时链。
+                "models": list(reviewer_models),
                 "async_retry_max": _REVIEWER_ASYNC_RETRY_MAX,
             },
         }
@@ -4642,6 +4791,35 @@ class HostReviewAdmission:
                     continue
         return False
 
+    def _reserve_respawn(
+        self, parent: str, child_id: str,
+    ) -> tuple[_Frozen, tuple[str, ...], int] | None:
+        """E4：锁内预占一次重试名额，并取回该审查被接纳时冻结的候选链。
+
+        只在冻结链上推进：冻结策略已不是当前策略（operator 撤销，或有效策略漂移）
+        时，该记录此后不可能再 mint，重试只会白烧一次审查——不预占、不 spawn
+        （沿用 review_policy_changed 的 fail-closed 语义）。没有冻结链的记录
+        （reviewer_models 为空）同样按不可重试处理。
+        """
+        with self._guard:
+            row = self._records.get(child_id)
+            if (
+                row is None or not row.task
+                or row.attempts >= _REVIEWER_ASYNC_RETRY_MAX
+            ):
+                return None
+            models = tuple(row.reviewer_models)
+            if not models or not row.policy_digest or row.policy_digest != self._policy_digest:
+                self._audit_reviewer_unavailable(
+                    parent, row.kind, "review_policy_changed",
+                    "frozen reviewer policy is no longer current; no re-spawn",
+                    child_id=child_id,
+                )
+                return None
+            reserved = row.attempts + 1
+            self._records[child_id] = replace(row, attempts=reserved)
+            return row, models, reserved
+
     def _respawn_reviewer(
         self, parent: str, child_id: str, label: str, remaining: float
     ) -> dict[str, Any] | None:
@@ -4659,44 +4837,39 @@ class HostReviewAdmission:
         # 检查在锁内、spawn 在锁外、计数在第二次加锁时 +1：两个并发 poll()
         # 都会通过 attempts 检查，各起一个 reviewer，先起的那个成了孤儿还
         # 继续占 runner 名额。预占后只有一路能过（RLock，与 start() 同款）。
-        with self._guard:
-            row = self._records.get(child_id)
-            if (
-                row is None or not row.task
-                or row.attempts >= _REVIEWER_ASYNC_RETRY_MAX
-            ):
-                return None
-            reserved = row.attempts + 1
-            self._records[child_id] = replace(row, attempts=reserved)
+        reserved_row = self._reserve_respawn(parent, child_id)
+        if reserved_row is None:
+            return None
+        row, models, reserved = reserved_row
         # Continue after the model actually selected by the initial spawn,
         # not after the count of asynchronous retries (the two differ on 429).
         if label == "reviewer_model_entitlement":
             try:
-                current_index = self._reviewer_models.index(row.reviewer_model)
+                current_index = models.index(row.reviewer_model)
             except ValueError:
                 return None  # unknown model identity cannot authorize a new child
             # P1-3：只推进到下一个**不同的** operator-approved 模型；列表已到尾就
             # fail closed（不再 clamp 回末位重试同一模型），并留下可核验的审计原因。
             next_index = current_index + 1
-            if next_index >= len(self._reviewer_models):
+            if next_index >= len(models):
                 self._audit_reviewer_unavailable(
                     parent, row.kind, "reviewer_models_exhausted",
                     f"current={row.reviewer_model}: no further operator-approved model",
                     child_id=child_id,
                 )
                 return None
-            model = self._reviewer_models[next_index]
+            model = models[next_index]
         else:
             # 429/超时等瞬时故障：列表里还有下一个就换下一个；已到链尾则同一
             # model 有界重试（attempt 预占已生效，不会无限重试）。
             if not str(row.reviewer_model or "").strip():
                 return None
             try:
-                current_index = self._reviewer_models.index(row.reviewer_model)
+                current_index = models.index(row.reviewer_model)
             except ValueError:
                 return None
-            if current_index + 1 < len(self._reviewer_models):
-                model = self._reviewer_models[current_index + 1]
+            if current_index + 1 < len(models):
+                model = models[current_index + 1]
             else:
                 model = row.reviewer_model
         runner = self._runner
@@ -4797,6 +4970,7 @@ class HostReviewAdmission:
                 cached_pass=True, reused_from=cached, reviewer_model=reviewed_model,
                 reviewer_observed_model=observed_model,
                 policy_digest=self._policy_digest,
+                reviewer_models=source.reviewer_models,
                 full_test_base=full_test_anchor[0] if kind == "full_test" else "",
                 full_test_first_push_ref=full_test_anchor[1] if kind == "full_test" else "",
             )
@@ -4847,7 +5021,9 @@ class HostReviewAdmission:
         }
         return previous_row, coverage, None
 
-    def _input_budget(self, task: str) -> tuple[int, int | None, int]:
+    def _input_budget(
+        self, task: str, reviewer_models: Sequence[str] | None = None,
+    ) -> tuple[int, int | None, int]:
         """Charge the spawn-time input budget (EVO-20261021-5bf26586).
 
         A frozen task that cannot fit the reviewer model's live registry budget
@@ -4868,7 +5044,9 @@ class HostReviewAdmission:
             task_ratio = _wire_chars_per_token(
                 [{"content": task}], _REVIEWER_REGISTRY_CHARS_PER_TOKEN
             )
-            for model in self._reviewer_models:
+            for model in (
+                self._reviewer_models if reviewer_models is None else tuple(reviewer_models)
+            ):
                 try:
                     registry_budget = probe(model)
                 except Exception:  # noqa: BLE001 — failed probe never widens a known cap
@@ -4973,9 +5151,17 @@ class HostReviewAdmission:
             receipt["split_plan"] = plan
         return estimated, deadline, receipt
 
-    def _spawn_reviewer(self, parent: str, task: str, kind: str) -> dict[str, Any]:
-        """Spawn with the historical bounded retry, using the model preference list."""
+    def _spawn_reviewer(
+        self, parent: str, task: str, kind: str,
+        reviewer_models: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """Spawn with the historical bounded retry, using the model preference list.
+
+        ``reviewer_models`` is the chain the admission was accepted under (start
+        passes its frozen snapshot); ``None`` keeps the live chain for direct callers.
+        """
         runner = self._runner
+        models = self._reviewer_models if reviewer_models is None else tuple(reviewer_models)
         if runner is None:  # 未挂 runner：与 start() 的 self._runner is None 同口径
             return {
                 "accepted": False,
@@ -4994,7 +5180,7 @@ class HostReviewAdmission:
                 # P1-3：entitlement（1311/无权限）把 operator 列表走完就 fail
                 # closed，不得重试同一 model；429/超时属瞬时抖动，允许在同一
                 # model 上有界重试（总次数仍受 _REVIEWER_RETRY_MAX 约束）。
-                if model_index >= len(self._reviewer_models):
+                if model_index >= len(models):
                     self._audit_reviewer_unavailable(
                         parent, kind, "reviewer_models_exhausted", last_failure,
                     )
@@ -5006,7 +5192,7 @@ class HostReviewAdmission:
                         ),
                         "reviewer_failure": "reviewer_models_exhausted",
                     }
-                model = self._reviewer_models[model_index]
+                model = models[model_index]
                 try:
                     started = runner.start(
                         task, inherit=False, depth=0, max_rounds=1,
@@ -5054,7 +5240,7 @@ class HostReviewAdmission:
                 time.sleep(delay)
                 slept += delay
                 attempt += 1
-                if model_index + 1 < len(self._reviewer_models):
+                if model_index + 1 < len(models):
                     # 列表里还有下一个 operator-approved 模型：换一个试（429 也
                     # 一样——被限流的模型换下一个通常比原地重试恢复得更快）。
                     model_index += 1
@@ -5531,6 +5717,7 @@ class HostReviewAdmission:
                     policy_digest=src.policy_digest,
                     reviewer_model=src.reviewer_model,
                     reviewer_observed_model=src.reviewer_observed_model,
+                    reviewer_models=src.reviewer_models,
                 )
                 self._records[child] = minted
                 self._audit(parent, "review_admission_derived_full_test", {
