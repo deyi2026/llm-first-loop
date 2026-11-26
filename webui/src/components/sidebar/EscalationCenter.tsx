@@ -9,6 +9,7 @@ import { isAuthRequired, reportUnauthorized } from "../../core/authSession";
 import { mainViewStore, sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { prefillComposer } from "../../core/conversation";
 import { switchWorkspace } from "../../core/api";
+import { EscalationReviewValidity } from "./EscalationReviewValidity";
 
 export interface EscalationRequest {
   id: string;
@@ -33,6 +34,12 @@ export interface EscalationRequest {
   /** FR-03: 跨进程签名失效标记（存储层投影保留）——失效 pending 不入待审队列，
    * 历史视图显示"已失效"。 */
   _sig_unverified?: boolean;
+  /** EVO-20261127-dd37be50: 人工批准时 Host 签发失败的终态（目前仅 verify_receipt 类）。
+   * failed 不进待审队列；历史区显示原因并提供「重新发起审批」入口。 */
+  last_issue_error?: string;
+  issue_failed_at?: string;
+  /** verify_receipt 类申请的冻结材料；host_review_expires_at 是审查截止时刻（仅展示）。 */
+  host_request?: { host_review_expires_at?: string };
 }
 
 interface ListResp {
@@ -227,6 +234,8 @@ function statusBadge(status: string): { text: string; cls: string } {
     denied: { text: "已拒绝", cls: "reject" },
     consumed: { text: "令牌已使用", cls: "ok" },
     expired: { text: "已过期", cls: "" },
+    // EVO-20261127-dd37be50: 人工批准时 Host 签发失败（终态，未授予任何凭证）。
+    failed: { text: "签发失败", cls: "reject" },
   };
   return map[status] || { text: status, cls: "" };
 }
@@ -243,8 +252,9 @@ function EscalationOrigin({ req, onNavigate }: {
   const [error, setError] = useState("");
   const sid = req.session_id;
   const title = sessions.find((s) => s.session_id === sid)?.title;
-  const recoverable = /^[A-Za-z0-9-]{6,80}$/.test(req.id) && ["pending", "approved", "expired"].includes(req.status);
-  const needsNew = req.status === "expired" || !!req._sig_unverified;
+  // EVO-20261127-dd37be50: failed（人工批准时 Host 签发失败）与 expired 同为终态——只能重新发起。
+  const recoverable = /^[A-Za-z0-9-]{6,80}$/.test(req.id) && ["pending", "approved", "expired", "failed"].includes(req.status);
+  const needsNew = req.status === "expired" || req.status === "failed" || !!req._sig_unverified;
   const open = async (recover: boolean) => {
     if (!sid || busy) return;
     setBusy(true);
@@ -401,6 +411,8 @@ function PendingCard({
       {req.request_kind === "verify_receipt" && (
         <div className="v2-esc-hash warn">此操作由已登录浏览器人工批准后由 Host 专用入口签发，不会授予 AI 审计账本写权限。</div>
       )}
+      {/* 审查剩余有效期：仅提示，是否可签发由 Host 在批准时判定（EVO-20261127-dd37be50） */}
+      <EscalationReviewValidity expiresAt={req.host_request?.host_review_expires_at} />
       <textarea
         className="v2-esc-note"
         placeholder="审批备注（拒绝时建议写理由，AI 侧可见）"
@@ -645,6 +657,11 @@ export function EscalationPanel({ onNavigate }: { onNavigate?: () => void } = {}
               </div>
               <EscalationOrigin req={r} onNavigate={onNavigate} />
               {r.decision_note && <div className="v2-esc-just">备注: {r.decision_note}</div>}
+              {r.status === "failed" && r.last_issue_error && (
+                <div className="v2-esc-hash warn" data-testid={`esc-issue-error-${r.id}`}>
+                  签发失败原因：{r.last_issue_error}（{r.issue_failed_at || r.decided_at}）。未授予任何凭证，AI 侧已收到该原因。
+                </div>
+              )}
             </div>
           );
         })}

@@ -50,7 +50,22 @@ logger = logging.getLogger(__name__)
 
 _PROC_LOCK = threading.Lock()
 
-_STATUS_FLOW = {"pending", "approved", "denied", "consumed", "expired"}
+# failed（EVO-20261127-dd37be50）：verify_receipt 类申请在浏览器人工批准时被 Host
+# 判定签发材料不可成立的终态——未签发任何凭证，不可再审批，不进待审队列。
+_STATUS_FLOW = {"pending", "approved", "denied", "consumed", "expired", "failed"}
+
+
+class IssueVerifyError(ValueError):
+    """签发回调判定该申请的签发材料不可成立（终态 failed；未授予任何授权）.
+
+    Host 的 ``HostVerifyError`` 继承本类（host_verify_issuer 反向依赖本模块，
+    故基类定义在此处）。只有本类异常把申请转为终态 failed——同一申请重批必然
+    再败，留在 pending 只会造成「面板仍列为待审、AI 只能等到 pending」的僵尸项。
+    其它异常（OSError 等瞬时/环境错误）不在此列：照旧上抛，申请保持 pending。
+    """
+
+
+ISSUE_FAILED_REASON_PREFIX = "host_verify_issue_failed"
 
 
 def _now() -> str:
@@ -460,6 +475,10 @@ class EscalationStore:
           command_sha256，否则拒绝（stale_review）。为空 = 旧调用方兼容：
           内部用记录自身 sha 填充（等价于对当前记录自证；不放宽 web 端点
           "必填且一致"的校验）。
+        verify_receipt 签发（EVO-20261127-dd37be50）: Host 回调抛 IssueVerifyError
+        = 该申请的签发材料不可成立 → 同锁内转终态 failed 并留下可见原因
+        （last_issue_error / issue_failed_at），返回 (None, "host_verify_issue_failed: …")；
+        未签发任何凭证。其它异常照旧上抛，申请保持 pending。
         """
         if decision not in ("approved", "denied"):
             return None, f"非法决定值: {decision}"
@@ -468,6 +487,28 @@ class EscalationStore:
 
         result: dict | None = None
         reason = ""
+
+        def _fail_issue(records: list[dict], rec: dict, exc: IssueVerifyError) -> list[dict]:
+            # 与决定同一把锁内落库（仍在 _mutate 的读-改-写里），不留「签发已失败
+            # 但记录仍 pending」的窗口：面板不再把它列为待审，AI 侧 wait 立即拿到
+            # 失败原因。token 恒空、状态不是 approved——没有授予任何东西。
+            nonlocal result, reason
+            detail = str(exc).strip()[:200] or type(exc).__name__
+            now = _now()
+            rec["status"] = "failed"
+            rec["decided_at"] = now
+            rec["decided_by"] = decided_by
+            rec["decision_channel"] = channel
+            rec["decision_note"] = note[:1000]
+            rec["last_issue_error"] = detail
+            rec["issue_failed_at"] = now
+            result = None
+            reason = f"{ISSUE_FAILED_REASON_PREFIX}: {detail}"
+            self._log(
+                "issue_failed", rec,
+                {"decision": decision, "detail": detail, "decided_by": decided_by, "channel": channel},
+            )
+            return records
 
         def _fn(records: list[dict]) -> list[dict]:
             nonlocal result, reason
@@ -493,8 +534,10 @@ class EscalationStore:
                     )
                     return records
                 # verify_receipt is a Host-owned effect, never an escalation
-                # token. Issue under the same pending/CAS lock; failures leave
-                # the request pending and do not grant generic audit writes.
+                # token. Issue under the same pending/CAS lock. A Host rejection
+                # (IssueVerifyError) moves the request to terminal failed with
+                # a visible reason; any other exception leaves it pending. Neither
+                # path grants generic audit writes.
                 verify_receipt_id = ""
                 if decision == "approved" and r.get("request_kind") == "verify_receipt":
                     if channel != "web_session" or not decided_by.startswith("web:session:"):
@@ -503,7 +546,10 @@ class EscalationStore:
                     if issue_verify is None:
                         reason = "verify_receipt_requires_host_issuer"
                         return records
-                    verify_receipt_id = issue_verify(dict(r))
+                    try:
+                        verify_receipt_id = issue_verify(dict(r))
+                    except IssueVerifyError as exc:
+                        return _fail_issue(records, r, exc)
                     if not verify_receipt_id:
                         raise ValueError("host verify issuer returned empty receipt_id")
                 r["status"] = decision

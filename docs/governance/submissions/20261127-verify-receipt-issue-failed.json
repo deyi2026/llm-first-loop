@@ -1,0 +1,94 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-verify-receipt-issue-failed",
+  "summary": "EVO-20261127-dd37be50（GOAL-20261127-d199799b / lane-46b6821c；人工 2026-11-27 04:13 经 web 面板批准，human_exec_override）。问题：verify_receipt 类提权申请在浏览器人工批准时 Host 签发失败（HostVerifyError）后，路由只写审计日志、decide 不落库，申请仍是 pending——面板继续列为待审、重批必再败、AI 的 escalation_wait 只能看到 pending、pending_count 虚高。data/audit/escalation_review_log.jsonl 自 11-21 起累计 108 次失败 / 10 条申请（review_not_host_owned_or_expired 60、lane_not_verifying 26、lane_changed_after_review 12、lane_base_or_head_stale 9），其中 4 条至今仍是 pending。改动：(A) Host 判定签发材料不可成立时，在同一把锁内把申请落为终态 failed 并写入 last_issue_error / issue_failed_at，离开待审列表与计数、不可再批；路由回执带原因；escalation_wait 返回明确失败码、原因与重试指引（重做 merge_review_start 后重新 verify_receipt_request），并在申请仍 pending 但审查已过截止时刻时给出提示。(B) 审查发起时记录墙钟截止时刻，写入申请的 host_request.host_review_expires_at，审批卡显示截止时刻与剩余分钟，临期/过期给出提示。不放宽任何签发条件、不延长审查 TTL：_attest 在 request 与 issue 两处的校验未改，谁能拿 verify_ref 不变；截止时刻仅用于展示。建议中的可选项 C（请求时剩余不足即拒绝）未实施：它新增一个阈值性拒绝，A+B 已覆盖问题，且会在人工及时批准时造成无谓重做。非 HostVerifyError 的异常（OSError 等）行为不变：照旧上抛、申请保持 pending。如实记录：本清单撰写时，RULE-AI-28 独立代码审查、全量门禁、push 审查、独立合并审查、人工签发的 verify_ref、合入 main、部署与活体验证均未完成，以后续回执为准。",
+  "components": [
+    {
+      "component_id": "escalation-issue-failure-terminal-state",
+      "paths": [
+        "src/llm_loop/tools/escalation.py",
+        "src/llm_loop/introspection/host_verify_issuer.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/tools/builtin/escalation.py",
+        "tests/unit/test_escalation.py",
+        "tests/unit/test_host_verify_issuer.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance：EscalationStore.decide（提权申请状态机，服务端派生身份、同锁读-改-写）；HostVerifyAuthority（合并审查冻结与 verify_ref 签发判定）；escalation_wait（AI 侧闭环接收端）",
+      "disposition": "modify。escalation.py 新增异常基类 IssueVerifyError(ValueError) 与原因前缀常量，_STATUS_FLOW 加入 failed；decide() 只在 verify_receipt + approved + 浏览器会话身份的前提下调用 Host 签发回调，回调抛 IssueVerifyError 时在 _mutate 的同一把锁内把记录置为 failed（decided_at/decided_by/decision_channel/decision_note + last_issue_error/issue_failed_at），追加 issue_failed 审计事件，返回 (None, 'host_verify_issue_failed: <原因>')；token 恒空，未签发任何凭证。host_verify_issuer.py 的 HostVerifyError 改为继承 IssueVerifyError；_FrozenReview 新增仅用于展示的墙钟截止时刻 expires_at（enforcement 仍是 _attest 的单调时钟，_REVIEW_TTL_S 未改）；request() 把 host_review_expires_at 写入 host_request 并在审批理由中给出截止时刻；merge_review_start 与 verify_receipt_request 的回执告知截止时刻。routes.py 的 _decide_escalation_with_host_verify 识别原因前缀，回执 409 {error, detail, status: failed, retry_hint}；detail 端点带出 last_issue_error / issue_failed_at。builtin/escalation.py 的 EscalationWaitTool 对 failed 返回 FAILURE（失败码、原因码译文、失败时间、重试指引），pending 超时且审查已过截止时刻时附提示（仅提示）。",
+      "declaration_id": "decl-escalation-issue-failure-terminal-state-dd37be50",
+      "evidence": [
+        "RULE-AI-35 双向实测。新投影已出现：真实路由入口（已登录浏览器会话经 HTTP 批准审查已过期的申请，tests/unit/test_host_verify_issuer.py::test_web_approval_of_expired_review_fails_visibly_and_leaves_the_pending_queue）→ 409 host_verify_issue_failed / review_not_host_owned_or_expired；记录 status=failed、token 为空、原因可见；GET /api/v1/escalation/list?status=pending 为空且 pending_count=0；历史区带出原因；detail 端点带出原因与时刻；审计 outcome 仍为 host_verify_issue_failed；全程无 verify_receipts.jsonl。再次批准返回 409『请求当前状态为 failed，仅 pending 可审批』且 Host 不被再次询问。",
+        "该拦的仍拦（既有 fail-closed 用例全部保持通过）：非浏览器通道 403 且保持 pending；无 Host 回调不铸凭证；REVISE / P0 / P1 非零 / 审查不独立在 request 处拒绝；符号链接与硬链接凭证目标拒绝（OSError，申请保持 pending）；stale_review 展示-审批绑定；跨进程签名记录不可批。3 条『批准时 Host 拒绝』的既有用例按新契约更新，并保留直接断言 authority.issue 仍抛 HostVerifyError。",
+        "边界用例：只有 IssueVerifyError 转终态——OSError / PermissionError / RuntimeError / 普通 ValueError 仍上抛且申请保持 pending、无 last_issue_error；申请上的 host_review_expires_at 写成十年后也不能阻止 Host 拒绝已过期的审查；请求时的 _attest 仍按自己的时钟让过期审查无法申请；failed 记录落盘后重新加载仍为 failed；同一文本的新申请是新记录，不复用 failed。",
+        "escalation_wait：failed → FAILURE，含『[签发失败]』、失败码 host_verify_issue_failed（<原因码>）、原因译文、重试指引（merge_review_start / verify_receipt_request），不含『仍为 pending』与 verify_ref；pending 超时且审查已过截止 → 附『已过截止时刻』提示；审查剩余 10 分钟内 → 附剩余分钟提示；无截止时刻 / 不可解析 / 非验证凭证类 → 不提示。",
+        "受影响 4 个测试文件 155 passed（改动前基线 144，新增 11）；更大一圈定向回归 23 个文件 403 passed / 5 skipped；R9 ruff 与 pyright 棘轮 PASS（new=0，changed_file_diagnostics=0）。"
+      ],
+      "verification_level": "本机定向测试 + 真实路由入口（TestClient）实测；全量门禁、独立审查、合并、部署与活体验证未完成",
+      "model_evidence_veto_recovery_exit": "任一独立审查给出否决即停止交付，修正或回退本组件，不绕过既有审批与合并闸。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务：恢复『签发失败后申请仍为 pending』的旧行为；已落为 failed 的记录保持 failed（终态，无数据迁移）。"
+    },
+    {
+      "component_id": "escalation-webui-issue-state",
+      "paths": [
+        "webui/src/components/sidebar/EscalationCenter.tsx",
+        "webui/src/components/sidebar/EscalationCenter.test.tsx",
+        "webui/src/components/sidebar/EscalationReviewValidity.tsx",
+        "webui/src/components/sidebar/EscalationReviewValidity.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "webui-frontend：提权审批面板与全局审批弹窗",
+      "disposition": "modify + add。EscalationCenter.tsx：状态徽标加入 failed（签发失败）；历史区对 failed 记录显示原因与时刻；EscalationOrigin 把 failed 与 expired 同等对待（可返回来源会话、文案为重新发起审批）；EscalationRequest 类型补 last_issue_error / issue_failed_at / host_request。新增 EscalationReviewValidity.tsx：按 host_request.host_review_expires_at 显示截止时刻与剩余整分钟，剩余 10 分钟内或已过期用 alert 角色提示。批准与拒绝按钮的启用条件未改，提交体未改，reviewEscalation 未改（即时回执仍是既有的通用错误码，原因在历史区可见）。",
+      "evidence": [
+        "vitest 3 个文件 40 passed（EscalationReviewValidity 9、EscalationRecovery 5、EscalationCenter 26，其中本次新增 6）：failed 申请不在待审区、无批准按钮、待审计数为 0、不再触发全局弹窗；历史区显示『签发失败』与原因并提供『重新发起审批』；临期 / 过期 / 充足三种展示；改动前的旧记录与不可解析的截止时刻不显示任何提示；过期提示存在时批准按钮仍可用（提示不替人工做决定）。",
+        "tsc --noEmit 无错误；npm run build 成功（WebUI source binding 214cbe60201eb941）。"
+      ],
+      "verification_level": "本机 vitest + 类型检查 + 构建；浏览器内的真实人工走查未做",
+      "model_evidence_veto_recovery_exit": "任一独立审查给出否决即停止交付，修正或回退本组件并重新构建 WebUI。",
+      "rollback_route": "git revert 本组件提交并重新构建 WebUI；无持久 UI 结构或数据迁移。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261127-verify-receipt-issue-failed.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "add",
+      "evidence": [
+        "本清单记录本次改动的路径划分、控制面声明与未完成项，不构成独立审查通过。"
+      ],
+      "verification_level": "mechanical-presence-coverage-check",
+      "model_evidence_veto_recovery_exit": "覆盖检查拒绝时修正清单。",
+      "rollback_route": "随本组件一起回退。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-escalation-issue-failure-terminal-state-dd37be50",
+      "g1": {
+        "necessity": "2026-11-27 实测：ESC-20261127-903c8034 被人工批准 7 次，每次都因审查冻结记录超过 3600 秒而签发失败，申请每次都仍是 pending；AI 侧 escalation_wait 只能返回 pending，靠人工指令核对才转去重做审查。审计日志里同型失败自 11-21 起累计 108 次 / 10 条申请，原因有 4 种，其中 4 条至今仍是 pending 僵尸。这是状态投影与可见性缺陷：签发判定本身正确（未授予任何凭证），但失败结果没有落到申请记录上。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：EscalationStore.decide（何时允许调用签发回调、申请状态如何落库）与 HostVerifyAuthority.issue（是否签发，未改）。人工授权=EVO-20261127-dd37be50 的 web 面板批准（2026-11-27 04:13，human_exec_override）。",
+        "relationship": "reuse",
+        "non_duplication": "复用既有 status 字段、统一状态投影、审计日志与 wait 通道；不新增闸、工具或账本。在途 lane-099b2b94（fix/escalation-nonblocking-delivery-20261126）关注审批响应性，其暂存改动未实现本修复；为缩小冲突面，前端有效期展示独立成文件，EscalationCenter.tsx 只改对方未触碰的行，EscalationOrigin 的 needsNew 一行与对方各自追加一个析取项。"
+      },
+      "g3": {
+        "model_evidence": [
+          "组件 evidence 所列的本机定向测试、真实路由入口实测、ruff / pyright 棘轮结果。",
+          "未完成项（如实记录）：RULE-AI-28 独立代码审查、全量门禁、push 审查、独立合并审查、人工签发的 verify_ref、合入 main、部署与宿主重启后的活体验证。"
+        ],
+        "recovery_or_reason": "应拦输入与应放输入各有用例（见组件 evidence）；任一审查否决即回退本组件并重走闸链。已知边界：只有 HostVerifyError 转终态，其它异常保持 pending；现存 4 条 pending 僵尸记录由旧代码写入、没有失败标注，不会被本改动回填（可由人工在面板拒绝，或随宿主重启后验签失效而离开待审队列）；证据层级是本机测试与 TestClient 入口，生产入口的活体验证待部署后进行。"
+      },
+      "g4": {
+        "rollback": "git revert 控制组件提交并重启宿主服务，恢复旧行为；已落为 failed 的申请保持 failed，无迁移。",
+        "verification": [
+          "tests/unit/test_escalation.py 与 tests/unit/test_host_verify_issuer.py 通过（155 passed），含真实路由入口的双向实测。",
+          "全量门禁（scripts/ci_gate.sh）与远端 CI：待独立审查后执行，以后续回执为准。",
+          "宿主重启后的活体验证（待做）：在真实面板批准一条审查已过期的 verify_receipt 申请，确认回执为 host_verify_issue_failed、申请离开待审区并在历史区显示原因、来源会话的 escalation_wait 返回 [签发失败]；同时确认正常签发路径不受影响。"
+        ]
+      }
+    }
+  ]
+}
