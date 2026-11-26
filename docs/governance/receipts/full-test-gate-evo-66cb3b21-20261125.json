@@ -5,75 +5,86 @@
   "lane_id": "lane-ffb64ade",
   "branch": "fix/rule28-heredoc-opener-tail-20261125",
   "worktree": ".worktrees/evo-rule28-heredoc-opener-tail-20261125",
-  "candidate_head": "f5d9e66ce9e512eb2471be9200fa68e8bf79172c",
-  "base_main": "c6612c7e99a5b6b58c1fdcf66a6c19f559b22211",
+  "candidate_head": "94aac7382208623e717752580ae072f65b512275",
+  "base_main": "0056babfc01e37d4e8f2fb0ed003e3168f69f256",
   "stacked_on": {
     "lane_id": "lane-27aa2dc0",
     "evo_id": "EVO-20261125-86a9864e",
-    "head": "16e4230d3416eccb2bbcb33f786056261b749401"
+    "head": "97eb2bce5df7c533f51e6c047d72431f5b1d005b",
+    "merged_via": "PR #130，合并提交 0056babfc01e37d4e8f2fb0ed003e3168f69f256（2026-11-26 08:27）"
   },
   "reviewer_admission": {
     "kind": "full_test",
-    "scope": "patch",
+    "scope": "tree",
     "command": "bash scripts/ci_gate.sh",
-    "paths": [
-      "src/llm_loop/tools/review_host_admission.py",
-      "src/llm_loop/tools/review_gate.py",
-      "tests/unit/test_review_host_admission.py",
-      "tests/unit/test_review_gate.py",
-      "docs/governance/receipts/evo-66cb3b21-rule35-bidirectional-20261125.md",
-      "docs/governance/receipts/evo-66cb3b21-probe-20261125.py.txt"
-    ],
-    "candidate_sha256": "d77517392ace09ae8694ee8678bae6ebff0f329e9a4924327ad7db44b4ecdf45",
+    "candidate_sha256": "e5213ce7fd5dd31a50d213cab25f49c4cac752fa73f896bf17499ce96dd7e8bd",
     "reviewer_model": "glm/glm-5.3-flash",
-    "child_id": "subagent_025310ced24a",
+    "child_id": "subagent_2a2d3fe590e9",
     "qualification": "PASS",
-    "pass_observed_at": "2026-11-26T02:06+08:00"
+    "pass_observed_at": "2026-11-26T09:17:54+08:00",
+    "note": "同一候选的另一轮审查 subagent_b02b6b51a78c 于 08:40 PASS，其一次性资格用于第一次门禁尝试"
   },
   "full_test": {
-    "command": "bash scripts/ci_gate.sh",
-    "job_id": "job-52797b3915144a3aaf39",
-    "started_at": "2026-11-26T02:10+08:00",
-    "terminal_observed_at": "2026-11-26T02:26+08:00",
+    "job_id": "job-e6b5ca55974f45f4948f",
+    "started_at": "2026-11-26T09:18:30+08:00",
+    "terminal_observed_at": "2026-11-26T09:36:05+08:00",
     "exit_code": 0,
-    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
     "ruff": {
       "status": "PASS",
+      "historical": 67,
+      "current": 27,
       "new": 0,
+      "resolved": 40,
       "changed_file_diagnostics": 0
     },
     "pyright": {
       "status": "PASS",
-      "new": 0
+      "historical": 45,
+      "current": 7,
+      "new": 0,
+      "resolved": 38,
+      "changed_file_diagnostics": 0
     },
-    "tier0_precheck": {
+    "tier0": {
       "passed": 341,
       "skipped": 2,
-      "deselected": 16981,
-      "duration_s": 27.16
+      "deselected": 16990,
+      "warnings": 7,
+      "seconds": 29.12
     },
-    "xdist_full": {
-      "passed": 17084,
+    "xdist_parallel": {
+      "passed": 17093,
       "skipped": 206,
       "xfailed": 3,
-      "duration_s": 762.93
+      "warnings": 33,
+      "seconds": 864.08
     },
-    "serial_tail": {
+    "serial_perf": {
+      "passed": 6,
+      "skipped": 2,
+      "deselected": 17325,
+      "warnings": 7,
+      "seconds": 60.1
+    },
+    "serial_signal": {
       "passed": 1,
       "deselected": 51,
-      "duration_s": 13.92
+      "seconds": 15.3
     },
-    "evidence_ref": "evidence://v1/4d601165e8fe5d475dd4fe732c0a35c23327407f7af8213529b57062aaf3a710"
+    "command": "bash scripts/ci_gate.sh",
+    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+    "evidence_ref": "evidence://v1/cc61a6ef149ed6c28f524b814c8eaa0b6d4b88abb46e694832ab17b1a958588a"
   },
   "receipts": {
     "rule35": "docs/governance/receipts/evo-66cb3b21-rule35-bidirectional-20261125.md",
     "probe": "docs/governance/receipts/evo-66cb3b21-probe-20261125.py.txt"
   },
   "notes": [
-    "门禁在候选 head f5d9e66ce 上运行（含 lane-27aa2dc0 的独立审查 P1 修复与本 lane 的合并面补强）；本回执文件是其之后追加的提交，不改代码。",
-    "证据层级：本地全量门禁。真实入口活体验证待部署后进行。",
-    "历史：首次 212792bfb@717c8def2；本轮 f5d9e66ce@c6612c7e9。见 previous_runs。",
-    "执行者：接力会话 a414aed7（用户 2026-11-26T00:53 指令「按建议执行」）；lane owner 会话为 a01b2fac。"
+    "候选 94aac738 是 a749d101b（本 lane 旧 head 62f79ac64 合入 lane-27aa2dc0 的 97eb2bce5，冲突文件 tests/unit/test_review_host_admission.py 已解）再合入 origin/main 0056babfc01e37d4e8f2fb0ed003e3168f69f256 的结果；git diff a749d101b 94aac738 为空，树相同。",
+    "本 lane 叠在 lane-27aa2dc0（EVO-20261125-86a9864e）之上；该 lane 已于 PR #130 合入 main。",
+    "第一次门禁尝试 exit 1 的 9 红是环境事故（主仓 .git/config 被外部改成 core.bare=true），不是候选回归；同一 head 修复后重跑 exit 0。写入者未定位，见 previous_runs 的 attribution。",
+    "定向两个测试模块在合并树上 349 passed（07:54:56，.tmp-ci/review-0657/unit-B-merged.txt）。",
+    "push 审查、独立合并审查、人工签发 verify_ref、远端 CI、宿主重启后的 RULE-AI-35 活体复验：未完成。"
   ],
   "previous_runs": [
     {
@@ -85,6 +96,82 @@
       "exit_code": 0,
       "started_at": "2026-11-25T20:15:30+08:00",
       "terminal_observed_at": "2026-11-25T20:37:00+08:00"
+    },
+    {
+      "candidate_head": "94aac7382208623e717752580ae072f65b512275",
+      "base_main": "0056babfc01e37d4e8f2fb0ed003e3168f69f256",
+      "child_id": "subagent_b02b6b51a78c",
+      "candidate_sha256": "e5213ce7fd5dd31a50d213cab25f49c4cac752fa73f896bf17499ce96dd7e8bd",
+      "job_id": "job-83a1a72646cc495b900a",
+      "exit_code": 1,
+      "started_at": "2026-11-26T08:42:00+08:00",
+      "terminal_observed_at": "2026-11-26T09:07:00+08:00",
+      "outcome": "9 failed, 17092 passed, 198 skipped, 3 xfailed in 1066.59s",
+      "attribution": "9 红全部是 git 命令以 128 退出（git status --porcelain 等）：主仓 .git/config 在 08:42–09:10 间被外部进程改成 core.bare=true，所有 worktree 的 git status 因此失败，与候选代码无关。09:13 把 core.bare 改回 false 后同一 head 重跑 exit 0。写入者未定位。",
+      "evidence_ref": "evidence://v1/aad9aa06e6f88ec7a3a3455c7f672332b2e50ef0f77c0bf019709332972a6aaf"
+    },
+    {
+      "candidate_head": "f5d9e66ce9e512eb2471be9200fa68e8bf79172c",
+      "base_main": "c6612c7e99a5b6b58c1fdcf66a6c19f559b22211",
+      "child_id": "subagent_025310ced24a",
+      "candidate_sha256": "d77517392ace09ae8694ee8678bae6ebff0f329e9a4924327ad7db44b4ecdf45",
+      "job_id": "job-52797b3915144a3aaf39",
+      "exit_code": 0,
+      "started_at": "2026-11-26T02:10+08:00",
+      "terminal_observed_at": "2026-11-26T02:26+08:00",
+      "reviewer_admission": {
+        "kind": "full_test",
+        "scope": "patch",
+        "command": "bash scripts/ci_gate.sh",
+        "paths": [
+          "src/llm_loop/tools/review_host_admission.py",
+          "src/llm_loop/tools/review_gate.py",
+          "tests/unit/test_review_host_admission.py",
+          "tests/unit/test_review_gate.py",
+          "docs/governance/receipts/evo-66cb3b21-rule35-bidirectional-20261125.md",
+          "docs/governance/receipts/evo-66cb3b21-probe-20261125.py.txt"
+        ],
+        "candidate_sha256": "d77517392ace09ae8694ee8678bae6ebff0f329e9a4924327ad7db44b4ecdf45",
+        "reviewer_model": "glm/glm-5.3-flash",
+        "child_id": "subagent_025310ced24a",
+        "qualification": "PASS",
+        "pass_observed_at": "2026-11-26T02:06+08:00"
+      },
+      "full_test": {
+        "command": "bash scripts/ci_gate.sh",
+        "job_id": "job-52797b3915144a3aaf39",
+        "started_at": "2026-11-26T02:10+08:00",
+        "terminal_observed_at": "2026-11-26T02:26+08:00",
+        "exit_code": 0,
+        "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+        "ruff": {
+          "status": "PASS",
+          "new": 0,
+          "changed_file_diagnostics": 0
+        },
+        "pyright": {
+          "status": "PASS",
+          "new": 0
+        },
+        "tier0_precheck": {
+          "passed": 341,
+          "skipped": 2,
+          "deselected": 16981,
+          "duration_s": 27.16
+        },
+        "xdist_full": {
+          "passed": 17084,
+          "skipped": 206,
+          "xfailed": 3,
+          "duration_s": 762.93
+        },
+        "serial_tail": {
+          "passed": 1,
+          "deselected": 51,
+          "duration_s": 13.92
+        },
+        "evidence_ref": "evidence://v1/4d601165e8fe5d475dd4fe732c0a35c23327407f7af8213529b57062aaf3a710"
+      }
     }
   ]
 }

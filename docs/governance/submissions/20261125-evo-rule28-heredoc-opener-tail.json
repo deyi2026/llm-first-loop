@@ -17,7 +17,7 @@
         "RULE-AI-35 实测（分类器直调探针 evo-66cb3b21-probe-20261125.py.txt，sha256 914565a5c3a343c42aa22678ac49e6bee513cd4b22751a4603d6083fa4ba4bd6）：修前 14 例中 5 例不符（T1 行尾分号后 push、T2 行尾 && 后 push、T3 行尾分号后 pytest、T4 未闭合体的行尾 push、T5 重定向后的 push 均返回 None），修后 14 例全部相符；应放行侧 U1–U6（行尾重定向到文件 / 标准错误、行尾注释、tee 的行尾重定向、终止符之后的命令、体里的 Markdown 代码span）修前修后均为 None。逐条见 docs/governance/receipts/evo-66cb3b21-rule35-bidirectional-20261125.md §3 与 §4。",
         "合并面（本修复 × 86a9864e 的体豁免）补强（2026-11-26）：行尾文本进骨架后，行尾留下未闭合引号会使骨架在该行引号失配；86a9864e 接力修复的「opener 行整行收在顶层」条件先于词法判定把体留在内容网与反引号网，不再依赖骨架词法失败后的全文兜底。check_shell 级测试断言「骨架可词法分析时仍被拦」与「行尾真实动作对段网可见」。"
       ],
-      "verification_level": "unit_340_passed_in_targeted_two_modules_plus_full_ci_gate_exit0_at_head_f5d9e66ce_plus_independent_full_test_review_pass__push_and_merge_review_and_host_restart_live_verification_pending",
+      "verification_level": "unit_349_passed_in_targeted_two_modules_on_merged_tree_plus_full_ci_gate_exit0_at_head_94aac738_after_merging_main_0056babfc_plus_independent_full_test_review_pass__push_and_merge_review_and_host_restart_live_verification_pending",
       "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是待审的命令文本与其 git 仓库状态，无模型自证输入。recovery：任一审查发现否决即回退本组件提交并重走闸链；exit：revert 并重启宿主后，opener 行尾文本恢复对段网不可见的旧行为。注意本文件是宿主进程内模块，运行中的宿主须重启后才加载新口径。",
       "rollback_route": "git revert 本组件提交并重启宿主服务；分类器无状态、无数据迁移。"
     },
@@ -83,8 +83,8 @@
       "g3": {
         "model_evidence": [
           "RULE-AI-35 应拦 / 应放行输入已固化并通过（代码终态 f5d9e66ce）：新增拦截确实触发=T1–T5 五种行尾真实动作形态（修前均放行）；既有豁免形态不被误拦=U1–U6 六种合法写法（修前修后均放行）；原有拦截不退化=M1–M3。用例清单见回执 §3、§4，合并面补强见 §7。",
-          "本机测试回执（2026-11-26）：定向两个测试模块 340 passed / 0 failed；bash scripts/ci_gate.sh 在 f5d9e66ce 上（02:10–02:26）exit 0，终判行『ci_gate 全链路通过』；xdist 17084 passed / 206 skipped / 3 xfailed in 762.93s，tier0 预检 341 passed / 2 skipped，R9 ruff 与 pyright 均 PASS（new=0）。",
-          "RULE-AI-28 审查回执：首轮 full_test 审查（subagent_801ecd8bf25d，head 8f7b55542）REVISE，P0=0 P1=1 P2=1；修复后 full_test 审查 PASS（child subagent_025310ced24a，candidate d77517392ace09ae8694ee8678bae6ebff0f329e9a4924327ad7db44b4ecdf45）。",
+          "本机测试回执（2026-11-26）：合并树上定向两个测试模块 349 passed / 0 failed（07:54）；候选 94aac738（= 62f79ac64 合入 lane-27aa2dc0 的 97eb2bce5，再合入 origin/main 0056babfc01e37d4e8f2fb0ed003e3168f69f256，树与 a749d101b 相同）上 bash scripts/ci_gate.sh（09:18–09:36，job-e6b5ca55974f45f4948f）exit 0，终判行『ci_gate 全链路通过』；xdist 17093 passed / 206 skipped / 3 xfailed in 864.08s，serial_perf 6 passed / 2 skipped，serial_signal 1 passed，tier0 预检 341 passed / 2 skipped，R9 ruff 与 pyright 均 PASS（new=0）。",
+          "RULE-AI-28 审查回执：首轮 full_test 审查（subagent_801ecd8bf25d，head 8f7b55542）REVISE，P0=0 P1=1 P2=1；修复后 full_test 审查 PASS（child subagent_025310ced24a，candidate d7751739…）；合并 main 后候选 94aac738（candidate e5213ce7fd5d…）的 full_test 审查两轮 PASS（subagent_b02b6b51a78c，08:40；subagent_2a2d3fe590e9，09:17）。同一 head 的第一次门禁（08:42–09:06，job-83a1a72646cc495b900a）exit 1：9 红全部是 git 命令以 128 退出——主仓 .git/config 在 08:42–09:10 间被外部进程改成 core.bare=true，所有 worktree 的 git status 因此失败，与候选无关；09:13 改回 false 后重跑结果见上一条。写入者未定位。",
           "未完成项（如实记录）：push 审查、PR 与远端 CI 终态、独立合并审查终态、人工签发的 verify_ref、合入 main、受管部署与宿主重启后的活体复验——以后续回执为准，不在此声称通过。"
         ],
         "recovery_or_reason": "应拦输入有逐条对应用例，任一审查发现否决即 revert 对应组件提交并重走闸链；置信度来自定向测试、全量门禁与独立审查，而非自述。已知边界：证据层级为分类器直调的本地实测，真实入口（execute_command）的活体复验待部署后进行；本清单以 shell 对 opener 行尾文本的常规解析语义为前提，行尾含未闭合引号的形态已由 86a9864e 接力修复的顶层条件保守拦截。review_host_admission.py 属宿主进程内模块，运行中的宿主须重启后才加载新口径。"
@@ -92,10 +92,10 @@
       "g4": {
         "rollback": "git revert 控制组件提交并重启宿主服务，即恢复『opener 行尾文本不进骨架』的旧判定。无状态、无数据迁移。",
         "verification": [
-          "python scripts/check_architecture_submission.py --base 16e4230d3416eccb2bbcb33f786056261b749401 --head HEAD 严格 PASS（本清单提交后本机复核，结果记入 PR 描述）",
-          "本机全量门禁：bash scripts/ci_gate.sh 在 f5d9e66ce 上 exit 0；定向 340 passed；逐项见 g3",
-          "RULE-AI-28：full_test 审查在修复后的候选上 PASS；push 审查与独立合并审查待完成",
-          "远端 CI（含 A.5）：待完成；须等 PR #130 先合入 main 后本 PR 区间才只剩本清单一份",
+          "python scripts/check_architecture_submission.py --base 0056babfc01e37d4e8f2fb0ed003e3168f69f256 --head HEAD 严格 PASS（本清单更新后本机复核，结果记入 PR 描述）",
+          "本机全量门禁：bash scripts/ci_gate.sh 在 94aac738 上 exit 0（第二次；第一次 exit 1 的 9 红是 core.bare 环境事故，见 g3）；定向 349 passed；逐项见 g3",
+          "RULE-AI-28：full_test 审查在 94aac738 对应候选上 PASS（两轮）；push 审查与独立合并审查待完成",
+          "远端 CI（含 A.5）：待完成（lane-27aa2dc0 已于 PR #130 合入 main，本 PR 区间只剩本 lane 的改动）",
           "独立合并审查终态与人工签发的 verify_ref：待完成",
           "宿主重启后 RULE-AI-35 活体复验（待做）：opener 行带后续受保护动作的写文档命令被拒；纯写文档命令（带重定向或注释）仍正常执行"
         ]
