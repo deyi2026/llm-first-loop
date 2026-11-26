@@ -1,0 +1,72 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-cache-stable-briefing",
+  "summary": "P0 cache stability: move dynamic knowledge statistics out of the resident briefing prefix. Adds build_stable_installation_briefing keyed only on ai_rules.md content plus the skills directory listing, and switches the ingress assembly point to the stable view. Rules/skills realtime freshness, the full diagnostic view and live retrieval guidance unchanged. No new tool, no frozen safety truth, no learning disabled.",
+  "components": [
+    {
+      "component_id": "ingress-briefing-assembly",
+      "paths": [
+        "docs/governance/submissions/20261126-cache-stable-briefing.json",
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
+        "src/llm_loop/runtime/briefing.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-stable-briefing-prefix",
+      "owning_subsystem": "Existing prompt_build ingress assembly stage and runtime briefing builder.",
+      "disposition": "Add a stable briefing variant whose resident prefix is keyed only on ai_rules.md content and the skills directory listing; move scores, counts, method index and settlement overview out of the resident prefix to on-demand doctor/introspection reads. Switch the single assembly point at ingress_resolution.py:222 to the stable view. Keep the full diagnostic view intact for fallback.",
+      "evidence": [
+        "Isolated reproduction 306b5704: 54-run weighted exact-recheck rate 76.29 percent (4723681/3603648); four prefix-fp drift moments correspond one-to-one with knowledge-update events (ledger/experience/method).",
+        "T4 regression commit e9c895e97: 8-run knowledge-update loop, provider-view prefix hash equality assertion including the zero-prefix-null branch, plus full-view drift liveness control; 44 assertions green.",
+        "Local original full gate scripts/ci_gate.sh exit 0 (ruff/env-pin/pyright/tier0/full parallel+serial suite).",
+        "Independent Host review review_admission(full_test scope=tree) PASS reviewer glm-5.3-flash candidate 885c94bc; push gate review_admission(git_push) PASS candidate 4836f7c52."
+      ],
+      "verification_level": "R9 independent full-tree review PASS; PR #137 CI running (gate and security scans pending at manifest writing); real-provider acceptance (zero-prefix rate, weighted hit rate, token/CPU/latency, knowledge fidelity) planned with unified deployment, 90 percent is a measured target not a promise.",
+      "model_evidence_veto_recovery_exit": "Model evidence remains live: rules and skills content stays keyed into the resident prefix so rule and authorization changes keep taking effect; scores and counts remain readable via doctor/introspection; the full diagnostic briefing view is retained and the assembly point is a single-line switch back.",
+      "rollback_route": "Revert the single assembly line at ingress_resolution.py:222 and remove build_stable_installation_briefing; protected revert of the two commits, no data migration."
+    },
+    {
+      "component_id": "cache-stability-regression-tests",
+      "paths": [
+        "tests/unit/test_installation_briefing.py",
+        "tests/unit/test_observation_exact_ref_red.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing unit test suite for installation briefing and observation exact-ref limits.",
+      "disposition": "Add permanent regression: provider-view prefix hash equality across 8 knowledge-update runs with the zero-prefix-null causal branch, plus full-view drift liveness control; include one boundary re-definition in the exact-ref cap test (28659 to 30000, attributed by base comparison to the introduced fix, formula documented).",
+      "evidence": [
+        "44 assertions green in the 8-run loop; directed regression 197+44 all green including the documented boundary case."
+      ],
+      "verification_level": "Directed local verification passed; the R9 full-tree review PASS covers the same tree.",
+      "model_evidence_veto_recovery_exit": "Tests only observe; no runtime authority, no evidence deletion; the exact-ref boundary change is documented with a base comparison.",
+      "rollback_route": "Revert the two test files."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-stable-briefing-prefix",
+      "g1": {
+        "necessity": "Knowledge updates (ledger, experience, method) mutate the resident briefing prefix byte-for-byte; isolated reproduction measured 76.29 percent weighted exact-recheck over 54 runs, so the provider prefix cache invalidates to zero on every knowledge update."
+      },
+      "g2": {
+        "authority_owner": "Host runtime ingress assembly subsystem; briefing content authority stays with the runtime briefing builder and docs/ai_rules.md.",
+        "relationship": "reuse",
+        "non_duplication": "No new assembly entry: the existing single assembly point switches views; the full diagnostic view is reused unchanged; no duplicate prefix builder is retained."
+      },
+      "g3": {
+        "model_evidence": [
+          "306b5704 isolated reproduction: 54-run weighted exact-recheck 76.29 percent with four fp-drift moments matching knowledge-update events.",
+          "T4 permanent regression: 8-run knowledge-update loop keeps the provider-view prefix hash identical while the full diagnostic view keeps drifting; 44 assertions."
+        ],
+        "recovery_or_reason": "Fallback is the retained full diagnostic view via the single assembly switch; on-demand doctor/introspection reads replace the moved statistics."
+      },
+      "g4": {
+        "rollback": "Protected revert of commits b9d891101 and e9c895e97; the assembly point is one line.",
+        "verification": [
+          "Original full gate scripts/ci_gate.sh exit 0 on the frozen tree.",
+          "Independent Host review full_test PASS (candidate 885c94bc) and git_push gate PASS (candidate 4836f7c52) on the same tree.",
+          "PR #137 remote CI: Linux install acceptance, env-leak gate and privacy-gate passed; gate and security scans pending at manifest writing."
+        ]
+      }
+    }
+  ]
+}
