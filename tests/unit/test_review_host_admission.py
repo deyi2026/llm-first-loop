@@ -221,6 +221,20 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF\nend\" ; echo \"\nx\"", "git_push"),
     # 终止符未配对：体保守保留在反引号网扫描范围内。
     ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`", "git_push"),
+    # ── EVO-20261125-66cb3b21（人工批准 2026-11-25）：opener 行引导之后的文本进骨架 ──
+    # heredoc 引导之后、同一行上的文本在 shell 中会被正常解析执行；修前生成骨架时
+    # 被整段丢弃，段网看不到同一行上其后的真实动作（漏放）。
+    ("cat > /tmp/doc.md <<'EOF'; git push origin main\n示例\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF' && git push origin main\n示例\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF'; pytest -q\n示例\nEOF", "full_test"),
+    ("cat > /tmp/doc.md <<'EOF'; git push origin main\n示例", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF' > /tmp/out; git push origin main\n示例\nEOF", "git_push"),
+    # 既有数据接收者豁免形态结果不变：后续文本只是重定向或注释。
+    ("cat > /tmp/doc.md <<'EOF' > /tmp/out\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' 2>> /tmp/err\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' # 说明：git push origin main 会被拦\n示例\nEOF", None),
+    ("tee /tmp/a.md <<'EOF' >> /tmp/b.md\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n示例\nEOF\necho done", None),
     # ── 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，2026-11-26）──
     # opener 行须整行收在 shell 顶层：`<<WORD` 之后的行尾文本留下未闭合引号时，
     # shell 把后续各行当作该引号串的延续（命令行，不是 here-doc 体；双引号内的
@@ -232,6 +246,12 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ('cat > /tmp/doc.md <<\'EOF\' > "a b"\n`git push origin main`\nEOF', None),
     ("cat > /tmp/doc.md <<'EOF' # it's fine\n`git push origin main`\nEOF", None),
     ("cat > /tmp/doc.md <<'EOF' 2>/dev/null\n`git push origin main`\nEOF", None),
+    # ── 66cb3b21 × 86a9864e 合并面（独立审查 subagent_801ecd8bf25d 的原样例）──
+    # 行尾含 `;` 即非豁免（修前修后都拦）；行尾只留下未闭合引号的形态见上一组，
+    # 两者都不依赖骨架词法失败的兜底。
+    ('cat > /tmp/doc.md <<\'EOF\'; echo "note\n`git push origin main`"\nEOF', "git_push"),
+    # 行尾文本进骨架后，合法文档写法（行尾重定向 / 注释）仍放行。
+    ("cat > /tmp/doc.md <<'EOF' > out.md\n示例：`git push origin main`\nEOF", None),
     # ── 接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 不是 here-doc 引导 ──
     # shell 里 `cat <<<'EOF'` 没有正文，其后直到 `EOF` 行都是普通命令行（bash 实测执行）。
     # 旧引导正则从第二个 `<` 起命中，把这些行当作已配对豁免体：反引号形态在
@@ -263,6 +283,22 @@ def test_heredoc_opener_line_with_unclosed_tail_quote_is_not_desensitized(tmp_pa
     # 对照：行尾引号闭合的同一写法仍是合法数据体。
     ok = 'cat > /tmp/pr.md <<\'PREOF\' > "a b"\n`git push origin main` 只是文档\nPREOF'
     assert host.check_shell("author-1", ok, str(repo)).allowed is True
+
+
+def test_opener_tail_text_stays_in_skeleton_and_unclosed_tail_quote_blocks(tmp_path: Path) -> None:
+    """66cb3b21 × 86a9864e 合并面：行尾文本进骨架后，行尾未闭合引号的体仍被拦.
+
+    行尾文本留在骨架里，会使骨架在该行留下未闭合引号；「opener 行整行收在顶层」
+    条件先于词法判定把体留在内容网与反引号网，不靠 ValueError 兜底碰巧拦住。
+    """
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    # 其后一行把骨架引号配平：骨架可以词法分析，必须由顶层条件本身拦下。
+    cmd = 'cat > /tmp/pr.md <<\'PREOF\' > "note\n`git push origin main` x"\nPREOF\necho "a" "b"'
+    assert host.check_shell("author-1", cmd, str(repo)).blocked is True
+    # 行尾的真实动作对段网可见（66cb3b21 的目标场景）。
+    tail_action = "cat > /tmp/pr.md <<'PREOF'; git push origin main\n正文\nPREOF"
+    assert host.check_shell("author-1", tail_action, str(repo)).blocked is True
 
 
 def test_here_string_lines_are_not_exempt_heredoc_body(tmp_path: Path) -> None:

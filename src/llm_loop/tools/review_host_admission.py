@@ -624,9 +624,14 @@ def _strip_heredoc_units(
         # 留下未闭合引号，shell 把后续各行当作该引号串的延续——属于命令行而非
         # here-doc 体，双引号内的命令替换真实执行（2026-11-26 bash 实测）。此时
         # 「体」既不豁免（内容网照扫）也不脱敏（留在反引号网扫描面）。
-        tail_txt = line[m.end() :]
-        data_body = is_exempt and _advance_quote_state(None, tail_txt) is None
+        tail = line[m.end() :]
+        data_body = is_exempt and _advance_quote_state(None, tail) is None
         ph = f"__XPL_{len(payloads)}__"
+        # EVO-20261125-66cb3b21：引导之后、同一行上的文本在 shell 中会被正常解析
+        # （`; cmd`、`&& cmd`、重定向、注释…），必须留在骨架里供段网判定；旧实现把它
+        # 整段丢弃，同一行上其后的真实动作因此对段网不可见。
+        skeleton_line = (head + " " + ph) if head else ph
+        skeleton_line = (skeleton_line + " " + tail).strip()
         body: list[str] = []
         j = i + 1
         closed = False
@@ -645,14 +650,14 @@ def _strip_heredoc_units(
             payloads.append("\n".join(body))
             if exempt is not None:
                 exempt.append(data_body)
-            out.append((head + " " + ph).strip() if head else ph)
+            out.append(skeleton_line)
             for _bl in lines[i + 1 :]:
                 _net_keep(_bl + "\n")
             return _finish()
         payloads.append("\n".join(body))
         if exempt is not None:
             exempt.append(data_body)
-        out.append((head + " " + ph).strip() if head else ph)
+        out.append(skeleton_line)
         if not (data_body and at_top_level):
             # 未豁免 / 非顶层 / opener 行未整行收在顶层：体照常进反引号网扫描面。
             for _bl in body:
@@ -935,9 +940,14 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     backtick pair) in a ``cat > file <<'EOF'`` body is not a command
     substitution and is not scanned. Unquoted bodies, bodies whose ``<<``
     lies inside a multi-line quoted string and unterminated bodies stay in
-    the net (backticks there really do execute); the ValueError fallback
-    still scans the raw text because line-based heredoc detection is
-    untrustworthy once the skeleton fails to lex.
+    the net (backticks there really do execute). Relay fix 2026-11-26
+    (independent review P1): an opener line that leaves a quote open after
+    the ``<<WORD`` operator makes bash read the following lines as part of
+    that quoted string (command line, not body), so such bodies stay in the
+    backtick net AND lose the protected-keyword exemption. If the skeleton
+    fails to lex, the ValueError fallback scans the raw command text
+    (``value`` — not the reduced ``net_text``), because line-based heredoc
+    detection is untrustworthy once the skeleton fails to lex.
     """
     value = str(command or "").strip()
     if not value:
