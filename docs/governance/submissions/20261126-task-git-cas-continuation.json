@@ -1,0 +1,30 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-task-git-cas-continuation",
+  "summary": "Keep the trusted Run CAS synchronized after its own successful bounded Git commit, without adopting external changes or extending Host authority.",
+  "components": [
+    {
+      "component_id": "existing-task-git-run-cas",
+      "paths": [
+        "docs/governance/submissions/20261126-task-git-cas-continuation.json",
+        "src/llm_loop/tools/builtin/task_git_commit.py",
+        "src/llm_loop/tools/task_execution.py",
+        "tests/unit/test_task_git_commit_tool.py",
+        "tests/unit/test_task_runtime.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing TrustedTaskExecution and TaskGitCommitTool; existing ManagedGitAdapter remains the sole commit/CAS authority.",
+      "disposition": "Replace the stale Run CAS snapshot only after a successful managed commit and durable Lane CAS receipt. All file/app/service/command checks use the same immutable pair. No new authority, policy, persistent store, signing, sandbox bypass or automatic external HEAD adoption.",
+      "evidence": [
+        "RED: real linked-worktree second commit in copied tool context failed git_lane_cas_conflict; revocation was masked by stale CAS.",
+        "GREEN: 148 targeted tests passed (Git adapter/tool, task runtime/authority, file/command, issuer, architecture guards); external Lane/physical HEAD/revocation denied and file/app authorization remains usable after own commit.",
+        "Ruff changed files and full-tree Pyright ratchet passed; Pyright new=0, changed_file_diagnostics=0.",
+        "Tests use isolated temporary repositories and test authority fixtures; no production Host signing or deployment claimed."
+      ],
+      "verification_level": "Local targeted real Git effects and test authority fixtures; independent review, full R9 and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "No model-supplied CAS or lease fields. Only trusted adapter success advances the pair; stale external Lane/HEAD, revoked or expired authority and unknown effects remain HOLD.",
+      "rollback_route": "Revert this isolated change through protected main; original fail-closed behavior restored."
+    }
+  ],
+  "declarations": []
+}
