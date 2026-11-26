@@ -1,0 +1,57 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-lane-host-lease-entry",
+  "summary": "Ordinary Lane owner request and bounded one-time approval through the existing separated Host issuer.",
+  "components": [
+    {
+      "component_id": "ordinary-lane-host-entry",
+      "paths": [
+        "docs/governance/submissions/20261126-lane-host-lease-entry.json",
+        "docs/governance/LANE-TASK-LEASE-ENTRY-20261126.md",
+        "scripts/host_task_lease_issuer.py",
+        "src/llm_loop/tools/managed_git.py",
+        "tests/unit/test_host_task_lease_issuer.py",
+        "tests/unit/test_managed_git.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "existing-host-lane-approval",
+      "owning_subsystem": "Existing UID462 Task Host issuer, Goal/Task/Lane ledgers, session binding and ManagedGitAdapter.",
+      "disposition": "Read-only request snapshot; installed issuer exact digest and local TTY Owner approval, repeated live snapshot, existing one-shot approval/lease/state/binding/audit publication. Per-session publication lock and active-binding rejection; managed Git verifies actual Lane branch. No new signer, key, authority database, Web signing endpoint or privilege delegation.",
+      "evidence": [
+        "158 targeted/architecture tests passed; real isolated linked worktrees, real ledger records and test Ed25519 keys.",
+        "One approval, two separate Run activations and real commits with the same lease; revocation denies next commit.",
+        "Digest/resource/owner/TTL/branch/HEAD/Lane/task drift, duplicate binding and unprivileged issue denied."
+      ],
+      "verification_level": "Offline real Git effects with test authority fixtures; actual separated UID, TTY, production sandbox and deployment pending.",
+      "model_evidence_veto_recovery_exit": "Draft is untrusted and grants nothing; only installed independent issuer after Owner confirmation can publish. Unknown effects require receipt reconciliation, no automatic replay.",
+      "rollback_route": "Stop new issuance, revoke affected leases, restore prior verified installed issuer and protected revert; preserve keys and audit."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "existing-host-lane-approval",
+      "g1": {
+        "necessity": "Existing issuer requires manual private approval file creation; ordinary Lane lacks a bounded Owner entry and repeatedly encounters Git authorization denial."
+      },
+      "g2": {
+        "authority_owner": "Existing independent UID462 Host issuer and local OS administrator/Owner; live Goal/Task/Lane and ManagedGitAdapter retain their existing fences.",
+        "relationship": "reuse",
+        "non_duplication": "Same installed issuer, approval schema, key, lease/state/binding/audit, no parallel signer or Web authority. Snapshot is read-only, no new task ledger."
+      },
+      "g3": {
+        "model_evidence": [
+          "Real ledger and physical Git preflight, exact request digest, one approval with two Run commits, negative cases and static/architecture gates."
+        ],
+        "recovery_or_reason": "Reject stale, revoked, ambiguous, unauthorized, branch drift and unknown effects; reconcile existing receipts before any retry."
+      },
+      "g4": {
+        "rollback": "Revoke affected leases and restore prior verified issuer, protected revert; no global permission changes.",
+        "verification": [
+          "Independent Reviewer PASS P0/P1=0, original full R9 exit0, protected PR/CI/main CI.",
+          "Administrator installs exact reviewed issuer; one physical Owner approval, multiple Web/CLI commits, scope/expiry/revoke negative tests.",
+          "Deepin and Web request UI not claimed; coordinate one deployment with PR135 and other accepted changes."
+        ]
+      }
+    }
+  ]
+}

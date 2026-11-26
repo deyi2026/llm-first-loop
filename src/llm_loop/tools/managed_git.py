@@ -227,6 +227,12 @@ class ManagedGitAdapter:
             or lane.get("version") != item.expected_lane_version
         ):
             raise ManagedGitError("git_lane_cas_conflict")
+        branch = lane.get("branch")
+        if (
+            not isinstance(branch, str) or not branch or branch in ("main", "master")
+            or _git_line(worktree, "symbolic-ref", "HEAD") != f"refs/heads/{branch}"
+        ):
+            raise ManagedGitError("git_lane_branch_conflict")
         checked = _paths_checked(worktree, item.paths, lane.get("paths") or [])
         parent_scope = current_write_scope.get()
         parent_allows = all(
