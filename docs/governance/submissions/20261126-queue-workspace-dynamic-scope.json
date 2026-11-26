@@ -1,0 +1,44 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-queue-workspace-dynamic-scope",
+  "summary": "Declarative architecture-submission manifest declaring exactly the four changed paths of PR131 (queue workspace dynamic scope: stale-scope stamping hotfix for q_c8a77451fdfb, EVO-20261126-f61fcfdb) plus this manifest itself. It grants no runtime authority and exists solely so scripts/check_architecture_submission.py finds exactly one changed manifest whose path partition equals the exact changed-path set after the branch is rebased onto remote main 0056babfc.",
+  "components": [
+    {
+      "component_id": "queue-workspace-dynamic-scope-runtime",
+      "paths": [
+        "src/llm_loop/web/human_turn_queue.py",
+        "src/llm_loop/web/queue_recovery.py",
+        "src/llm_loop/web/routes.py",
+        "tests/web/test_super_agent_concurrency.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "web",
+      "disposition": "实机验收缺陷 q_c8a77451fdfb（workspace_scope 盖章为历史 worktree evo-approval-feedback，请求前后 current 均 root）修复：enqueue 显式 scope 冻结参数（入队时从同源快照取值，消除构造期快照漂移）、QueueServerFallback 派发 scope 改实时 property 动态读 engine.workspace_root、A→B→A 共享 data_dir 回归负测（test_super_agent_concurrency.py +96 行）。",
+      "evidence": [
+        "实机核证：q_c8a77451fdfb workspace_scope=.worktrees/evo-approval-feedback-20261125，web pid=36736 cwd=root，enqueue→claim 19.9ms（主筹 SA-GEN457-SCOPE-DEFECT 只读核证）",
+        "lane-6ff5d250 merge review PASS（subagent_1ff20be512ad，P0=0/P1=1f，base/head 双绑定）",
+        "verify_ref 人工签发 lane-6ff5d250:c6612c7e（ESC-20261126-28767201）",
+        "lane_queue_submit mq-d8b7ee21 四机检 pass（base_main_current 当时成立；后 main 前进至 0056babfc，本 manifest 随 rebase 重验）"
+      ],
+      "verification_level": "r9_commit 内嵌完整 ci_gate exit=0（e9a7038b6f 提交时）；rebase 到 0056babfc 后最终候选须本地三守卫+pyright+定向回归复验与 fresh git_push 闸独审后方可合并；远端 PR131 CI（含 A.5）以真实回执观察。",
+      "model_evidence_veto_recovery_exit": "若 rebase 冲突/复验非绿/A.5 仍红，停止合并并在本分支修复后重走全部闸；不以本 manifest 或既有 PASS 冒充 rebase 后候选的审查结果；绝不绕过或弱化 A.5/arch_guards/ci_gate 门禁。",
+      "rollback_route": "删除本 manifest 文件并将远端分支恢复到 e9a7038b6f（CI/privacy 除 A.5 外全绿、仅缺本 manifest），该状态为最后可核状态。"
+    },
+    {
+      "component_id": "queue-scope-submission-meta",
+      "paths": [
+        "docs/governance/submissions/20261126-queue-workspace-dynamic-scope.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance",
+      "disposition": "本声明式 manifest 自身（新增未审材料）：rebase 后最终候选的 fresh git_push 闸独审（tree scope）将其纳入整树覆盖，不以旧回执冒充。",
+      "evidence": [
+        "checker 校验：scripts/check_architecture_submission.py --base 0056babfc --head 最终候选，schema+coverage 双向精确相等"
+      ],
+      "verification_level": "A.5（远端 CI）以下一轮真实回执观察。",
+      "model_evidence_veto_recovery_exit": "若 checker 报 coverage 缺失/多余/重复路径或 schema 错误，先修 manifest 再合并；绝不编辑 architecture-review.yml 或 checker 本体来适配本 PR。",
+      "rollback_route": "删除本 manifest 并将远端分支恢复到 e9a7038b6f，即回退到 PR131 当前 head（除 A.5 外全绿状态）。"
+    }
+  ],
+  "declarations": []
+}
