@@ -1,0 +1,129 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-evo-rule28-heredoc-data-region",
+  "summary": "EVO-20261125-86a9864e（GOAL-20261125-40677ea1 / lane-27aa2dc0；人工 2026-11-25 18:35:32 经 web 面板批准）：RULE-AI-28 宿主命令分类器的两处误判收窄。① here-doc 数据体：命中豁免条件（引号定界符 + 数据落点 + 顶层 opener + opener 行整行收在顶层 + 终止符已配对）的体不进反引号网——cat > 文档 <<'EOF' 正文里的 Markdown 代码span（一对反引号包着受保护动作名）不是命令替换，旧实现按反引号网判为真实 push / 全量测试而误拒；② pytest 非执行形态（--collect-only / --co / -h / --help / --version）不再归全量测试闸，观测行分类器与 Host 准入分类器口径对齐。控制边界=既有分类器的判定输入收窄，不新增闸、不新增放行通道、不改人工授权环节。实施=a01b2fac（3ab8ac979 代码、c995cbb74 探针回执、cf87b290f 门禁回执）；接力=a414aed7（用户 2026-11-26 00:53 指令「按建议执行」）：合并 main、按独立审查 P1 修复、复跑门禁、补本清单。独立审查首轮两道闸各报 1 条 P1（均 REVISE）：非执行判定放过藏在引号 / bash -c 载荷里的真实 pytest 调用；opener 行尾留下未闭合引号时体被脱敏（真实 bash 实测命令替换会执行）。两处先复现确认再修（只收紧），修复后的候选经同一审查模型复核 PASS。接力修复 2（2026-11-26，用户 06:41 要求重发审批后）：合并审查绑定过期，重做审查得 REVISE（P1=1，审查者不附正文）；差分实测（分类器判定 × 真实 bash，30 例）发现 here-string（cat 接三个小于号）被引导正则误当 here-doc 引导，其后的真实命令行被当作豁免体——反引号形态为本 lane 新引入的漏放，裸动词形态为 main 既有漏放；引导正则加否定后顾闭合，全量门禁在 5e37e8951 复跑 exit 0。已知边界 B11（真实 push 出现在 opener 行）不在本清单范围，由 lane-ffb64ade（EVO-20261125-66cb3b21）修复。如实记录：独立合并审查终态、人工签发的 verify_ref、合入 main、远端 CI 终态、受管部署与宿主重启后的活体复验在本清单撰写时均未完成，以后续回执为准，不在此声称通过。",
+  "components": [
+    {
+      "component_id": "review-host-admission-heredoc-exempt-body",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-rule28-heredoc-data-region",
+      "evidence": [
+        "判定实现：_strip_heredoc_units 新增可选 net_out 镜像，收集 shell 实际解析的文本。仅当「终止符已配对 + 已豁免 + 引导位于 shell 顶层 + opener 行整行收在顶层」时数据体不进镜像；其余（无引号终止符 / 非数据接收者 / 引导落在跨行引号串内 / opener 行尾留下未闭合引号 / 未配对）照常进镜像。classify_host_shell 的反引号网改扫 net 镜像；骨架词法失败时 ValueError 兜底仍扫原始命令文本。",
+        "RULE-AI-35 实测（tests/unit/test_review_host_admission.py，定向 327 passed 内）：应放行=豁免体里的 Markdown 代码span（含受保护动作名的文档行）、行尾重定向 / 注释的合法写法；应拦=非豁免 here-doc（执行落点 / 嵌入 / 定界符可展开）、引导落在跨行引号串内、终止符未配对、opener 行尾留下未闭合引号的四种形态。逐条对照表见 docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md §3 与 §8.2。",
+        "独立审查 P1 的复现与修复（2026-11-26）：opener 行尾不含 ;&|() 却留下未闭合引号（如 > \"note）时，真实 bash 把后续各行当作该引号串延续，双引号内命令替换真实执行（实测 touch 标记被创建）；分类器修前返回 None（main 基线为 git_push，属本次改动新引入的漏放）。修法：data_body = is_exempt 且 opener 行尾引号状态收在顶层，同时约束内容网豁免与反引号网脱敏。",
+        "接力修复 2（2026-11-26，合并审查 REVISE 后差分实测）：_HEREDOC_OPENER_RE 没有后顾，cat 接三个小于号再接带引号终止符的 here-string 会从第二个小于号起命中，被当作 here-doc 引导，其后的真实命令行进入「已配对 + 豁免」的数据体；shell 里 here-string 没有正文（真实 bash 实测后续行的 touch 标记被创建）。反引号形态 main 基线为 git_push、本 lane 修前为 None，属本 lane 新引入的漏放；裸动词形态 main 基线即 None（内容网既有豁免），同一处一并闭合。修法：正则加否定后顾，两个小于号前紧邻小于号时不再是引导；只收紧，真 here-doc 的豁免不受影响。差分对照表（30 例）见回执 §9。"
+      ],
+      "verification_level": "unit_336_passed_in_targeted_two_modules_plus_full_ci_gate_exit0_at_head_5e37e8951_plus_independent_full_test_and_push_review_pass__merge_review_and_host_restart_live_verification_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是待审的命令文本与其 git 仓库状态，无模型自证输入。recovery：任一审查发现否决即回退本组件提交并重走闸链；exit：revert 并重启宿主后，含 Markdown 代码span 的写文档命令恢复被误拒的旧行为。注意本文件是宿主进程内模块，运行中的宿主须重启后才加载新口径。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务；分类器无状态、无数据迁移。"
+    },
+    {
+      "component_id": "review-gate-pytest-non-exec",
+      "paths": [
+        "src/llm_loop/tools/review_gate.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-rule28-heredoc-data-region",
+      "evidence": [
+        "判定实现：classify_review_gate_command 逐个 pytest 调用取其所在命令段（到下一个 shell 操作符为止）核对非执行旗标；全部为非执行形态、且命令位命中之外不残留 pytest 词元，才返回 None。--fixtures / --setup-only 会执行 setup，不在豁免之列；--co / --collect-only 仍会导入 conftest 与测试模块（模块级代码会执行），口径边界已在注释中声明。",
+        "独立审查 P1 的复现与修复（2026-11-26）：命中只收命令位的调用，诱饵形态「pytest --version; bash -c 'pytest -q'」的唯一命中是 --version，修前被判非执行而放行（main 基线为全量闸面，属本次改动新引入的漏放）。修法：挖掉全部命中后若仍残留 pytest 词元（排除 pytest-xdist / pytest_cov 这类包名片段），回到全量闸面。同批收紧 P2-3：旗标须是该次调用的选项，引号串里与 -- 之后的旗标文本不算。",
+        "RULE-AI-35 实测（tests/unit/test_review_gate.py，定向 327 passed 内）：应放行=六种非执行旗标（两侧分类器同判）、命中之外仅有包名片段；应拦=诱饵 + bash -c 载荷、引号串里的旗标文本、-- 之后的旗标、真实调用。对照表见回执 §8.1。",
+        "顺带发现未修（不在已批准范围）：Host 准入分类器对「pytest -- -h」返回 None（-- 之后的 -h 被当作 help 旗标），main 基线一致，属既有缺口，另行提演进建议。"
+      ],
+      "verification_level": "unit_336_passed_in_targeted_two_modules_plus_full_ci_gate_exit0_at_head_5e37e8951_plus_independent_full_test_and_push_review_pass__merge_review_and_host_restart_live_verification_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是命令文本，无模型自证输入。recovery：审查否决即回退本组件提交并重走闸；exit：revert 后非执行形态恢复归全量测试闸面（误拒）。",
+      "rollback_route": "git revert 本组件提交；观测行分类器随进程重启生效，无状态、无数据影响。"
+    },
+    {
+      "component_id": "rule28-heredoc-tests",
+      "paths": [
+        "tests/unit/test_review_gate.py",
+        "tests/unit/test_review_host_admission.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "evidence": [
+        "两个测试文件新增应放行 / 应拦双向用例，以及接力修复后的 9 条（诱饵形态、残留词元、旗标文本、opener 行尾未闭合引号的四种形态、check_shell 级端到端）。两个模块合计 327 passed in 133.93s / 0 failed（本机，head 5e4c77909）。接力修复 2 再增 9 条：here-string 之后的 6 种应拦形态（单引号、带空格、双引号、cat 重定向、未闭合、同一行分号之后）、2 种应放行（here-string 之后再接真 here-doc、真 here-doc 体内的文档行）、check_shell 级端到端 1 条；合计 336 passed in 133.70s / 0 failed（本机，head 5e37e8951）。"
+      ],
+      "verification_level": "336_passed_0_failed_exit0_local_head_5e37e8951",
+      "model_evidence_veto_recovery_exit": "不适用（测试，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "rule28-heredoc-receipts",
+      "paths": [
+        "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt",
+        "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
+        "docs/governance/receipts/full-test-gate-evo-86a9864e-20261125.json",
+        "docs/governance/receipts/evo-86a9864e-diffprobe-20261126.py.txt"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "RULE-AI-35 双向回执与探针原文（只读分类器探针，.py.txt 后缀不参与测试收集）；全量门禁回执记录四次运行（c995cbb74@1f0601e9d、830e8240a@c6612c7e9、5e4c77909@c6612c7e9、5e37e8951@c6612c7e9）均 exit 0，含前三次的 previous_runs。evo-86a9864e-diffprobe-20261126.py.txt 是接力修复 2 的差分探针原文（分类器判定 × 真实 bash，30 例）。"
+      ],
+      "verification_level": "doc_only_no_behavior_change",
+      "model_evidence_veto_recovery_exit": "不适用（回执文档，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261125-evo-rule28-heredoc-data-region.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "本清单即 A.5 结构化声明。PR #130 首次远端 CI 中『A.5 架构提交审查』fail，原因为改动集内没有清单（expected exactly one、found 0）；本提交补入。提交后以 python scripts/check_architecture_submission.py --base c6612c7e99a5b6b58c1fdcf66a6c19f559b22211 --head HEAD 做本机复核，结果记入 PR 描述。"
+      ],
+      "verification_level": "check_architecture_submission_strict_pass_required_after_commit",
+      "model_evidence_veto_recovery_exit": "不适用（治理清单，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-rule28-heredoc-data-region",
+      "g1": {
+        "necessity": "宿主命令分类器以文本模式判定受保护动作。写文档命令常用 here-doc 把 Markdown 落盘，正文里的代码span（一对反引号包着受保护动作名，用于说明「这条命令会被拦」）被反引号网当作命令替换，被判为真实 push 或全量测试而误拒；pytest 的 --collect-only 等非执行形态被观测行分类器归入全量测试闸，与 Host 准入分类器口径不一致。人工批准的 EVO-20261125-86a9864e 范围：只收窄这两处判定输入，不改人工授权环节、不新增放行通道。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：HostReviewAdmission.check_shell（准入判定）与 review_gate.classify_review_gate_command（观测行 / 兜底判定）；人工授权=EVO-20261125-86a9864e 的 web 面板批准（2026-11-25 18:35:32）。无模型 / 会话自证输入。",
+        "relationship": "reuse",
+        "non_duplication": "不新增闸、不新增放行通道：只改既有分类器的扫描面与旗标口径；两处改动都只把原先误拒的输入改为不拒，独立审查发现的两处新漏放已收回（只收紧）；合并审查 REVISE 后差分实测发现的 here-string 漏放同已收回（只收紧）。隐私扫描、回执占位闸、精确候选绑定、受管审批、CI、main 直写闸均不变。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦 / 应放行输入已固化并通过（代码终态 5e37e8951）：放行=豁免 here-doc 体里的 Markdown 代码span、行尾重定向 / 注释的合法写法、六种 pytest 非执行旗标；仍拦=非豁免 here-doc、引导落在跨行引号串内、终止符未配对、opener 行尾未闭合引号的四种形态、here-string 之后的反引号与裸受保护动作、诱饵 --version + bash -c 载荷、引号串里 / -- 之后的旗标文本。用例清单见两个控制组件的 evidence 与回执 §3、§4、§8、§9。",
+          "真实 bash 实测（2026-11-26 01:39 与 01:47，无害 touch 标记代替受保护动作）：opener 行尾 > \"note 留下未闭合双引号时，下一行的命令替换真实执行（标记被创建），文档 0 字节。回执 §8.2。",
+          "真实 bash 差分实测（2026-11-26 07:06 与 07:11，30 例，受保护动词位置换成 touch 标记）：here-string 之后直到同名终止符行的命令被执行（标记被创建），真 here-doc 带引号终止符体内的反引号不执行。回执 §9。",
+          "本机测试回执（2026-11-26）：定向两个测试模块 336 passed in 133.70s / 0 failed（head 5e37e8951）；bash scripts/ci_gate.sh 在 830e8240a（01:14–01:29）、5e4c77909（01:55–02:10）与 5e37e8951（07:20–07:37）各一次，均 exit 0，终判行『ci_gate 全链路通过』；5e37e8951 那次 xdist 17080 passed / 206 skipped / 3 xfailed in 751.53s、串行补跑 1 passed / 51 deselected in 14.86s，R9 ruff new=0、pyright new=0。并行集以外分段的精确通过数未逐项取到的，不引用。",
+          "RULE-AI-28 审查回执：首轮 git_push 审查（subagent_3c3885323858，head 6ed4a59d9）REVISE，P0=0 P1=1 P2=3；修复后 full_test 审查 PASS（child subagent_3759ebe5dfa0，candidate 2545a707364fb638e68214f05553b4d2f9e1e043fe6f2a4334d5df6a2ee5d3ad）、git_push 审查 PASS（child subagent_c7a9c1a99eb9，candidate f19144b9c24e185ce901d91a8c82e9c7e99ce046503caef6ee723f1ed7edab72）。push 已执行，远端分支 head=d9f5847ffa957a1c76b96ab98e9fcd8705617403 经 ls-remote 核对。接力修复 2 后：full_test 审查 PASS（child subagent_b01443a67bc4，candidate 9f0e5712083098ce21b2207d570cd9c93261d3a8bbf5eaab4d5ec3d95dec6e8c）；其后的 git_push 审查由宿主强制执行，结果在审查回执中而不在本清单。独立合并审查 2026-11-26 06:44 重做（subagent_30e3d30f3a05）终态 REVISE，P0=0 P1=1，审查者不附正文；修复后的合并审查待完成。",
+          "未完成项（如实记录）：远端 CI 终态（修复 2 提交推送后的新一轮）、修复后的独立合并审查终态、人工签发的 verify_ref、合入 main、受管部署与宿主重启后的活体复验——以后续回执为准，不在此声称通过。"
+        ],
+        "recovery_or_reason": "应拦输入有逐条对应用例，任一审查发现否决即 revert 对应组件提交并重走闸链；置信度来自定向测试、全量门禁与独立审查，而非自述。已知边界：B11——真实 push 出现在 opener 行（<< 之后的同一行）时，本 PR 的观测行分类器仍看不到该行尾文本，由 lane-ffb64ade 修复；本 PR 合入到该 lane 合入之间，main 上这一形态与基线行为相同（基线同样不拦）。已知残余：无引号 here-doc 体中的撇号会使镜像引号状态失配（既有行为，未改）；另有四种保守方向的过拦形态（真实 bash 不执行而分类器拒绝）未改，见回执 §9.5。review_host_admission.py 属宿主进程内模块，运行中的宿主须重启后才加载新口径。"
+      },
+      "g4": {
+        "rollback": "git revert 两个控制组件提交并重启宿主服务，即恢复『豁免 here-doc 体进反引号网』与『非执行形态归全量测试闸』的旧判定。无状态、无数据迁移。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base c6612c7e99a5b6b58c1fdcf66a6c19f559b22211 --head HEAD 严格 PASS（本清单提交后本机复核，结果记入 PR #130 描述）",
+          "本机全量门禁：bash scripts/ci_gate.sh 在 830e8240a、5e4c77909 与代码终态 5e37e8951 上均 exit 0；定向 336 passed；逐项见 g3",
+          "RULE-AI-28：首轮修复后 full_test 与 git_push 审查 PASS；接力修复 2 后 full_test 审查 PASS，其后的 git_push 审查由宿主强制执行，结果在审查回执中而不在本清单；本清单提交只改文档",
+          "远端 CI：PR #130 首次运行 A.5 fail（缺清单，补入后通过）；修复 2 提交推送后的新一轮终态待完成",
+          "修复后的独立合并审查终态与人工签发的 verify_ref：待完成",
+          "宿主重启后 RULE-AI-35 活体复验（待做）：execute_command 下正文含 Markdown 代码span 的写文档命令不再被拒；真实 push 与全量测试命令在无资格时仍被拒；opener 行尾未闭合引号、诱饵 --version 形态、here-string 之后的反引号受保护动作仍被拒"
+        ]
+      }
+    }
+  ]
+}

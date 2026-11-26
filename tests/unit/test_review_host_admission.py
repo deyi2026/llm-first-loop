@@ -200,11 +200,98 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("env -u FOO cat <<'EOF'\ngit push origin main\nEOF", None),
     # P2-1：路径形态 argv0（basename 白名单命中）不算裸名白名单——不豁免。
     ("/tmp/cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    # ── EVO-20261125-86a9864e（人工批准 2026-11-25）：豁免 here-doc 数据体不进反引号网 ──
+    # 带引号终止符的体在 shell 中不做展开，Markdown 代码span（一对反引号）不是
+    # 命令替换——修复前反引号网扫原始全文，写文档命令被按受保护动作误拒
+    # （2026-11-25 17:11 实测）。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n## 标题\n\n- `nohup git push origin main 2>&1` 也被误报\nEOF", None),
+    ("tee /tmp/doc.md <<\"EOF\"\nit's `git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n`pytest -q`\nEOF", None),
+    # 同批闭合的漏放：体内撇号使原始全文扫描的引号状态失步，其后的真实反引号
+    # 替换曾被当作单引号内文本而漏判。
+    ("cat > /tmp/doc.md <<'EOF'\nit's fine\nEOF\necho `git push origin main`", "git_push"),
+    # 应拦仍拦：无引号终止符的体会做展开；非数据接收者；豁免体之外的真实动作。
+    ("cat > /tmp/doc.md <<EOF\n示例：`git push origin main`\nEOF", "git_push"),
+    ("bash <<'EOF'\n示例：`git push origin main`\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`\nEOF\ngit push origin main", "git_push"),
+    # opener 落在跨行未闭合引号串内：`<<` 不是 here-doc 引导，体内反引号在 shell
+    # 中真实执行——不得脱敏（前一条骨架词法失败，走原始全文兜底）。
+    ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF", "git_push"),
+    ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF\nend\" ; echo \"\nx\"", "git_push"),
+    # 终止符未配对：体保守保留在反引号网扫描范围内。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`", "git_push"),
+    # ── 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，2026-11-26）──
+    # opener 行须整行收在 shell 顶层：`<<WORD` 之后的行尾文本留下未闭合引号时，
+    # shell 把后续各行当作该引号串的延续（命令行，不是 here-doc 体；双引号内的
+    # 命令替换真实执行——2026-11-26 bash 实测）。体既不豁免也不脱敏。
+    ('cat > /tmp/doc.md <<\'EOF\' > "note\n`git push origin main` x"\nEOF', "git_push"),
+    ('cat > /tmp/doc.md <<\'EOF\' > "note\n`git push origin main` x"\nEOF\necho "a" "b"', "git_push"),
+    ("cat <<'EOF' 'arg\n`git push origin main`\nEOF\necho 'a' 'b'", "git_push"),
+    # 行尾引号已闭合 / 行尾注释里的撇号 / 无引号重定向：仍是合法数据体，照常豁免。
+    ('cat > /tmp/doc.md <<\'EOF\' > "a b"\n`git push origin main`\nEOF', None),
+    ("cat > /tmp/doc.md <<'EOF' # it's fine\n`git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' 2>/dev/null\n`git push origin main`\nEOF", None),
+    # ── 接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 不是 here-doc 引导 ──
+    # shell 里 `cat <<<'EOF'` 没有正文，其后直到 `EOF` 行都是普通命令行（bash 实测执行）。
+    # 旧引导正则从第二个 `<` 起命中，把这些行当作已配对豁免体：反引号形态在
+    # EVO-20261125-86a9864e 之后整段移出反引号网而漏放（改动前由原始全文网兜住）；
+    # 裸动词形态则是 main 上既有的内容网旧洞，同处一并闭合。
+    ("cat <<<'EOF'\n`git push origin main`\nEOF", "git_push"),
+    ("cat <<< 'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("cat <<<\"EOF\"\n`git push origin main`\nEOF", "git_push"),
+    ("cat >f <<<'EOF'\ngit push origin main\n", "git_push"),
+    ("cat <<<'EOF'\n`git push origin main`", "git_push"),
+    ("cat <<<'EOF'; git push origin main\nEOF", "git_push"),
+    # 真 here-doc 不受影响：here-string 之后的 `<<'X'` 仍是引导，带引号终止符的体照常豁免。
+    ("cat <<< 'EOF' <<'X'\n`git push origin main` 只是文档\nX", None),
+    ("cat <<'X'\n`git push origin main` 只是文档\nX", None),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
 ) -> None:
     assert classify_host_shell(command) == expected
+
+
+def test_heredoc_opener_line_with_unclosed_tail_quote_is_not_desensitized(tmp_path: Path) -> None:
+    """接力修复（独立审查 P1，2026-11-26）：opener 行尾留下未闭合引号时体不得脱敏."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    cmd = 'cat > /tmp/pr.md <<\'PREOF\' > "note\n`git push origin main` x"\nPREOF'
+    verdict = host.check_shell("author-1", cmd, str(repo))
+    assert verdict.blocked is True
+    # 对照：行尾引号闭合的同一写法仍是合法数据体。
+    ok = 'cat > /tmp/pr.md <<\'PREOF\' > "a b"\n`git push origin main` 只是文档\nPREOF'
+    assert host.check_shell("author-1", ok, str(repo)).allowed is True
+
+
+def test_here_string_lines_are_not_exempt_heredoc_body(tmp_path: Path) -> None:
+    """接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 之后的行不是 here-doc 体."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    # 应拦：`cat <<<'PREOF'` 没有正文，反引号命令替换与裸 push 都是其后的真实命令。
+    for blocked_cmd in (
+        "cat <<<'PREOF'\n`git push origin main`\nPREOF",
+        "cat <<< 'PREOF'\ngit push origin main\nPREOF",
+        "cat <<<'PREOF'\ngit push origin main\n",
+    ):
+        verdict = host.check_shell("author-1", blocked_cmd, str(repo))
+        assert verdict.blocked is True, blocked_cmd
+    # 应放：真 here-doc 的带引号终止符体仍是数据体（含 Markdown 代码span）。
+    ok = "cat <<< 'PREOF' <<'X'\n`git push origin main` 只是文档\nX"
+    assert host.check_shell("author-1", ok, str(repo)).allowed is True
+
+
+def test_exempt_heredoc_markdown_backtick_span_not_admitted_as_push(tmp_path: Path) -> None:
+    """EVO-20261125-86a9864e：写文档命令的体含 Markdown 代码span，不得按受保护动作拒绝."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    cmd = "cat > /tmp/pr.md <<'PREOF'\n## 说明\n\n- `git push origin main` 仍会被拦\nPREOF"
+    verdict = host.check_shell("author-1", cmd, str(repo))
+    assert verdict.allowed is True
+    # 应拦仍拦：同一入口下，真实 push 仍须有效审查资格。
+    denial = host.check_shell("author-1", "git push origin main", str(repo))
+    assert denial.blocked is True
 
 
 def test_no_durable_log_or_model_text_can_mint_live_child_attestation(tmp_path: Path) -> None:

@@ -452,7 +452,12 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 
 # ── EVO-20261029-65f6fe21：自足语法单元剥离 ──
-_HEREDOC_OPENER_RE = re.compile(r"<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
+# here-string（``<<<``）不是 here-doc 引导（接力修复 2，2026-11-26 差分实测）：
+# 旧式无后顾的 ``<<`` 会从第二个 ``<`` 起命中 ``cat <<<'EOF'``，把其后的真实命令
+# 行当作「已配对 + 豁免」的 here-doc 体——EVO-20261125-86a9864e 之后整段移出反引号
+# 网（改动前由扫原始全文的反引号网兜住），受保护动作因此漏放。shell 里 here-string
+# 没有正文：其后直到同名终止符行都是普通命令行。``<<`` 前紧邻 ``<`` 时不再匹配。
+_HEREDOC_OPENER_RE = re.compile(r"(?<![<])<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
 _PAYLOAD_INTERPRETER_RE = (
     r"""\b(?P<interp>python[0-9.]*|(?:b|z|k|d|a)?sh|node|nodejs|ruby|perl|php|osascript|deno|bun|awk)\b"""
     r"""(?P<flags>(?:\s+-{1,2}[A-Za-z0-9][\w=.-]*)*?)"""
@@ -514,28 +519,87 @@ def _heredoc_head_exempts_head(head: str) -> bool:
     return "/" not in argv0 and argv0 in _HEREDOC_DATA_SINKS
 
 
+def _advance_quote_state(state: str | None, text: str) -> str | None:
+    """沿 shell 词法推进引号状态：None=顶层，其余为所在的引号字符。
+
+    EVO-20261125-86a9864e：只服务于「here-doc 引导是否位于 shell 顶层」的判定，
+    不是完整 shell 词法——顶层与双引号/反引号内反斜杠转义下一字符，单引号内
+    为字面；顶层词首 ``#`` 起注释到行尾。识别不了的形态停在非顶层（不脱敏，
+    保守方向）。
+    """
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if state is None:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch in "'\"`":
+                state = ch
+            elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
+                break
+        elif state == "'":
+            if ch == "'":
+                state = None
+        else:  # 双引号/反引号内
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == state:
+                state = None
+        i += 1
+    return state
+
+
 def _strip_heredoc_units(
-    text: str, payloads: list[str], exempt: list[bool] | None = None
+    text: str,
+    payloads: list[str],
+    exempt: list[bool] | None = None,
+    net_out: list[str] | None = None,
 ) -> str:
     """here-doc 体 → 占位 token（体逐行原样搬运；关闭行 `<<` 精确 / `<<-` 前导 tab）.
 
     P2-3（审查 REVISE 第二轮）：`<<` 前文本若含未闭合引号（说明 `<<WORD`
     在引号串/注释里），不当作 here-doc 引导——误吞后续骨架行会丢段结构；
     该行原样保留，由骨架 shlex fail-closed。
+
+    EVO-20261125-86a9864e（人工批准）：``net_out``（可选）镜像收集 shell 实际
+    解析的文本——反引号网的扫描面。带引号终止符的体在 shell 中不做展开，
+    其中的 Markdown 代码span（一对反引号）不是命令替换；故「终止符已配对 +
+    豁免 + 引导位于顶层 + opener 行整行收在顶层」的体不进镜像，其余（无引号
+    终止符/非数据接收者/引导落在跨行引号串内/opener 行尾留下未闭合引号/未配对）
+    照常进镜像。
     """
     lines = text.split("\n")
     out: list[str] = []
+    net: list[str] = []
+    quote: str | None = None  # 镜像文本在当前行起点的引号状态（None=顶层）
+
+    def _net_keep(piece: str) -> None:
+        nonlocal quote
+        if net_out is None:
+            return
+        net.append(piece)
+        quote = _advance_quote_state(quote, piece)
+
+    def _finish() -> str:
+        if net_out is not None:
+            net_out.extend(net)
+        return "\n".join(out)
+
     i = 0
     while i < len(lines):
         line = lines[i]
         m = _HEREDOC_OPENER_RE.search(line)
         if m is None:
             out.append(line)
+            _net_keep(line + "\n")
             i += 1
             continue
         head_txt = line[: m.start()]
         if head_txt.count("'") % 2 or head_txt.count('"') % 2 or "#" in head_txt:
             out.append(line)  # 开引号/注释内的 << 不是 here-doc 引导
+            _net_keep(line + "\n")
             i += 1
             continue
         delim = m.group(2)
@@ -551,6 +615,17 @@ def _strip_heredoc_units(
             and _HEREDOC_UNSAFE_LINE_RE.search(line) is None
             and _heredoc_head_exempts_head(head)
         )
+        # EVO-20261125-86a9864e：引导须位于 shell 顶层——不在跨行未闭合的引号串
+        # 内；否则 `<<` 不是 here-doc 引导，体内反引号在 shell 中真实执行，不得
+        # 从反引号网脱敏。
+        at_top_level = quote is None and _advance_quote_state(None, head_txt) is None
+        # 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，
+        # 2026-11-26）：opener 行须整行收在 shell 顶层。`<<WORD` 之后的行尾文本若
+        # 留下未闭合引号，shell 把后续各行当作该引号串的延续——属于命令行而非
+        # here-doc 体，双引号内的命令替换真实执行（2026-11-26 bash 实测）。此时
+        # 「体」既不豁免（内容网照扫）也不脱敏（留在反引号网扫描面）。
+        tail_txt = line[m.end() :]
+        data_body = is_exempt and _advance_quote_state(None, tail_txt) is None
         ph = f"__XPL_{len(payloads)}__"
         body: list[str] = []
         j = i + 1
@@ -563,20 +638,27 @@ def _strip_heredoc_units(
                 break
             body.append(cand)
             j += 1
+        _net_keep(line + "\n")
         if not closed:
             # 未闭合：体吞到结尾（shell 语义）；残余不进骨架（fail-closed）
             body.extend(lines[i + 1 :])
             payloads.append("\n".join(body))
             if exempt is not None:
-                exempt.append(is_exempt)
+                exempt.append(data_body)
             out.append((head + " " + ph).strip() if head else ph)
-            return "\n".join(out)
+            for _bl in lines[i + 1 :]:
+                _net_keep(_bl + "\n")
+            return _finish()
         payloads.append("\n".join(body))
         if exempt is not None:
-            exempt.append(is_exempt)
+            exempt.append(data_body)
         out.append((head + " " + ph).strip() if head else ph)
+        if not (data_body and at_top_level):
+            # 未豁免 / 非顶层 / opener 行未整行收在顶层：体照常进反引号网扫描面。
+            for _bl in body:
+                _net_keep(_bl + "\n")
         i = j + 1
-    return "\n".join(out)
+    return _finish()
 
 
 def _strip_interpreter_payloads(
@@ -627,21 +709,25 @@ def _strip_interpreter_payloads(
 
 
 def _strip_payload_units(
-    command: str, exempt: list[bool] | None = None
+    command: str,
+    exempt: list[bool] | None = None,
+    net_out: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """剥离自足语法单元（先 here-doc 体，后解释器 -c/-e 载荷）→ (骨架, payloads).
 
     骨架只承载 argv 结构与命令位分界（classify 的 segment 网只看骨架）。
     载荷内容级网（EVO-20261102-99717443 后的准确契约）：未豁免载荷仍进
     classify_host_shell 的载荷网（受保护动词 / python shell 调用递归）；
-    豁免载荷（quoted here-doc + 数据接收者体）跳过该网。反引号网
-    （_active_backtick_substitutions）不受豁免影响——始终扫描原始全文。
+    豁免载荷（quoted here-doc + 数据接收者体）跳过该网。``net_out``（可选）
+    收集反引号网（_active_backtick_substitutions）的扫描面：EVO-20261125-86a9864e
+    起，「终止符已配对 + 豁免 + 引导位于顶层」的 here-doc 体不再进该网（带引号
+    终止符的体不做展开）；解释器载荷与其余文本保持原样。
     exempt（可选）与 payloads 等长对齐：True=quoted here-doc 数据接收者体
     （纯数据，内容级网豁免）；False=解释器载荷/不豁免体（第三轮审查 P2-2：
     此 docstring 曾无条件断言"仍看原始全文"，已改为如上准确表述）。
     """
     payloads: list[str] = []
-    skeleton = _strip_heredoc_units(str(command or ""), payloads, exempt)
+    skeleton = _strip_heredoc_units(str(command or ""), payloads, exempt, net_out)
     skeleton = _strip_interpreter_payloads(skeleton, payloads, exempt)
     return skeleton, payloads
 
@@ -843,12 +929,23 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     the sink reads them (not plain data) and every other receiver
     (interpreter, unknown argv0, path-form argv0, piped/compound opener
     line, ``VAR=``/``env VAR=`` prefixed head) keeps the net (fail-closed).
+    EVO-20261125-86a9864e (human-approved): the backtick net scans only the
+    text bash actually parses. A PAIRED, exempt here-doc body whose opener
+    sits at shell top level is never expanded, so a Markdown code span (a
+    backtick pair) in a ``cat > file <<'EOF'`` body is not a command
+    substitution and is not scanned. Unquoted bodies, bodies whose ``<<``
+    lies inside a multi-line quoted string and unterminated bodies stay in
+    the net (backticks there really do execute); the ValueError fallback
+    still scans the raw text because line-based heredoc detection is
+    untrustworthy once the skeleton fails to lex.
     """
     value = str(command or "").strip()
     if not value:
         return None
     payload_exempt: list[bool] = []
-    skeleton, payloads = _strip_payload_units(value, payload_exempt)
+    net_parts: list[str] = []
+    skeleton, payloads = _strip_payload_units(value, payload_exempt, net_parts)
+    net_text = "".join(net_parts) or value  # 反引号网扫描面（EVO-20261125-86a9864e）
     try:
         results = [
             _shell_segment_kind(tokens, depth=_depth)
@@ -863,7 +960,7 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
         # Backticks execute even inside double quotes. They are opaque to shlex
         # argv0 matching, so inspect their literal bodies separately.
         if _depth < 3:
-            for script in _active_backtick_substitutions(value):
+            for script in _active_backtick_substitutions(net_text):
                 results.append(classify_host_shell(script, _depth=_depth + 1))
             # EVO-20261029-65f6fe21：剥离载荷的内容级网——载荷文本含受保护
             # 动词时仍按保护效果分类（旧 ValueError 全文网的行为保持），
