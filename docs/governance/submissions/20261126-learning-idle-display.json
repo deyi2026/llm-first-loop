@@ -1,0 +1,51 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-learning-idle-display",
+  "summary": "Prospective isolated three-entry backend display optimization on deployed main 279c8ce6b. No deployment or gate relaxation claim.",
+  "components": [
+    {
+      "component_id": "learning-idle-display-projection",
+      "paths": [
+        "docs/governance/submissions/20261126-learning-idle-display.json",
+        "src/llm_loop/runtime/learning_idle.py",
+        "src/llm_loop/runtime/service_control.py",
+        "tests/unit/test_learning_idle.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing service identity lifecycle evidence display and learning journal probe.",
+      "disposition": "One display fold per lifecycle view; single-entry compact reason cache with dev/inode/size/mtime/ctime validation and concurrent single-flight. Consumer lock is checked live. Restart admission retains the original uncached learning_busy_reason.",
+      "evidence": [
+        "Production Gen458 browser service panel failed 12s data deadline at desktop and mobile-emulated sizes; direct GET also timed out.",
+        "Read-only production-data cProfile: 2.764s service composition, 2.408s learning busy probe, 789009 JSON loads in two journal folds.",
+        "Isolated candidate on production data: 1.795s cold (one fold), 0.438s warm (zero folds), journal stamp unchanged for each read.",
+        "101 directed tests passed, including append/replace, concurrent readers, unstable/read-failure invalidation, original restart admission and two-phase restart. Ruff and diff check passed."
+      ],
+      "verification_level": "Directed local tests and read-only candidate profile passed; independent review, full R9, remote CI and production browser/load acceptance pending.",
+      "model_evidence_veto_recovery_exit": "No change to durable journal, consumer lock protocol, restart gate decision or action authority. Unstable folds are not cached; current view remains a point-in-time observation.",
+      "rollback_route": "Protected revert of display projection; no data migration."
+    },
+    {
+      "component_id": "learning-and-knowledge-display-projection",
+      "paths": [
+        "src/llm_loop/methods/learning_journal.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/experiences/store.py",
+        "src/llm_loop/methods/store.py",
+        "tests/unit/test_learning_journal.py",
+        "tests/web/test_knowledge_endpoints.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing LearningJournal and knowledge catalog/inventory read-only endpoints.",
+      "disposition": "One canonical fold for recent jobs, full counts and oldest queued; reuse stable file revisions with a bounded 200-row/2 MiB serialized snapshot, detached response values and single-flight. Preserve existing requeue and worker/admission observations. Only hydrate requested experience records and project method signals for selected rows while visiting all records for counts.",
+      "evidence": [
+        "Production-data isolated baseline/candidate learning first 1.443s/0.689s, repeat 1.118s/0.001s; stable journal and identical result digest excluding dynamic wait_seconds.",
+        "Experience catalog 0.128s/0.039s, method inventory 0.508s/0.107s; identical response digests on 1059/2331 records. Timing includes filesystem cache effects; not a production browser result.",
+        "64 directed tests passed including 8 concurrent readers, append/replacement/unstable invalidation, detached values, full counts, limits, aliases and endpoint semantics."
+      ],
+      "verification_level": "Directed regression and read-only data comparison passed; final independent review, R9, CI and deployment pending.",
+      "model_evidence_veto_recovery_exit": "Canonical journal, mutation methods, lifecycle, authority and retrieval semantics remain unchanged. Unstable source does not certify a cache; failures fall back to existing per-field degradation.",
+      "rollback_route": "Protected revert of display-only projection changes; no migration."
+    }
+  ],
+  "declarations": []
+}

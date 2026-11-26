@@ -472,7 +472,7 @@ class ExperienceStore:
                 continue
             doc_status = str(doc.status or "active")
             counts[doc_status] = counts.get(doc_status, 0) + 1
-            if status and doc_status != status:
+            if (status and doc_status != status) or len(records) >= limit:
                 continue
             record = self.to_hydrated_record(path.stem, doc)
             stat = usage.get(str(record.get("experience_ref") or ""), {})
@@ -482,8 +482,7 @@ class ExperienceStore:
                 haystack = f"{record.get('summary', '')} {record.get('scenario', '')} {' '.join(record.get('tags') or [])}"
                 if query.lower() not in haystack.lower():
                     continue
-            if len(records) < limit:
-                records.append(record)
+            records.append(record)
         self._last_diagnostics["scanned"] = len(paths)
         self._last_diagnostics["skipped"] = skipped
         self._last_diagnostics["scan_error"] = scan_error

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import heapq
 import json
 import logging
 import math
@@ -15,7 +16,7 @@ import re
 import shutil
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -1521,33 +1522,39 @@ class MethodStore:
         """
         needle = query.strip().lower()
         counts: dict[str, int] = {}
-        entries: list[dict[str, Any]] = []
-        for path in self._iter_paths():
-            record = self._load_path(path)
-            if record is None:
-                continue
-            record_status = str(record.status or "unknown")
-            counts[record_status] = counts.get(record_status, 0) + 1
-            if status and record_status != status:
-                continue
-            if needle:
-                # 2026-10-22 method-alias-retrieval：管理页关键词匹配也认别名，作者/模型
-                # 用口语词能查到同一张卡。别名仍是检索同义表述，不是适用性或使用许可。
-                # `" ".join(())` == ""：无别名的卡 haystack 与改动前逐字相同。
-                haystack = self._normalized_search_text(
-                    f"{record.method_id} {record.method_ref} {record.name} "
-                    f"{' '.join(record.aliases)} {record.description}"
-                )
-                if needle not in haystack:
+
+        def matching_records() -> Iterator[MethodRecord]:
+            for path in self._iter_paths():
+                record = self._load_path(path)
+                if record is None:
                     continue
+                record_status = str(record.status or "unknown")
+                counts[record_status] = counts.get(record_status, 0) + 1
+                if status and record_status != status:
+                    continue
+                if needle:
+                    # 2026-10-22 method-alias-retrieval：管理页关键词匹配也认别名，作者/模型
+                    # 用口语词能查到同一张卡。别名仍是检索同义表述，不是适用性或使用许可。
+                    # `" ".join(())` == ""：无别名的卡 haystack 与改动前逐字相同。
+                    haystack = self._normalized_search_text(
+                        f"{record.method_id} {record.method_ref} {record.name} "
+                        f"{' '.join(record.aliases)} {record.description}"
+                    )
+                    if needle not in haystack:
+                        continue
+                yield record
+
+        # Keep only the requested rows; all matches are still visited for global counts.
+        selected = heapq.nlargest(
+            max(1, limit), matching_records(),
+            key=lambda record: (str(record.updated_at or record.created_at or ""), str(record.method_id or "")),
+        )[:max(0, limit)]
+        entries = []
+        for record in selected:
             card = record.card()
             self._attach_last_signal_age(card, record)
             entries.append(card)
-        entries.sort(
-            key=lambda item: (str(item.get("ts") or ""), str(item.get("id") or "")),
-            reverse=True,
-        )
-        return {"counts": counts, "records": entries[: max(0, limit)]}
+        return {"counts": counts, "records": entries}
 
     @staticmethod
     def semantic_candidate(record: MethodRecord) -> dict[str, Any]:

@@ -41,6 +41,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -50,7 +51,7 @@ from llm_loop.runtime.admission_barrier import (
     BarrierConflictError,
 )
 from llm_loop.runtime.feishu_compensation_reader import read_compensation_records
-from llm_loop.runtime.learning_idle import learning_busy_reason
+from llm_loop.runtime.learning_idle import learning_busy_reason, learning_busy_reason_for_display
 from llm_loop.runtime.package_identity import installed_identity
 from llm_loop.runtime.service_control_derivation import (
     RestartTargetDerivation,
@@ -2171,6 +2172,20 @@ def _restart_all_coverage_view() -> dict[str, Any]:
     }
 
 
+def _display_idle_states(store: ManagedServiceDeploymentStore) -> dict[str, dict[str, str]]:
+    """One point-in-time learning probe per read-only lifecycle view."""
+    runtime_root = str(store.data_dir.parent)
+    idle_state: dict[str, dict[str, str]] = {}
+    display_learning_probe = cache(learning_busy_reason_for_display)
+    for target in ("web", "feishu", "wecom", "learning", "all"):
+        state, detail = _target_idle_state(
+            target=target, runtime_root=runtime_root, data_dir=store.data_dir,
+            display_learning_probe=display_learning_probe,
+        )
+        idle_state[target] = {"state": state, "detail": detail}
+    return idle_state
+
+
 def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """只读证据面（design 2.2.2.6 / tasks 9.1）：只**增**字段，不新增门禁.
 
@@ -2247,11 +2262,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
                 {"action_id": action.action_id, "status": action.status, "age_s": round(age)}
             )
 
-    runtime_root = str(store.data_dir.parent)
-    idle_state: dict[str, dict[str, str]] = {}
-    for target in ("web", "feishu", "wecom", "learning", "all"):
-        state, detail = _target_idle_state(target=target, runtime_root=runtime_root, data_dir=store.data_dir)
-        idle_state[target] = {"state": state, "detail": detail}
+    idle_state = _display_idle_states(store)
 
     stage_facts = _stage_facts_view(latest_by_service, actions)
     evidence_refs = {
@@ -3935,7 +3946,7 @@ def _feishu_stale_processing_recovered(
     return True, ""
 
 
-def _target_idle_state(*, target: str, runtime_root: str, data_dir: str | Path | None = None) -> tuple[str, str]:
+def _target_idle_state(*, target: str, runtime_root: str, data_dir: str | Path | None = None, display_learning_probe: Callable[[Path], str | None] | None = None) -> tuple[str, str]:
     """L22: 目标空闲三态 ``confirmed_busy`` / ``confirmed_idle`` / ``unconfirmable``.
 
     feishu/wecom/all 要求桥 heartbeat 空闲（processing_msg_id 空 且 queue_depth
@@ -4020,9 +4031,8 @@ def _target_idle_state(*, target: str, runtime_root: str, data_dir: str | Path |
         if held:
             reasons.append(f"active run locks: {len(held)}")
     if target in {"learning", "all"}:
-        learning_reason = learning_busy_reason(
-            data_root / "sessions"
-        )
+        probe = display_learning_probe or learning_busy_reason
+        learning_reason = probe(data_root / "sessions")
         if learning_reason:
             reasons.append(learning_reason)
     cli_mutations = active_run_locks(data_root / "runtime" / "cli-mutations")

@@ -17,14 +17,16 @@ Design (Learning Plane, DESIGN-20260910):
 
 from __future__ import annotations
 
+import copy
 import fcntl
 import hashlib
+import heapq
 import json
 import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +71,43 @@ def _truncate(text: str, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit]
 
 
+def _display_source_stamp(path: Path) -> tuple[int, ...] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+@dataclass
+class LearningJournalDisplay:
+    """Bounded, detached display snapshot; no mutation or admission methods."""
+
+    journal: LearningJournal
+    recent: list[LearningJob]
+    counts: dict[str, int]
+    oldest: LearningJob | None
+
+    def recent_jobs(self, limit: int = 50) -> list[LearningJob]:
+        return self.recent[:max(1, min(int(limit), 200))]
+
+    def count_states(self) -> dict[str, int]:
+        return self.counts
+
+    def oldest_queued(self) -> dict[str, Any] | None:
+        job = self.oldest
+        if job is None:
+            return None
+        return {
+            "job_id": job.job_id, "kind": job.kind, "session_id": job.session_id,
+            "source_model": job.source_model, "created_at": job.created_at,
+            "wait_seconds": round(max(0.0, time.time() - float(job.created_at)), 1),
+        }
+
+    def requeue_stats(self) -> dict[str, Any]:
+        return self.journal.requeue_stats()
+
+
 class LearningJournal:
     """Append-only JSONL journal with fold-on-read state machine.
 
@@ -90,6 +129,7 @@ class LearningJournal:
         # EVO-20261013 队列可观测性：requeue 统计的 (mtime_ns, size) 缓存，
         # 供 web 状态页 5s 轮询免于每次全量重扫 append-only journal。
         self._requeue_cache: tuple[Any, dict[str, int], dict[str, int], float] | None = None
+        self._display_cache: tuple[tuple[int, ...], list[LearningJob], dict[str, int], LearningJob | None] | None = None
 
     # ---------- event log primitives ----------
 
@@ -180,6 +220,38 @@ class LearningJournal:
     def _snapshot(self) -> dict[str, LearningJob]:
         with self._lock:
             return self._fold()
+
+    def display_view(self) -> LearningJournalDisplay:
+        """One canonical fold for recent rows, global counts and oldest queued.
+
+        Reuse only stable source revisions, retain at most 200 rows and one
+        oldest job, and never retain more than 2 MiB of serialized job data.
+        Admission, reconciliation and write paths still use their live fold.
+        """
+        with self._lock:
+            stamp = _display_source_stamp(self._path)
+            cached = self._display_cache
+            if stamp is not None and cached is not None and cached[0] == stamp:
+                recent, counts, oldest = copy.deepcopy(cached[1:])
+                return LearningJournalDisplay(self, recent, counts, oldest)
+            self._display_cache = None
+            jobs = self._fold()
+            recent = heapq.nlargest(200, jobs.values(), key=lambda j: (j.updated_at or j.created_at, j.created_at))
+            counts: dict[str, int] = {}
+            oldest = None
+            for job in jobs.values():
+                state = str(job.state or "unknown")
+                counts[state] = counts.get(state, 0) + 1
+                if state == "queued" and (oldest is None or job.created_at < oldest.created_at):
+                    oldest = job
+            if stamp is not None and _display_source_stamp(self._path) == stamp:
+                retained = sum(len(json.dumps(asdict(job), ensure_ascii=False).encode("utf-8")) for job in recent)
+                if oldest is not None:
+                    retained += len(json.dumps(asdict(oldest), ensure_ascii=False).encode("utf-8"))
+                if retained <= 2 * 1024 * 1024:
+                    self._display_cache = (stamp, *copy.deepcopy((recent, counts, oldest)))
+            return LearningJournalDisplay(self, recent, counts, oldest)
+
 
     def inflight_jobs(self) -> list[LearningJob]:
         """Jobs in ``admitted``/``started``（在飞，含准入后未开跑的）.
