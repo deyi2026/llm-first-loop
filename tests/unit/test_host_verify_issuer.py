@@ -113,6 +113,84 @@ def requested(host):
     return authority.request(lane_id=lane_id, child_id=out["child_id"], scope="focused PASS")
 
 
+def _finding(severity="P1"):
+    return {
+        "severity": severity, "path": "src/llm_loop/x.py", "line": 10,
+        "summary": "unchecked input reaches eval",
+        "evidence": "x.py:10 eval(user_input) runs attacker-controlled text",
+    }
+
+
+def test_review_task_demands_located_findings_on_revise(host):
+    """EVO-20261126-549f940c: a REVISE conclusion must carry its P0/P1 findings."""
+    authority, runner, _, lane_id, *_ = host
+    authority.start_review(lane_id)
+    task = runner.started["task"]
+    for required in (
+        "When verdict is REVISE, add key findings",
+        "severity ('P0'|'P1')", "path", "line (integer or null)", "summary", "evidence",
+        "number of 'P0' entries must equal p0", "number of 'P1' entries must equal p1",
+        "When verdict is PASS, omit findings or send an empty array",
+    ):
+        assert required in task, required
+    # The isolation that rules out follow-up questions is unchanged.
+    assert runner.started["review_isolated"] is True
+    assert runner.started["inherit"] is False
+    assert runner.started["required_tools"] == ["read_file", "search_files"]
+
+
+@pytest.mark.parametrize("has_empty_findings", [False, True])
+def test_pass_without_findings_still_issues(host, has_empty_findings):
+    authority, runner, store, lane_id, _, audit = host
+    if has_empty_findings:
+        runner.facts["findings"] = []
+    rec = requested(host)
+    approved, reason = human_decide(store, rec, authority)
+    assert reason == "" and approved is not None
+    assert load_receipts(audit / "verify_receipts.jsonl")
+
+
+@pytest.mark.parametrize("findings", [
+    [_finding("P1")],
+    [_finding("P0")],
+    [_finding("P2")],
+    [_finding("P1"), _finding("P2")],
+    ["P1: unchecked input at x.py:10"],
+    "none",
+    None,
+    {},
+], ids=["P1", "P0", "P2", "P1+P2", "string-entry", "string", "null", "object"])
+def test_pass_carrying_findings_fails_closed(host, findings):
+    """PASS p0=p1=0 plus listed findings is self-contradictory: never a receipt."""
+    authority, runner, _, lane_id, _, audit = host
+    authority.start_review(lane_id)
+    runner.facts["findings"] = findings
+    with pytest.raises(HostVerifyError, match="review_pass_with_findings"):
+        authority.request(lane_id=lane_id, child_id="subagent-test-review")
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_findings_added_after_request_cannot_be_approved(host):
+    authority, runner, store, lane_id, _, audit = host
+    rec = requested(host)
+    runner.facts["findings"] = [_finding("P1")]
+    with pytest.raises(HostVerifyError, match="review_pass_with_findings"):
+        human_decide(store, rec, authority)
+    assert store.get(rec["id"])["status"] == "pending"
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+@pytest.mark.parametrize("verdict,p0,p1", [("REVISE", 0, 1), ("PASS", 0, 1)])
+def test_listed_findings_never_make_a_revise_issuable(host, verdict, p0, p1):
+    authority, runner, _, lane_id, _, audit = host
+    authority.start_review(lane_id)
+    runner.verdict, runner.p0, runner.p1 = verdict, p0, p1
+    runner.facts["findings"] = [_finding("P1")]
+    with pytest.raises(HostVerifyError):
+        authority.request(lane_id=lane_id, child_id="subagent-test-review")
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
 def human_issue(authority):
     return lambda row: authority.issue(row, approver="web:session:12345678")
 

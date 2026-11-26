@@ -128,6 +128,12 @@ def _parse_review(text: str, *, lane_id: str, base: str, head: str) -> None:
         raise HostVerifyError("review_p0_p1_invalid")
     if payload["p0"] != 0 or payload["p1"] != 0:
         raise HostVerifyError("review_p0_p1_blocked")
+    # EVO-20261126-549f940c: findings belong to REVISE conclusions only. A PASS
+    # that carries any entry (or a malformed non-array value) contradicts the
+    # reviewer contract and fails closed; nothing here reads finding text.
+    findings = payload.get("findings", [])
+    if not isinstance(findings, list) or findings:
+        raise HostVerifyError("review_pass_with_findings")
 
 
 class HostVerifyAuthority:
@@ -205,6 +211,18 @@ class HostVerifyAuthority:
             "no preface or trailing explanation) with keys gate='merge', verdict="
             "'PASS'|'REVISE', p0 (integer), p1 (integer), lane_id, base_sha, "
             "head_sha. Non-JSON prose invalidates Host receipt issuance. "
+            # EVO-20261126-549f940c: the child is review-isolated and cannot be
+            # asked follow-up questions, so this answer is the only channel for
+            # the reasons behind a REVISE.
+            "When verdict is REVISE, add key findings: an array holding one "
+            "object per P0 and per P1 finding with keys severity ('P0'|'P1'), "
+            "path, line (integer or null), summary, evidence (the exact code "
+            "or diff text and why it is a defect, under 600 characters). The "
+            "number of 'P0' entries must equal p0 and the number of 'P1' "
+            "entries must equal p1; optional 'P2' entries are not counted. You "
+            "cannot be asked follow-up questions, so a REVISE without these "
+            "findings cannot be acted on. When verdict is PASS, omit findings "
+            "or send an empty array. "
             "PASS only if P0=P1=0 and the reviewed exact candidate "
             "is sound. Do not accept the parent agent's claims as evidence. "
             "The frozen committed diff below is authoritative; filenames and "
@@ -339,7 +357,8 @@ class MergeReviewStartTool:
         return _result(
             self.name,
             f"[已启动独立审查] child_id={out['child_id']} model={out['model']} "
-            "（read_file/search_files 只读；无 shell；需真实终态 PASS）",
+            "（read_file/search_files 只读；无 shell；需真实终态 PASS；"
+            "REVISE 时每条 P0/P1 的位置与依据在该子代理结论 JSON 的 findings 数组里）",
             True,
         )
 
