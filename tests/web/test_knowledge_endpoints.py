@@ -460,3 +460,47 @@ def test_knowledge_scores_skips_non_utf8_sidecar_file(build_test_engine, tmp_pat
     assert list(data["scores"]) == ["experience:EXPERIENCE-20261015-aaaaaa"]
     assert data["scores"]["experience:EXPERIENCE-20261015-aaaaaa"]["top_label"] == "显著帮助"
     assert data["scores"]["experience:EXPERIENCE-20261015-aaaaaa"]["confidence"] == 0.61
+
+
+def test_experience_catalog_hydrates_only_requested_rows(tmp_path, monkeypatch):
+    store = ExperienceStore(tmp_path / "experiences")
+    for title in ("first card", "second card", "third card"):
+        _seed_experience(store, title)
+    full = store.catalog(limit=10)
+    original = store.to_hydrated_record
+    calls = []
+
+    def counted(ref, doc):
+        calls.append(ref)
+        return original(ref, doc)
+
+    monkeypatch.setattr(store, "to_hydrated_record", counted)
+    limited = store.catalog(limit=1)
+    assert limited["counts"] == full["counts"]
+    assert limited["records"] == full["records"][:1]
+    assert len(calls) == 1
+    assert store.catalog(limit=0)["counts"] == full["counts"]
+    assert len(calls) == 1
+
+
+def test_method_inventory_projects_signals_only_for_selected_rows(tmp_path, monkeypatch):
+    store = MethodStore(tmp_path / "methods")
+    for method_id, status in (("alpha", "active"), ("beta", "candidate"), ("gamma", "retired")):
+        _seed_method(tmp_path / "methods", method_id, status=status)
+    full = store.inventory(limit=10)
+    original = store._attach_last_signal_age
+    calls = []
+
+    def counted(card, record):
+        calls.append(record.method_id)
+        original(card, record)
+
+    monkeypatch.setattr(store, "_attach_last_signal_age", counted)
+    limited = store.inventory(limit=1)
+    assert limited["counts"] == full["counts"]
+    assert limited["records"] == full["records"][:1]
+    assert len(calls) == 1
+    assert store.inventory(limit=0)["counts"] == full["counts"]
+    assert len(calls) == 1
+    assert store.inventory(query="beta", limit=1)["records"][0]["id"] == "beta"
+    assert store.inventory(status="retired", limit=1)["records"][0]["id"] == "gamma"

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 from pathlib import Path
 
 from llm_loop.methods.learning_journal import LearningJournal
@@ -21,6 +22,10 @@ from llm_loop.methods.learning_journal import LearningJournal
 logger = logging.getLogger(__name__)
 
 INFLIGHT_STATES = frozenset({"admitted", "started"})
+
+# Only the read-only service status view uses this one-entry cache.
+_display_lock = threading.Lock()
+_display_cache: tuple[Path, tuple[int, ...], str | None] | None = None
 
 
 def learning_dir(sessions_dir: str | Path) -> Path:
@@ -94,3 +99,42 @@ def learning_busy_reason(sessions_dir: str | Path) -> str | None:
         return None
     shown = ",".join(ids[:3]) + ("…" if len(ids) > 3 else "")
     return f"learning busy: inflight={len(ids)} ({shown})"
+
+
+def _journal_stamp(path: Path) -> tuple[int, ...] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def learning_busy_reason_for_display(sessions_dir: str | Path) -> str | None:
+    """Read-only status projection; never use for restart admission.
+
+    Recheck the live consumer lock on every call. Reuse only an unchanged
+    journal's compact result; never cache a failed or unstable fold. A single
+    lock coalesces concurrent status readers without retaining historical jobs.
+    """
+    global _display_cache
+    if not consumer_active(sessions_dir):
+        return None
+    path = journal_path(sessions_dir).absolute()
+    with _display_lock:
+        stamp = _journal_stamp(path)
+        if stamp is None:
+            return learning_busy_reason(sessions_dir)
+        if _display_cache is not None and _display_cache[:2] == (path, stamp):
+            return _display_cache[2]
+        try:
+            ids = [job.job_id for job in LearningJournal(path).inflight_jobs()]
+        except Exception:  # noqa: BLE001 - same fail-open display semantics as the live probe
+            logger.warning("learning journal unreadable for display probe: %s", path, exc_info=True)
+            return None
+        reason = None
+        if ids:
+            shown = ",".join(ids[:3]) + ("…" if len(ids) > 3 else "")
+            reason = f"learning busy: inflight={len(ids)} ({shown})"
+        if _journal_stamp(path) == stamp:
+            _display_cache = (path, stamp, reason)
+        return reason

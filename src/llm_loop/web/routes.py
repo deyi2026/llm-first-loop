@@ -40,6 +40,7 @@ from llm_loop.feedback.honesty import (
 from llm_loop.knowledge_score.ledger import KnowledgeScoreLedger
 from llm_loop.knowledge_score.pending import scan_pending
 from llm_loop.knowledge_score.runner import read_runner_state
+from llm_loop.methods.learning_journal import LearningJournal
 from llm_loop.runtime.admission_barrier import (
     ServiceAdmissionBarrier,
     task_admission_barrier,
@@ -668,11 +669,21 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+def _learning_status_journal(engine: Any) -> Any:
+    journal = getattr(engine, "learning_journal", None)
+    if isinstance(journal, LearningJournal):
+        try:
+            return journal.display_view()
+        except Exception:  # noqa: BLE001 - preserve the endpoint's per-field degradation path
+            logger.warning("learning status snapshot failed; falling back to live fields", exc_info=True)
+    return journal
+
+
 @router.get("/api/v1/learning/status")
 def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> Response:
     """Read-only Learning Plane observability without exposing hidden reasoning."""
     engine = _engine_from(request)
-    journal = getattr(engine, "learning_journal", None)
+    journal = _learning_status_journal(engine)
     jobs = []
     # EVO-20261013-2: journal 读取失败仍 fail-open，但显式暴露降级信号（不再伪装成全 0/空）
     observability_errors: list[str] = []

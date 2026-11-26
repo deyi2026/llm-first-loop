@@ -628,3 +628,85 @@ def test_learning_plane_revalidates_authority_before_started_and_requeues_on_gen
     after = journal.job(job.job_id)
     assert after is not None and after.state == "queued" and after.attempt == 0
     assert governor.active_leases() == ()
+
+
+def test_display_view_reuses_exact_bounded_snapshot(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    journal = _mk(tmp_path)
+    a = journal.enqueue("episode:display:a", session_id="a", trigger_facts={"rounds": 1})
+    b = journal.enqueue("episode:display:b", session_id="b")
+    assert a and b
+    journal.mark_saved(b.job_id, "method:b")
+    expected_jobs = journal.recent_jobs()
+    expected_counts = journal.count_states()
+    expected_oldest = journal.oldest_queued()
+    original = journal._fold
+    calls = 0
+
+    def counted():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(journal, "_fold", counted)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        views = list(pool.map(lambda _: journal.display_view(), range(8)))
+    assert calls == 1
+    for view in views:
+        assert view.recent_jobs() == expected_jobs
+        assert view.count_states() == expected_counts
+        assert view.oldest_queued()["job_id"] == expected_oldest["job_id"]
+    views[0].recent_jobs()[0].trigger_facts["mutated"] = True
+    views[0].count_states()["saved"] = 99
+    assert journal.display_view().recent_jobs() == expected_jobs
+    assert journal.display_view().count_states() == expected_counts
+    assert calls == 1
+    # An external journal writer invalidates the display cache.
+    LearningJournal(journal._path).mark_started(a.job_id)
+    assert journal.display_view().count_states() == {"started": 1, "saved": 1}
+    assert journal.display_view().oldest_queued() is None
+    assert calls == 2
+    assert journal.inflight_jobs()[0].job_id == a.job_id
+    assert calls == 3  # no display cache in the admission/reconciliation fold
+
+
+def test_display_view_does_not_reuse_unstable_or_replaced_journal(tmp_path, monkeypatch):
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:display:unstable", session_id="s")
+    assert job
+    original = journal._fold
+    calls = 0
+
+    def changed():
+        nonlocal calls
+        calls += 1
+        result = original()
+        if calls == 1:
+            LearningJournal(journal._path).mark_saved(job.job_id, "method:s")
+        return result
+
+    monkeypatch.setattr(journal, "_fold", changed)
+    assert journal.display_view().count_states() == {"queued": 1}
+    assert journal.display_view().count_states() == {"saved": 1}
+    assert journal.display_view().count_states() == {"saved": 1}
+    assert calls == 2
+    replacement = journal._path.with_suffix(".replacement")
+    replacement.write_text('{"event":"queued","job_id":"new"}\n', encoding="utf-8")
+    replacement.replace(journal._path)
+    assert journal.display_view().count_states() == {"queued": 1}
+    assert journal.display_view().recent_jobs()[0].job_id == "new"
+    assert calls == 3
+
+
+def test_display_view_preserves_recent_limit_and_full_counts(tmp_path):
+    journal = _mk(tmp_path)
+    # Seed directly with valid queued records to avoid quadratic setup folds.
+    import json
+    journal._path.parent.mkdir(parents=True, exist_ok=True)
+    journal._path.write_text("".join(json.dumps({"event": "queued", "job_id": str(i), "ts": i % 3}) + "\n" for i in range(250)), encoding="utf-8")
+    view = journal.display_view()
+    assert view.count_states() == {"queued": 250}
+    assert view.recent_jobs(500) == journal.recent_jobs(500)
+    assert len(view.recent_jobs(500)) == 200
+    assert view.oldest_queued()["job_id"] == journal.oldest_queued()["job_id"]
