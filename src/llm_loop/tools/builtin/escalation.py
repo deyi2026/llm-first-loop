@@ -66,6 +66,21 @@ def _review_expiry_note(rec: dict) -> str:
     return ""
 
 
+def _issue_failure_content(rid: str, rec: dict) -> str:
+    """签发失败的回执：失败码、原因说明、失败时间与可执行的重试路径。"""
+    code = str(rec.get("last_issue_error") or "") or "unknown"
+    lines = [
+        f"[签发失败] request_id={rid}",
+        f"失败码: {ISSUE_FAILED_REASON_PREFIX}（{code}）",
+        f"原因: {ISSUE_FAIL_REASON_HINTS.get(code, ISSUE_FAIL_REASON_DEFAULT_HINT)}",
+    ]
+    failed_at = str(rec.get("issue_failed_at") or "")
+    if failed_at:
+        lines.append(f"失败时间: {failed_at}")
+    lines.append(f"重试指引: {_ISSUE_RETRY_HINT}")
+    return "\n".join(lines)
+
+
 def _fail(tool: str, content: str) -> ToolResult:
     return ToolResult(
         status=ToolResultStatus.FAILURE,
@@ -219,17 +234,7 @@ class EscalationWaitTool:
         if status == "failed":
             # EVO-20261127-dd37be50: 人工批准时 Host 判定签发材料不可成立（终态）。
             # 明确失败，不再以 pending 让调用方空等；给出可执行的重试路径。
-            code = str(rec.get("last_issue_error") or "") or "unknown"
-            failed_at = str(rec.get("issue_failed_at") or "")
-            lines = [
-                f"[签发失败] request_id={rid}",
-                f"失败码: {ISSUE_FAILED_REASON_PREFIX}（{code}）",
-                f"原因: {ISSUE_FAIL_REASON_HINTS.get(code, ISSUE_FAIL_REASON_DEFAULT_HINT)}",
-            ]
-            if failed_at:
-                lines.append(f"失败时间: {failed_at}")
-            lines.append(f"重试指引: {_ISSUE_RETRY_HINT}")
-            return _fail(self.name, "\n".join(lines))
+            return _fail(self.name, _issue_failure_content(rid, rec))
         if status == "approved":
             token = str(rec.get("token", "") or "")
             exp = str(rec.get("token_expires_at", "") or "")

@@ -463,6 +463,33 @@ class EscalationStore:
             if r.get("status") == "pending" and not r.get("_sig_unverified")
         )
 
+    def _settle_rejected_issue(
+        self, rec: dict, exc: IssueVerifyError, *,
+        decision: str, decided_by: str, channel: str, note: str,
+    ) -> str:
+        """Host 拒绝签发 → 把申请落为终态 failed，返回给审批路由的原因串.
+
+        只能由 decide() 在 _mutate 的同一把锁内调用：与决定同锁落库，不留「签发
+        已失败但记录仍 pending」的窗口。token 恒空、状态不是 approved——没有授予
+        任何东西。审计两处落笔、各记一事：这里的 issue_failed（escalation_log.jsonl）
+        是申请状态迁移记录；审批路由另写 host_verify_issue_failed
+        （escalation_review_log.jsonl）记这次人工批准的尝试结果，统计时勿相加。
+        """
+        detail = str(exc).strip()[:200] or type(exc).__name__
+        now = _now()
+        rec["status"] = "failed"
+        rec["decided_at"] = now
+        rec["decided_by"] = decided_by
+        rec["decision_channel"] = channel
+        rec["decision_note"] = note[:1000]
+        rec["last_issue_error"] = detail
+        rec["issue_failed_at"] = now
+        self._log(
+            "issue_failed", rec,
+            {"decision": decision, "detail": detail, "decided_by": decided_by, "channel": channel},
+        )
+        return f"{ISSUE_FAILED_REASON_PREFIX}: {detail}"
+
     def decide(
         self,
         rid: str,
@@ -498,31 +525,6 @@ class EscalationStore:
 
         result: dict | None = None
         reason = ""
-
-        def _fail_issue(records: list[dict], rec: dict, exc: IssueVerifyError) -> list[dict]:
-            # 与决定同一把锁内落库（仍在 _mutate 的读-改-写里），不留「签发已失败
-            # 但记录仍 pending」的窗口：面板不再把它列为待审，AI 侧 wait 立即拿到
-            # 失败原因。token 恒空、状态不是 approved——没有授予任何东西。
-            nonlocal result, reason
-            detail = str(exc).strip()[:200] or type(exc).__name__
-            now = _now()
-            rec["status"] = "failed"
-            rec["decided_at"] = now
-            rec["decided_by"] = decided_by
-            rec["decision_channel"] = channel
-            rec["decision_note"] = note[:1000]
-            rec["last_issue_error"] = detail
-            rec["issue_failed_at"] = now
-            result = None
-            reason = f"{ISSUE_FAILED_REASON_PREFIX}: {detail}"
-            # 审计两处落笔、各记一事：这里的 issue_failed（escalation_log.jsonl）是申请状态
-            # 迁移记录；审批路由另写 host_verify_issue_failed（escalation_review_log.jsonl）
-            # 记这次人工批准的尝试结果。同一次失败两处各一行，统计时勿相加。
-            self._log(
-                "issue_failed", rec,
-                {"decision": decision, "detail": detail, "decided_by": decided_by, "channel": channel},
-            )
-            return records
 
         def _fn(records: list[dict]) -> list[dict]:
             nonlocal result, reason
@@ -563,7 +565,11 @@ class EscalationStore:
                     try:
                         verify_receipt_id = issue_verify(dict(r))
                     except IssueVerifyError as exc:
-                        return _fail_issue(records, r, exc)
+                        reason = self._settle_rejected_issue(
+                            r, exc, decision=decision, decided_by=decided_by,
+                            channel=channel, note=note,
+                        )
+                        return records
                     if not verify_receipt_id:
                         raise ValueError("host verify issuer returned empty receipt_id")
                 r["status"] = decision
