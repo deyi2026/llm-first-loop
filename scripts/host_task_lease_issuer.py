@@ -235,13 +235,13 @@ def _lane_git(worktree: Path, *args: str) -> str:
 def _ensure_lane_gitconfig(worktree: Path) -> None:
     """Issuer-side (root) maintenance of the safe.directory allowlist file.
 
-    ``worktree`` MUST be the authoritative ledger row value (LaneStore), never
-    the raw request payload — this path is written verbatim into a protected
-    config source consumed by unprivileged git, so it is a privilege sink.
-
-    Trust validation before any write: the worktree directory must exist, be
-    owned by the issuing real user (not root — root-owned directory would let
-    a future repo swap launder trust), and not be world-writable.
+    Trust anchoring for ``worktree`` is the Owner's live TTY confirmation of
+    the lane-request payload (the issuance trust anchor), reinforced here by
+    machine validation: the directory must exist, must not be root-owned
+    (root-owned directory would let a future repo swap launder trust), and
+    must not be world-writable. The path is additionally scrubbed for
+    config-syntax metacharacters before it may enter the protected file
+    consumed by unprivileged git.
     Appends one ``safe.directory = <worktree>`` entry (deduplicated) and
     enforces root:wheel 0644 on the allowlist file.
     """
@@ -253,8 +253,14 @@ def _ensure_lane_gitconfig(worktree: Path) -> None:
         )
     except OSError as exc:
         raise SystemExit("lane_request_worktree_untrusted") from exc
+    scrubbed = str(worktree)
+    require(
+        scrubbed == scrubbed.strip()
+        and all(c.isprintable() and c not in "\"';#" for c in scrubbed),
+        "lane_request_worktree_untrusted",
+    )
     allowlist = _BASE / "gitconfig-safe-directories"
-    entry = f"safe.directory = {worktree}\n"
+    entry = f"safe.directory = {scrubbed}\n"
     try:
         existing = allowlist.read_text(encoding="utf-8") if allowlist.is_file() else ""
     except OSError:
@@ -263,14 +269,17 @@ def _ensure_lane_gitconfig(worktree: Path) -> None:
         allowlist.parent.mkdir(parents=True, exist_ok=True)
         with allowlist.open("a", encoding="utf-8") as stream:
             stream.write(entry)
-    allowlist.chmod(0o644)
-    import pwd  # local: issuer-side only
-    if allowlist.stat().st_uid != 0:
-        try:
+    try:
+        allowlist.chmod(0o644)
+        import pwd  # local: issuer-side only
+        if allowlist.stat().st_uid != 0:
             root_uid = pwd.getpwnam("root").pw_uid
             os.chown(allowlist, root_uid, 0)
-        except (KeyError, PermissionError, OSError):
-            pass
+    except OSError:
+        # Left untrusted: the next _lane_git read re-validates ownership/mode
+        # and fails closed to /dev/null, so a half-maintained file grants
+        # nothing.
+        pass
 
 
 def _lane_snapshot(
