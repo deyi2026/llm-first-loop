@@ -1,0 +1,25 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-model-role-concurrency-tests",
+  "summary": "Acceptance-gap closure for merged model-role routing: concurrent hot-reload/reader race test and reviewer-independence assertion (test-only, no production change).",
+  "components": [
+    {
+      "component_id": "model-role-concurrency-test-coverage",
+      "paths": [
+        "docs/governance/submissions/20261126-model-role-concurrency-tests.json",
+        "tests/unit/test_model_roles.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing ModelClientPool role table tests. No production change, no new service, no authority change.",
+      "disposition": "Adds a threaded writer/reader race test (generation monotonicity, no torn candidate reads during concurrent replace_model_roles) and an assertion that execution-role hot reload never touches reviewer resolution. Closes the last acceptance gap from the model-role final review; all other negative paths (429/timeout/network failover, no-candidate, hot-reload atomicity, registry independence, dotenv refresh) were already covered.",
+      "evidence": [
+        "Acceptance review on main=aafae770/25b5820a: 7 of 8 requested negative-path items already covered by merged PR126 tests; the concurrency race item was the sole missing test.",
+        "Both new tests pass on base 25b5820a (48+2 directed suite green at delivery)."
+      ],
+      "verification_level": "Local directed tests green; independent review and remote CI pending.",
+      "model_evidence_veto_recovery_exit": "Test-only change; no runtime semantics touched. A flaky-machine failure of the race test surfaces a real concurrency defect, never a false success.",
+      "rollback_route": "Revert the test file; no production or durable-state impact."
+    }
+  ],
+  "declarations": []
+}
