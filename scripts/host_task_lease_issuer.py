@@ -201,18 +201,76 @@ def _lane_rows(path: Path, owner: int) -> list[dict[str, Any]]:
 
 
 def _lane_git(worktree: Path, *args: str) -> str:
-    """Fixed read-only Git queries; no hooks, user argv or inherited Git config."""
+    """Fixed read-only Git queries; no hooks, user argv or inherited Git config.
+
+    ``safe.directory`` is honored only from protected config sources (system
+    or global files); command-line ``-c`` and environment variables are not
+    reliable across git versions (>= 2.35.2 ignores them entirely), so the
+    only effective source here is ``GIT_CONFIG_SYSTEM``
+    pointing at the root-owned issuer allowlist file maintained at issue
+    time. When that file is missing or its ownership/mode is not root-only
+    readable, we point git at ``/dev/null`` instead: fail-closed HOLD, never
+    a silently widened trust boundary.
+    """
+    allowlist = _BASE / "gitconfig-safe-directories"
+    try:
+        st = allowlist.stat()
+        trusted = (allowlist.is_file() and st.st_uid == 0
+                   and (st.st_mode & 0o022) == 0)
+    except OSError:
+        trusted = False
     result = subprocess.run(
-        ["/usr/bin/git", "-c", f"safe.directory={worktree}", "-c",
-         "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-         "-C", str(worktree), *args],
+        ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c",
+         "core.fsmonitor=false", "-C", str(worktree), *args],
         env={"PATH": "/usr/bin:/bin", "HOME": "/var/empty", "LC_ALL": "C",
-             "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+             "GIT_CONFIG_SYSTEM": str(allowlist) if trusted else "/dev/null",
+             "GIT_CONFIG_GLOBAL": "/dev/null",
              "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1"},
         capture_output=True, text=True, timeout=5, check=False,
     )
     require(result.returncode == 0, "lane_request_git_unavailable")
     return result.stdout.strip()
+
+
+def _ensure_lane_gitconfig(worktree: Path) -> None:
+    """Issuer-side (root) maintenance of the safe.directory allowlist file.
+
+    ``worktree`` MUST be the authoritative ledger row value (LaneStore), never
+    the raw request payload — this path is written verbatim into a protected
+    config source consumed by unprivileged git, so it is a privilege sink.
+
+    Trust validation before any write: the worktree directory must exist, be
+    owned by the issuing real user (not root — root-owned directory would let
+    a future repo swap launder trust), and not be world-writable.
+    Appends one ``safe.directory = <worktree>`` entry (deduplicated) and
+    enforces root:wheel 0644 on the allowlist file.
+    """
+    try:
+        st = worktree.stat()
+        require(
+            worktree.is_dir() and st.st_uid != 0 and (st.st_mode & 0o002) == 0,
+            "lane_request_worktree_untrusted",
+        )
+    except OSError as exc:
+        raise SystemExit("lane_request_worktree_untrusted") from exc
+    allowlist = _BASE / "gitconfig-safe-directories"
+    entry = f"safe.directory = {worktree}\n"
+    try:
+        existing = allowlist.read_text(encoding="utf-8") if allowlist.is_file() else ""
+    except OSError:
+        existing = ""
+    if entry not in existing.splitlines(keepends=True):
+        allowlist.parent.mkdir(parents=True, exist_ok=True)
+        with allowlist.open("a", encoding="utf-8") as stream:
+            stream.write(entry)
+    allowlist.chmod(0o644)
+    import pwd  # local: issuer-side only
+    if allowlist.stat().st_uid != 0:
+        try:
+            root_uid = pwd.getpwnam("root").pw_uid
+            os.chown(allowlist, root_uid, 0)
+        except (KeyError, PermissionError, OSError):
+            pass
 
 
 def _lane_snapshot(
@@ -776,6 +834,14 @@ def _issue_lane_request(raw: bytes, digest: str, key: Any, eddsa: Any) -> dict[s
         _require_no_active_binding(approval["owner_session_id"], datetime.now(UTC))
         # Check again under the publication lock; no silent adoption of a new Lane.
         _check_lane_request(json.loads(raw), datetime.now(UTC))
+        # Live snapshot as UID462 needs a protected-config trust entry for the
+        # owner-owned worktree; the ineffective -c form was removed (git >=
+        # 2.35.2 ignores safe.directory from command line and environment).
+        # The workspace path was explicitly confirmed by the Owner over the
+        # local TTY (issuance trust anchor); _ensure_lane_gitconfig additionally
+        # machine-validates it (exists, not root-owned, not world-writable)
+        # before it may enter the protected config consumed by UID462 git.
+        _ensure_lane_gitconfig(Path(str(json.loads(raw)["workspace"])))
         _create(_BASE / "private" / "approvals" / f"{approval['approval_id']}.json",
                 canonical(approval), 0o600)
         return _issue_approved(approval, key, eddsa)
