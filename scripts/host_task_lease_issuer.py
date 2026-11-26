@@ -215,7 +215,7 @@ def _lane_git(worktree: Path, *args: str) -> str:
     allowlist = _BASE / "gitconfig-safe-directories"
     try:
         st = allowlist.stat()
-        trusted = (allowlist.is_file() and st.st_uid == 0
+        trusted = (allowlist.is_file() and st.st_uid == _ISSUER_UID
                    and (st.st_mode & 0o022) == 0)
     except OSError:
         trusted = False
@@ -228,22 +228,25 @@ def _lane_git(worktree: Path, *args: str) -> str:
              "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1"},
         capture_output=True, text=True, timeout=5, check=False,
     )
-    require(result.returncode == 0, "lane_request_git_unavailable")
+    require(
+        result.returncode == 0,
+        "lane_request_git_unavailable: " + result.stderr[:200],
+    )
     return result.stdout.strip()
 
 
 def _ensure_lane_gitconfig(worktree: Path) -> None:
-    """Issuer-side (root) maintenance of the safe.directory allowlist file.
+    """Issuer-side maintenance of the safe.directory allowlist file.
 
     Trust anchoring for ``worktree`` is the Owner's live TTY confirmation of
     the lane-request payload (the issuance trust anchor), reinforced here by
     machine validation: the directory must exist, must not be root-owned
     (root-owned directory would let a future repo swap launder trust), and
     must not be world-writable. The path is additionally scrubbed for
-    config-syntax metacharacters before it may enter the protected file
-    consumed by unprivileged git.
+    config-syntax metacharacters (including gitconfig wildcard characters)
+    before it may enter the protected file consumed by unprivileged git.
     Appends one ``safe.directory = <worktree>`` entry (deduplicated) and
-    enforces root:wheel 0644 on the allowlist file.
+    enforces issuer-owned 0644 on the allowlist file.
     """
     try:
         st = worktree.stat()
@@ -256,11 +259,13 @@ def _ensure_lane_gitconfig(worktree: Path) -> None:
     scrubbed = str(worktree)
     require(
         scrubbed == scrubbed.strip()
-        and all(c.isprintable() and c not in "\"';#" for c in scrubbed),
+        and all(
+            c.isprintable() and c not in "\"';#*?[]" for c in scrubbed
+        ),
         "lane_request_worktree_untrusted",
     )
     allowlist = _BASE / "gitconfig-safe-directories"
-    entry = f"safe.directory = {scrubbed}\n"
+    entry = f"\tdirectory = {scrubbed}\n"
     try:
         existing = allowlist.read_text(encoding="utf-8") if allowlist.is_file() else ""
     except OSError:
@@ -268,13 +273,9 @@ def _ensure_lane_gitconfig(worktree: Path) -> None:
     if entry not in existing.splitlines(keepends=True):
         allowlist.parent.mkdir(parents=True, exist_ok=True)
         with allowlist.open("a", encoding="utf-8") as stream:
-            stream.write(entry)
+            stream.write(f"[safe]\n{entry}")
     try:
         allowlist.chmod(0o644)
-        import pwd  # local: issuer-side only
-        if allowlist.stat().st_uid != 0:
-            root_uid = pwd.getpwnam("root").pw_uid
-            os.chown(allowlist, root_uid, 0)
     except OSError:
         # Left untrusted: the next _lane_git read re-validates ownership/mode
         # and fails closed to /dev/null, so a half-maintained file grants
