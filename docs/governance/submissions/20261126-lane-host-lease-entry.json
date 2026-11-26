@@ -11,7 +11,8 @@
         "scripts/host_task_lease_issuer.py",
         "src/llm_loop/tools/managed_git.py",
         "tests/unit/test_host_task_lease_issuer.py",
-        "tests/unit/test_managed_git.py"
+        "tests/unit/test_managed_git.py",
+        "tests/unit/test_task_runtime.py"
       ],
       "control_machinery": true,
       "declaration_id": "existing-host-lane-approval",
