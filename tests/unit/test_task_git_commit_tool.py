@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 import pytest
@@ -57,6 +59,59 @@ def test_model_tool_real_commit_updates_only_lane_owned_path(signed_git_task):
     assert body["merged"] is False
     assert body["deployed"] is False
     assert lanes.get(item.capability.lane_id)["head_sha"] == body["new_head"]
+
+
+def test_same_run_two_commits_share_trusted_cas_across_tool_contexts(signed_git_task):
+    linked, _audit, lanes, _authority, item = signed_git_task
+    tool = TaskGitCommitTool()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(
+            contextvars.copy_context().run, tool.execute,
+            paths=["hello.txt"], message="feat: first commit",
+        ).result()
+        assert first.status == ToolResultStatus.SUCCESS
+        first_head = git(linked, "rev-parse", "HEAD")
+        (linked / "hello.txt").write_text("second change\n")
+        second = pool.submit(
+            contextvars.copy_context().run, tool.execute,
+            paths=["hello.txt"], message="feat: second commit",
+        ).result()
+    assert second.status == ToolResultStatus.SUCCESS, second.content
+    body = json.loads(second.content.split("] ", 1)[1])
+    assert body["old_head"] == first_head
+    assert body["new_head"] == git(linked, "rev-parse", "HEAD")
+    assert body["lane_version"] == item.expected_lane_version + 2
+    assert lanes.get(item.capability.lane_id)["head_sha"] == body["new_head"]
+    assert not git(linked, "diff", "--cached", "--name-only")
+
+
+@pytest.mark.parametrize("interference", ["lane", "head", "revocation"])
+def test_same_run_does_not_adopt_external_cas_or_revocation(signed_git_task, interference):
+    linked, _audit, lanes, authority, item = signed_git_task
+    tool = TaskGitCommitTool()
+    first = tool.execute(paths=["hello.txt"], message="feat: first commit")
+    assert first.status == ToolResultStatus.SUCCESS
+    head = git(linked, "rev-parse", "HEAD")
+    if interference == "lane":
+        lanes.update(
+            item.capability.lane_id,
+            expected_version=item.expected_lane_version + 1, head_sha=head,
+        )
+    elif interference == "head":
+        git(linked, "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "--allow-empty", "-m", "external commit")
+        head = git(linked, "rev-parse", "HEAD")
+    else:
+        authority.revoked = True
+    (linked / "hello.txt").write_text("must not commit\n")
+    denied = tool.execute(paths=["hello.txt"], message="feat: denied")
+    expected = {
+        "lane": "git_lane_cas_conflict", "head": "git_head_cas_conflict",
+        "revocation": "authority_lease_revoked",
+    }[interference]
+    assert denied.error_type == expected
+    assert git(linked, "rev-parse", "HEAD") == head
+    assert not git(linked, "diff", "--cached", "--name-only")
 
 
 def test_model_tool_missing_context_and_unknown_git_options_hold(setup_git):
