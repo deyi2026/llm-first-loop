@@ -274,15 +274,12 @@ def _ensure_lane_gitconfig(worktree: Path) -> None:
         allowlist.parent.mkdir(parents=True, exist_ok=True)
         with allowlist.open("a", encoding="utf-8") as stream:
             stream.write(f"[safe]\n{entry}")
+    # Keep the file issuer-owned 0644: the downstream _lane_git trust check
+    # requires exactly issuer ownership (matching the UID462 issuer), so no
+    # chown-to-root happens here. A failed chmod leaves the file untrusted —
+    # the next _lane_git read fails closed to /dev/null.
     with contextlib.suppress(OSError):
-        # Left untrusted: the next _lane_git read re-validates ownership/mode
-        # and fails closed to /dev/null, so a half-maintained file grants
-        # nothing.
         allowlist.chmod(0o644)
-        import pwd  # local: issuer-side only
-        if allowlist.stat().st_uid != 0:
-            root_uid = pwd.getpwnam("root").pw_uid
-            os.chown(allowlist, root_uid, 0)
 
 
 def _remove_lane_gitconfig_entry(worktree: Path) -> None:
