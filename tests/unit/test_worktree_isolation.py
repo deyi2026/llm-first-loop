@@ -71,6 +71,49 @@ class TestPrepare:
             prepare_worktree("lfl-subagent-11111111", parent_root=str(plain))
         assert ei.value.reason_code == "NOT_GIT_WORKSPACE"
 
+    def test_nested_plain_directory_cannot_register_in_parent_repo(self, git_repo: Path) -> None:
+        plain = git_repo / "plain"
+        plain.mkdir()
+        before = _git(str(git_repo), "worktree", "list", "--porcelain")
+        with pytest.raises(WorktreeIsolationError) as ei:
+            prepare_worktree("lfl-subagent-11111111", parent_root=str(plain))
+        assert ei.value.reason_code == "NOT_GIT_WORKSPACE"
+        assert _git(str(git_repo), "worktree", "list", "--porcelain") == before
+        assert not (plain / ".worktrees").exists()
+
+    def test_inherited_git_common_dir_cannot_redirect_worktree(self, git_repo: Path, monkeypatch) -> None:
+        foreign = git_repo.parent / "foreign"
+        foreign.mkdir()
+        _git(str(foreign), "init", "-q")
+        before = _git(str(foreign), "worktree", "list", "--porcelain")
+        with monkeypatch.context() as env:
+            env.setenv("GIT_COMMON_DIR", str(foreign / ".git"))
+            env.setenv("GIT_DIR", str(foreign / ".git"))
+            lease = prepare_worktree("lfl-subagent-abcdef13", parent_root=str(git_repo))
+        assert _git(str(foreign), "worktree", "list", "--porcelain") == before
+        assert Path(lease.path).is_dir()
+        assert lease.path in _git(str(git_repo), "worktree", "list", "--porcelain")
+
+    @pytest.mark.parametrize("variable", ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"])
+    def test_inherited_config_override_cannot_redirect_worktree(self, git_repo: Path, monkeypatch, variable: str) -> None:
+        from llm_loop.runtime.git_repository_env import git_repository_env
+
+        foreign = git_repo.parent / "foreign"
+        foreign.mkdir()
+        _git(str(foreign), "init", "-q")
+        override = git_repo.parent / "foreign.gitconfig"
+        _git(str(git_repo), "config", "--file", str(override), "core.worktree", str(foreign))
+        _git(str(git_repo), "config", "--file", str(override), "core.hooksPath", str(foreign / "hooks"))
+        before = (foreign / ".git" / "config").read_bytes()
+        with monkeypatch.context() as env:
+            env.setenv(variable, str(override))
+            inherited_override = variable in git_repository_env()
+            assert not inherited_override
+            lease = prepare_worktree("lfl-subagent-abcdef14", parent_root=str(git_repo))
+        assert Path(lease.path).is_dir()
+        assert lease.path in _git(str(git_repo), "worktree", "list", "--porcelain")
+        assert (foreign / ".git" / "config").read_bytes() == before
+
     def test_disk_low_refused(self, git_repo: Path, monkeypatch) -> None:
         import llm_loop.workspace.worktree_isolation as mod
 

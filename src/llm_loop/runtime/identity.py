@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from llm_loop.runtime.git_repository_env import git_repository_env
 from llm_loop.runtime.installation import installed_identity
 
 FATAL_TAG = "FATAL_RUNTIME_IDENTITY_MISMATCH"
@@ -71,10 +72,13 @@ class IdentityReport:
 def _git_head(workspace: Path) -> str:
     try:
         out = subprocess.run(
-            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            ["git", "-C", str(workspace), "rev-parse", "--show-toplevel", "HEAD"],
+            env=git_repository_env(), capture_output=True, text=True, timeout=5,
         )
-        return out.stdout.strip() if out.returncode == 0 else "unknown"
+        lines = out.stdout.strip().splitlines()
+        if out.returncode == 0 and len(lines) == 2 and Path(lines[0]).resolve() == workspace.resolve():
+            return lines[1]
+        return "unknown"
     except Exception:
         return "unknown"
 

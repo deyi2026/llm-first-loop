@@ -89,3 +89,33 @@ def test_default_commit_path_remains_unchanged(repo: Path):
     assert result.returncode != 0
     assert "DEV_COMMIT_DISABLED" not in result.stderr
     assert _git(repo, "rev-list", "--count", "HEAD") == "1"
+
+
+@pytest.mark.parametrize("variable", [
+    "GIT_DIR", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+])
+def test_normal_r9_rejects_inherited_repo_binding_before_any_write(repo: Path, variable: str):
+    foreign = repo.parent / "foreign"
+    foreign.mkdir()
+    _git(foreign, "init", "-q", "--bare")
+    before_config = (foreign / "config").read_bytes()
+    before_head = _git(repo, "rev-parse", "HEAD")
+    before_tree = _git(repo, "write-tree")
+    value = "1" if variable == "GIT_CONFIG_COUNT" else str(foreign)
+    if variable in {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"}:
+        override = repo.parent / "foreign.gitconfig"
+        _git(repo, "config", "--file", str(override), "core.worktree", str(foreign))
+        _git(repo, "config", "--file", str(override), "core.hooksPath", str(foreign / "hooks"))
+        value = str(override)
+    env = {**os.environ, variable: value}
+    result = subprocess.run(
+        ["bash", "scripts/r9_commit.sh", "fix: test isolated binding"],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 78, result.stdout + result.stderr
+    assert f"inherited Git repository variable: {variable}" in result.stderr
+    assert (foreign / "config").read_bytes() == before_config
+    assert _git(repo, "rev-parse", "HEAD") == before_head
+    assert _git(repo, "write-tree") == before_tree
+    assert not (repo / ".git" / "r9-commit.lock").exists()

@@ -1,0 +1,105 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-git-config-isolation",
+  "summary": "Prevent inherited Git repository identity and ancestor discovery from crossing CI/worktree and runtime identity boundaries; diagnose bare-config corruption without rewriting production configuration.",
+  "components": [
+    {
+      "component_id": "git-repository-boundary",
+      "paths": [
+        "scripts/ci_gate.sh",
+        "scripts/r9_commit.sh",
+        "src/llm_loop/workspace/worktree_isolation.py",
+        "src/llm_loop/runtime/paths.py",
+        "src/llm_loop/runtime/identity.py",
+        "src/llm_loop/runtime/build_identity.py",
+        "src/llm_loop/runtime/git_repository_env.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing CI/R9 and workspace isolation",
+      "disposition": "modify",
+      "evidence": [
+        "Disposable repositories reproduced core.bare false-to-true with inherited GIT_DIR or GIT_COMMON_DIR. Historical writer not identified.",
+        "Final targeted regression on base cc20d4a0f after Reviewer P1 repair: 183 passed using two xdist workers; Ruff, shell syntax and diff checks passed.",
+        "Disposable production sentinels were overwritten by launch fixtures with inherited GIT_DIR or an ancestor repository before the fix; both now remain intact and the fixture records unknown Git identity.",
+        "Independent Reviewer subagent_7f5f84d2502d returned REVISE (P0=0/P1=1/P2=2) on the previous tree. Explicit GIT_CONFIG_GLOBAL/SYSTEM overrides are now cleared by CI and explicit-root Git operations, and rejected by R9 before repository lookup. Six new disposable-repository tests failed before and passed after the repair.",
+        "Prior GLM-5.3-Flash independent review passed, but original full gate job-81e7ffba0cbb4f248645 failed on the new runtime->workspace import edge. Move the existing pure environment helper to core; preserve its filtering semantics and the frozen architecture baseline. Revised candidate review and full gate pending.",
+        "Revised candidate: 162 targeted tests across 12 modules, including the full architecture guard module, passed in 12.58s. Ruff and diff checks passed. The architecture baseline is unchanged.",
+        "Full original R9 for tree 3bcceed2: 17183 passed, 4 failed, 163 skipped, 3 xfailed; all four failures reproduced in serial. The correction reuses the existing runtime resolver environment snapshot, retains the legacy unsafe Git/shell diagnostic with the new rejection tag, and includes the actual runtime helper/resolver dependency closure in the release fixture. No architecture/env baseline or known-red exemption is changed. Final review and full gate pending.",
+        "184 targeted tests in 15 modules passed in 20.28s, including all four original failures, full architecture guard, environment ratchets, release-sidecar E2E, and existing Git/runtime regressions. Ruff, shell syntax and diff checks passed."
+      ],
+      "verification_level": "targeted_184_passed_final_review_full_gate_pending",
+      "model_evidence_veto_recovery_exit": "Independent review may veto; preserve the candidate and repair/retest. No automatic configuration repair.",
+      "rollback_route": "Revert only this candidate through the normal protected delivery path; no state migration or automatic production config edit.",
+      "declaration_id": "git-repository-boundary"
+    },
+    {
+      "component_id": "regression-tests",
+      "paths": [
+        "tests/conftest.py",
+        "tests/unit/test_ci_gate_conclusion_line.py",
+        "tests/unit/test_r9_commit_dev_mode.py",
+        "tests/unit/test_worktree_isolation.py",
+        "tests/unit/test_runtime_manifest.py",
+        "tests/unit/test_release_sidecar.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "test infrastructure",
+      "disposition": "modify",
+      "evidence": [
+        "Tests exercise inherited environment rejection, CI child isolation, exact workspace root, and no automatic bare config rewrite.",
+        "End-to-end launch regressions reproduced both manifest pollution paths (2 RED) and now pass.",
+        "Six negative cases cover both external config override variables across CI, R9 and worktree isolation, using core.worktree and core.hooksPath values."
+      ],
+      "verification_level": "local_targeted_183_passed",
+      "model_evidence_veto_recovery_exit": "Not applicable to non-control evidence.",
+      "rollback_route": "Revert only this candidate through the normal protected delivery path; no state migration or automatic production config edit."
+    },
+    {
+      "component_id": "submission",
+      "paths": [
+        "docs/governance/submissions/20261126-git-config-isolation.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "Exact changed-path declaration; no claim of independent review, full R9, remote CI or deployment."
+      ],
+      "verification_level": "documentation_only",
+      "model_evidence_veto_recovery_exit": "Not applicable to non-control evidence.",
+      "rollback_route": "Revert only this candidate through the normal protected delivery path; no state migration or automatic production config edit."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "git-repository-boundary",
+      "g1": {
+        "necessity": "Git environment variables and ancestor discovery can redirect operations into another repository. Shared config pollution can stop all worktrees. The repair is bounded to deterministic repository identity and diagnostics."
+      },
+      "g2": {
+        "authority_owner": "Existing CI checkout, R9 staged index, and worktree isolation implementation; existing protected review/merge authority remains unchanged.",
+        "relationship": "reuse",
+        "non_duplication": "No new authority, permanent monitor, approval channel, or alternate push path. CI clears inherited repository-local variables; R9 refuses ambiguous commit context; workspace operations bind to explicit root. Runtime path and build identity reuse the same clean Git environment and verify the exact checkout root. The same boundary includes explicit global/system configuration override variables; normal Git configuration discovery is retained."
+      },
+      "g3": {
+        "model_evidence": [
+          "Disposable-repository reproduction; production config remained core.bare=false with unchanged inode/mtime. Historical writer remains unknown.",
+          "Earlier targeted milestones: 65, then 94, then 177 passing tests on earlier candidates; final repaired candidate: 183 passed.",
+          "Previous independent review REVISE identified one P1 and two P2 findings; six new regressions RED before and GREEN after repair. New independent review and full R9 remain pending.",
+          "Both launch regressions RED before the original fix and GREEN after. No production manifest was rewritten."
+        ],
+        "recovery_or_reason": "Reject ambiguous context before commit mutation, report bare config as an environment fault, and preserve config for attribution. Retry from the intended clean checkout; do not silently rewrite shared config."
+      },
+      "g4": {
+        "rollback": "Revert only this candidate through the normal protected delivery path; no state migration or automatic production config edit.",
+        "verification": [
+          "Local Ruff and bash syntax checks PASS; final nine-module targeted xdist two-worker suite 183 passed.",
+          "Validate exact staged path coverage; independent review, original full R9, remote CI, protected merge and deployment verification pending.",
+          "After the dependency correction, 162 targeted and architecture tests passed; new independent review and original full gate are pending.",
+          "Full R9 on prior candidate found four regressions; new candidate requires targeted and full original R9 verification.",
+          "184 targeted/architecture/environment/release tests passed on the corrected candidate. Independent review and full original R9 pending."
+        ]
+      }
+    }
+  ]
+}

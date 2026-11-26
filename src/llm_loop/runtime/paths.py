@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from llm_loop.runtime.git_repository_env import git_repository_env
+
 
 @dataclass(frozen=True)
 class RuntimePaths:
@@ -119,8 +121,10 @@ def discover_git_common_root(code_root: str | Path) -> Path | None:
                 str(code),
                 "rev-parse",
                 "--path-format=absolute",
+                "--show-toplevel",
                 "--git-common-dir",
             ],
+            env=git_repository_env(),
             capture_output=True,
             text=True,
             timeout=3,
@@ -130,7 +134,10 @@ def discover_git_common_root(code_root: str | Path) -> Path | None:
         return None
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
-    common_dir = _resolved(proc.stdout.strip())
+    lines = proc.stdout.strip().splitlines()
+    if len(lines) != 2 or _resolved(lines[0]) != code:
+        return None  # A nested non-repository workspace does not own its ancestor.
+    common_dir = _resolved(lines[1])
     # LFL uses normal non-bare repositories.  Refuse to infer from an unfamiliar
     # common-dir shape rather than inventing a root.
     return common_dir.parent if common_dir.name == ".git" else None
