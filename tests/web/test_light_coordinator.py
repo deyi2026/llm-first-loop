@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from llm_loop.web.coordinator_light import (
+    derive_job_receipt,
     dispatch_task_card,
     resolve_role,
     resume_on_approval,
@@ -158,11 +159,12 @@ def test_approval_approved_triggers_verify_and_poke_not_token(tmp_path: Path) ->
             "ESC-1": {
                 "status": "approved",
                 "session_id": "sess-origin",
+                "workspace_scope": "/ws/x",
                 "token_expires_at": "2026-11-27T00:00:00",
             }
         }
     )
-    receipt = resume_on_approval(store, "ESC-1", poke=poke)
+    receipt = resume_on_approval(store, "ESC-1", poke=poke, require_binding={"workspace_scope": "/ws/x"})
     assert receipt["verified"] is True and receipt["status"] == "approved"
     assert receipt["poked"] is True
     assert poke.count("sess-origin") == 1
@@ -174,13 +176,13 @@ def test_approval_non_approved_not_poked(tmp_path: Path) -> None:
     poke = _PokeRecorder()
     store = _FakeEscalationStore(
         {
-            "ESC-p": {"status": "pending", "session_id": "sess-a"},
-            "ESC-d": {"status": "denied", "session_id": "sess-a"},
-            "ESC-e": {"status": "expired", "session_id": "sess-a"},
+            "ESC-p": {"status": "pending", "session_id": "sess-a", "workspace_scope": "/ws/x"},
+            "ESC-d": {"status": "denied", "session_id": "sess-a", "workspace_scope": "/ws/x"},
+            "ESC-e": {"status": "expired", "session_id": "sess-a", "workspace_scope": "/ws/x"},
         }
     )
     for rid in ("ESC-p", "ESC-d", "ESC-e"):
-        receipt = resume_on_approval(store, rid, poke=poke)
+        receipt = resume_on_approval(store, rid, poke=poke, require_binding={"workspace_scope": "/ws/x"})
         assert receipt["poked"] is False
     missing = resume_on_approval(store, "ESC-unknown", poke=poke)
     assert missing["poked"] is False and missing["verified"] is False
@@ -194,21 +196,21 @@ def test_job_terminal_resume_requires_exit0_and_sha(tmp_path: Path) -> None:
     """R34：exit0+SHA 匹配才接续；非零/SHA 不匹配不唤醒（权威分别核验）."""
     poke = _PokeRecorder()
     ok = resume_on_job(
-        {"job_id": "j1", "exit_code": 0, "artifact_sha256": "ab" * 32, "owner_session": "sess-j"},
+        {"job_id": "j1", "authority": "job_authority", "exit_code": 0, "artifact_sha256": "ab" * 32, "owner_session": "sess-j"},
         expected_sha256="ab" * 32,
         poke=poke,
     )
     assert ok["poked"] is True and poke.count("sess-j") == 1
 
     bad_exit = resume_on_job(
-        {"job_id": "j2", "exit_code": 1, "artifact_sha256": "ab" * 32, "owner_session": "sess-j"},
+        {"job_id": "j2", "authority": "job_authority", "exit_code": 1, "artifact_sha256": "ab" * 32, "owner_session": "sess-j"},
         expected_sha256="ab" * 32,
         poke=poke,
     )
     assert bad_exit["poked"] is False
 
     sha_mismatch = resume_on_job(
-        {"job_id": "j3", "exit_code": 0, "artifact_sha256": "cd" * 32, "owner_session": "sess-j"},
+        {"job_id": "j3", "authority": "job_authority", "exit_code": 0, "artifact_sha256": "cd" * 32, "owner_session": "sess-j"},
         expected_sha256="ab" * 32,
         poke=poke,
     )
@@ -221,7 +223,7 @@ def test_job_resume_independent_from_review_verdict(tmp_path: Path) -> None:
     poke = _PokeRecorder()
     receipt = resume_on_job(
         {
-            "job_id": "j4",
+            "job_id": "j4", "authority": "job_authority",
             "exit_code": 0,
             "artifact_sha256": "ef" * 32,
             "owner_session": "sess-k",
@@ -277,7 +279,7 @@ def test_stale_generation_card_not_resumed(tmp_path: Path) -> None:
     poke = _PokeRecorder()
     receipt = resume_on_job(
         {
-            "job_id": "j5",
+            "job_id": "j5", "authority": "job_authority",
             "exit_code": 0,
             "artifact_sha256": "12" * 32,
             "owner_session": "sess-old",
@@ -336,6 +338,7 @@ def test_integration_card_feeds_real_queue_worker_receipt(tmp_path: Path) -> Non
     assert done["status"] == "completed"
     # Job 权威回执接续（真实终态事实 → 唤醒来源会话）
     job = {
+        "authority": "job_authority",
         "owner_session": "sess-w1",
         "exit_code": 0,
         "artifact_sha256": _sha(b"artifact"),
@@ -500,6 +503,7 @@ def test_integration_job_rejects_bool_exit_code(tmp_path: Path) -> None:
     """bool False 不得等价 exit0（严格 int 类型核验，fail-closed）."""
     poke = _PokeRecorder()
     job = {
+        "authority": "job_authority",
         "owner_session": "sess-j",
         "exit_code": False,  # bool，非 int 0
         "artifact_sha256": _sha(b"a"),
@@ -513,10 +517,10 @@ def test_integration_job_rejects_malformed_record(tmp_path: Path) -> None:
     poke = _PokeRecorder()
     sha = _sha(b"a")
     bad_records = [
-        {"exit_code": 0, "artifact_sha256": sha},  # 缺 owner
-        {"owner_session": 123, "exit_code": 0, "artifact_sha256": sha},  # owner 非字符串
-        {"owner_session": "s", "exit_code": "0", "artifact_sha256": sha},  # exit 非数字
-        {"owner_session": "s", "exit_code": 0, "artifact_sha256": "nothex"},  # sha 非 64-hex
+        {"authority": "job_authority", "exit_code": 0, "artifact_sha256": sha},  # 缺 owner
+        {"authority": "job_authority", "owner_session": 123, "exit_code": 0, "artifact_sha256": sha},  # owner 非字符串
+        {"authority": "job_authority", "owner_session": "s", "exit_code": "0", "artifact_sha256": sha},  # exit 非数字
+        {"authority": "job_authority", "owner_session": "s", "exit_code": 0, "artifact_sha256": "nothex"},  # sha 非 64-hex
         "not-a-dict",
     ]
     for job in bad_records:
@@ -529,6 +533,7 @@ def test_integration_job_binding_must_be_sha256_hex(tmp_path: Path) -> None:
     poke = _PokeRecorder()
     sha = _sha(b"artifact")
     job = {
+        "authority": "job_authority",
         "owner_session": "sess-b",
         "exit_code": 0,
         "artifact_sha256": sha,
@@ -565,3 +570,100 @@ def test_integration_restart_rediscovers_active_cards(tmp_path: Path) -> None:
     hq2 = HumanTurnQueue(data, workspace_scope="/ws/a")  # 模拟重启重载
     claimed = hq2.dispatch_claim("sess-rs", expected_workspace_scope="/ws/a")
     assert claimed is not None and claimed["origin_operation_id"] == "op-restart"
+
+
+# ---------------------------------------------------------------------------
+# SA-LIVE-RECEIPT-AUTHORITY 边界负测（主筹 2026-11-26 20:43）：队列终态≠Job/
+# CI 凭证；origin/workspace 绑定；派工声明 SHA 不进权威面；binding 缺省不唤醒。
+# ---------------------------------------------------------------------------
+
+
+def _coordinator_card_queue(tmp_path: Path) -> HumanTurnQueue:
+    hq = HumanTurnQueue(tmp_path / "data", workspace_scope="/ws/a")
+    dispatch_task_card(
+        _card("sess-rc", "op-rc"),
+        inbox_dir=tmp_path / "inbox",
+        poke=_PokeRecorder(),
+        settings={"coordinator_light_role": "orchestrator"},
+        queue=hq,
+    )
+    return hq
+
+
+def test_derive_receipt_rejects_foreign_origin(tmp_path: Path) -> None:
+    """普通队列项（origin=web 等）不可派生 Job 回执（origin 绑定 fail-closed）."""
+    hq = HumanTurnQueue(tmp_path / "data", workspace_scope="/ws/a")
+    hq.enqueue("sess-x", "普通聊天消息", origin="web")
+    r = derive_job_receipt(hq, hq.snapshot_items()[0]["queue_id"])
+    assert r["found"] is False and "origin" in str(r.get("reason"))
+
+
+def test_derive_receipt_rejects_workspace_mismatch(tmp_path: Path) -> None:
+    """跨工作区投递/陈旧单例盖章（scope=/ws/b vs 可信 /ws/a）不可采信."""
+    hq = HumanTurnQueue(tmp_path / "data", workspace_scope="/ws/b")
+    dispatch_task_card(_card("sess-rc", "op-x"), inbox_dir=tmp_path / "inbox",
+                       poke=_PokeRecorder(), settings={"coordinator_light_role": "orchestrator"}, queue=hq)
+    qid = hq.snapshot_items()[0]["queue_id"]
+    r = derive_job_receipt(hq, qid, expected_workspace_scope="/ws/a")
+    assert r["found"] is False and "workspace mismatch" in str(r.get("reason"))
+    # 匹配口径：realpath 归一后一致 → 可派生
+    ok = derive_job_receipt(hq, qid, expected_workspace_scope="/ws/b/")
+    assert ok["found"] is True
+
+
+def test_derived_receipt_separates_declared_payload_and_authority(tmp_path: Path) -> None:
+    """伪造/派工声明 SHA 只落 payload_declared（非权威）；authority=queue_terminal
+    （队列 completed→exit 语义≠真实 Job exit0/CI 凭证）."""
+    hq = HumanTurnQueue(tmp_path / "data", workspace_scope="/ws/a")
+    dispatch_task_card(
+        _card("sess-rc", "op-rc", candidate_sha256="ca" * 32),
+        inbox_dir=tmp_path / "inbox",
+        poke=_PokeRecorder(),
+        settings={"coordinator_light_role": "orchestrator"},
+        queue=hq,
+    )
+    qid = hq.snapshot_items()[0]["queue_id"]
+    claimed = hq.dispatch_claim("sess-rc", expected_workspace_scope="/ws/a")
+    assert claimed is not None  # mark_terminal 只对 claimed 在途项生效
+    hq.mark_terminal("sess-rc", qid, "completed")
+    r = derive_job_receipt(hq, qid, expected_workspace_scope="/ws/a")
+    assert r["found"] is True
+    rec = r["job_record"]
+    assert rec["authority"] == "queue_terminal"
+    assert rec["queue_exit_semantics"] == 0 and "exit_code" not in rec
+    declared = rec["payload_declared"]
+    assert declared["candidate_sha256"] == "ca" * 32  # 派工声明原样归组
+    for top in ("candidate_sha256", "artifact_sha256", "bound_run_generation", "owner_session"):
+        assert top not in rec, f"声明字段不得出现在权威顶层: {top}"
+
+
+def test_resume_on_job_rejects_queue_terminal_projection(tmp_path: Path) -> None:
+    """队列终态投影（authority=queue_terminal）不得当作 Job/CI 凭证接续唤醒."""
+    hq = _coordinator_card_queue(tmp_path)
+    qid = hq.snapshot_items()[0]["queue_id"]
+    assert hq.dispatch_claim("sess-rc", expected_workspace_scope="/ws/a") is not None
+    hq.mark_terminal("sess-rc", qid, "completed")
+    derived = derive_job_receipt(hq, qid, expected_workspace_scope="/ws/a")["job_record"]
+    poked = _PokeRecorder()
+    r = resume_on_job(derived, poke=poked, require_binding=True,
+                      expected_sha256="ab" * 32)
+    assert r["poked"] is False and poked.pokes == []
+    assert "authority" in str(r.get("reason")) or "queue" in str(r.get("reason"))
+
+
+def test_resume_on_approval_requires_binding_never_default_wake(tmp_path: Path) -> None:
+    """require_binding 缺省/空=fail-closed 不唤醒（approved≠自动触发）."""
+    store = _FakeEscalationStore({
+        "ESC-b": {"status": "approved", "session_id": "sess-origin",
+                  "workspace_scope": "/ws/x", "token_expires_at": "2026-11-27T00:00:00"},
+    })
+    poke = _PokeRecorder()
+    for binding in (None, {}):
+        r = resume_on_approval(store, "ESC-b", poke=poke, require_binding=binding)
+        assert r["verified"] is True and r["poked"] is False
+        assert "binding_required" in str(r.get("reason"))
+    assert poke.pokes == []
+    # 显式绑定匹配 → 唤醒（真实 accepted 事实由 poke 返回值区分）
+    ok = resume_on_approval(store, "ESC-b", poke=poke,
+                            require_binding={"workspace_scope": "/ws/x"})
+    assert ok["poked"] is True and poke.pokes == ["sess-origin"]

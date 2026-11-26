@@ -25,7 +25,6 @@ tempfile+os.replace 原子替换；派工查重/入队经进程锁+cards 目录 
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import re
@@ -34,12 +33,31 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from fastapi import APIRouter, Request, Response
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+
+class CoordinatorDispatchBody(BaseModel):
+    """POST /dispatch 请求体（模块级：FastAPI get_type_hints 需全局可解析——
+    局部类会降级为 query 参数导致 422）。"""
+
+    operation_id: str
+    target_session: str
+    payload: dict = {}
+
+
+class CoordinatorResumeApprovalBody(BaseModel):
+    """POST /resume-approval 请求体（同上，模块级）。"""
+
+    request_id: str
+    require_binding: dict = {}
+
 _VALID_ROLES = {"orchestrator", "worker", "disabled"}
 _DEFAULT_ROLE = "disabled"
 _OP_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ORIGIN = "coordinator_light"
-_DISPATCH_GUARD = threading.Lock()
 
 
 def resolve_role(settings: dict[str, Any] | None) -> str:
@@ -82,7 +100,7 @@ def dispatch_task_card(
     card: dict[str, Any],
     *,
     inbox_dir: Path,
-    poke: Callable[[str], bool],
+    poke: Callable[[str], object],
     settings: dict[str, Any] | None = None,
     queue: Any = None,
 ) -> dict[str, Any]:
@@ -122,78 +140,66 @@ def dispatch_task_card(
     payload["role"] = role
     message = _canonical(payload)
     cards_dir = Path(inbox_dir) / "cards"
-    lock_path = cards_dir / ".dispatch.lock"
 
-    with _DISPATCH_GUARD:  # 进程内串行化：查重+入队必须原子（否则并发双投）
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            if fcntl is not None:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            entries = [
-                it
-                for it in queue.snapshot_items()
-                if it.get("origin") == _ORIGIN
-                and it.get("origin_operation_id") == operation_id
-            ]
-            if entries:
-                entry = entries[0]
-                if str(entry.get("message") or "") != message:
-                    return {
-                        "accepted": False,
-                        "conflict": True,
-                        "card_id": operation_id,
-                        "reason": "operation_id 已以不同载荷派工（拒绝覆盖，409 语义）",
-                    }
-                return {
-                    "accepted": True,
-                    "duplicate": True,
-                    "card_id": operation_id,
-                    "queue_id": entry.get("queue_id"),
-                    "queue_status": entry.get("status"),
-                    "queued": True,
-                    "poked": False,
-                }
-            item = queue.enqueue(
-                target,
-                message,
-                origin=_ORIGIN,
-                origin_operation_id=operation_id,
-            )
-            # 审计附件 best-effort（队列条目 message 自足，附件缺失不影响执行）
-            card_path = cards_dir / f"{operation_id}.json"
-            with contextlib.suppress(OSError):
-                _atomic_write_json(
-                    card_path, {**payload, "queue_id": item.get("queue_id")}
-                )
-            poked = bool(poke(target))
-            return {
-                "accepted": True,
-                "duplicate": False,
-                "card_id": operation_id,
-                "queue_id": item.get("queue_id"),
-                "queued": True,
-                "poked": poked,
-            }
-        finally:
-            if fcntl is not None:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
+    # SA-LIGHT-COORDINATOR-P0-LIVE-WIRING：查重+入队收敛到队列 enqueue_once
+    # 单一原子事务（flock+fresh reload 全局互斥）——旧实现 snapshot_items 读
+    # 与 enqueue 写之间存在跨锁窗口（多实例下可双投），现由队列侧原子保证。
+    outcome = queue.enqueue_once(
+        target,
+        message,
+        origin=_ORIGIN,
+        origin_operation_id=operation_id,
+    )
+    entry = outcome["item"]
+    if outcome["conflict"]:
+        return {
+            "accepted": False,
+            "conflict": True,
+            "card_id": operation_id,
+            "queue_id": entry.get("queue_id"),
+            "reason": "operation_id 已以不同载荷派工（拒绝覆盖，409 语义）",
+        }
+    if outcome["duplicate"]:
+        return {
+            "accepted": True,
+            "duplicate": True,
+            "card_id": operation_id,
+            "queue_id": entry.get("queue_id"),
+            "queue_status": entry.get("status"),
+            "queued": True,
+            "poked": False,
+        }
+    item = entry
+    # 审计附件 best-effort（队列条目 message 自足，附件缺失不影响执行）
+    card_path = cards_dir / f"{operation_id}.json"
+    with contextlib.suppress(OSError):
+        _atomic_write_json(card_path, {**payload, "queue_id": item.get("queue_id")})
+    poked = bool(poke(target))
+    return {
+        "accepted": True,
+        "duplicate": False,
+        "card_id": operation_id,
+        "queue_id": item.get("queue_id"),
+        "queued": True,
+        "poked": poked,
+    }
 
 
 def resume_on_approval(
     store: Any,
     request_id: str,
     *,
-    poke: Callable[[str], bool],
+    poke: Callable[[str], object],
     require_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """R33：真实审批 approved → 只读核验 + 上下文绑定核验 + 来源会话唤醒.
 
     - status!=approved（denied/expired/consumed/revoked/…）→ 统一不唤醒；
-    - require_binding（如 {"goal_id","workspace_scope","operation_id"}）：记录
-      缺字段或与期望不符 → 不唤醒（approved 只是核验+唤醒信号，绑定缺失/
-      错配不得触发目标会话动作）；
+    - require_binding（如 {"goal_id","workspace_scope","operation_id"}）：
+      **None/空=fail-closed 不唤醒**（SA-LIVE-RECEIPT-AUTHORITY 边界②：
+      无受信绑定不得触发目标会话动作——唤醒是副作用，缺绑定即拒绝）；
+      显式给出时逐键核验，记录缺字段或与期望不符 → 不唤醒（approved 只是
+      核验+唤醒信号，绑定缺失/错配不得触发目标会话动作）；
     - 只调 store.get（只读投影），绝不 consume/签发——令牌链路零触碰。
     """
     rec = store.get(str(request_id or ""))
@@ -203,6 +209,13 @@ def resume_on_approval(
     if status != "approved":
         return {"verified": True, "status": status, "poked": False,
                 "reason": "not_approved"}
+    if not require_binding:
+        return {
+            "verified": True,
+            "status": status,
+            "poked": False,
+            "reason": "binding_required（未提供受信绑定，fail-closed 不唤醒）",
+        }
     origin = str(rec.get("session_id") or "")
     if not origin:
         return {"verified": True, "status": status, "poked": False,
@@ -225,12 +238,16 @@ def resume_on_job(
     job_record: Any,
     *,
     expected_sha256: str,
-    poke: Callable[[str], bool],
+    poke: Callable[[str], object],
     require_binding: bool = False,
     current_run_generation: str | None = None,
 ) -> dict[str, Any]:
     """R34/R35：Job 权威回执接续——形状校验 + exit0 + 精确 SHA + 代次绑定分别核验.
 
+    - **authority 门槛（SA-LIVE-RECEIPT-AUTHORITY 边界①）**：只接受
+      authority="job_authority" 的真实 Job 记录；队列终态投影（derive_job_receipt
+      产出 authority="queue_terminal"）**只回队列状态、不唤醒**——队列
+      completed≠CI/合并凭证，伪造/派工声明 SHA 不构成接续依据；
     - 形状 fail-closed：非 dict、owner_session 非非空字符串、exit_code 非严格
       int（bool False 不等价 0）、artifact/expected 非 64-hex → 一律不唤醒；
     - require_binding=True（收口类 Job）：binding/candidate 必须 64-hex 精确
@@ -241,6 +258,13 @@ def resume_on_job(
     """
     if not isinstance(job_record, dict):
         return {"poked": False, "reason": "invalid job record（必须为 dict）"}
+    if str(job_record.get("authority") or "") != "job_authority":
+        return {
+            "poked": False,
+            "verified": False,
+            "reason": "not a real Job authority record（队列终态/派工声明≠CI/合并凭证，不唤醒）",
+            "queue_status": job_record.get("queue_status"),
+        }
     owner = job_record.get("owner_session")
     if not isinstance(owner, str) or not owner:
         return {"poked": False, "reason": "missing/invalid owner_session"}
@@ -280,3 +304,259 @@ def resume_on_job(
 
     poked = bool(poke(owner))
     return {"poked": poked, "verified": True}
+
+
+def derive_job_receipt(
+    queue: Any,
+    queue_id: str,
+    *,
+    expected_workspace_scope: str | None = None,
+) -> dict[str, Any]:
+    """从 HumanTurnQueue 权威事实派生**队列终态投影**（SA-LIVE-RECEIPT-AUTHORITY）.
+
+    边界①（权威区分，fail-closed）：
+    - 只认 origin=coordinator_light 的队列项（他源条目不可派生 Job 回执）；
+    - expected_workspace_scope 非空时绑定核验：条目 workspace_scope 与当前
+      进程可信 scope 不符 → 拒绝（跨工作区投递/陈旧单例盖章不可采信）；
+    - payload 内 candidate/artifact/bound_run_generation/owner_session 是
+      **派工声明**（payload_declared），不是实际 Job/产物权威——回执单独
+      分组，消费方不得当作 CI/合并凭证；
+    - authority="queue_terminal"：本投影只证明队列终态（completed→队列语义
+      exit0 / failed→1），**不构成真实 Job exit0 或 CI/合并凭证**；接续唤醒
+      须由 resume_on_job 对 authority="job_authority" 的真实 Job 记录核验。
+    """
+    for it in queue.snapshot_items():
+        if it.get("queue_id") != queue_id:
+            continue
+        if str(it.get("origin") or "") != _ORIGIN:
+            return {
+                "found": False,
+                "job_record": None,
+                "reason": "origin mismatch（非 coordinator_light 派工项，不可派生 Job 回执）",
+            }
+        item_scope = str(it.get("workspace_scope") or "") or None
+        if expected_workspace_scope and item_scope:
+            try:
+                _same = os.path.realpath(item_scope) == os.path.realpath(
+                    expected_workspace_scope
+                )
+            except OSError:
+                _same = item_scope == expected_workspace_scope
+            if not _same:
+                return {
+                    "found": False,
+                    "job_record": None,
+                    "reason": (
+                        f"workspace mismatch（条目 {item_scope!r} ≠ 当前可信 "
+                        f"{expected_workspace_scope!r}，不可采信）"
+                    ),
+                }
+        status = str(it.get("status") or "")
+        payload: dict[str, Any] = {}
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            parsed = json.loads(str(it.get("message") or ""))
+            if isinstance(parsed, dict):
+                payload = parsed
+        receipt: dict[str, Any] = {
+            "queue_id": queue_id,
+            "authority": "queue_terminal",
+            # 权威面：队列机械事实
+            "queue_status": status,
+            "terminal_at": it.get("terminal_at"),
+            "run_error": it.get("run_error"),
+            "claimed_by": it.get("claimed_by"),
+            "workspace_scope": item_scope,
+            "workspace_epoch": it.get("workspace_epoch"),
+            "session_id": it.get("session_id"),
+            # 派工声明面（payload_declared）：非实际 Job/产物权威，消费方
+            # 不得当作 CI/合并凭证
+            "payload_declared": {
+                "owner_session": payload.get("owner_session") or it.get("session_id"),
+                "card_id": payload.get("card_id"),
+                "candidate_sha256": payload.get("candidate_sha256"),
+                "artifact_sha256": payload.get("artifact_sha256"),
+                "bound_run_generation": payload.get("bound_run_generation"),
+            },
+        }
+        if status == "completed":
+            receipt["queue_exit_semantics"] = 0
+        elif status == "failed":
+            receipt["queue_exit_semantics"] = 1
+        else:
+            receipt["queue_exit_semantics"] = None
+            receipt["not_terminal"] = True
+        return {"found": True, "job_record": receipt}
+    return {"found": False, "job_record": None}
+
+
+def verify_coordinator_access(settings: Any, token_header: Any) -> dict[str, Any]:
+    """服务端可信身份核验（SA-LIGHT-COORDINATOR-P0-LIVE-WIRING）.
+
+    双开关 fail-closed：coordinator_light_role 必须显式配置为合法角色（缺省
+    空=disabled，普通部署端点整体不存在语义）；coordinator_light_token 必须
+    配置且请求头恒时匹配（secrets.compare_digest，防时序侧信道）。任何一项
+    不满足即拒绝——普通聊天路径不经过本核验，行为不变。
+    """
+    import secrets as _secrets
+
+    role = ""
+    token_expected = ""
+    if isinstance(settings, dict):
+        role = str(settings.get("coordinator_light_role") or "")
+        token_expected = str(settings.get("coordinator_light_token") or "")
+    else:
+        role = str(getattr(settings, "coordinator_light_role", "") or "")
+        token_expected = str(getattr(settings, "coordinator_light_token", "") or "")
+    if not token_expected:
+        return {"allowed": False, "status": 403, "reason": "coordinator disabled（未配置访问令牌）"}
+    if role not in _VALID_ROLES or role == "disabled":
+        return {"allowed": False, "status": 403, "reason": f"coordinator role disabled/illegal: {role!r}"}
+    if not isinstance(token_header, str) or not _secrets.compare_digest(token_header, token_expected):
+        return {"allowed": False, "status": 401, "reason": "invalid coordinator token"}
+    return {"allowed": True, "role": role}
+
+
+def build_coordinator_light_router(
+    queue_from: Callable[[Any], Any] | None = None,
+    poke_from: Callable[[Any], Callable[[str], object]] | None = None,
+):
+    """真实 HTTP 入口（SA-LIGHT-COORDINATOR-P0-LIVE-WIRING）：本模块此前的
+    src 无 caller——现以 FastAPI router 接线既有 HTTP→queue→Worker 链路.
+
+    依赖注入（R9-P2-06a 断环）：queue_from(request)→HumanTurnQueue 单例、
+    poke_from(request)→poke 函数由装配方（routes._build_coordinator_router）
+    注入——本模块不反向 import routes，消除 coordinator_light<->preview_routes
+    <->routes runtime 环。两者缺省 None=fail-closed（端点返回 503 not_wired，
+    不静默自造依赖）。
+
+    - POST /api/v1/coordinator/light/dispatch：真实调用 dispatch_task_card
+      （queue=请求侧 HumanTurnQueue 单例，poke=既有 _poke_queue_fallback）；
+    - POST /api/v1/coordinator/light/resume-approval：真实 EscalationStore
+      （data/audit/escalation_requests.json 权威记录）→ resume_on_approval；
+    - GET  /api/v1/coordinator/light/job/{queue_id}：derive_job_receipt 从
+      队列权威事实派生回执（不另建账本）。
+    全部端点先过 verify_coordinator_access（401/403 fail-closed）；
+    coordinator_light CI 自动接续接口本版明确未实现（返回 not_implemented，
+    不假造）。
+    """
+    from llm_loop.tools.escalation import EscalationStore
+
+    router = APIRouter(prefix="/api/v1/coordinator/light")
+
+    def _guard(request: Any) -> JSONResponse | None:
+        engine = getattr(request.app.state, "engine", None)
+        outcome = verify_coordinator_access(getattr(engine, "settings", None), request.headers.get("X-Coordinator-Token"))
+        if outcome.get("allowed"):
+            return None
+        return JSONResponse(content={"ok": False, "error": outcome.get("reason")}, status_code=int(outcome.get("status") or 403))
+
+    def _queue_from(request: Any) -> Any:
+        if queue_from is None:
+            return None  # 未注入依赖：fail-closed（端点 503 not_wired）
+
+        return queue_from(request)
+
+    def _poke_of(request: Any) -> Callable[[str], object] | None:
+        if poke_from is None:
+            return None
+
+        return poke_from(request)
+
+    def _data_dir(request: Any) -> str:
+        engine = getattr(request.app.state, "engine", None)
+        return str(getattr(getattr(engine, "settings", None), "data_dir", "./data"))
+
+    @router.post("/dispatch")
+    def light_dispatch(body: CoordinatorDispatchBody, request: Request) -> Response:
+        denied = _guard(request)
+        if denied is not None:
+            return denied
+        queue = _queue_from(request)
+        poke = _poke_of(request)
+        if queue is None or poke is None:
+            return JSONResponse(
+                content={"ok": False, "error": "not_wired（queue/poke 依赖未注入，fail-closed）"},
+                status_code=503,
+            )
+
+        engine = getattr(request.app.state, "engine", None)
+        settings = getattr(engine, "settings", None)
+        # 元字段权威：payload 不得覆盖 operation_id/target_session（否则
+        # 幂等键与派工声明漂移，回执对不上账）
+        result = dispatch_task_card(
+            {
+                **dict(body.payload),
+                "operation_id": body.operation_id,
+                "target_session": body.target_session,
+            },
+            inbox_dir=Path(_data_dir(request)) / "coordinator_light",
+            poke=lambda sid: poke(sid),
+            settings={
+                "coordinator_light_role": str(getattr(settings, "coordinator_light_role", "") or ""),
+            },
+            queue=queue,
+        )
+        status_code = 409 if result.get("conflict") else 200
+        return JSONResponse(content={"ok": bool(result.get("accepted")), **result}, status_code=status_code)
+
+    @router.post("/resume-approval")
+    def light_resume_approval(body: CoordinatorResumeApprovalBody, request: Request) -> Response:
+        denied = _guard(request)
+        if denied is not None:
+            return denied
+        poke = _poke_of(request)
+        if poke is None:
+            return JSONResponse(
+                content={"ok": False, "error": "not_wired（poke 依赖未注入，fail-closed）"},
+                status_code=503,
+            )
+
+        store = EscalationStore(Path(_data_dir(request)) / "audit" / "escalation_requests.json")
+        # SA-LIVE-RECEIPT-AUTHORITY 边界②：require_binding 缺省/空=不唤醒
+        # （fail-closed，须显式受信绑定）；端点层在请求绑定之外强制追加当前
+        # 进程可信 workspace_scope 绑定（单例盖章/切换陈旧缺陷的运行面约束）。
+        binding = dict(body.require_binding or {})
+        engine = getattr(request.app.state, "engine", None)
+        trusted_scope = str(getattr(engine, "workspace_root", "") or "")
+        if trusted_scope:
+            binding.setdefault("workspace_scope", trusted_scope)
+        result = resume_on_approval(
+            store,
+            body.request_id,
+            poke=lambda sid: poke(sid),
+            require_binding=binding or None,
+        )
+        return JSONResponse(content={"ok": bool(result.get("verified")), **result})
+
+    @router.get("/job/{queue_id}")
+    def light_job_receipt(queue_id: str, request: Request) -> Response:
+        denied = _guard(request)
+        if denied is not None:
+            return denied
+        queue = _queue_from(request)
+        if queue is None:
+            return JSONResponse(
+                content={"ok": False, "error": "not_wired（queue 依赖未注入，fail-closed）"},
+                status_code=503,
+            )
+        engine = getattr(request.app.state, "engine", None)
+        trusted_scope = str(getattr(engine, "workspace_root", "") or "") or None
+        result = derive_job_receipt(queue, queue_id, expected_workspace_scope=trusted_scope)
+        if not result.get("found"):
+            return JSONResponse(
+                content={"ok": False, "error": "job_not_found", "reason": result.get("reason")},
+                status_code=404,
+            )
+        return JSONResponse(content={"ok": True, **result})
+
+    @router.post("/ci-continue")
+    def light_ci_continue(request: Request) -> Response:
+        denied = _guard(request)
+        if denied is not None:
+            return denied
+        return JSONResponse(
+            content={"ok": False, "error": "not_implemented（可信 CI 自动接续接口本版未实现，不假造）"},
+            status_code=501,
+        )
+
+    return router

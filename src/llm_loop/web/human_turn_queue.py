@@ -366,37 +366,113 @@ class HumanTurnQueue:
         """
         now = _now()
         with self._exclusive_locked():
-            self._seq += 1
-            item = {
-                "queue_id": f"q_{uuid.uuid4().hex[:12]}",
-                "_seq": self._seq,
-                "session_id": session_id,
-                "message": message,
-                "attachments": list(attachments or []),
-                "attachment_facts": list(attachment_facts or []),
-                "model": model,
-                "model_change": bool(model_change),
-                "reasoning_effort": reasoning_effort,
-                "reasoning_mode": reasoning_mode,
-                "created_at": now,
-                "status": "queued",
-            }
-            if origin:
-                item["origin"] = str(origin)
-            if origin_operation_id:
-                item["origin_operation_id"] = str(origin_operation_id)
-            # SA-SCOPE-HOTFIX-20261125：动态盖章——每次入队实时取当前
-            # (scope, epoch)（provider 模式），单例跨 workspace 切换不再
-            # 错章；无 provider 退化为构造冻结值（遗留兼容）。epoch 仅记账
-            # （审计/追溯），不作领取阻断——同 owner 返回按新执行快照重验。
-            _stamp_scope, _stamp_epoch = self._current_scope_epoch()
-            if _stamp_scope:
-                item["workspace_scope"] = _stamp_scope
-            if _stamp_epoch is not None:
-                item["workspace_epoch"] = _stamp_epoch
-            self._items.append(item)
-            self._save()
-            return self._public(item)
+            return self._enqueue_locked(session_id, message, attachments, model,
+                                        model_change, reasoning_effort, reasoning_mode,
+                                        attachment_facts, origin, origin_operation_id, now)
+
+    def _enqueue_locked(
+        self,
+        session_id: str,
+        message: str,
+        attachments: list[dict[str, Any]] | None,
+        model: str | None,
+        model_change: bool,
+        reasoning_effort: str | None,
+        reasoning_mode: str,
+        attachment_facts: list[dict[str, Any]] | None,
+        origin: str,
+        origin_operation_id: str,
+        now: float,
+    ) -> dict[str, Any]:
+        """enqueue 写体（调用方必须已持有 _exclusive_locked；不可重入——
+        SA-LIGHT-COORDINATOR-P0-LIVE-WIRING：enqueue_once 复用本写体避免
+        在锁内二次获取 threading.Lock 造成死锁）。"""
+        self._seq += 1
+        item = {
+            "queue_id": f"q_{uuid.uuid4().hex[:12]}",
+            "_seq": self._seq,
+            "session_id": session_id,
+            "message": message,
+            "attachments": list(attachments or []),
+            "attachment_facts": list(attachment_facts or []),
+            "model": model,
+            "model_change": bool(model_change),
+            "reasoning_effort": reasoning_effort,
+            "reasoning_mode": reasoning_mode,
+            "created_at": now,
+            "status": "queued",
+        }
+        if origin:
+            item["origin"] = str(origin)
+        if origin_operation_id:
+            item["origin_operation_id"] = str(origin_operation_id)
+        # SA-SCOPE-HOTFIX-20261125：动态盖章——每次入队实时取当前
+        # (scope, epoch)（provider 模式），单例跨 workspace 切换不再
+        # 错章；无 provider 退化为构造冻结值（遗留兼容）。epoch 仅记账
+        # （审计/追溯），不作领取阻断——同 owner 返回按新执行快照重验。
+        _stamp_scope, _stamp_epoch = self._current_scope_epoch()
+        if _stamp_scope:
+            item["workspace_scope"] = _stamp_scope
+        if _stamp_epoch is not None:
+            item["workspace_epoch"] = _stamp_epoch
+        self._items.append(item)
+        self._save()
+        return self._public(item)
+
+    def enqueue_once(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        origin: str = "",
+        origin_operation_id: str = "",
+    ) -> dict[str, Any]:
+        """幂等入队（SA-LIGHT-COORDINATOR-P0-LIVE-WIRING）：同键查重+入队在
+        同一 _exclusive_locked 临界区（flock+fresh reload 原子事务）.
+
+        键 = (session_id, origin, origin_operation_id) 的活跃条目：
+        - 无命中 → 正常入队（返回 {"item": …, "duplicate": False, "conflict": False}）；
+        - 命中且 message 相同 → duplicate=True（不重复入队，返回既有条目）；
+        - 命中但 message 不同 → conflict=True（拒绝覆盖，返回既有条目供对账）。
+        查重与写入共享队列全局互斥——多实例/多进程/并发线程同键恰一条目，
+        不会因 snapshot 读取与 enqueue 写入之间的窗口产生双投。
+        """
+        with self._exclusive_locked():
+            self._reap_stale_claims_locked(_now())
+            for it in self._items:
+                if (
+                    it.get("session_id") == session_id
+                    and it.get("origin") == (origin or None)
+                    and it.get("origin_operation_id") == (origin_operation_id or None)
+                    and it.get("status")
+                    in ("queued", "claimed", "interject_pending")
+                ):
+                    existing = self._public(it)
+                    if str(it.get("message") or "") == str(message):
+                        return {
+                            "item": existing,
+                            "duplicate": True,
+                            "conflict": False,
+                        }
+                    return {
+                        "item": existing,
+                        "duplicate": False,
+                        "conflict": True,
+                    }
+            item = self._enqueue_locked(
+                session_id,
+                message,
+                None,
+                None,
+                False,
+                None,
+                "auto",
+                None,
+                origin,
+                origin_operation_id,
+                _now(),
+            )
+            return {"item": item, "duplicate": False, "conflict": False}
 
     def list_active(self, session_id: str) -> list[dict[str, Any]]:
         """会话的活跃队列（queued+claimed，FIFO 序）；顺带触发 reaper."""
@@ -405,8 +481,14 @@ class HumanTurnQueue:
             return [self._public(it) for it in self._active_items_locked(session_id)]
 
     def snapshot_items(self) -> list[dict[str, Any]]:
-        """全量只读快照（公共视图，含终态；恢复扫描等下游用，不触发 reaper）."""
-        with self._lock:
+        """全量快照（公共视图，含终态；恢复扫描等下游用，不触发 reaper）.
+
+        SA-LIGHT-COORDINATOR-P0-LIVE-WIRING：改走 _exclusive_locked（flock+
+        fresh reload）——旧实现仅实例内存锁，跨实例/跨进程场景读到的是构造
+        时刻的陈旧内存视图（不重载），共享 data_dir 下派工查重会漏掉他实例
+        刚写入的条目。现与写路径同一全局互斥+磁盘权威起点，快照即全局一致。
+        """
+        with self._exclusive_locked():
             return [self._public(it) for it in self._items]
 
     def cancel(self, session_id: str, queue_id: str) -> bool:

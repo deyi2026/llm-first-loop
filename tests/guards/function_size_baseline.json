@@ -1257,7 +1257,8 @@
     "src/llm_loop/tools/review_host_admission.py::_target": 170,
     "src/llm_loop/runtime/service_control.py::accept_restart": 122,
     "src/llm_loop/cli.py::main": 139,
-    "src/llm_loop/terminal/shell.py::interactive_session": 181
+    "src/llm_loop/terminal/shell.py::interactive_session": 181,
+    "src/llm_loop/web/coordinator_light.py::build_coordinator_light_router": 144
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
