@@ -366,37 +366,113 @@ class HumanTurnQueue:
         """
         now = _now()
         with self._exclusive_locked():
-            self._seq += 1
-            item = {
-                "queue_id": f"q_{uuid.uuid4().hex[:12]}",
-                "_seq": self._seq,
-                "session_id": session_id,
-                "message": message,
-                "attachments": list(attachments or []),
-                "attachment_facts": list(attachment_facts or []),
-                "model": model,
-                "model_change": bool(model_change),
-                "reasoning_effort": reasoning_effort,
-                "reasoning_mode": reasoning_mode,
-                "created_at": now,
-                "status": "queued",
-            }
-            if origin:
-                item["origin"] = str(origin)
-            if origin_operation_id:
-                item["origin_operation_id"] = str(origin_operation_id)
-            # SA-SCOPE-HOTFIX-20261125：动态盖章——每次入队实时取当前
-            # (scope, epoch)（provider 模式），单例跨 workspace 切换不再
-            # 错章；无 provider 退化为构造冻结值（遗留兼容）。epoch 仅记账
-            # （审计/追溯），不作领取阻断——同 owner 返回按新执行快照重验。
-            _stamp_scope, _stamp_epoch = self._current_scope_epoch()
-            if _stamp_scope:
-                item["workspace_scope"] = _stamp_scope
-            if _stamp_epoch is not None:
-                item["workspace_epoch"] = _stamp_epoch
-            self._items.append(item)
-            self._save()
-            return self._public(item)
+            return self._enqueue_locked(session_id, message, attachments, model,
+                                        model_change, reasoning_effort, reasoning_mode,
+                                        attachment_facts, origin, origin_operation_id, now)
+
+    def _enqueue_locked(
+        self,
+        session_id: str,
+        message: str,
+        attachments: list[dict[str, Any]] | None,
+        model: str | None,
+        model_change: bool,
+        reasoning_effort: str | None,
+        reasoning_mode: str,
+        attachment_facts: list[dict[str, Any]] | None,
+        origin: str,
+        origin_operation_id: str,
+        now: float,
+    ) -> dict[str, Any]:
+        """enqueue 写体（调用方必须已持有 _exclusive_locked；不可重入——
+        SA-LIGHT-COORDINATOR-P0-LIVE-WIRING：enqueue_once 复用本写体避免
+        在锁内二次获取 threading.Lock 造成死锁）。"""
+        self._seq += 1
+        item = {
+            "queue_id": f"q_{uuid.uuid4().hex[:12]}",
+            "_seq": self._seq,
+            "session_id": session_id,
+            "message": message,
+            "attachments": list(attachments or []),
+            "attachment_facts": list(attachment_facts or []),
+            "model": model,
+            "model_change": bool(model_change),
+            "reasoning_effort": reasoning_effort,
+            "reasoning_mode": reasoning_mode,
+            "created_at": now,
+            "status": "queued",
+        }
+        if origin:
+            item["origin"] = str(origin)
+        if origin_operation_id:
+            item["origin_operation_id"] = str(origin_operation_id)
+        # SA-SCOPE-HOTFIX-20261125：动态盖章——每次入队实时取当前
+        # (scope, epoch)（provider 模式），单例跨 workspace 切换不再
+        # 错章；无 provider 退化为构造冻结值（遗留兼容）。epoch 仅记账
+        # （审计/追溯），不作领取阻断——同 owner 返回按新执行快照重验。
+        _stamp_scope, _stamp_epoch = self._current_scope_epoch()
+        if _stamp_scope:
+            item["workspace_scope"] = _stamp_scope
+        if _stamp_epoch is not None:
+            item["workspace_epoch"] = _stamp_epoch
+        self._items.append(item)
+        self._save()
+        return self._public(item)
+
+    def enqueue_once(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        origin: str = "",
+        origin_operation_id: str = "",
+    ) -> dict[str, Any]:
+        """幂等入队（SA-LIGHT-COORDINATOR-P0-LIVE-WIRING）：同键查重+入队在
+        同一 _exclusive_locked 临界区（flock+fresh reload 原子事务）.
+
+        键 = (session_id, origin, origin_operation_id) 的活跃条目：
+        - 无命中 → 正常入队（返回 {"item": …, "duplicate": False, "conflict": False}）；
+        - 命中且 message 相同 → duplicate=True（不重复入队，返回既有条目）；
+        - 命中但 message 不同 → conflict=True（拒绝覆盖，返回既有条目供对账）。
+        查重与写入共享队列全局互斥——多实例/多进程/并发线程同键恰一条目，
+        不会因 snapshot 读取与 enqueue 写入之间的窗口产生双投。
+        """
+        with self._exclusive_locked():
+            self._reap_stale_claims_locked(_now())
+            for it in self._items:
+                if (
+                    it.get("session_id") == session_id
+                    and it.get("origin") == (origin or None)
+                    and it.get("origin_operation_id") == (origin_operation_id or None)
+                    and it.get("status")
+                    in ("queued", "claimed", "interject_pending")
+                ):
+                    existing = self._public(it)
+                    if str(it.get("message") or "") == str(message):
+                        return {
+                            "item": existing,
+                            "duplicate": True,
+                            "conflict": False,
+                        }
+                    return {
+                        "item": existing,
+                        "duplicate": False,
+                        "conflict": True,
+                    }
+            item = self._enqueue_locked(
+                session_id,
+                message,
+                None,
+                None,
+                False,
+                None,
+                "auto",
+                None,
+                origin,
+                origin_operation_id,
+                _now(),
+            )
+            return {"item": item, "duplicate": False, "conflict": False}
 
     def list_active(self, session_id: str) -> list[dict[str, Any]]:
         """会话的活跃队列（queued+claimed，FIFO 序）；顺带触发 reaper."""
@@ -405,8 +481,14 @@ class HumanTurnQueue:
             return [self._public(it) for it in self._active_items_locked(session_id)]
 
     def snapshot_items(self) -> list[dict[str, Any]]:
-        """全量只读快照（公共视图，含终态；恢复扫描等下游用，不触发 reaper）."""
-        with self._lock:
+        """全量快照（公共视图，含终态；恢复扫描等下游用，不触发 reaper）.
+
+        SA-LIGHT-COORDINATOR-P0-LIVE-WIRING：改走 _exclusive_locked（flock+
+        fresh reload）——旧实现仅实例内存锁，跨实例/跨进程场景读到的是构造
+        时刻的陈旧内存视图（不重载），共享 data_dir 下派工查重会漏掉他实例
+        刚写入的条目。现与写路径同一全局互斥+磁盘权威起点，快照即全局一致。
+        """
+        with self._exclusive_locked():
             return [self._public(it) for it in self._items]
 
     def cancel(self, session_id: str, queue_id: str) -> bool:
@@ -738,6 +820,71 @@ class HumanTurnQueue:
                     self._save()
                     return True
             return False
+
+    def mark_resumed_once(
+        self, queue_id: str, job_id: str, *, unmark: bool = False
+    ) -> dict[str, Any]:
+        """一次性原子接续标记（SA-PR145-FINAL-ATOMIC-RESUME）.
+
+        在 _exclusive_locked（flock+fresh reload 全局互斥）内核验并标记
+        ``resumed_job_id``——接续幂等权威面在队列条目自身（cards 审计附件
+        不可作权威、best-effort 写非原子）：
+        - 首次标记并成功落盘 → ``{"marked": True}``（调用方此后才允许 poke）；
+        - 已标记同 job → ``duplicate=True``（不重放唤醒）；
+        - 已标记异 job → ``conflict=True``（一卡一 Job）；
+        - 持久化失败 → 内存标记回滚 + ``persist_uncertain=True``（fail-closed：
+          未确认落盘不触发唤醒；磁盘若实际已写，fresh reload 后重入走
+          duplicate 分支同样不重放——双保险幂等）；
+        - queue_id 不存在 → ``missing=True``。
+
+        ``unmark=True``（独审 P1 修复）：显式清除已存在标记——resume_on_job
+        在标记之后拒绝唤醒时（如 candidate 不匹配/poke 失败），调用方以
+        ``mark_resumed_once(queue_id, "", unmark=True)`` 回滚"未接续"事实，
+        使重试仍可正常接续（清除落盘失败同样 persist_uncertain fail-closed；
+        未有标记时 unmark 为幂等 no-op 返回 ``unmarked=False``）。
+        """
+        with self._exclusive_locked():
+            for it in self._items:
+                if it.get("queue_id") != queue_id:
+                    continue
+                resumed = str(it.get("resumed_job_id") or "")
+                if unmark:
+                    if not resumed:
+                        return {"marked": False, "unmarked": False, "duplicate": False}
+                    had = resumed
+                    it.pop("resumed_job_id", None)
+                    try:
+                        self._save()
+                    except Exception as exc:  # noqa: BLE001 — 清除失败回滚内存并如实 uncertain
+                        it["resumed_job_id"] = had
+                        return {
+                            "marked": False,
+                            "unmarked": False,
+                            "duplicate": True,
+                            "persist_uncertain": True,
+                            "error": str(exc),
+                        }
+                    return {"marked": False, "unmarked": True, "duplicate": False}
+                if resumed:
+                    return {
+                        "marked": False,
+                        "duplicate": True,
+                        "conflict": resumed != str(job_id),
+                        "resumed_job_id": resumed,
+                    }
+                it["resumed_job_id"] = str(job_id)
+                try:
+                    self._save()
+                except Exception as exc:  # noqa: BLE001 — 任何持久化异常同样回滚+uncertain（独审 P2-2）
+                    it.pop("resumed_job_id", None)
+                    return {
+                        "marked": False,
+                        "duplicate": False,
+                        "persist_uncertain": True,
+                        "error": str(exc),
+                    }
+                return {"marked": True, "duplicate": False}
+            return {"marked": False, "duplicate": False, "missing": True}
 
     def compact(self, keep_n: int = TERMINAL_HISTORY_KEEP_N) -> None:
         """终态条目滚动清理（保最近 keep_n 条终态历史）."""

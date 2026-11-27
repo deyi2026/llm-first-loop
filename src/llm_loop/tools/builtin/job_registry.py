@@ -52,6 +52,9 @@ class JobEntry:
     killed: bool = False
     session_id: str = ""
     origin_run_generation: str = ""
+    # SA-PR145-FINAL-ATOMIC-RESUME：创建时即绑定的派工 operation_id——resume-job
+    # 精确关联核验凭据（代次相等≠关联；同 owner/scope/代次的无关联 Job 不可冒认）
+    origin_operation_id: str = ""
     workspace_root: str = ""
     executor: str = ""
     durable: bool = False
@@ -141,6 +144,7 @@ class JobRegistry:
         *,
         workspace_root: str = "",
         executor: str = "execute_command",
+        origin_operation_id: str = "",
     ) -> str:
         """Register a live process only after any required durable launch fact commits."""
         with self._lock:
@@ -188,6 +192,7 @@ class JobRegistry:
                 proc=proc,
                 session_id=session_id,
                 origin_run_generation=origin_run_generation,
+                origin_operation_id=str(origin_operation_id or ""),
                 workspace_root=canonical_workspace,
                 executor=str(executor or "external"),
                 durable=bool(launch and launch.durable),
@@ -287,6 +292,7 @@ class JobRegistry:
                 "job_id": job_id,
                 "session_id": entry.session_id,
                 "origin_run_generation": entry.origin_run_generation,
+                "origin_operation_id": entry.origin_operation_id,
                 "workspace_root": entry.workspace_root,
                 "executor": entry.executor,
                 "state": state,
