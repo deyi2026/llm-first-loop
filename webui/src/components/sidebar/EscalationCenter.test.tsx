@@ -447,3 +447,100 @@ describe("审批轮询去重", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("签发失败的终态展示与审查有效期提示（EVO-20261127-dd37be50）", () => {
+  const FAILED_ID = "ESC-20261127-903c8034";
+  const failed: EscalationRequest = makeReq({
+    id: FAILED_ID,
+    tool_name: "verify_receipt_issue",
+    command: "[host-verify-receipt] lane=lane-0072effa base=279c8ce6",
+    justification: "独立只读 merge Reviewer 已 PASS",
+    command_truncated: false,
+    status: "failed",
+    decided_at: "2026-11-27T03:43:03+08:00",
+    decided_by: "web:session:1f3baf56",
+    request_kind: "verify_receipt",
+    last_issue_error: "review_not_host_owned_or_expired",
+    issue_failed_at: "2026-11-27T03:43:03+08:00",
+  });
+  const verifyCard = (id: string, minutesToDeadline?: number): EscalationRequest =>
+    makeReq({
+      id,
+      tool_name: "verify_receipt_issue",
+      command: `[host-verify-receipt] lane=lane-0123abcd request=${id}`,
+      justification: "独立只读 merge Reviewer 已 PASS",
+      command_truncated: false,
+      request_kind: "verify_receipt",
+      ...(minutesToDeadline === undefined
+        ? {}
+        : { host_request: { host_review_expires_at: new Date(Date.now() + minutesToDeadline * 60_000).toISOString() } }),
+    });
+
+  it("签发失败的申请离开待审区；历史区显示「签发失败」与原因，并提供重新发起入口", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([], [failed])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByText("签发失败")).toBeInTheDocument());
+    // 不在待审区：没有待审卡片、没有批准按钮、待审计数为 0
+    expect(screen.queryByTestId(`esc-item-${FAILED_ID}`)).toBeNull();
+    expect(screen.queryByTestId(`esc-approve-${FAILED_ID}`)).toBeNull();
+    expect(screen.getByText("待审批 (0)")).toBeInTheDocument();
+    // 历史区：原因 + 时刻
+    expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toHaveTextContent(
+      "签发失败原因：review_not_host_owned_or_expired——独立审查已超过有效期",
+    );
+    expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toHaveTextContent("2026-11-27T03:43:03+08:00");
+    // 终态只能重新发起，不是「返回会话继续处理」
+    expect(screen.getByRole("button", { name: "重新发起审批" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "返回会话继续处理" })).toBeNull();
+  });
+
+  it("签发失败的申请不会再触发全局审批弹窗", async () => {
+    const fetchMock = vi.fn(listMock([], [failed]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("esc-modal")).toBeNull();
+  });
+
+  it("历史区不认识的原因码：保留原码并给通用说明，不猜测", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([], [{ ...failed, last_issue_error: "some_new_code" }])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toBeInTheDocument());
+    expect(screen.getByTestId(`esc-issue-error-${FAILED_ID}`)).toHaveTextContent(
+      "签发失败原因：some_new_code——Host 判定该申请的签发材料不可成立",
+    );
+  });
+
+  it("验证凭证类待审卡显示审查剩余有效期，临期给出提醒", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([verifyCard("esc-vr-soon", 5)])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-review-short")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-review-short")).toHaveTextContent(/剩余约 5 分钟/);
+    expect(screen.getByTestId("esc-review-short")).toHaveTextContent(/请尽快批准/);
+  });
+
+  it("审查已过期的待审卡醒目提示；提示不替人工做决定——批准仍可用", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([verifyCard("esc-vr-expired", -1)])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-review-expired")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-review-expired")).toHaveTextContent(/现在批准也无法签发/);
+    // 仅提示：人工仍可「批准」（签发失败并落为 failed）或「拒绝」来清掉这条申请
+    expect(screen.getByTestId("esc-approve-esc-vr-expired")).toBeEnabled();
+  });
+
+  it("改动前创建的申请没有截止时刻 → 不显示有效期提示", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([verifyCard("esc-vr-legacy")])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-approve-esc-vr-legacy")).toBeEnabled());
+    expect(screen.queryByTestId("esc-review-validity")).toBeNull();
+    expect(screen.queryByTestId("esc-review-short")).toBeNull();
+    expect(screen.queryByTestId("esc-review-expired")).toBeNull();
+  });
+
+  it("全局弹窗里的待审卡同样显示有效期提示", async () => {
+    vi.stubGlobal("fetch", vi.fn(listMock([verifyCard("esc-vr-modal", 20)])));
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-review-validity")).toHaveTextContent(/剩余约 20 分钟/);
+  });
+});

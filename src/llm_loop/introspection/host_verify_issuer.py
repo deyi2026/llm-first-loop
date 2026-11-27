@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,8 @@ from llm_loop.core.run_context import current_session_id, current_workspace_root
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.merge_queue import issue_verify_receipt
 from llm_loop.security_guard import has_strong_secret, sensitive_path_reason
-from llm_loop.tools.escalation import EscalationStore
+from llm_loop.timekeeping import system_local_now
+from llm_loop.tools.escalation import EscalationStore, IssueVerifyError
 from llm_loop.tools.review_host_admission import _configured_reviewer_models
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -32,8 +34,14 @@ _REVIEW_TTL_S = 3600
 _READ_ONLY_TOOLS = ["read_file", "search_files"]
 
 
-class HostVerifyError(ValueError):
-    """Fail-closed host verification; no receipt was authorized."""
+class HostVerifyError(IssueVerifyError):
+    """Fail-closed host verification; no receipt was authorized.
+
+    Subclasses IssueVerifyError (EVO-20261127-dd37be50) so a rejection raised
+    while a human approves a verify_receipt request settles that request as a
+    terminal failure with this reason, instead of leaving it pending forever.
+    Still a ValueError; no issuance condition changes.
+    """
 
 
 @dataclass(frozen=True)
@@ -47,6 +55,9 @@ class _FrozenReview:
     model: str
     diff_sha256: str
     created: float
+    # Display-only wall-clock deadline for the approval card. Enforcement stays
+    # on the monotonic ``created`` clock in _attest; this never extends the TTL.
+    expires_at: str
 
 
 _GIT_OUTPUT_LIMIT = 100_000
@@ -257,14 +268,18 @@ class HostVerifyAuthority:
         model = str(started.get("model") or "").strip()
         if not model:
             raise HostVerifyError("review_model_unavailable")
+        created, created_wall = time.monotonic(), system_local_now()
+        expires_at = (created_wall + timedelta(seconds=_REVIEW_TTL_S)).isoformat()
         with self._lock:
             self._reviews[child] = _FrozenReview(
                 parent=parent, lane_id=lane_id, base=base, head=head,
                 branch=str(lane["branch"]), worktree=str(lane["worktree"]),
                 model=model, diff_sha256=hashlib.sha256(diff.encode()).hexdigest(),
-                created=time.monotonic(),
+                created=created,
+                expires_at=expires_at,
             )
-        return {"child_id": child, "model": started.get("model"), "lane_id": lane_id}
+        return {"child_id": child, "model": started.get("model"), "lane_id": lane_id,
+                "review_expires_at": expires_at}
 
     def _attest(self, child_id: str, parent: str) -> tuple[_FrozenReview, str]:
         with self._lock:
@@ -296,12 +311,15 @@ class HostVerifyAuthority:
             f"head={frozen.head} child={child_id} review_sha256={digest} scope={scope}"
         )
         # The Web approval card shows only command and justification text: name
-        # the reviewer model the human is actually being asked to rely on.
+        # the reviewer model the human is actually being asked to rely on, and
+        # when this review stops being issuable. The deadline is display only:
+        # _attest keeps deciding on its own monotonic clock and is unchanged.
         return self.escalation_store.create(
             tool_name="verify_receipt_issue", command=command,
             justification=(
                 f"独立只读 merge Reviewer（模型 {frozen.model}）已 PASS；"
                 "请求浏览器人工批准 Host 签发验证凭证，不授予审计账本通用写权限。"
+                f"审查有效期至 {frozen.expires_at}，过期后批准也无法签发，需重做审查。"
             ),
             session_id=parent, kind="verify_receipt",
             extra={
@@ -309,6 +327,7 @@ class HostVerifyAuthority:
                 "host_head_sha": frozen.head, "host_child_id": child_id,
                 "host_review_sha256": digest, "host_scope": scope,
                 "host_reviewer_model": frozen.model,
+                "host_review_expires_at": frozen.expires_at,
             },
         )
 
@@ -374,7 +393,9 @@ class MergeReviewStartTool:
             self.name,
             f"[已启动独立审查] child_id={out['child_id']} model={out['model']} "
             "（read_file/search_files 只读；无 shell；需真实终态 PASS；"
-            "REVISE 时每条 P0/P1 的位置与依据在该子代理结论 JSON 的 findings 数组里）",
+            "REVISE 时每条 P0/P1 的位置与依据在该子代理结论 JSON 的 findings 数组里）"
+            f"；审查冻结记录有效期至 {out['review_expires_at']}（自发起起 60 分钟），"
+            "须在此前完成 verify_receipt_request 与人工批准；过期后只能重做本审查",
             True,
         )
 
@@ -404,9 +425,15 @@ class VerifyReceiptRequestTool:
             )
         except (HostVerifyError, OSError, ValueError) as exc:
             return _result(self.name, f"[拒绝] {exc}", False)
+        expires = str((rec.get("host_request") or {}).get("host_review_expires_at") or "")
         return _result(
             self.name,
             f"[待人工审批] request_id={rec['id']}；请在已登录 LFL Web 审批。"
-            "批准后 escalation_wait 返回 verify_ref；不要用 host-grant 写 audit。",
+            "批准后 escalation_wait 返回 verify_ref；不要用 host-grant 写 audit。"
+            + (
+                f"审查有效期至 {expires}，请提醒人工在此前批准；过期后批准会签发失败"
+                "（申请转终态 failed），需重做 merge_review_start 后重新申请。"
+                if expires else ""
+            ),
             True,
         )

@@ -2979,7 +2979,7 @@ def _escalation_reviewer_identity(request: Request) -> tuple[str, str, str]:
 def escalation_list(request: Request, limit: int = 50, status: str = "", before_id: str = "") -> Response:
     """提权申请列表（只读；EVO-20260923-c58a0bb1 提权闭环 web 端）.
 
-    status 可选过滤（pending/approved/denied/consumed/expired）；响应**永不
+    status 可选过滤（pending/approved/denied/consumed/expired/failed）；响应**永不
     含令牌**（令牌只由 AI 侧 escalation_wait 从存储读取，不经 web 通道）。
     前端轮询此端点驱动弹窗。本地 web（127.0.0.1）默认可信；WEB_AUTH_REQUIRE=1
     时受统一 Bearer 保护（与 evolution 审批一致）。
@@ -3057,6 +3057,9 @@ def escalation_detail(request: Request, id: str = "") -> Response:
             "origin_goal_id": rec.get("origin_goal_id", ""),
             "_sig_unverified": bool(rec.get("_sig_unverified")),
             "request_kind": rec.get("request_kind", "command"),
+            # EVO-20261127-dd37be50: 终态签发失败的原因与时刻（仅 failed 记录有值）。
+            "last_issue_error": rec.get("last_issue_error", ""),
+            "issue_failed_at": rec.get("issue_failed_at", ""),
             **({"host_request": rec.get("host_request", {})} if rec.get("host_request") else {}),
         }
     )
@@ -3068,6 +3071,12 @@ def _decide_escalation_with_host_verify(
     base: Any, audit: Any, command_sha256: str,
 ) -> tuple[dict | None, str] | Response:
     """Keep protected Host issuance separate from the existing review route."""
+    from llm_loop.tools.escalation import (
+        ISSUE_FAIL_REASON_DEFAULT_HINT,
+        ISSUE_FAIL_REASON_HINTS,
+        ISSUE_FAILED_REASON_PREFIX,
+    )
+
     issue_verify = None
     if record.get("request_kind") == "verify_receipt" and payload.decision == "approved":
         authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
@@ -3080,20 +3089,53 @@ def _decide_escalation_with_host_verify(
 
         issue_verify = _issue_verify
     try:
-        return store.decide(
+        decided, reason = store.decide(
             payload.id, payload.decision, decided_by=decided_by,
             channel=channel, note=payload.note, ttl_minutes=payload.ttl_minutes,
             expected_sha256=expected, host_grant_id=host_grant_id,
             issue_verify=issue_verify,
         )
     except (OSError, ValueError, RuntimeError) as exc:
+        # 非终态分支。Host 的 IssueVerifyError 已由 store 在锁内转成终态 failed 并以
+        # 返回值表达，不会走到这里；这里只剩环境类异常——账本不可读写、凭证目标不安全
+        # 等 OSError，或状态文件损坏的 ValueError。异常发生在落盘之前，记录未被改写，
+        # 申请仍是 pending；审计 outcome 沿用历史名称以保持日志连续性。
         logger.warning("Host verify receipt issue rejected: %s", exc)
         audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
               command_sha256=command_sha256, detail=str(exc)[:200])
         return JSONResponse(
-            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            {
+                "error": "host_verify_issue_failed",
+                "detail": str(exc)[:200],
+                "status": "pending",
+                "retry_hint": "签发未完成，记录未被改写，申请仍是待审批：可稍后重试批准，或拒绝该申请。",
+            },
             status_code=409,
         )
+    if decided is None and reason.startswith(ISSUE_FAILED_REASON_PREFIX):
+        # 终态分支（EVO-20261127-dd37be50）: Host 判定该申请的签发材料不可成立。store 已在
+        # 同一把锁内把申请落为终态 failed（原因可见、离开待审队列、未签发任何凭证），这里
+        # 如实回执原因与去向——人工不必再批同一申请，AI 侧 escalation_wait 同步拿到失败。
+        # 审计：此处 host_verify_issue_failed（escalation_review_log.jsonl）记人工批准的
+        # 尝试结果；store 另写 issue_failed（escalation_log.jsonl）记状态迁移，两处勿相加。
+        detail = reason[len(ISSUE_FAILED_REASON_PREFIX):].lstrip(": ").strip()
+        audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
+              command_sha256=command_sha256, detail=detail)
+        return JSONResponse(
+            {
+                "error": ISSUE_FAILED_REASON_PREFIX,
+                "detail": detail,
+                "reason_hint": ISSUE_FAIL_REASON_HINTS.get(detail, ISSUE_FAIL_REASON_DEFAULT_HINT),
+                "status": "failed",
+                "retry_hint": (
+                    "该申请已标记为签发失败，AI 侧会收到原因，请不要重复批准。"
+                    "如仍需合并：由来源会话核对 lane 与 main 后重做 merge_review_start，"
+                    "再重新 verify_receipt_request。"
+                ),
+            },
+            status_code=409,
+        )
+    return decided, reason
 
 
 @router.post("/api/v1/escalation/review")

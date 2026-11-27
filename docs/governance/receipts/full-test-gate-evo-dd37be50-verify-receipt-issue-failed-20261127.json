@@ -1,0 +1,48 @@
+{
+  "gate": "full_test",
+  "rule": "RULE-AI-28(1) 代码全量测试（独立审查 PASS 后执行）",
+  "evolution": "EVO-20261127-dd37be50",
+  "goal_id": "GOAL-20261127-d199799b",
+  "lane_id": "lane-46b6821c",
+  "branch": "fix/verify-receipt-issue-failed-state-20261127",
+  "head": "9756d3e67820a9d74ae85edfed41eb03c6e7cc69",
+  "based_on_main": "6adcf90bd8cd7f67cd221dc42e76f805809c5f2f",
+  "script": "scripts/ci_gate.sh",
+  "command": "TMPDIR=/private/tmp bash scripts/ci_gate.sh",
+  "workdir": ".worktrees/verify-receipt-issue-failed-20261127",
+  "completed_at": "2026-11-27T05:46+08:00",
+  "result": "exit 0；结论行：✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+  "code_review_prerequisite": "同目录 code-gate-evo-dd37be50-verify-receipt-issue-failed-20261127.json：subagent_c4fc1a2c4e09 PASS，候选 ba5edd043635da695298dad3f6b52996da5f73f1b858874da8b96c6d278e1c62",
+  "steps": {
+    "ruff": "R9 ruff: PASS (historical=67, current=27, new=0, resolved=40, changed_file_diagnostics=0, changed_python_files=6); status=complete",
+    "test_env_pins": "PASS test env-pin gate: scanned 1317 test files, 0 undeclared COMPACT_RATIO dependents",
+    "pyright": "R9 pyright: PASS (historical=45, current=7, new=0, resolved=38, changed_file_diagnostics=0, changed_python_files=6); status=complete",
+    "webui_build": "npm run build 成功，webui/dist/index.html 存在（脚本判定；构建输出被脚本重定向）",
+    "webui_vitest": "Test Files 76 passed (76); Tests 754 passed (754)",
+    "tier0": "341 passed, 2 skipped, 17128 deselected, 7 warnings in 28.43s",
+    "serial_signal": "8 passed, 2 skipped, 17461 deselected, 7 warnings in 5.09s",
+    "serial_perf": "6 passed, 2 skipped, 17463 deselected, 7 warnings in 60.74s (0:01:00)",
+    "parallel": "17241 passed, 196 skipped, 3 xfailed, 31 warnings in 744.51s (0:12:24); junit errors=0 failures=0 skipped=199 tests=17440",
+    "guard_report": "1 passed, 51 deselected in 13.73s",
+    "attribution_note": "pytest 的 stdout 在进程退出时整体刷出，各集合的汇总行因此排在它的标题之后、下一个标题之前；以上归属按 scripts/ci_gate.sh 的步骤顺序逐行核对（tier0 汇总紧挨在 [5/5] 标题之前，serial_signal 汇总在 serial_perf 标题之前，serial_perf 汇总在并行集之前，守卫汇总在结论行之前）。serial_signal 的通过数由同一收集集的计数核对得出（17471 收集 = 8 + 2 + 17461）。"
+  },
+  "first_attempt": {
+    "head": "877b7556c1ba7be300c374248489e3d31640f887",
+    "result": "exit 1，止于 tier0 预检",
+    "failure": "tests/unit/test_arch_guards.py::test_function_lines_ratchet_within_baseline：EscalationStore.decide 实测 136 行、EscalationWaitTool.execute 实测 128 行，越过未登记函数 120 行红线",
+    "resolution": "未重登记基线；行为不变的抽取（_settle_rejected_issue、_issue_failure_content），提交 1d15f4ab9，之后重新取得独立审查 PASS 再重跑"
+  },
+  "observed_noise": [
+    "git: error: couldn't create cache file '/var/folders/…/T/xcrun_db-…' (errno=Operation not permitted)：macOS xcrun 垫片在沙盒内建缓存被拒，git 仍正常执行、WebUI 构建成功",
+    "(!) Some chunks are larger than 500 kB after minification：既有告警，非本次引入",
+    "[audit_test_side_effects] 63 处待人工复核（仅告警不阻断）：既有的测试副作用扫描告警"
+  ],
+  "evidence": [
+    "evidence://v1/328aa9a4e0e3c9ef116a40ec3802e3ef9532b1e139f93ad186326e87d4272a3b（job_output，job-4008691304f84d179503）",
+    "临时产物 /tmp/ci_gate_out.1im5b8 与 /tmp/ci_gate.qpNGTy/report.xml（系统临时目录，可能被清理；report.xml 的 testsuite 时间戳 2026-11-27T05:33:26+08:00）"
+  ],
+  "incomplete": [
+    "push 审查、独立合并审查（RULE-AI-34）、人工签发的 verify_ref、合入 main、远端 CI：未完成",
+    "部署与宿主重启后的活体验证（RULE-AI-35 真实入口层级）：未做；在部署之前，本改动的完成层级是「代码已提交并通过本机全量门禁」，不是「已生效」"
+  ]
+}
