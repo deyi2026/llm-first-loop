@@ -8,9 +8,17 @@ web 面板弹窗审批后凭一次性令牌重发同一命令。闭环全程无�
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
-from llm_loop.tools.escalation import EscalationStore
+from llm_loop.timekeeping import system_local_now
+from llm_loop.tools.escalation import (
+    ISSUE_FAIL_REASON_DEFAULT_HINT,
+    ISSUE_FAIL_REASON_HINTS,
+    ISSUE_FAILED_REASON_PREFIX,
+    EscalationStore,
+)
 from llm_loop.tools.safety import CatastrophicGuard
 
 _MAX_WAIT_S = 300
@@ -20,6 +28,57 @@ _RETRY_HINT = (
     "普通命令 escalation_request，宿主路径 host_access_request，验证凭证走原 Host 签发申请入口。"
     "必须取得新 request_id 并重新人工审批；不得复活旧凭证或重做已完成操作。"
 )
+# EVO-20261127-dd37be50: 人工批准验证凭证时 Host 判定签发材料不可成立（HostVerifyError
+# 的原因码）。记录已落为终态 failed，这里把它翻成 AI 能据以行动的说明；原因码→说明的
+# 映射与审批路由共用同一份（tools.escalation.ISSUE_FAIL_REASON_HINTS）。
+_ISSUE_RETRY_HINT = (
+    "该申请已终态、不可复用：不要再 escalation_wait，也不要请人工重批同一申请。"
+    "若合并仍有必要：先核对 lane 状态与 main 是否前进并据此更新 lane，"
+    "重做 merge_review_start（取得新的 child_id），再重新 verify_receipt_request 并重新人工批准。"
+)
+# 审查剩余有效期低于此分钟数即提示（展示阈值，不参与任何签发判定）。
+_REVIEW_EXPIRY_WARN_MIN = 10
+
+
+def _review_expiry_note(rec: dict) -> str:
+    """验证凭证类申请：按记录里的审查截止时刻给出提示（仅提示；能否签发只由 Host 判定）."""
+    if rec.get("request_kind") != "verify_receipt":
+        return ""
+    host_request = rec.get("host_request")
+    raw = str(host_request.get("host_review_expires_at") or "") if isinstance(host_request, dict) else ""
+    try:
+        expires = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return ""  # 旧记录无截止时刻 / 格式不可解析：不提示，不猜测
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=system_local_now().tzinfo)
+    remaining_min = (expires - system_local_now()).total_seconds() / 60
+    if remaining_min <= 0:
+        return (
+            f"注意：该申请绑定的独立审查已过截止时刻（{raw}），人工现在批准也会签发失败。"
+            "请勿继续空等：向用户说明，必要时重做 merge_review_start 后重新 verify_receipt_request。"
+        )
+    if remaining_min <= _REVIEW_EXPIRY_WARN_MIN:
+        return (
+            f"注意：该申请绑定的独立审查将于 {raw} 截止（剩余约 {int(remaining_min)} 分钟），"
+            "请提醒人工在此前完成批准；过期后签发会失败。"
+        )
+    return ""
+
+
+def _issue_failure_content(rid: str, rec: dict) -> str:
+    """签发失败的回执：失败码、原因说明、失败时间与可执行的重试路径。"""
+    code = str(rec.get("last_issue_error") or "") or "unknown"
+    lines = [
+        f"[签发失败] request_id={rid}",
+        f"失败码: {ISSUE_FAILED_REASON_PREFIX}（{code}）",
+        f"原因: {ISSUE_FAIL_REASON_HINTS.get(code, ISSUE_FAIL_REASON_DEFAULT_HINT)}",
+    ]
+    failed_at = str(rec.get("issue_failed_at") or "")
+    if failed_at:
+        lines.append(f"失败时间: {failed_at}")
+    lines.append(f"重试指引: {_ISSUE_RETRY_HINT}")
+    return "\n".join(lines)
 
 
 def _fail(tool: str, content: str) -> ToolResult:
@@ -113,7 +172,9 @@ class EscalationWaitTool:
     description = (
         "等待提权申请的人工决定（闭环接收端）。web 面板批准/拒绝后本工具返回结果: "
         "approved → 一次性 escalation_token（及过期时间），凭它以 execute_command 重发"
-        "同一命令；denied → 拒绝理由；超时未决 → 返回 pending（可再等或改期）。"
+        "同一命令；denied → 拒绝理由；超时未决 → 返回 pending（可再等或改期）；"
+        "failed → 人工批准时 Host 签发失败（仅验证凭证类）：返回失败码、原因与重试指引，"
+        "该申请已终态，不要继续等待或请人工重批。"
         "默认等待 120s、上限 300s。令牌单次有效、绑定批准时的精确命令文本。"
     )
     parameters = {
@@ -163,12 +224,17 @@ class EscalationWaitTool:
                 status=ToolResultStatus.SUCCESS,
                 content=(
                     f"[等待超时] request_id={rid} 仍为 pending（人工未处理）。"
-                    f"可再次 escalation_wait 继续等待，或向用户说明后改期；"
-                    f"不要在无令牌状态下重试被阻断命令。"
+                    + _review_expiry_note(rec)
+                    + "可再次 escalation_wait 继续等待，或向用户说明后改期；"
+                    "不要在无令牌状态下重试被阻断命令。"
                 ),
                 tool_call_id="",
                 tool_name=self.name,
             )
+        if status == "failed":
+            # EVO-20261127-dd37be50: 人工批准时 Host 判定签发材料不可成立（终态）。
+            # 明确失败，不再以 pending 让调用方空等；给出可执行的重试路径。
+            return _fail(self.name, _issue_failure_content(rid, rec))
         if status == "approved":
             token = str(rec.get("token", "") or "")
             exp = str(rec.get("token_expires_at", "") or "")

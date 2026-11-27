@@ -40,6 +40,7 @@ from llm_loop.feedback.honesty import (
 from llm_loop.knowledge_score.ledger import KnowledgeScoreLedger
 from llm_loop.knowledge_score.pending import scan_pending
 from llm_loop.knowledge_score.runner import read_runner_state
+from llm_loop.methods.learning_journal import LearningJournal
 from llm_loop.runtime.admission_barrier import (
     ServiceAdmissionBarrier,
     task_admission_barrier,
@@ -257,7 +258,23 @@ def _queue_workspace_options(engine: Any) -> dict:
                 return str(getattr(ws, "path", ""))
         return None
 
-    return {"workspace_scope": scope, "legacy_scope_resolver": _legacy_scope_resolver}
+    def _scope_provider() -> tuple[str | None, int | None]:
+        """SA-SCOPE-HOTFIX-20261125：实时读引擎当前工作区（workspace 切换
+        即时生效，队列单例不冻结动态 workspace——根治实机 q_c8a77451fdfb/
+        q_a26bb24ce757 错章 EVO worktree 缺陷）。engine.workspace_root 由
+        引擎在切换提交时更新；epoch 随切换递增，仅供入队记账（审计/追溯，
+        不作领取阻断）。调用方应在 engine.workspace_snapshot 内调用保证
+        scope/epoch 原子一致。"""
+        return (
+            str(getattr(engine, "workspace_root", "") or "") or None,
+            getattr(engine, "_workspace_epoch", None),
+        )
+
+    return {
+        "workspace_scope": scope,  # 兼容字段：provider 缺席时的退化值
+        "scope_provider": _scope_provider,
+        "legacy_scope_resolver": _legacy_scope_resolver,
+    }
 
 
 def _human_turn_queue(request: Request) -> HumanTurnQueue:
@@ -652,11 +669,21 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+def _learning_status_journal(engine: Any) -> Any:
+    journal = getattr(engine, "learning_journal", None)
+    if isinstance(journal, LearningJournal):
+        try:
+            return journal.display_view()
+        except Exception:  # noqa: BLE001 - preserve the endpoint's per-field degradation path
+            logger.warning("learning status snapshot failed; falling back to live fields", exc_info=True)
+    return journal
+
+
 @router.get("/api/v1/learning/status")
 def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> Response:
     """Read-only Learning Plane observability without exposing hidden reasoning."""
     engine = _engine_from(request)
-    journal = getattr(engine, "learning_journal", None)
+    journal = _learning_status_journal(engine)
     jobs = []
     # EVO-20261013-2: journal 读取失败仍 fail-open，但显式暴露降级信号（不再伪装成全 0/空）
     observability_errors: list[str] = []
@@ -2952,7 +2979,7 @@ def _escalation_reviewer_identity(request: Request) -> tuple[str, str, str]:
 def escalation_list(request: Request, limit: int = 50, status: str = "", before_id: str = "") -> Response:
     """提权申请列表（只读；EVO-20260923-c58a0bb1 提权闭环 web 端）.
 
-    status 可选过滤（pending/approved/denied/consumed/expired）；响应**永不
+    status 可选过滤（pending/approved/denied/consumed/expired/failed）；响应**永不
     含令牌**（令牌只由 AI 侧 escalation_wait 从存储读取，不经 web 通道）。
     前端轮询此端点驱动弹窗。本地 web（127.0.0.1）默认可信；WEB_AUTH_REQUIRE=1
     时受统一 Bearer 保护（与 evolution 审批一致）。
@@ -3030,6 +3057,9 @@ def escalation_detail(request: Request, id: str = "") -> Response:
             "origin_goal_id": rec.get("origin_goal_id", ""),
             "_sig_unverified": bool(rec.get("_sig_unverified")),
             "request_kind": rec.get("request_kind", "command"),
+            # EVO-20261127-dd37be50: 终态签发失败的原因与时刻（仅 failed 记录有值）。
+            "last_issue_error": rec.get("last_issue_error", ""),
+            "issue_failed_at": rec.get("issue_failed_at", ""),
             **({"host_request": rec.get("host_request", {})} if rec.get("host_request") else {}),
         }
     )
@@ -3041,6 +3071,12 @@ def _decide_escalation_with_host_verify(
     base: Any, audit: Any, command_sha256: str,
 ) -> tuple[dict | None, str] | Response:
     """Keep protected Host issuance separate from the existing review route."""
+    from llm_loop.tools.escalation import (
+        ISSUE_FAIL_REASON_DEFAULT_HINT,
+        ISSUE_FAIL_REASON_HINTS,
+        ISSUE_FAILED_REASON_PREFIX,
+    )
+
     issue_verify = None
     if record.get("request_kind") == "verify_receipt" and payload.decision == "approved":
         authority = getattr(getattr(request.app.state, "engine", None), "host_verify_authority", None)
@@ -3053,20 +3089,53 @@ def _decide_escalation_with_host_verify(
 
         issue_verify = _issue_verify
     try:
-        return store.decide(
+        decided, reason = store.decide(
             payload.id, payload.decision, decided_by=decided_by,
             channel=channel, note=payload.note, ttl_minutes=payload.ttl_minutes,
             expected_sha256=expected, host_grant_id=host_grant_id,
             issue_verify=issue_verify,
         )
     except (OSError, ValueError, RuntimeError) as exc:
+        # 非终态分支。Host 的 IssueVerifyError 已由 store 在锁内转成终态 failed 并以
+        # 返回值表达，不会走到这里；这里只剩环境类异常——账本不可读写、凭证目标不安全
+        # 等 OSError，或状态文件损坏的 ValueError。异常发生在落盘之前，记录未被改写，
+        # 申请仍是 pending；审计 outcome 沿用历史名称以保持日志连续性。
         logger.warning("Host verify receipt issue rejected: %s", exc)
         audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
               command_sha256=command_sha256, detail=str(exc)[:200])
         return JSONResponse(
-            {"error": "host_verify_issue_failed", "detail": str(exc)[:200]},
+            {
+                "error": "host_verify_issue_failed",
+                "detail": str(exc)[:200],
+                "status": "pending",
+                "retry_hint": "签发未完成，记录未被改写，申请仍是待审批：可稍后重试批准，或拒绝该申请。",
+            },
             status_code=409,
         )
+    if decided is None and reason.startswith(ISSUE_FAILED_REASON_PREFIX):
+        # 终态分支（EVO-20261127-dd37be50）: Host 判定该申请的签发材料不可成立。store 已在
+        # 同一把锁内把申请落为终态 failed（原因可见、离开待审队列、未签发任何凭证），这里
+        # 如实回执原因与去向——人工不必再批同一申请，AI 侧 escalation_wait 同步拿到失败。
+        # 审计：此处 host_verify_issue_failed（escalation_review_log.jsonl）记人工批准的
+        # 尝试结果；store 另写 issue_failed（escalation_log.jsonl）记状态迁移，两处勿相加。
+        detail = reason[len(ISSUE_FAILED_REASON_PREFIX):].lstrip(": ").strip()
+        audit("host_verify_issue_failed", decided_by=decided_by, channel=channel,
+              command_sha256=command_sha256, detail=detail)
+        return JSONResponse(
+            {
+                "error": ISSUE_FAILED_REASON_PREFIX,
+                "detail": detail,
+                "reason_hint": ISSUE_FAIL_REASON_HINTS.get(detail, ISSUE_FAIL_REASON_DEFAULT_HINT),
+                "status": "failed",
+                "retry_hint": (
+                    "该申请已标记为签发失败，AI 侧会收到原因，请不要重复批准。"
+                    "如仍需合并：由来源会话核对 lane 与 main 后重做 merge_review_start，"
+                    "再重新 verify_receipt_request。"
+                ),
+            },
+            status_code=409,
+        )
+    return decided, reason
 
 
 @router.post("/api/v1/escalation/review")
@@ -3803,7 +3872,7 @@ def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[s
     event_store = getattr(engine.session, "_event_store", None)
     if event_store is not None and getattr(event_store, "enabled", False):
         try:
-            events = event_store.read(session_id)
+            events = getattr(event_store, "read_usage_events", event_store.read)(session_id)
             for e in events:
                 if e.type != "request.usage":
                     continue
@@ -3928,8 +3997,17 @@ def session_stats(
             status_code=404,
             content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"},
         )
-    sess = engine.session.load(session_id)
-    result = _stats_for_loaded_session(engine, session_id, sess)
+    # P0 CPU fix (2026-11-26): 60s UI polling must not re-load the session and
+    # re-parse the full event history every time. Serve from the bounded scalar
+    # projection when the durable fingerprint is unchanged; recompute (single
+    # flight) only when it moved. No parsed-event list is ever retained.
+    from llm_loop.web.session_stats_cache import projection_for_engine
+
+    projection = projection_for_engine(engine)
+    result = projection.compute_and_store(
+        engine, session_id,
+        lambda: _stats_for_loaded_session(engine, session_id, engine.session.load(session_id)),
+    )
     if child_id is not None:
         if (
             not child_id.startswith("subagent_")
@@ -3938,12 +4016,15 @@ def session_stats(
             return UTF8JSONResponse(
                 status_code=404, content={"error": "child_session_not_found"},
             )
-        child = engine.session.load(child_id)
-        if child.parent_id != session_id:
+        child_stats = projection.compute_and_store(
+            engine, child_id,
+            lambda: _stats_for_loaded_session(engine, child_id, engine.session.load(child_id)),
+        )
+        # Validate parentage from the same snapshot as the returned accounting.
+        if child_stats["agent_scope"]["parent_session_id"] != session_id:
             return UTF8JSONResponse(
                 status_code=404, content={"error": "child_session_not_found"},
             )
-        child_stats = _stats_for_loaded_session(engine, child_id, child)
         result["agent_comparison"] = {
             "parent": dict(result),
             "child": child_stats,

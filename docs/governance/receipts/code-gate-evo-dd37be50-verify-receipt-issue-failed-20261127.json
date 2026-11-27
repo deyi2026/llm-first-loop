@@ -1,0 +1,86 @@
+{
+  "gate": "code",
+  "rule": "RULE-AI-28(1) 代码全量测试前的独立子代理审查",
+  "evolution": "EVO-20261127-dd37be50",
+  "goal_id": "GOAL-20261127-d199799b",
+  "lane_id": "lane-46b6821c",
+  "branch": "fix/verify-receipt-issue-failed-state-20261127",
+  "based_on_main": "6adcf90bd8cd7f67cd221dc42e76f805809c5f2f",
+  "candidate_head": "9756d3e67820a9d74ae85edfed41eb03c6e7cc69",
+  "reviewer": "subagent_c4fc1a2c4e09",
+  "reviewer_model": "glm/glm-5.3-flash",
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "scope": "patch",
+  "target": "full_test:.worktrees/verify-receipt-issue-failed-20261127:command:a84c13ca6efd4869d75bf96ed8c8833f0b7ca4e804774a12910869a2fe8ac62d",
+  "scope_files": [
+    "src/llm_loop/tools/escalation.py",
+    "src/llm_loop/introspection/host_verify_issuer.py",
+    "src/llm_loop/web/routes.py",
+    "src/llm_loop/tools/builtin/escalation.py",
+    "tests/unit/test_escalation.py",
+    "tests/unit/test_host_verify_issuer.py",
+    "webui/src/components/sidebar/EscalationCenter.tsx",
+    "webui/src/components/sidebar/EscalationCenter.test.tsx",
+    "webui/src/components/sidebar/EscalationReviewValidity.tsx",
+    "webui/src/components/sidebar/EscalationReviewValidity.test.tsx",
+    "docs/governance/submissions/20261127-verify-receipt-issue-failed.json"
+  ],
+  "findings": [],
+  "review_chain": [
+    {
+      "reviewer": "subagent_c97a28ddf3f5",
+      "candidate_sha256": "a44eff3e805cdaee55f1a76cb3bc1c7cef401221ff0346af12720f607151c641",
+      "verdict": "REVISE",
+      "counts": {"P0": 0, "P1": 1, "P2": 3}
+    },
+    {
+      "reviewer": "subagent_5b250e91e743",
+      "candidate_sha256": "e204de75f0b325576c61dae0fd3624aa3b087534582dd7ff74f38c67fbcd01a4",
+      "verdict": "PASS",
+      "note": "绑定的是不带 TMPDIR 前缀的命令串，与实际执行串不同，其资格未采用"
+    },
+    {
+      "reviewer": "subagent_10aaba8ae57e",
+      "candidate_sha256": "e204de75f0b325576c61dae0fd3624aa3b087534582dd7ff74f38c67fbcd01a4",
+      "verdict": "PASS"
+    },
+    {
+      "reviewer": "subagent_c4fc1a2c4e09",
+      "candidate_sha256": "ba5edd043635da695298dad3f6b52996da5f73f1b858874da8b96c6d278e1c62",
+      "verdict": "PASS",
+      "note": "增量复审（覆盖链挂 subagent_10aaba8ae57e）：首轮意见的处理与函数行数棘轮重构之后的候选"
+    }
+  ],
+  "applied": [
+    {
+      "id": "P1-1",
+      "finding": "/api/v1/learning/status 被移除 LearningJournal 相关代码（未声明的无关行为变更）",
+      "resolution": "不在本分支内：当时分支基于旧 main（fb6f6b8f7），审查材料相对已前进的 main（PR #142 已合入）取 diff，#142 新增的 learning 代码因此呈现为被本分支删除。处理=变基到 origin/main 6adcf90bd，相对 main 的差异只剩本改动声明的路径。"
+    },
+    {
+      "id": "P2-1",
+      "finding": "路由异常分支对 HostVerifyError 已不可达，且回执形状与新分支不一致",
+      "resolution": "两个分支显式区分：终态分支回执 status=failed 并带 reason_hint；异常分支只剩非 Host 判定的环境类异常，回执 status=pending 与说明。补路由层用例（凭证目标为符号链接 → OSError → 仍 pending、无 reason_hint）。"
+    },
+    {
+      "id": "P2-2",
+      "finding": "一次失败写两个不同名的审计事件",
+      "resolution": "在两处写明各记一事（escalation_log.jsonl 的 issue_failed = 状态迁移；escalation_review_log.jsonl 的 host_verify_issue_failed = 人工批准的尝试结果），并用用例钉住两处各一行。"
+    },
+    {
+      "id": "P2-3",
+      "finding": "原因码对人未翻译",
+      "resolution": "原因码→人读说明的映射收敛为单一来源 tools.escalation.ISSUE_FAIL_REASON_HINTS（wait 工具与审批路由共用）；路由回执新增 reason_hint；前端历史区在原因码后补人读说明（镜像映射），未知码保留原码并给通用说明。"
+    }
+  ],
+  "rejected": [],
+  "artifact_sha256": "ba5edd043635da695298dad3f6b52996da5f73f1b858874da8b96c6d278e1c62",
+  "narrow_recheck": {
+    "reviewer": "subagent_c4fc1a2c4e09",
+    "verdict": "PASS",
+    "scope": "首轮意见处理 + 行为不变的重构（_settle_rejected_issue、_issue_failure_content）之后的增量"
+  },
+  "qualification_note": "审查资格由 Host 在进程内一次性签发并已用于执行全量门禁（见同目录 full-test-gate 回执）。本回执记录该事实，不构成对 push、合并或发布的授权，也不替代人工批准。"
+}

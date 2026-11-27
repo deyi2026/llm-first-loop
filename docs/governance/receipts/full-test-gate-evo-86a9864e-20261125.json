@@ -1,0 +1,110 @@
+{
+  "schema": "rule28-full-test-gate/v1",
+  "evolution_id": "EVO-20261125-86a9864e",
+  "goal_id": "GOAL-20261125-40677ea1",
+  "lane_id": "lane-27aa2dc0",
+  "branch": "fix/rule28-heredoc-data-region-classify-20261125",
+  "worktree": ".worktrees/evo-rule28-heredoc-data-region-20261125",
+  "candidate_head": "5e37e89513138aa93a70ec94137a9924bc616831",
+  "base_main": "c6612c7e99a5b6b58c1fdcf66a6c19f559b22211",
+  "reviewer_admission": {
+    "kind": "full_test",
+    "scope": "patch",
+    "command": "bash scripts/ci_gate.sh",
+    "paths": [
+      "src/llm_loop/tools/review_gate.py",
+      "src/llm_loop/tools/review_host_admission.py",
+      "tests/unit/test_review_gate.py",
+      "tests/unit/test_review_host_admission.py",
+      "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
+      "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt",
+      "docs/governance/receipts/evo-86a9864e-diffprobe-20261126.py.txt",
+      "docs/governance/receipts/full-test-gate-evo-86a9864e-20261125.json",
+      "docs/governance/submissions/20261125-evo-rule28-heredoc-data-region.json"
+    ],
+    "candidate_sha256": "9f0e5712083098ce21b2207d570cd9c93261d3a8bbf5eaab4d5ec3d95dec6e8c",
+    "reviewer_model": "glm/glm-5.3-flash",
+    "child_id": "subagent_b01443a67bc4",
+    "qualification": "PASS",
+    "pass_observed_at": "2026-11-26T07:20+08:00"
+  },
+  "full_test": {
+    "command": "bash scripts/ci_gate.sh",
+    "job_id": "job-34731b270b7e45ca97ac",
+    "started_at": "2026-11-26T07:20+08:00",
+    "terminal_observed_at": "2026-11-26T07:37+08:00",
+    "exit_code": 0,
+    "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）",
+    "ruff": {
+      "historical": 67,
+      "current": 27,
+      "new": 0,
+      "changed_file_diagnostics": 0
+    },
+    "pyright": {
+      "historical": 45,
+      "current": 7,
+      "new": 0,
+      "changed_file_diagnostics": 0
+    },
+    "xdist_full": {
+      "passed": 17080,
+      "skipped": 206,
+      "xfailed": 3,
+      "duration_s": 751.53
+    },
+    "serial_signal": {
+      "passed": 6,
+      "skipped": 2,
+      "deselected": 17312,
+      "duration_s": 57.33
+    },
+    "serial_tail": {
+      "passed": 1,
+      "deselected": 51,
+      "duration_s": 14.86
+    },
+    "evidence_ref": "evidence://v1/4cda5cb48d7294d25f4da8b000f2c08e7791f6b00d14a6ad560c7fca03862ddb"
+  },
+  "receipts": {
+    "rule35": "docs/governance/receipts/evo-86a9864e-rule35-bidirectional-20261125.md",
+    "probe": "docs/governance/receipts/evo-86a9864e-probe-20261125.py.txt",
+    "diffprobe": "docs/governance/receipts/evo-86a9864e-diffprobe-20261126.py.txt"
+  },
+  "notes": [
+    "门禁在候选 head 5e37e8951 上运行（合并审查 REVISE 后的接力修复 2：here-string 不再被当作 here-doc 引导）；本回执文件是其之后追加的提交，不改代码。",
+    "证据层级：本地全量门禁。真实入口活体验证待部署后进行。",
+    "历史：首次 c995cbb74@1f0601e9d；重定基 830e8240a@c6612c7e9；5e4c77909@c6612c7e9（首轮审查 P1 修复后复跑）；本轮 5e37e8951@c6612c7e9。见 previous_runs。",
+    "执行者：接力会话 a414aed7（用户 2026-11-26T00:53 指令「按建议执行」，2026-11-26T06:41 指令重发审批）；lane owner 会话为 a01b2fac。"
+  ],
+  "previous_runs": [
+    {
+      "candidate_head": "5e4c779094b9e82cd03d775917930cb29052e906",
+      "base_main": "c6612c7e99a5b6b58c1fdcf66a6c19f559b22211",
+      "child_id": "subagent_3759ebe5dfa0",
+      "candidate_sha256": "2545a707364fb638e68214f05553b4d2f9e1e043fe6f2a4334d5df6a2ee5d3ad",
+      "job_id": "job-1b34504577db43458a2b",
+      "exit_code": 0,
+      "started_at": "2026-11-26T01:55+08:00",
+      "terminal_observed_at": "2026-11-26T02:10+08:00"
+    },
+    {
+      "candidate_head": "c995cbb74422d745495be54948bf28a5f72afb1b",
+      "base_main": "1f0601e9d0225bfb66160e9fb2a569eba176cf99",
+      "child_id": "subagent_d469f82235c4",
+      "candidate_sha256": "5969aac0613486418696cb1cfae01dc113e1774a43ddfea9d60f5959938e32d0",
+      "job_id": "job-279e6765c8594ca5880a",
+      "exit_code": 0
+    },
+    {
+      "candidate_head": "830e8240a27fea505ff1554a70b27796c394b10b",
+      "base_main": "c6612c7e99a5b6b58c1fdcf66a6c19f559b22211",
+      "child_id": "subagent_d2d76c515b67",
+      "candidate_sha256": "f93466972ac842439e27320bef87b0d51010f2c456312e9e03e531fe89d2647c",
+      "job_id": "job-915ad2f9590142faab67",
+      "exit_code": 0,
+      "started_at": "2026-11-26T01:14+08:00",
+      "terminal_observed_at": "2026-11-26T01:29+08:00"
+    }
+  ]
+}

@@ -12,15 +12,21 @@ from __future__ import annotations
 
 import os
 import stat
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from llm_loop.core.message import ToolCall, ToolResultStatus
-from llm_loop.tools.builtin.escalation import EscalationRequestTool, EscalationWaitTool
+from llm_loop.timekeeping import system_local_now
+from llm_loop.tools.builtin.escalation import (
+    EscalationRequestTool,
+    EscalationWaitTool,
+    _review_expiry_note,
+)
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
-from llm_loop.tools.escalation import EscalationStore
+from llm_loop.tools.escalation import EscalationStore, IssueVerifyError
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.web.schemas import EscalationReviewRequest
 
@@ -338,6 +344,145 @@ def test_wait_returns_denied(tmp_path):
     w = EscalationWaitTool(store=s)
     r = w.execute(request_id=rec["id"], timeout_s=1)
     assert "已拒绝" in r.content and "不要动这个目录" in r.content
+
+
+# ── EVO-20261127-dd37be50: 验证凭证签发失败的终态投影与可见性 ─────────────────
+# 2026-11-27 实测：人工批准时 Host 签发失败 7 次，申请每次都仍是 pending——面板
+# 继续列为待审、AI 的 escalation_wait 只能等到 pending。以下用例固定新契约。
+
+_VR_CMD = "[host-verify-receipt] lane=lane-0123abcd unit-test"
+
+
+def _verify_request(s: EscalationStore, extra: dict | None = None, tag: str = "") -> dict:
+    # A distinct ``tag`` makes a distinct request: the same text in the same
+    # session is idempotently reused by create() while it is still pending.
+    return s.create(
+        tool_name="verify_receipt_issue", command=_VR_CMD + tag, justification="unit-test 签发失败投影",
+        session_id="s1", kind="verify_receipt",
+        extra={"host_lane_id": "lane-0123abcd", **(extra or {})},
+    )
+
+
+def _human(code: str, calls: list | None = None) -> dict:
+    """A browser human whose Host issuer rejects with ``code`` (recording each call)."""
+    def _issue(row: dict) -> str:
+        if calls is not None:
+            calls.append(row["id"])
+        raise IssueVerifyError(code)
+    return {"decided_by": "web:session:12345678", "channel": "web_session", "issue_verify": _issue}
+
+
+def test_verify_issue_rejection_settles_failed_visible_and_unapprovable(tmp_path):
+    s = _store(tmp_path)
+    rec = _verify_request(s)
+    other = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20, session_id="s1")
+    assert s.pending_count() == 2
+    calls: list = []
+    approved, reason = s.decide(rec["id"], "approved", note="同意签发", **_human("review_not_host_owned_or_expired", calls))
+    assert approved is None
+    assert reason == "host_verify_issue_failed: review_not_host_owned_or_expired"
+    failed = s.get(rec["id"])
+    assert failed["status"] == "failed" and failed["token"] == "" and "verify_receipt_id" not in failed
+    assert failed["last_issue_error"] == "review_not_host_owned_or_expired"
+    assert failed["issue_failed_at"] and failed["decided_at"] == failed["issue_failed_at"]
+    assert failed["decided_by"] == "web:session:12345678" and failed["decision_note"] == "同意签发"
+    # Leaves the pending queue and the count; the unrelated request is untouched.
+    assert [r["id"] for r in s.list(status="pending")] == [other["id"]]
+    assert s.pending_count() == 1
+    listed = s.list(status="failed")
+    assert [r["id"] for r in listed] == [rec["id"]]
+    assert listed[0]["status"] == "failed" and listed[0]["last_issue_error"] == "review_not_host_owned_or_expired"
+    # The same request can never be approved again, and the Host is not re-asked.
+    again, why = s.decide(rec["id"], "approved", **_human("review_not_host_owned_or_expired", calls))
+    assert again is None and why == "请求当前状态为 failed，仅 pending 可审批"
+    assert calls == [rec["id"]]
+    # A new request for the same text is a fresh record, never the failed one.
+    fresh = _verify_request(s)
+    assert fresh["id"] != rec["id"] and s.get(fresh["id"])["status"] == "pending"
+    # The failure survives a reload from disk (it is signed state, not an in-memory view).
+    reloaded = EscalationStore(s._path).get(rec["id"])
+    assert reloaded["status"] == "failed"
+    assert reloaded["last_issue_error"] == "review_not_host_owned_or_expired"
+
+
+def test_verify_issue_non_host_errors_keep_the_request_pending(tmp_path):
+    # Only the Host's own verdict (IssueVerifyError) is terminal. Environment
+    # errors keep the pre-change behaviour: raise, nothing decided, still pending.
+    s = _store(tmp_path)
+    for error in (OSError("disk"), PermissionError("denied"), RuntimeError("boom"), ValueError("plain")):
+        rec = _verify_request(s, tag=f" {type(error).__name__}")
+
+        def _issue(row: dict, _error: Exception = error) -> str:
+            raise _error
+
+        with pytest.raises(type(error)):
+            s.decide(
+                rec["id"], "approved", decided_by="web:session:12345678",
+                channel="web_session", issue_verify=_issue,
+            )
+        kept = s.get(rec["id"])
+        assert kept["status"] == "pending" and kept["decided_at"] == ""
+        assert "last_issue_error" not in kept and "issue_failed_at" not in kept
+    assert s.pending_count() == 4 and s.list(status="failed") == []
+
+
+def test_display_deadline_never_overrides_the_host_verdict(tmp_path):
+    # host_review_expires_at is display-only: a far-future value on the request
+    # does not stop the Host from rejecting an expired review.
+    s = _store(tmp_path)
+    far_future = (system_local_now() + timedelta(days=3650)).isoformat()
+    rec = _verify_request(s, extra={"host_review_expires_at": far_future})
+    approved, reason = s.decide(rec["id"], "approved", **_human("review_not_host_owned_or_expired"))
+    assert approved is None and reason.endswith("review_not_host_owned_or_expired")
+    assert s.get(rec["id"])["status"] == "failed"
+
+
+def test_wait_reports_issue_failure_with_code_reason_and_retry_path(tmp_path):
+    s = _store(tmp_path)
+    rec = _verify_request(s)
+    s.decide(rec["id"], "approved", **_human("lane_base_or_head_stale"))
+    r = EscalationWaitTool(store=s).execute(request_id=rec["id"], timeout_s=1)
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[签发失败]" in r.content
+    assert "失败码: host_verify_issue_failed（lane_base_or_head_stale）" in r.content
+    assert "main 已前进" in r.content  # reason code translated into something actionable
+    assert "merge_review_start" in r.content and "verify_receipt_request" in r.content
+    assert "仍为 pending" not in r.content and "verify_ref=" not in r.content
+
+
+def test_wait_pending_surfaces_an_expired_review_deadline(tmp_path):
+    s = _store(tmp_path)
+    past = (system_local_now() - timedelta(minutes=1)).isoformat()
+    rec = _verify_request(s, extra={"host_review_expires_at": past})
+    r = EscalationWaitTool(store=s).execute(request_id=rec["id"], timeout_s=0.1)
+    assert r.status == ToolResultStatus.SUCCESS and "等待超时" in r.content
+    assert "已过截止时刻" in r.content and "merge_review_start" in r.content
+
+
+def test_review_deadline_note_is_advisory_and_precise(tmp_path):
+    s = _store(tmp_path)
+    now = system_local_now()
+
+    def note_in(minutes: int, seconds: int = 0, **extra) -> str:
+        deadline = (now + timedelta(minutes=minutes, seconds=seconds)).isoformat()
+        tag = f" {minutes}m{seconds}s{sorted(extra)}"
+        rec = _verify_request(s, extra={"host_review_expires_at": deadline, **extra}, tag=tag)
+        return _review_expiry_note(s.get(rec["id"]))
+
+    for minutes in (-1, 0):
+        assert "已过截止时刻" in note_in(minutes)
+    # Inside the warning window (10 minutes) the note warns without calling it expired.
+    for minutes in (4, 10):
+        note = note_in(minutes)
+        assert "剩余约" in note and "已过截止时刻" not in note
+    # Whole minutes, rounded down; a half minute cannot round up into a false "valid longer".
+    assert "剩余约 9 分钟" in note_in(9, seconds=30)
+    # Outside the window, or without a trustworthy deadline: no note at all.
+    assert note_in(12) == ""
+    assert _review_expiry_note(s.get(_verify_request(s)["id"])) == ""  # written before this change
+    assert note_in(0, host_review_expires_at="not-a-timestamp") == ""
+    plain = s.create(tool_name="execute_command", command=_CMD, justification="x" * 20, session_id="s1")
+    assert _review_expiry_note(s.get(plain["id"])) == ""
 
 
 # ── 准入审核P1-1(2026-10-25): 跨进程记录不销毁/不审批/不消费 ────────────────

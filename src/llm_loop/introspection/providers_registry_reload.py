@@ -12,9 +12,13 @@ from __future__ import annotations
 from typing import Any
 
 from llm_loop.config import Settings
-from llm_loop.llm.model_roles import model_roles_for_refresh
+from llm_loop.llm.model_roles import (
+    model_roles_for_refresh,
+    reviewer_models_for_refresh,
+)
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.llm.providers import ProviderRegistry
+from llm_loop.tools.review_host_admission import HostReviewAdmission
 
 
 def refresh_provider_registry(
@@ -173,10 +177,13 @@ def install_refresh_executor(engine: object) -> None:
         # even when providers.json itself is unchanged, so operator role edits take
         # effect without restarting the service. Validate against the active registry;
         # invalid or wholly unavailable roles retain the last-known-good mapping.
+        roles_raw = new_settings.model_roles_raw
         try:
-            model_pool.replace_model_roles(model_roles_for_refresh(new_settings.model_roles_raw))
+            roles_raw = model_roles_for_refresh(new_settings.model_roles_raw)
+            model_pool.replace_model_roles(roles_raw)
         except ValueError as exc:
             summary_note += f" 模型角色配置未应用（保留上次有效配置）：{exc}。"
+        reviewer_note = _refresh_reviewer_policy_note(engine, roles_raw, new_settings)
 
         # default_client 同时被 engine/extractor/summarizer 等长期共享。逐字段原地热改会让
         # 并发请求观察到半新半旧配置，且底层 httpx transport 仍是启动时配置。
@@ -209,6 +216,31 @@ def install_refresh_executor(engine: object) -> None:
             "其余 Settings 字段为启动时装配（冻结），变更需重启进程生效；"
             "运行参数（max_iterations/timeout_s/history_budget）请用 adjust_strategy 即时调整。"
         )
-        return f"{msg} {hot_note}{default_contract_note}{summary_note}{restart_note}"
+        return f"{msg} {hot_note}{default_contract_note}{summary_note}{reviewer_note}{restart_note}"
 
     ctx.refresh_executor = _refresh_executor
+
+
+def _refresh_reviewer_policy_note(engine: object, roles_raw: str, settings: Settings) -> str:
+    """Refresh the RULE-AI-28 reviewer's candidates on the existing refresh path.
+
+    The reviewer (``HostReviewAdmission``) takes its candidates from the same
+    operator configuration as the model roles, so an operator edit reaches NEW
+    reviews without a restart. The outcome is reported honestly and separately
+    from the role mapping: a valid list applies, an unreadable one keeps the last
+    effective chain, an empty one is an explicit revocation. Reviews that were
+    already accepted keep the candidates they were accepted with.
+    """
+    authority = getattr(engine, "host_review_admission", None)
+    if not isinstance(authority, HostReviewAdmission):
+        return ""  # engine without the Host reviewer wiring: nothing to refresh
+    reviewer_raw, unreadable = reviewer_models_for_refresh(
+        roles_raw, settings.reviewer_models_raw
+    )
+    if unreadable:
+        return f" 审查员候选配置未刷新（保留上次有效候选）：{unreadable}。"
+    return (
+        " "
+        + str(authority.refresh_reviewer_models(reviewer_raw)["note"])
+        + "（merge_review_start 审查员取启动配置，变更需重启）"
+    )

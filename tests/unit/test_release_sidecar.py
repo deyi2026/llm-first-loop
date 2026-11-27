@@ -27,6 +27,8 @@ _PKG_FILES = (
     "src/llm_loop/runtime/installation.py",
     "src/llm_loop/runtime/package_identity.py",
     "src/llm_loop/runtime/paths.py",
+    "src/llm_loop/runtime/git_repository_env.py",
+    "src/llm_loop/runtime/resolver.py",
     "src/llm_loop/runtime/knowledge_health.py",
 )
 _WORKSPACE = Path(__file__).resolve().parents[2]

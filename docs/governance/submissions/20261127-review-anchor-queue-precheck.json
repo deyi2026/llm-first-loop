@@ -1,0 +1,121 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-review-anchor-queue-precheck",
+  "summary": "EVO-20261127-9fd075f9 与 EVO-20261127-e770b7cb（GOAL-20261127-e311aaf4 / lane-0d716835；两案均经 web 面板 2026-11-27 07:59 人工批准进入 executing）。9fd075f9：合并队列 S0 预检的 paths 交叉检查此前把 lane 账本已终态（merged/closed/abandoned）lane 的遗留队列行也计入 others——2026-11-27 实测 closed lane（被 PR 取代、未合并）的 ready_for_confirm 遗留项把所有共享 paths 的新入队挡成 paths_overlap（假阻塞，PR #144 被挡）。修法：run_preflight 快照阶段对照 lanes.jsonl 剔除明确终态 lane 的遗留行，fail-closed（账本缺失/读失败/坏行一律保留原行），被剔除者在机检 c 的 evidence.skipped_terminal_lanes 披露。e770b7cb：review_admission 的 first-push 锚（远端默认分支）此前不校验待审 HEAD 是否包含它——分支基线落后时 <anchor>..<HEAD> 的冻结 diff 把基线新提交渲染成反向删除，审查员对分支从未触碰的代码给出假 P1（dd37be50 首轮代码闸 REVISE 实测）。修法：_assert_anchor_contained_by_head 要求 merge-base(HEAD, anchor)==anchor，否则显式拒绝（review_base_behind_main_rebase_first / review_anchor_history_unrelated_fail_closed），git_push 与 full_test 两处 first-push 路径都覆盖，检测置于异常包装之外（结构性拒绝不得被换成稍后重试话术）。两案同 PR 交付（同属合并流程假阻塞/假材料修复）。本 PR 区间只含本清单一份架构提交清单。",
+  "components": [
+    {
+      "component_id": "merge-queue-terminal-lane-precheck",
+      "paths": [
+        "src/llm_loop/introspection/merge_queue.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "merge-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-review-anchor-queue-precheck",
+      "evidence": [
+        "判定实现：新增 _LANE_TERMINAL_STATUSES 常量、_read_lane_statuses（只读 audit_dir/lanes.jsonl → {lane_id: status}，同 id 取末行；文件缺失/读失败/坏行返回空或部分映射）与 _split_others_by_lane_terminal（构造 others 快照并剔除明确终态 lane 的遗留行）；run_preflight 锁内改调后者（93 行），机检 c check_paths_disjoint 增 skipped_terminal_lanes 参数写入 evidence。剔除只在「lane_map 中明确读到终态」时发生——查不到状态的行一律保留（与预检整体 fail-closed 口径一致）。",
+        "刻意不 import goal_coordination._lane_status_map（口径一致但本地实现）：goal_coordination 反向依赖本模块，顶层互 import 会新增 runtime 环 goal_coordination<->merge_queue，违反 R9-P2-06a 恒 0 终态（环计数只减不增）；tests/unit/test_arch_guards.py::test_runtime_cycles_match_known 实测拦截并已断环。",
+        "RULE-AI-35 实测（单测 4 例）：closed lane 遗留项（paths 重叠）→ preflight pass 且 evidence 披露 skipped_terminal_lanes；open lane 重叠 → 仍 paths_overlap；lanes.jsonl 缺失 → 保守 paths_overlap（不剔除、evidence 无该键）；lanes.jsonl 只有坏行 → 保守 paths_overlap。既有在途项语义不变。"
+      ],
+      "verification_level": "unit_4_new_cases_plus_76_guard_and_target_module_passed_at_head_164516b26_plus_ci_gate_exit0_full_suite__independent_merge_review_pass_verify_ref_issued__remote_ci_and_live_redeploy_verification_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是队列账本行与 lane 账本文件，无模型自证输入。recovery：任一审查发现否决即回退本组件提交并重走闸链。exit：git revert 本组件提交后，终态 lane 遗留项恢复计入 others（旧行为）。注意本文件属 LFL 进程内模块，运行中的宿主须重启后才加载新口径——S0 预检新逻辑在部署/重启前不生效（本 PR 合并后 PR #144 重投时须实测确认）。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务；merge_queue 账本无 schema 变更、无数据迁移。"
+    },
+    {
+      "component_id": "review-admission-first-push-anchor-guard",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "declaration_id": "decl-review-anchor-queue-precheck",
+      "evidence": [
+        "判定实现：新增 _assert_anchor_contained_by_head（merge-base(HEAD, base)==base 才放行；rc!=0 → review_anchor_history_unrelated_fail_closed；不等 → review_base_behind_main_rebase_first，消息含可直接执行的 fetch/rebase 指导）与 _assert_first_push_push_base（git_push 路径守卫，_target 内联瘦身为 1 行调用以守 function_size 棘轮）；_full_test_review_base 在 except 包装之外、return 之前调用——结构性拒绝不得被 EVO-20261106-141b29b9 的暂时性失败包装换成稍后重试话术。仅 first_push=True（锚=远端默认分支）触发；first_push=False（锚=分支自身远端 head）不受影响——该 delta 恰是未推提交集，不可能含反向删除。",
+        "生产路径活体证据（RULE-AI-35 应放行侧）：本分支首推审查 start 回执 first_push_anchor=6adcf90bd8cd…、push_src_commit=164516b26/64886cfbb，新守卫对包含锚的合法分支放行（两轮 git_push 受理均 accepted）；应拦侧与历史无关侧由单测覆盖。",
+        "function_size 棘轮处理：首版内联 5 行使 _target 170→174 触发零增长棘轮（tests/unit/test_arch_guards.py::test_function_lines_ratchet_within_baseline 红，EXPERIENCE-20261112 预警应验）；瘦身后 _target 回 170、run_preflight 93 行，棘轮绿，tests/guards/function_size_baseline.json 未改动。"
+      ],
+      "verification_level": "unit_4_new_cases_contained_behind_unrelated_unit_plus_362_passed_two_modules_at_head_164516b26_plus_ci_gate_exit0_full_suite__independent_merge_review_pass_verify_ref_issued__remote_ci_and_host_restart_live_verification_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：无——判定输入是 git 仓库事实（merge-base）与冻结锚，无模型自证输入。recovery：任一审查发现否决即回退本组件提交并重走闸链。exit：git revert 本组件提交并重启宿主后，first-push 锚恢复不校验包含性的旧行为（落后分支的审查材料会重新出现基线反向删除假 P1）。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务；审查闸无状态、无数据迁移。"
+    },
+    {
+      "component_id": "queue-precheck-anchor-guard-tests",
+      "paths": [
+        "tests/unit/test_merge_queue.py",
+        "tests/unit/test_review_host_admission.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "modify",
+      "evidence": [
+        "本 PR 区间新增 8 例：终态剔除+披露 / 在途仍拦 / 缺账本保守 / 坏行保守（test_merge_queue.py）；落后拒绝含 rebase 提示 / 包含放行含 dst_ref / 历史无关拒绝 / _assert_anchor_contained_by_head 单元正反例（test_review_host_admission.py）。两个模块合计 362 passed / 0 failed（本机两次，head 164516b26）；守卫+目标模块合计 76 passed（含棘轮与 runtime 环检测）。"
+      ],
+      "verification_level": "362_passed_0_failed_local_head_164516b26",
+      "model_evidence_veto_recovery_exit": "不适用（测试，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "governance-receipts",
+      "paths": [
+        "docs/governance/receipts/full-test-gate-evo-9fd075f9-e770b7cb-20261127.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "全量门禁回执：TMPDIR=/private/tmp bash scripts/ci_gate.sh 在 164516b26 上 exit 0（ruff new=0、pyright new=0、tier0、全量并行集 + serial_signal 串行补跑、WebUI 构建与测试；改动 4 文件零诊断）；记录代码闸（subagent_41baa580bca5 PASS）与首轮 push 闸引用（subagent_46fe95a23185 PASS，回执落盘改变整树摘要后按 RULE-AI-28 对新产物重发）。"
+      ],
+      "verification_level": "doc_only_no_behavior_change",
+      "model_evidence_veto_recovery_exit": "不适用（回执文档，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261127-review-anchor-queue-precheck.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "governance-docs",
+      "disposition": "add",
+      "evidence": [
+        "本清单即 A.5 结构化声明，随代码改动一并提交；提交后以 python scripts/check_architecture_submission.py --base 6adcf90bd8cd7f67cd221dc42e76f805809c5f2f --head HEAD 做本机复核，结果记入 PR 描述。"
+      ],
+      "verification_level": "check_architecture_submission_strict_pass_required_after_commit",
+      "model_evidence_veto_recovery_exit": "不适用（治理清单，非控制机器）。",
+      "rollback_route": "随本 PR 一并 revert。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-review-anchor-queue-precheck",
+      "g1": {
+        "necessity": "两处既有机械闸各有一类假信号：S0 预检把终态 lane 的遗留队列项当真实串行冲突源（假阻塞，挡住所有共享 paths 的合入）；first-push 审查锚不校验待审分支包含性（假材料，落后分支的冻结 diff 混入基线反向删除，审查员据此给假 P1）。两案均为人工批准的演进（2026-11-27 07:59 面板批准），范围=收紧误判、不新增闸、不新增放行通道、不改人工授权环节。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：MergeQueueStore.run_preflight 四条机检（S0 human_confirm 级，合入仍需人工 confirm）与 HostReviewAdmission 的 first-push 锚解析（full_test/git_push 准入）；人工授权=两案 web 面板批准 + 合并链 verify_receipt 人工签发。无模型/会话自证输入。",
+        "relationship": "reuse",
+        "non_duplication": "不新增闸：S0 仍四条机检（只改 others 快照构成）；review 锚点链不变（只加包含性校验，置于既有解析之后）。lane 账本读取与 goal_coordination._lane_status_map 口径一致但本地实现（断 runtime 环）；verify_ref 签发、人工 confirm、串行槽、A.5 清单闸均不变。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦/应放行输入已固化并通过（代码终态 164516b26）：终态剔除 4 例（closed 放行+披露 / open 仍拦 / 缺账本保守 / 坏行保守）+ 锚包含 4 例（落后拒绝含 rebase 指导 / 包含放行 / 历史无关拒绝 / 单元正反例）；应放行侧另有生产路径活体——本分支首推审查两轮 accepted（first_push_anchor=6adcf90bd，push_src=164516b26/64886cfbb）。",
+          "本机测试：两模块 362 passed / 0 failed（两次）；守卫+目标模块 76 passed；全量门禁 TMPDIR=/private/tmp bash scripts/ci_gate.sh exit 0（ruff new=0、pyright new=0、改动文件零诊断）。",
+          "RULE-AI-28 审查回执：full_test 代码闸 PASS（subagent_41baa580bca5，candidate 7dff8a91…，tree scope）；git_push 首轮 PASS（subagent_46fe95a23185，21b7ee97…）；回执落盘后对新树（64886cfbb）重发 git_push PASS（subagent_cdb9bdf7792f，candidate 7a7488db…）；独立合并审查 PASS（subagent_6f7f44ed3122，p0=0 p1=0，base 6adcf90bd head 64886cfbb）；verify_ref=lane-0d716835:6adcf90b 经 web 面板人工签发（request ESC-20261127-64042d8e）。",
+          "未完成项（如实记录）：远端 CI 终态（A.5 首跑因缺本清单 fail，补清单后重跑）、合入 main、PR #144 借本修复解锁重投、部署/宿主重启后 S0 新逻辑与锚守卫的活体复验——以后续回执为准，不在此声称通过。"
+        ],
+        "recovery_or_reason": "应拦/应放行均有逐条对应用例，任一审查发现否决即 revert 对应组件提交并重走闸链；置信度来自定向测试、全量门禁与独立审查，而非自述。已知边界：merge_queue.py 与 review_host_admission.py 均属宿主/LFL 进程内模块，运行中进程须重启后才加载新口径；S0 新逻辑生效前后 PR #144 重投结果须实测（RULE-AI-35），在实测前不宣称 9fd075f9 已生效。"
+      },
+      "g4": {
+        "rollback": "git revert 两个控制组件提交并重启宿主服务：S0 恢复「终态 lane 遗留项计入 others」、first-push 锚恢复不校验包含性；队列账本与审查闸均无状态、无数据迁移。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base 6adcf90bd8cd7f67cd221dc42e76f805809c5f2f --head HEAD 严格 PASS（本清单提交后本机复核，结果记入 PR 描述）",
+          "本机全量门禁 ci_gate.sh 在 164516b26 上 exit 0；定向两模块 362 passed / 0 failed；守卫 76 passed；逐项见 g3",
+          "RULE-AI-28：代码闸与两轮 push 闸 PASS；独立合并审查 PASS；verify_ref 人工签发",
+          "远端 CI（含 A.5）：补本清单后重跑，待绿",
+          "部署/重启后活体复验（待做）：closed lane 遗留项不再阻塞 S0 入队（以 PR #144 重投实测）；落后 first-push 锚的审查被拒并给出 rebase 指导"
+        ]
+      }
+    }
+  ]
+}

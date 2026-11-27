@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llm_loop.methods.learning_journal import LearningJournal
+import pytest
+
+from llm_loop.methods.learning_journal import LearningJob, LearningJournal
 from llm_loop.runtime.learning_idle import (
     consumer_active,
     consumer_lock_path,
     inflight_job_ids,
     journal_path,
     learning_busy_reason,
+    learning_busy_reason_for_display,
 )
 
 _LOCK_CHILD = """
@@ -153,3 +156,128 @@ def test_target_busy_reason_includes_learning_for_learning_and_all(
         assert "learning busy" in all_reason
 
     assert sc._target_busy_reason(target="web", runtime_root=str(runtime_root)) == ""
+
+
+def test_display_probe_cache_is_exact_and_gate_stays_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = LearningJournal(journal_path(tmp_path))
+    job = journal.enqueue("episode:display:1", session_id="display")
+    assert job is not None
+    journal.mark_started(job.job_id)
+    original = LearningJournal.inflight_jobs
+    calls = 0
+
+    def counted(self: LearningJournal) -> list[LearningJob]:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(LearningJournal, "inflight_jobs", counted)
+    with _HeldConsumerLock(tmp_path):
+        expected = learning_busy_reason(tmp_path)
+        assert expected is not None
+        assert learning_busy_reason_for_display(tmp_path) == expected
+        assert learning_busy_reason_for_display(tmp_path) == expected
+        assert calls == 2
+        assert learning_busy_reason(tmp_path) == expected
+        assert calls == 3  # admission never consumes the display cache
+        journal.mark_failed(job.job_id, "done")
+        assert learning_busy_reason_for_display(tmp_path) is None
+        assert calls == 4
+        assert learning_busy_reason_for_display(tmp_path) is None
+        assert calls == 4
+        # Replace the journal; the original fold semantics remain.
+        replacement = journal_path(tmp_path).with_suffix(".replacement")
+        replacement.write_text('{"event":"queued","job_id":"new"}\n{"event":"started","job_id":"new"}\n', encoding="utf-8")
+        replacement.replace(journal_path(tmp_path))
+        assert "new" in (learning_busy_reason_for_display(tmp_path) or "")
+        assert calls == 5
+    assert learning_busy_reason_for_display(tmp_path) is None  # live consumer lock is rechecked
+    assert calls == 5
+
+
+def test_display_probe_does_not_cache_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue_started(tmp_path)
+    original = LearningJournal.inflight_jobs
+    calls = 0
+
+    def flaky(self: LearningJournal) -> list[LearningJob]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("test read failure")
+        return original(self)
+
+    monkeypatch.setattr(LearningJournal, "inflight_jobs", flaky)
+    with _HeldConsumerLock(tmp_path):
+        assert learning_busy_reason_for_display(tmp_path) is None
+        assert learning_busy_reason_for_display(tmp_path) is not None
+        assert calls == 2
+
+
+def test_service_display_coalesces_learning_and_all_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_loop.runtime import service_control as sc
+
+    calls = 0
+
+    def display_probe(path: Path) -> str:
+        nonlocal calls
+        calls += 1
+        return "learning busy: test"
+
+    monkeypatch.setattr(sc, "learning_busy_reason_for_display", display_probe)
+    view = sc.compose_lifecycle_evidence_view(sc.ManagedServiceDeploymentStore(tmp_path / "data"))
+    assert calls == 1
+    assert view["idle_state"]["learning"]["state"] == "confirmed_busy"
+    assert view["idle_state"]["all"]["state"] == "confirmed_busy"
+    assert sc._target_idle_state(target="learning", runtime_root=str(tmp_path))[0] == "confirmed_idle"
+    assert calls == 1  # physical gate does not use the display probe
+
+
+def test_display_probe_coalesces_concurrent_readers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    _enqueue_started(tmp_path)
+    original = LearningJournal.inflight_jobs
+    calls = 0
+
+    def counted(self: LearningJournal) -> list[LearningJob]:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(LearningJournal, "inflight_jobs", counted)
+    with _HeldConsumerLock(tmp_path), ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(learning_busy_reason_for_display, [tmp_path] * 8))
+    assert calls == 1
+    assert results[0] is not None and all(x == results[0] for x in results)
+
+
+def test_display_probe_does_not_cache_changed_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enqueue_started(tmp_path)
+    original = LearningJournal.inflight_jobs
+    calls = 0
+
+    def changed(self: LearningJournal) -> list[LearningJob]:
+        nonlocal calls
+        calls += 1
+        result = original(self)
+        if calls == 1:
+            self.mark_failed(result[0].job_id, "changed during display fold")
+        return result
+
+    monkeypatch.setattr(LearningJournal, "inflight_jobs", changed)
+    with _HeldConsumerLock(tmp_path):
+        assert learning_busy_reason_for_display(tmp_path) is not None
+        assert learning_busy_reason_for_display(tmp_path) is None
+        assert learning_busy_reason_for_display(tmp_path) is None
+    assert calls == 2

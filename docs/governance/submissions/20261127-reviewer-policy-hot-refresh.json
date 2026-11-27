@@ -1,0 +1,128 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-reviewer-policy-hot-refresh",
+  "summary": "EVO-20261125-120c7dd9（GOAL-20261126-7aa7ee3e / lane-0072effa；人工 2026-11-25 23:32 经 web 面板批准）的第 1 项，加主筹 60178c68 的规格移交（help 498c929ed983）与用户 2026-11-26 23:24 指令追加的边界：Reviewer 接线。(1) RULE-AI-28 审查员 HostReviewAdmission 的候选链可在运行时经既有 refresh_config 通路热更新，每个已接纳审查冻结候选与策略快照，在途重试身份不随全局链漂移；(2) merge_review_start 的审查员模型取自运营者配置 LFL_REVIEWER_MODELS，不再沿用父会话当前模型。不新增闸、不新增工具、不新增账本，不放宽任何放行判据。EVO 原方案的其余各项（任务书重写、frozen_commits、review_no_verdict、unverified 列表）不在本次范围，未实施。如实记录：push 审查、PR 与远端 CI、独立合并审查、人工签发的 verify_ref、合入 main、统一部署与宿主重启后的活体验证，在本清单撰写时均未完成，以后续回执为准。",
+  "components": [
+    {
+      "component_id": "reviewer-policy-hot-refresh",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py",
+        "src/llm_loop/introspection/providers_registry_reload.py",
+        "src/llm_loop/llm/model_roles.py",
+        "tests/unit/test_reviewer_policy_hot_refresh.py",
+        "tests/unit/test_model_roles.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance：RULE-AI-28 Host 审查准入权威 HostReviewAdmission；introspection 的 refresh_config 执行器；llm/model_roles 的运营者模型角色配置读取",
+      "disposition": "modify。新增 HostReviewAdmission.refresh_reviewer_models(raw)，经既有 refresh_config 执行器（providers_registry_reload）在运行时重读运营者候选链：有效配置只对之后的新审查生效并清掉诊断；空配置视为运营者明确撤销，新审查一律拒绝、不回退任何模型，在途资格按既有规则 fail-closed；非法配置不应用，保留上次有效链，error 只作诊断（诊断与阻断分离）。每次接纳冻结策略快照：_Frozen 新增 reviewer_models，start 开头取一次 _ReviewerPolicy，输入预算、spawn、冻结记录与回执同用这一份，锁内复核 digest 未变才 spawn，否则拒绝 review_policy_changed；异步重试经 _reserve_respawn 只在被接纳时冻结的链上推进，冻结策略已非当前策略则不重试。policy_digest 在候选链非空时不再计入 reviewer_model_error（有效状态下 digest 值与改动前相同）。model_roles 把受管 dotenv 读取抽成 _managed_dotenv_value，并新增 reviewer_models_for_refresh：遗留变量 LFL_REVIEWER_MODELS 与 LFL_MODEL_ROLES 的 reviewer 角色按启动时同一优先级解析且从文件重读，角色映射非法或不可读时如实报告并保留，绝不被当作撤销。start 内的分批判据原样抽成 _push_batch_full_review_refusal（行为不变，为守 start 的函数行数棘轮腾出空间）。",
+      "declaration_id": "decl-reviewer-policy-hot-refresh-120c7dd9",
+      "evidence": [
+        "RULE-AI-35 应拦与应放实测（真实 HostReviewAdmission，以及真实 build_engine 装配后经 refresh_config 工具再到 start 的生产入口；tests/unit/test_reviewer_policy_hot_refresh.py 共 18 个用例）。应拦：撤销后 start 返回 reviewer_models_unconfigured 且不派子；有效策略漂移后在途审查 poll 为 review_policy_changed、_consume 拒绝、_respawn_reviewer 返回 None 且 attempts 不变；start 准备期间有效策略变更时拒绝并不派子；未配置或非法时即使父会话当前模型已设置也不回退。应放：无效刷新后新审查照常、在途审查 PASS 且可消费；同链刷新不影响在途审查；execution 角色热更新不改变 reviewer 的策略 digest。",
+        "并发实测：6 个线程 start、1 个线程反复刷新，共 24 次接纳尝试；每条被接纳记录的候选链与 policy_digest 配套，实际派发的模型属于该记录自己的冻结链，拒绝只出现在 review_policy_changed。",
+        "只换全局 tuple 的反例回归：在途审查接纳于 [glm/glm-5.3-flash, deepseek/deepseek-v4-flash] 且实际使用 deepseek；把实时链改成 [deepseek/deepseek-v4-flash, minimax/MiniMax-M3.1-Flash] 后重试，现实现仍在冻结链上重试 deepseek，不漂到 minimax。",
+        "RULE-AI-28 代码闸独立审查 PASS：child subagent_497638ba8f0f，审查员 glm/glm-5.3-flash，candidate 3db9faea7415cce5dceb10fe28ce769d682c55a4d8a72f9730ec9463187899a7，scope=patch 8 条路径，受理 2026-11-27T00:29:22+08:00，PASS 观测 00:32:24。回执见 docs/governance/receipts/full-test-gate-evo-120c7dd9-reviewer-hot-refresh-20261127.json。"
+      ],
+      "verification_level": "directed_754_passed_in_21_related_test_files__ruff_clean__ci_gate_quick_exit0__rule28_full_test_review_pass__r9_full_ci_gate_exit0_on_committed_tree_ff3f7e8f0__push_review_merge_review_remote_ci_and_post_deploy_live_check_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：有。放行资格来自独立审查子代理的结论，Host 只机械校验结构与身份，不判定审查文本的对错；任一审查发现否决即回退本组件提交并重走闸链。recovery：代码在宿主进程内，回退后须随部署重启宿主；_records 是进程内易失表，无数据迁移。exit：revert 本组件后审查员候选链回到只在启动时读取（改配置需重启），在途重试回到读实时链的旧行为。",
+      "rollback_route": "git revert 本组件提交，随下一次统一部署重启宿主；无状态、无数据迁移。"
+    },
+    {
+      "component_id": "merge-reviewer-operator-model",
+      "paths": [
+        "src/llm_loop/introspection/host_verify_issuer.py",
+        "src/llm_loop/factory.py",
+        "tests/unit/test_host_verify_issuer.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "host-governance：RULE-AI-34 合并审查的 HostVerifyAuthority（merge_review_start）",
+      "disposition": "modify。HostVerifyAuthority 构造时接收 reviewer_models_raw（factory 用 reviewer_models_configured(settings.model_roles_raw, settings.reviewer_models_raw) 传入，与 RULE-AI-28 审查员同一运营者配置面）；start_review 使用配置的首个模型，不再读取父会话的 current_model_label；未配置或非法即 HostVerifyError（reviewer_models_unconfigured / reviewer_models_invalid），不派子代理。factory.py 里另有热刷新执行器定位 authority 的一行接线（engine.host_review_admission），其行为归属组件 reviewer-policy-hot-refresh。本组件不做运行时热刷新：merge_review_start 的审查员模型仍取启动配置，变更需重启；EVO 原方案的任务书重写、frozen_commits、review_no_verdict、unverified 列表均未实施。",
+      "declaration_id": "decl-merge-reviewer-operator-model-120c7dd9",
+      "evidence": [
+        "单测：tests/unit/test_host_verify_issuer.py 覆盖配置优先于会话模型、未配置即拒绝且不派子代理、工具回执含 [拒绝] reviewer_models_unconfigured、首个配置模型被使用；对齐到 main 279c8ce6 后随相关测试集一并通过（21 个文件 754 passed）。",
+        "同批全量门禁：原版完整 R9 在提交态 ff3f7e8f043c 上 exit 0（并行集 17208 passed / 206 skipped / 3 xfailed；serial_signal 8 passed；serial_perf 6 passed），回执见 docs/governance/receipts/full-test-gate-evo-120c7dd9-reviewer-hot-refresh-20261127.json。",
+        "背景事实：main 279c8ce6 的 host_verify_issuer.py 在 start_review 里仍以 current_model_label 取审查员模型（即 EVO 所述 glm-5.4 推理占满、无结论的路径）；本组件把身份来源换成运营者配置。"
+      ],
+      "verification_level": "unit_covered_in_test_host_verify_issuer__directed_754_passed__rule28_full_test_review_pass__r9_full_ci_gate_exit0__merge_review_live_behaviour_after_host_restart_pending",
+      "model_evidence_veto_recovery_exit": "model-evidence veto：有。合并审查的结论本身是模型输出，Host 只校验结构与计数。recovery：回退后须重启宿主；verify_receipts 等落盘回执不含本组件引入的新状态，无数据迁移。exit：revert 本组件后 merge_review_start 回到用父会话当前模型作审查员的旧行为。",
+      "rollback_route": "git revert 本组件提交并重启宿主服务；无状态、无数据迁移。"
+    },
+    {
+      "component_id": "submission-and-gate-receipt",
+      "paths": [
+        "docs/governance/submissions/20261127-reviewer-policy-hot-refresh.json",
+        "docs/governance/receipts/full-test-gate-evo-120c7dd9-reviewer-hot-refresh-20261127.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "治理文档：A.5 架构提交清单与 RULE-AI-28 代码闸、全量门禁回执",
+      "disposition": "add。本清单，以及代码闸独立审查与原版完整 R9 全量门禁的回执。全量门禁之后到 PR head 之间只有这两个文档文件，源码与测试未再改动。",
+      "evidence": [
+        "python scripts/check_architecture_submission.py 对 base 279c8ce6bd2f8c63692129b7b680a80946e036b1 到 PR head 严格 PASS（落盘后本机复核）。",
+        "回执中的计数逐项摘自门禁日志 /tmp/r9_gate_last.log 的归档副本（sha256 f3e9f8e80a8bb39acba643437eeac6c8712af154000ced45931ae29a78dc8b79），未凭印象填写。"
+      ],
+      "verification_level": "architecture_submission_checker_strict_pass_on_final_head",
+      "model_evidence_veto_recovery_exit": "纯文档，无运行时语义。若审查发现陈述与证据不符，按指出的条目更正后重新提交。",
+      "rollback_route": "git revert 本文档提交；无运行时影响。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-reviewer-policy-hot-refresh-120c7dd9",
+      "g1": {
+        "necessity": "主筹 60178c68 在模型角色终验中确认的缺口：HostReviewAdmission 的审查员候选链只在启动时读取，运营者改了配置必须重启才生效。用户 2026-11-26 23:24 追加两条必须验证的边界：start 与后续重试在多处读取全局候选链，只换全局 tuple 会让在途重试的身份漂移；无效刷新的错误诊断必须与有效快照的阻断状态分离，未配置或明确撤销须拒绝且不回退开发模型。本声明覆盖这两条边界与运行时刷新本身。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：HostReviewAdmission（start、_reserve_respawn、_mint_pass、_consume 对候选链与 policy_digest 的判定）与 refresh_config 执行器（只调用 refresh_reviewer_models，不签发任何资格）。人工授权=EVO-20261125-120c7dd9 的 web 面板批准（2026-11-25 23:32）与用户 2026-11-26 23:24 指令；规格移交=主筹 60178c68 的 help 498c929ed983。",
+        "relationship": "reuse",
+        "non_duplication": "不新增闸、工具或账本：刷新走既有 refresh_config 与 ProviderRegistry 通路，候选来源仍是运营者受管 dotenv，撤销与漂移沿用既有 policy_digest 的 fail-closed 规则（mint 与 consume 报 review_policy_changed）。独立 Host 授权、Provider 自报 model 核验、人工签发 verify_ref 均不变。"
+      },
+      "g3": {
+        "model_evidence": [
+          "RULE-AI-35 应拦与应放实测：见组件 reviewer-policy-hot-refresh 的 evidence；18 个用例全部通过，含真实 build_engine 入口与并发用例。",
+          "定向测试：相关 21 个测试文件 754 passed（0 失败）；ruff 对改动文件零诊断；ci_gate --quick 退出码 0（tier0 341 passed / 2 skipped，WebUI 737 passed）。",
+          "原版完整 R9：bash scripts/r9_commit.sh 在 PROBE 隔离检出上跑全量 ci_gate，exit 0（并行集 17208 passed / 206 skipped / 3 xfailed / 735.85s；serial_signal 8 passed；serial_perf 6 passed）；r9_commit_check 对 PROBE 与 HEAD 均 PASS。",
+          "RULE-AI-28 代码闸独立审查 PASS（subagent_497638ba8f0f，glm/glm-5.3-flash，candidate 3db9faea7415cce5dceb10fe28ce769d682c55a4d8a72f9730ec9463187899a7）。",
+          "未完成项（如实记录）：push 审查、PR 与远端 CI（含 A.5）、独立合并审查、人工签发的 verify_ref、合入 main、统一部署与宿主重启后的活体验证。"
+        ],
+        "recovery_or_reason": "应拦输入各有逐条对应用例，任一审查发现否决即回退对应组件提交并重走闸链；置信度来自定向测试、全量门禁与独立审查，而不是自述。已知边界：证据层级是本机进程内真实入口的实测；生产四服务要等统一部署并重启宿主后才加载新代码，届时才能称生效。角色映射为空对象 {} 在既有解析器里属非法配置（与 replace_model_roles 同一规则），会保留上次有效候选而不是撤销；要撤销须清空遗留变量并移除或清空角色键。"
+      },
+      "g4": {
+        "rollback": "git revert 控制组件提交并随下一次统一部署重启宿主，即恢复『审查员候选链只在启动时读取、在途重试读实时链』的旧行为。无状态、无数据迁移。",
+        "verification": [
+          "python scripts/check_architecture_submission.py --base 279c8ce6bd2f8c63692129b7b680a80946e036b1 --head HEAD 严格 PASS（本清单落盘后本机复核）",
+          "原版完整 R9 在提交态 ff3f7e8f043c 上 exit 0：并行集 17208 passed / 206 skipped / 3 xfailed，serial_signal 8 passed，serial_perf 6 passed；门禁之后到 PR head 之间只有文档提交，不再动源码与测试",
+          "RULE-AI-28 代码闸独立审查 PASS；push 审查与独立合并审查未完成",
+          "远端 CI（含 A.5）、独立合并审查终态与人工签发的 verify_ref：未完成",
+          "宿主重启后的活体验证（待做）：在生产进程里对受管 dotenv 修改审查员候选后调用 refresh_config，新审查使用新候选；清空候选后 review_admission(start) 被拒且不派子；写入非法值后旧候选继续服务且回执如实标注"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-merge-reviewer-operator-model-120c7dd9",
+      "g1": {
+        "necessity": "EVO-20261125-120c7dd9 的根因链第一条：合并审查员的模型取自父会话当前模型，2026-11-25 那次父会话是 glm/glm-5.4，输出 16000 token 全被推理占满、没有结论。RULE-AI-28 的审查员已改用运营者配置 LFL_REVIEWER_MODELS，合并审查员仍是另一套来源。本声明只覆盖『模型身份取自运营者配置、未配置或非法即拒绝』这一项。"
+      },
+      "g2": {
+        "authority_owner": "Host 侧机械闸：HostVerifyAuthority.start_review（审查员模型选择与拒绝判定）。人工授权=EVO-20261125-120c7dd9 的 web 面板批准（2026-11-25 23:32）。",
+        "relationship": "reuse",
+        "non_duplication": "复用 review_host_admission._configured_reviewer_models 与既有的 LFL_REVIEWER_MODELS 配置面；不改审查任务书、不改 _parse_review、不改人工签发环节。与 lane-782fa22d（EVO-20261126-549f940c，findings 契约）同文件但函数不重叠。"
+      },
+      "g3": {
+        "model_evidence": [
+          "单测覆盖：配置优先于会话模型、未配置即拒绝且不派子代理、工具回执如实、首个配置模型被使用；随相关测试集 754 passed。",
+          "原版完整 R9 在提交态 ff3f7e8f043c 上 exit 0，覆盖 tests/unit/test_host_verify_issuer.py。",
+          "未完成项（如实记录）：merge_review_start 的活体验证须等统一部署并重启宿主；push 审查、独立合并审查、远端 CI 未完成。"
+        ],
+        "recovery_or_reason": "应拦输入（未配置、非法）各有用例；任一审查发现否决即回退本组件提交并重走闸链。已知边界：本组件不做运行时热刷新，模型配置变更需重启宿主；证据层级是单测与本机全量门禁，生产入口的活体验证待部署后进行。"
+      },
+      "g4": {
+        "rollback": "git revert 控制组件提交并重启宿主服务，即恢复『合并审查员使用父会话当前模型』的旧行为。无状态、无数据迁移。",
+        "verification": [
+          "tests/unit/test_host_verify_issuer.py 随相关测试集与全量门禁通过",
+          "原版完整 R9 在提交态 ff3f7e8f043c 上 exit 0",
+          "RULE-AI-28 代码闸独立审查 PASS（与热刷新组件同一批材料）",
+          "宿主重启后的活体验证（待做）：未配置 LFL_REVIEWER_MODELS 时 merge_review_start 直接拒绝、不派子代理；配置后审查子代理的模型是配置的首个候选"
+        ]
+      }
+    }
+  ]
+}

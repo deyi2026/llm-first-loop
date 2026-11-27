@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { SessionStats } from "./components/conversation/SessionStats";
 
 afterEach(() => {
   cleanup();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -49,5 +52,38 @@ describe("SessionStats runtime projection", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await Promise.resolve();
     expect(screen.queryByTestId("session-stats")).toBeNull();
+  });
+});
+
+
+describe("SessionStats polling load", () => {
+  it("hidden tabs do not poll and visibility restores one request", async () => {
+    vi.useFakeTimers();
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ turns: 1, steps: 1 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SessionStats sessionId="s1" />);
+    act(() => { vi.advanceTimersByTime(120_000); });
+    expect(fetchMock).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never overlaps a slow request and aborts it when switching sessions", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, _init: RequestInit) => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<SessionStats sessionId="s1" />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const firstSignal = fetchMock.mock.calls[0][1].signal;
+    act(() => { vi.advanceTimersByTime(120_000); });
+    expect(firstSignal?.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    view.rerender(<SessionStats sessionId="s2" />);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toContain("/s2/stats");
+    view.unmount();
+    expect(fetchMock.mock.calls[1][1].signal?.aborted).toBe(true);
   });
 });

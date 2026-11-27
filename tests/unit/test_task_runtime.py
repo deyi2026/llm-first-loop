@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from llm_loop.core.message import ToolResultStatus
 from llm_loop.core.run_context import (
     current_session_id,
     current_task_execution,
@@ -17,6 +18,7 @@ from llm_loop.core.task_capabilities import CapabilityResource, TaskLeaseClaims
 from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.task_store import TaskStore
+from llm_loop.tools.builtin.task_git_commit import TaskGitCommitTool
 from llm_loop.tools.task_execution import TaskExecutionError
 from llm_loop.tools.task_runtime import (
     TaskRuntimeActivationError,
@@ -45,6 +47,10 @@ def active_binding(tmp_path, monkeypatch):
     (host / "trust.json").write_text("test-only fake trust")
     (host / "bindings").mkdir()
     _git(a, "init", "-q")
+    # The Lane is registered with branch="task"; modern managed_git hard-checks
+    # refs/heads/<branch> == HEAD before any write, so the fixture repo must
+    # actually sit on that branch (CI default branch differs across runners).
+    _git(a, "checkout", "-q", "-b", "task")
     (a / "source.txt").write_text("version one")
     _git(a, "add", "source.txt")
     _git(
@@ -85,7 +91,7 @@ def active_binding(tmp_path, monkeypatch):
         1,
         datetime.now(UTC) + timedelta(hours=1),
         (
-            CapabilityResource("project", str(a), frozenset({"read", "write"})),
+            CapabilityResource("project", str(a), frozenset({"read", "write", "git_commit"})),
             CapabilityResource("project", str(b), frozenset({"read", "write"})),
             CapabilityResource("app", "com.microsoft.VSCode", frozenset({"edit"})),
         ),
@@ -168,6 +174,34 @@ def test_signed_session_binding_activates_only_matching_lane_and_head(active_bin
         assert ctx.authorize_file(str(b / "new.txt"), "write") == str(b)
     finally:
         current_task_execution.reset(task)
+        current_workspace_root.reset(ws)
+        current_session_id.reset(sid)
+
+
+def test_runtime_file_and_app_authorization_after_managed_commit(active_binding):
+    a, b, host, data, lanes, _claims, row = active_binding
+    (data / "audit" / "git-locks").mkdir()
+    ctx = resolve_task_execution_for_run(
+        session_id="owner-1", workspace_root=str(a), data_dir=str(data),
+        authority_root=host,
+    )
+    assert ctx is not None
+    sid = current_session_id.set("owner-1")
+    ws = current_workspace_root.set(str(a))
+    token = current_task_execution.set(ctx)
+    try:
+        (a / "source.txt").write_text("version two")
+        result = TaskGitCommitTool().execute(paths=["source.txt"], message="feat: bounded")
+        assert result.status == ToolResultStatus.SUCCESS, result.content
+        assert ctx.git_cas == (row["version"] + 1, _git(a, "rev-parse", "HEAD"))
+        assert ctx.authorize_file(str(b / "new.txt"), "write") == str(b)
+        ctx.authorize_app("com.microsoft.VSCode", os_permission_granted=True, backend_supported=True)
+        # A later external ledger change is NOT adopted into the Run cursor.
+        lanes.update(ctx.lane_id, expected_version=ctx.git_cas[0], status="verifying")
+        with pytest.raises(TaskExecutionError, match="task_lane_cas_conflict"):
+            ctx.authorize_file(str(b / "new.txt"), "write")
+    finally:
+        current_task_execution.reset(token)
         current_workspace_root.reset(ws)
         current_session_id.reset(sid)
 

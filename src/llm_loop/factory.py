@@ -938,11 +938,18 @@ def _wire_host_review_and_verify(
     """One Host-owned wiring point; keep build_engine's frozen size unchanged."""
     host_review.attach_runner(runner)
     registry.register(ReviewAdmissionTool(host_review))
+    # refresh_config resolves the RULE-AI-28 reviewer through the engine when it
+    # runs (its executor is installed before this wiring).
+    engine.host_review_admission = host_review
     authority = HostVerifyAuthority(
         audit_dir=settings.audit_dir,
         repo_root=settings._extra.get("runtime_root") or "",
         runner=runner,
         escalation_store=escalation_store,
+        # Same operator-trusted reviewer identity as the RULE-AI-28 reviewer above.
+        reviewer_models_raw=reviewer_models_configured(
+            settings.model_roles_raw, settings.reviewer_models_raw
+        ),
     )
     engine.host_verify_authority = authority
     registry.register(MergeReviewStartTool(authority))

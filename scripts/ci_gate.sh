@@ -22,6 +22,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd -P)"
+# Git hooks and nested tools can export repository-local variables. In particular,
+# GIT_COMMON_DIR can redirect even `git init --bare <fixture>` into the live
+# repository's config. CI owns its checkout; child tests must discover their own.
+_git_local_vars="$(git rev-parse --local-env-vars)"
+for _git_var in $_git_local_vars GIT_NAMESPACE GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM; do
+  unset "$_git_var"
+done
+if [[ "$(git config --local --bool --get core.bare 2>/dev/null || true)" == true ]]; then
+  echo "[GIT_WORKSPACE_ENVIRONMENT_ERROR] shared core.bare=true; preserve config and investigate its writer before retrying" >&2
+  exit 78
+fi
 
 # 并行底座自足化（R9-B3 前置/用户原则：阻碍并行执行的环境陷阱要修）：
 # 1) PY 解析——worktree 自带 .venv 优先；无则回落主检出区 .venv（worktree 共享 venv 可用，

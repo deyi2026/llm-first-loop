@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from llm_loop.core.message import ToolResultStatus
 from llm_loop.core.run_context import (
     current_model_label,
     current_session_id,
@@ -24,6 +27,7 @@ from llm_loop.introspection.host_verify_issuer import (
 )
 from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.merge_queue import load_receipts
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.web import build_app
 from llm_loop.web.auth import SESSION_COOKIE_NAME
@@ -90,9 +94,12 @@ def host(tmp_path):
     runner.facts = {"lane_id": lane.lane_id, "base_sha": base, "head_sha": head}
     authority = HostVerifyAuthority(
         audit_dir=audit, repo_root=repo, runner=runner, escalation_store=escalation,
+        reviewer_models_raw="glm/glm-5.3-flash",
     )
     tok = current_session_id.set("owner-session")
-    mtok = current_model_label.set("glm/glm-5.3-flash")
+    # The parent session runs the model that once exhausted the reviewer's output
+    # budget; the reviewer must still come from operator configuration above.
+    mtok = current_model_label.set("glm/glm-5.4")
     try:
         yield authority, runner, escalation, lane.lane_id, repo, audit
     finally:
@@ -113,6 +120,89 @@ def requested(host):
     return authority.request(lane_id=lane_id, child_id=out["child_id"], scope="focused PASS")
 
 
+def _finding(severity="P1"):
+    return {
+        "severity": severity, "path": "src/llm_loop/x.py", "line": 10,
+        "summary": "unchecked input reaches eval",
+        "evidence": "x.py:10 eval(user_input) runs attacker-controlled text",
+    }
+
+
+def test_review_task_demands_located_findings_on_revise(host):
+    """EVO-20261126-549f940c: a REVISE conclusion must carry its P0/P1 findings."""
+    authority, runner, _, lane_id, *_ = host
+    authority.start_review(lane_id)
+    task = runner.started["task"]
+    for required in (
+        "When verdict is REVISE, add key findings",
+        "severity ('P0'|'P1')", "path", "line (integer or null)", "summary", "evidence",
+        "number of 'P0' entries must equal p0", "number of 'P1' entries must equal p1",
+        "When verdict is PASS, omit findings or send an empty array",
+    ):
+        assert required in task, required
+    # The isolation that rules out follow-up questions is unchanged.
+    assert runner.started["review_isolated"] is True
+    assert runner.started["inherit"] is False
+    assert runner.started["required_tools"] == ["read_file", "search_files"]
+
+
+@pytest.mark.parametrize("has_empty_findings", [False, True])
+def test_pass_without_findings_still_issues(host, has_empty_findings):
+    authority, runner, store, lane_id, _, audit = host
+    if has_empty_findings:
+        runner.facts["findings"] = []
+    rec = requested(host)
+    approved, reason = human_decide(store, rec, authority)
+    assert reason == "" and approved is not None
+    assert load_receipts(audit / "verify_receipts.jsonl")
+
+
+@pytest.mark.parametrize("findings", [
+    [_finding("P1")],
+    [_finding("P0")],
+    [_finding("P2")],
+    [_finding("P1"), _finding("P2")],
+    ["P1: unchecked input at x.py:10"],
+    "none",
+    None,
+    {},
+], ids=["P1", "P0", "P2", "P1+P2", "string-entry", "string", "null", "object"])
+def test_pass_carrying_findings_fails_closed(host, findings):
+    """PASS p0=p1=0 plus listed findings is self-contradictory: never a receipt."""
+    authority, runner, _, lane_id, _, audit = host
+    authority.start_review(lane_id)
+    runner.facts["findings"] = findings
+    with pytest.raises(HostVerifyError, match="review_pass_with_findings"):
+        authority.request(lane_id=lane_id, child_id="subagent-test-review")
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_findings_added_after_request_cannot_be_approved(host):
+    authority, runner, store, lane_id, _, audit = host
+    rec = requested(host)
+    runner.facts["findings"] = [_finding("P1")]
+    # The Host still rejects the changed review…
+    with pytest.raises(HostVerifyError, match="review_pass_with_findings"):
+        authority.issue(rec, approver="web:session:12345678")
+    # …and a human approval now settles the request as failed with that reason
+    # (EVO-20261127-dd37be50) instead of leaving it pending forever.
+    approved, reason = human_decide(store, rec, authority)
+    assert approved is None and reason == "host_verify_issue_failed: review_pass_with_findings"
+    _assert_settled_failed(store, rec, "review_pass_with_findings")
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+@pytest.mark.parametrize("verdict,p0,p1", [("REVISE", 0, 1), ("PASS", 0, 1)])
+def test_listed_findings_never_make_a_revise_issuable(host, verdict, p0, p1):
+    authority, runner, _, lane_id, _, audit = host
+    authority.start_review(lane_id)
+    runner.verdict, runner.p0, runner.p1 = verdict, p0, p1
+    runner.facts["findings"] = [_finding("P1")]
+    with pytest.raises(HostVerifyError):
+        authority.request(lane_id=lane_id, child_id="subagent-test-review")
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
 def human_issue(authority):
     return lambda row: authority.issue(row, approver="web:session:12345678")
 
@@ -123,6 +213,42 @@ def human_decide(store, rec, authority):
         channel="web_session", expected_sha256=rec["command_sha256"],
         issue_verify=human_issue(authority),
     )
+
+
+def _assert_settled_failed(store, rec, code: str) -> None:
+    """A Host-rejected issuance leaves a terminal, visible failure and grants nothing."""
+    failed = store.get(rec["id"])
+    assert failed["status"] == "failed"
+    assert failed["token"] == "" and "verify_receipt_id" not in failed
+    # Server-derived identity: a fixed value in unit calls, the session digest via the web route.
+    assert str(failed["decided_by"]).startswith("web:session:")
+    assert failed["last_issue_error"] == code and failed["issue_failed_at"]
+    # Out of the pending queue and its count; readable under status=failed.
+    assert store.pending_count() == 0 and store.list(status="pending") == []
+    listed = store.list(status="failed")
+    assert [row["id"] for row in listed] == [rec["id"]]
+    assert listed[0]["last_issue_error"] == code and listed[0]["status"] == "failed"
+
+
+def _expire_review(authority, child_id="subagent-test-review", seconds=3601):
+    """Rewind the frozen review's monotonic clock past _REVIEW_TTL_S."""
+    frozen = authority._reviews[child_id]
+    authority._reviews[child_id] = dataclasses.replace(frozen, created=frozen.created - seconds)
+
+
+def _signed_in_client(authority, audit, build_test_engine, monkeypatch) -> TestClient:
+    """A browser session that may approve, bound to the fixture's own request store."""
+    # Route uses LFL_DATA_DIR; bind it to the fixture's own signed request store.
+    monkeypatch.setenv("LFL_DATA_DIR", str(audit.parent))
+    monkeypatch.delenv("WEB_AUTH_REQUIRE", raising=False)
+    monkeypatch.delenv("WEB_ORIGIN_ALLOWLIST", raising=False)
+    monkeypatch.setenv("WEB_HOST", "127.0.0.1")
+    engine, _ = build_test_engine([{"content": "ok"}])
+    engine.host_verify_authority = authority
+    app = build_app(engine=engine)
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 51321))
+    client.cookies.set(SESSION_COOKIE_NAME, app.state.web_sessions.create(ttl_seconds=3600))
+    return client
 
 
 def test_human_approved_host_issues_exact_receipt(host):
@@ -182,6 +308,66 @@ def test_reviewer_must_be_independent_pass(host, verdict, p0, p1, independent):
     assert not (audit / "verify_receipts.jsonl").exists()
 
 
+def test_reviewer_model_comes_from_operator_config_not_session_model(host):
+    # EVO-20261125-120c7dd9: the reviewer inherited the parent session's glm-5.4
+    # and exhausted its whole output budget on reasoning, with no verdict.
+    authority, runner, escalation, lane_id, _, _ = host
+    assert current_model_label.get() == "glm/glm-5.4"
+    started = authority.start_review(lane_id)
+    assert runner.started["model"] == started["model"] == "glm/glm-5.3-flash"
+    rec = authority.request(lane_id=lane_id, child_id=started["child_id"])
+    # The Web approval card shows only command and justification text: the human
+    # must see which reviewer model the PASS actually came from.
+    assert "模型 glm/glm-5.3-flash" in escalation.get(rec["id"])["justification"]
+
+
+@pytest.mark.parametrize("configured,reason", [
+    ("", "reviewer_models_unconfigured"),
+    ("   ", "reviewer_models_unconfigured"),
+    ("glm/glm-5.3-flash,,", "reviewer_models_invalid"),
+    ("no-slash", "reviewer_models_invalid"),
+])
+def test_unconfigured_reviewer_models_refuse_before_spawn(host, configured, reason):
+    authority, runner, _, lane_id, _, audit = host
+    unconfigured = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw=configured,
+    )
+    with pytest.raises(HostVerifyError) as excinfo:
+        unconfigured.start_review(lane_id)
+    assert str(excinfo.value) == reason
+    # The parent session's model is set, and it is still never a fallback.
+    assert current_model_label.get() == "glm/glm-5.4"
+    assert runner.started == {}
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_first_operator_configured_model_is_used(host):
+    authority, runner, _, lane_id, _, _ = host
+    ordered = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw="glm/glm-5.3-flash, glm/backup",
+    )
+    assert ordered.start_review(lane_id)["model"] == "glm/glm-5.3-flash"
+    assert runner.started["model"] == "glm/glm-5.3-flash"
+
+
+def test_start_tool_reports_unconfigured_reviewer_models_without_spawn(host):
+    from llm_loop.introspection.host_verify_issuer import MergeReviewStartTool
+
+    authority, runner, _, lane_id, _, _ = host
+    unconfigured = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw="",
+    )
+    result = MergeReviewStartTool(unconfigured).execute(lane_id=lane_id)
+    assert "[拒绝] reviewer_models_unconfigured" in result.content
+    assert runner.started == {}
+
+
 def test_base_advance_between_request_and_approval_fails_closed(host):
     authority, _, store, _, repo, audit = host
     rec = requested(host)
@@ -189,9 +375,13 @@ def test_base_advance_between_request_and_approval_fails_closed(host):
     git(repo, "add", "b.txt")
     git(repo, "commit", "-m", "main advanced")
     git(repo, "update-ref", "refs/remotes/origin/main", git(repo, "rev-parse", "main"))
+    # The Host still refuses to issue against a stale base…
     with pytest.raises(HostVerifyError, match="lane_base_or_head_stale"):
-        human_decide(store, rec, authority)
-    assert store.get(rec["id"])["status"] == "pending"
+        authority.issue(rec, approver="web:session:12345678")
+    # …and the human approval settles as failed with that reason (EVO-20261127-dd37be50).
+    approved, reason = human_decide(store, rec, authority)
+    assert approved is None and reason == "host_verify_issue_failed: lane_base_or_head_stale"
+    _assert_settled_failed(store, rec, "lane_base_or_head_stale")
     assert not (audit / "verify_receipts.jsonl").exists()
 
 
@@ -223,9 +413,13 @@ def test_review_changed_after_request_rejected(host):
     authority, runner, store, _, _, audit = host
     rec = requested(host)
     runner.p1 = 1
+    # The Host still rejects the no-longer-PASS review…
     with pytest.raises(HostVerifyError, match="review_p0_p1_blocked"):
-        human_decide(store, rec, authority)
-    assert store.get(rec["id"])["status"] == "pending"
+        authority.issue(rec, approver="web:session:12345678")
+    # …and the human approval settles as failed with that reason (EVO-20261127-dd37be50).
+    approved, reason = human_decide(store, rec, authority)
+    assert approved is None and reason == "host_verify_issue_failed: review_p0_p1_blocked"
+    _assert_settled_failed(store, rec, "review_p0_p1_blocked")
     assert not (audit / "verify_receipts.jsonl").exists()
 
 
@@ -250,6 +444,167 @@ def test_browser_auth_required_then_host_issue(host, build_test_engine, isolated
     assert ok.status_code == 200, ok.text
     assert store.get(rec["id"])["status"] == "approved"
     assert load_receipts(audit / "verify_receipts.jsonl")
+
+
+def test_expired_review_approval_settles_failed_and_cannot_be_retried(host):
+    # EVO-20261127-dd37be50, the 2026-11-27 incident: the human approved seven
+    # times, every issuance failed on review_not_host_owned_or_expired, and the
+    # request was still pending after each attempt.
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    _expire_review(authority)
+    with pytest.raises(HostVerifyError, match="review_not_host_owned_or_expired"):
+        authority.issue(rec, approver="web:session:12345678")  # the Host still refuses
+    asked: list = []
+    original_issue = authority.issue
+
+    def counting_issue(row, *, approver):
+        asked.append(row["id"])
+        return original_issue(row, approver=approver)
+
+    authority.issue = counting_issue
+    approved, reason = human_decide(store, rec, authority)
+    assert approved is None
+    assert reason == "host_verify_issue_failed: review_not_host_owned_or_expired"
+    _assert_settled_failed(store, rec, "review_not_host_owned_or_expired")
+    # Approving again is refused by the request state; the Host is never asked twice.
+    again, why = human_decide(store, rec, authority)
+    assert again is None and why == "请求当前状态为 failed，仅 pending 可审批"
+    assert asked == [rec["id"]]
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_wait_tool_reports_issue_failure_instead_of_pending(host):
+    from llm_loop.tools.builtin.escalation import EscalationWaitTool
+
+    authority, _, store, _, _, _ = host
+    rec = requested(host)
+    _expire_review(authority)
+    human_decide(store, rec, authority)
+    waited = EscalationWaitTool(store=store).execute(request_id=rec["id"], timeout_s=5)
+    assert waited.status is ToolResultStatus.FAILURE
+    assert "[签发失败]" in waited.content
+    assert "失败码: host_verify_issue_failed（review_not_host_owned_or_expired）" in waited.content
+    assert "merge_review_start" in waited.content and "verify_receipt_request" in waited.content
+    assert "仍为 pending" not in waited.content and "verify_ref=" not in waited.content
+
+
+def test_review_deadline_is_recorded_for_display_only(host):
+    authority, _, store, lane_id, _, audit = host
+    started = authority.start_review(lane_id)
+    remaining_s = (datetime.fromisoformat(started["review_expires_at"]) - system_local_now()).total_seconds()
+    assert 3590 < remaining_s <= 3600
+    rec = authority.request(lane_id=lane_id, child_id=started["child_id"])
+    stored = store.get(rec["id"])
+    assert stored["host_request"]["host_review_expires_at"] == started["review_expires_at"]
+    assert f"审查有效期至 {started['review_expires_at']}" in stored["justification"]
+    # Display only: a live review still issues through the unchanged binding checks…
+    approved, reason = human_decide(store, rec, authority)
+    assert reason == "" and approved["verify_receipt_id"].startswith(lane_id + ":")
+    # …and the request-time attestation still expires on the Host's own clock.
+    second = authority.start_review(lane_id)
+    _expire_review(authority)
+    with pytest.raises(HostVerifyError, match="review_not_host_owned_or_expired"):
+        authority.request(lane_id=lane_id, child_id=second["child_id"])
+    assert len(load_receipts(audit / "verify_receipts.jsonl")) == 1  # only the receipt above
+
+
+def test_tools_tell_the_caller_when_the_review_stops_being_issuable(host):
+    from llm_loop.introspection.host_verify_issuer import (
+        MergeReviewStartTool,
+        VerifyReceiptRequestTool,
+    )
+
+    authority, _, _, lane_id, _, _ = host
+    started = MergeReviewStartTool(authority).execute(lane_id=lane_id)
+    assert started.status is ToolResultStatus.SUCCESS
+    assert "有效期至" in started.content and "60 分钟" in started.content
+    asked = VerifyReceiptRequestTool(authority).execute(lane_id=lane_id, child_id="subagent-test-review")
+    assert asked.status is ToolResultStatus.SUCCESS
+    assert "审查有效期至" in asked.content and "转终态 failed" in asked.content
+    assert "merge_review_start" in asked.content
+
+
+def test_web_approval_of_expired_review_fails_visibly_and_leaves_the_pending_queue(
+    host, build_test_engine, isolated_data_dir, monkeypatch,
+):
+    # EVO-20261127-dd37be50 through the real entry point: a signed-in browser
+    # session approving over HTTP.
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    _expire_review(authority)
+    client = _signed_in_client(authority, audit, build_test_engine, monkeypatch)
+    body = {"id": rec["id"], "decision": "approved", "expected_sha256": rec["command_sha256"]}
+    response = client.post("/api/v1/escalation/review", json=body)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == "host_verify_issue_failed"
+    assert response.json()["detail"] == "review_not_host_owned_or_expired"
+    assert response.json()["status"] == "failed"
+    assert "独立审查已超过有效期" in response.json()["reason_hint"]  # human-readable, code stays the key
+    _assert_settled_failed(store, rec, "review_not_host_owned_or_expired")
+    # What the panel reads: no longer pending, and history carries the reason.
+    queue = client.get("/api/v1/escalation/list?status=pending&limit=50").json()
+    assert queue["requests"] == [] and queue["pending_count"] == 0
+    history = client.get("/api/v1/escalation/list").json()["requests"]
+    row = next(r for r in history if r["id"] == rec["id"])
+    assert row["status"] == "failed" and row["last_issue_error"] == "review_not_host_owned_or_expired"
+    detail = client.get(f"/api/v1/escalation/detail?id={rec['id']}").json()
+    assert detail["last_issue_error"] == "review_not_host_owned_or_expired" and detail["issue_failed_at"]
+    # The audit trail keeps the outcome name used by the pre-change failures.
+    lines = (audit / "escalation_review_log.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [(json.loads(line)["outcome"], json.loads(line).get("detail")) for line in lines] == [
+        ("host_verify_issue_failed", "review_not_host_owned_or_expired"),
+    ]
+    # A second approval is an ordinary conflict; nothing is issued at any point.
+    again = client.post("/api/v1/escalation/review", json=body)
+    assert again.status_code == 409
+    assert again.json()["error"] == "请求当前状态为 failed，仅 pending 可审批"
+    assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_issue_failure_is_logged_once_in_each_audit_sink(
+    host, build_test_engine, isolated_data_dir, monkeypatch,
+):
+    # One failed approval writes two records on purpose: a state transition in the
+    # store ledger and the attempt outcome in the web review log. Not duplicates.
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    _expire_review(authority)
+    client = _signed_in_client(authority, audit, build_test_engine, monkeypatch)
+    body = {"id": rec["id"], "decision": "approved", "expected_sha256": rec["command_sha256"]}
+    assert client.post("/api/v1/escalation/review", json=body).status_code == 409
+    events = [json.loads(line) for line in (audit / "escalation_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(e["event"], e["status"]) for e in events if e["id"] == rec["id"]] == [
+        ("request_created", "pending"),
+        ("issue_failed", "failed"),
+    ]
+    trail = [json.loads(line) for line in (audit / "escalation_review_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [entry["outcome"] for entry in trail] == ["host_verify_issue_failed"]
+
+
+def test_web_approval_environment_error_keeps_the_request_pending(
+    host, build_test_engine, isolated_data_dir, monkeypatch,
+):
+    # The other branch of the same route: an unsafe receipts target raises OSError
+    # inside the Host issuer. Nothing is decided, the request stays pending, and the
+    # response says so instead of claiming a terminal failure.
+    authority, _, store, _, _, audit = host
+    rec = requested(host)
+    victim = audit / "victim.txt"
+    victim.write_text("do not touch", encoding="utf-8")
+    (audit / "verify_receipts.jsonl").symlink_to(victim)
+    client = _signed_in_client(authority, audit, build_test_engine, monkeypatch)
+    body = {"id": rec["id"], "decision": "approved", "expected_sha256": rec["command_sha256"]}
+    response = client.post("/api/v1/escalation/review", json=body)
+    assert response.status_code == 409, response.text
+    payload = response.json()
+    assert payload["error"] == "host_verify_issue_failed" and payload["status"] == "pending"
+    assert "reason_hint" not in payload  # no Host verdict was given
+    kept = store.get(rec["id"])
+    assert kept["status"] == "pending" and kept["decided_at"] == "" and "last_issue_error" not in kept
+    assert store.pending_count() == 1
+    assert victim.read_text(encoding="utf-8") == "do not touch"
+    assert (audit / "verify_receipts.jsonl").is_symlink()  # untouched, not replaced
 
 
 FENCE = "```"

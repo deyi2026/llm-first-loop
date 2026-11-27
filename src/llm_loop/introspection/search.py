@@ -739,7 +739,13 @@ class RecordSearcher:
             names = [s.strip() for s in streams.split(",") if s.strip()]
         # EVO-20260918: 多词分词 AND + id/ts 入检索域（与 _jsonl_search 对齐）
         terms = _query_terms(query)
-        merged: list[dict] = []
+        # Keep only the newest requested rows. A stable tie-breaker preserves
+        # the original stream/file order when timestamps are identical.
+        if limit == 0:
+            return []
+        hits: list[tuple[str, int, dict]] = []
+        legacy: list[dict] = []
+        ordinal = 0
         for name in names:
             fname, keys = self._EVENT_STREAMS.get(name, (None, ()))
             if fname is None:
@@ -762,32 +768,42 @@ class RecordSearcher:
                     entry_session_id = str(entry.get("session_id") or "")
                     if session_id is not None and entry_session_id != session_id:
                         continue
-                    hay = " ".join(
-                        str(v)
-                        for v in (
-                            entry.get("id", ""),
-                            ts,
-                            *(entry.get(k, "") for k in keys),
-                            entry.get("content", ""),
-                            entry.get("note", ""),
-                        )
-                    ).lower()
-                    if terms and not _hay_matches(hay, terms):
+                    if terms:
+                        hay = " ".join(
+                            str(v)
+                            for v in (
+                                entry.get("id", ""),
+                                ts,
+                                *(entry.get(k, "") for k in keys),
+                                entry.get("content", ""),
+                                entry.get("note", ""),
+                            )
+                        ).lower()
+                        if not _hay_matches(hay, terms):
+                            continue
+                    ordinal += 1
+                    rank = (ts, -ordinal)
+                    if limit > 0 and len(hits) == limit and rank <= hits[0][:2]:
                         continue
-                    merged.append(
-                        {
-                            "stream": name,
-                            "ts": ts,
-                            "session_id": entry_session_id,
-                            "summary": " ".join(str(entry.get(k, "")) for k in keys)[:300],
-                            "file": str(path),
-                        }
-                    )
-        # 按 ts 降序取最近 N 条，再反转为升序（旧→新轨迹）
-        merged.sort(key=lambda e: e["ts"], reverse=True)
-        merged = merged[:limit]
-        merged.sort(key=lambda e: e["ts"])
-        return merged
+                    row = {
+                        "stream": name,
+                        "ts": ts,
+                        "session_id": entry_session_id,
+                        "summary": " ".join(str(entry.get(k, "")) for k in keys)[:300],
+                        "file": str(path),
+                    }
+                    if limit < 0:
+                        # Preserve the historical slicing semantics for direct
+                        # callers; the registered tool accepts only 1..200.
+                        legacy.append(row)
+                    elif len(hits) < limit:
+                        heapq.heappush(hits, (*rank, row))
+                    else:
+                        heapq.heapreplace(hits, (*rank, row))
+        if limit < 0:
+            legacy.sort(key=lambda e: e["ts"], reverse=True)
+            return sorted(legacy[:limit], key=lambda e: e["ts"])
+        return [row for _, _, row in sorted(hits, key=lambda hit: (hit[0], -hit[1]))]
 
     def _annotate_usage(self, rows: list[dict], *, side: str) -> list[dict]:
         """EVO-20261014-7299aec2: 命中行附使用净分（record_use 审计派生视图，只读）。

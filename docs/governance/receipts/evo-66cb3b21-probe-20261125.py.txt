@@ -1,0 +1,55 @@
+"""EVO-20261125-66cb3b21 probe: here-doc opener-line tail reaches the skeleton.
+
+usage: python3 lfl_evo_66cb3b21_probe.py <absolute-src-dir-to-import>
+"""
+import sys
+
+SRC = sys.argv[1]
+assert SRC.startswith("/"), "pass an absolute src path"
+sys.path.insert(0, SRC)
+import llm_loop  # noqa: E402
+
+assert llm_loop.__file__.startswith(SRC), llm_loop.__file__
+from llm_loop.tools.review_host_admission import (  # noqa: E402
+    _strip_payload_units,
+    classify_host_shell,
+)
+
+BT = chr(96)  # backtick, built here so the probe file itself carries no literal one
+DOC = "cat > /tmp/doc.md <<'EOF'"
+PUSH = "git push origin main"
+TICKED = BT + PUSH + BT
+
+CASES = [
+    # target: text after the heredoc operator on the opener line is live shell
+    ("T1_tail_semicolon_push", DOC + "; " + PUSH + "\n示例\nEOF", "git_push"),
+    ("T2_tail_andand_push", DOC + " && " + PUSH + "\n示例\nEOF", "git_push"),
+    ("T3_tail_semicolon_pytest", DOC + "; pytest -q\n示例\nEOF", "full_test"),
+    ("T4_tail_push_unterminated", DOC + "; " + PUSH + "\n示例", "git_push"),
+    ("T5_tail_redirect_then_push", DOC + " > /tmp/out; " + PUSH + "\n示例\nEOF", "git_push"),
+    # unchanged: the tail is only a redirection or a comment
+    ("U1_tail_redirect_out", DOC + " > /tmp/out\n示例：" + PUSH + "\nEOF", None),
+    ("U2_tail_redirect_err", DOC + " 2>> /tmp/err\n示例：" + PUSH + "\nEOF", None),
+    ("U3_tail_comment", DOC + " # 说明：" + PUSH + " 会被拦\n示例\nEOF", None),
+    ("U4_tee_tail_redirect", "tee /tmp/a.md <<'EOF' >> /tmp/b.md\n示例：" + PUSH + "\nEOF", None),
+    ("U5_command_after_terminator", DOC + "\n示例\nEOF\necho done", None),
+    ("U6_markdown_code_span_body", DOC + "\n示例：" + TICKED + "\nEOF", None),
+    # must still block (unchanged)
+    ("M1_unquoted_delimiter_body", "cat > /tmp/doc.md <<EOF\n示例：" + TICKED + "\nEOF", "git_push"),
+    ("M2_real_push", PUSH, "git_push"),
+    ("M3_tail_backtick_substitution", DOC + " " + TICKED + "\n示例\nEOF", "git_push"),
+]
+
+print("module =", llm_loop.__file__)
+bad = 0
+for cid, cmd, expected in CASES:
+    actual = classify_host_shell(cmd)
+    ok = actual == expected
+    bad += 0 if ok else 1
+    print(("OK       " if ok else "MISMATCH ") + cid
+          + " | expected=" + repr(expected) + " actual=" + repr(actual))
+    if cid.startswith("T"):
+        skeleton, _ = _strip_payload_units(cmd)
+        print("           skeleton=" + repr(skeleton))
+print("mismatches =", bad, "of", len(CASES))
+sys.exit(1 if bad else 0)

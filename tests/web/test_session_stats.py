@@ -115,6 +115,7 @@ def test_child_stats_use_physical_settlement_and_keep_parent_separate(
     )
     assert comparison.status_code == 200
     d = comparison.json()["agent_comparison"]
+    assert "agent_comparison" not in client.get(f"/api/v1/sessions/{parent_id}/stats").json()
     assert d["parent"]["tokens_in"] == 1000
     assert d["child"]["tokens_in"] == 200
     assert d["reviewer_role"] == "unverified"
@@ -154,3 +155,87 @@ def test_child_opened_without_settlement_is_not_a_zero_hit_sample(
     assert d["cache_hit_rate"] is None
     assert d["physical_provider_usage"]["physical_attempts"] == 0
     assert d["physical_provider_usage"]["opened_unsettled_attempts"] == 1
+
+
+def test_stats_uses_usage_projection_without_full_event_replay(build_test_engine, tmp_path, monkeypatch):
+    engine, _ = build_test_engine([])
+    engine.session._event_store = EventStore(tmp_path / "events")
+    sid = engine.session.create()
+    store = engine.session._event_store
+    store.append(sid, "message.appended", {"content": "x" * 100000})
+    store.append(sid, "request.usage", {"tokens_in": 100, "tokens_out": 10, "cache_hit": 50})
+
+    def unexpected_replay(_session_id):
+        raise AssertionError("statistics must not replay full event payloads")
+
+    monkeypatch.setattr(store, "read", unexpected_replay)
+    client = _make_client(engine)
+    for expected in (100, 150):
+        response = client.get(f"/api/v1/sessions/{sid}/stats")
+        assert response.status_code == 200
+        assert response.json()["tokens_in"] == expected
+        assert response.json()["usage_source"] == "request.usage"
+        if expected == 100:
+            store.append(sid, "request.usage", {"tokens_in": 50, "tokens_out": 5})
+
+
+def test_stats_warm_poll_skips_session_load_and_invalidates_on_transcript_change(
+    build_test_engine, tmp_path, monkeypatch,
+):
+    from llm_loop.core.message import Message, MessageSource
+
+    engine, _ = build_test_engine([])
+    engine.session._event_store = EventStore(tmp_path / "events")
+    sid = engine.session.create()
+    engine.session._event_store.append(sid, "request.usage", {"tokens_in": 100})
+    client = _make_client(engine)
+    assert client.get(f"/api/v1/sessions/{sid}/stats").json()["turns"] == 0
+    original = engine.session.load
+    calls = []
+
+    def count_load(session_id):
+        calls.append(session_id)
+        return original(session_id)
+
+    monkeypatch.setattr(engine.session, "load", count_load)
+    assert client.get(f"/api/v1/sessions/{sid}/stats").json()["tokens_in"] == 100
+    assert calls == []
+    sess = original(sid)
+    sess.messages.append(Message(role="assistant", content="new", source=MessageSource.USER))
+    engine.session.save(sess)
+    assert client.get(f"/api/v1/sessions/{sid}/stats").json()["turns"] == 1
+    assert calls == [sid]
+
+
+def test_child_stats_reject_old_parent_after_transcript_only_change(
+    build_test_engine, tmp_path,
+):
+    engine, _ = build_test_engine([])
+    store = EventStore(tmp_path / "events")
+    engine.session._event_store = store
+    old_parent = engine.session.create()
+    new_parent = engine.session.create()
+    child_id = "subagent_" + uuid4().hex[:12]
+    engine.session.save(Session(session_id=child_id, parent_id=old_parent))
+    store.append(child_id, "request.usage", {"tokens_in": 7})
+    client = _make_client(engine)
+    child_url = f"/api/v1/sessions/{child_id}/stats"
+    first = client.get(child_url).json()
+    assert first["agent_scope"]["parent_session_id"] == old_parent
+    assert client.get(
+        f"/api/v1/sessions/{old_parent}/stats", params={"child_id": child_id},
+    ).status_code == 200
+    stamp = store.history_source_stamp(child_id)
+    child = engine.session.load(child_id)
+    child.parent_id = new_parent
+    engine.session.save(child)
+    assert store.history_source_stamp(child_id) == stamp
+    assert client.get(
+        f"/api/v1/sessions/{old_parent}/stats", params={"child_id": child_id},
+    ).status_code == 404
+    assert client.get(child_url).json()["agent_scope"]["parent_session_id"] == new_parent
+    comparison = client.get(
+        f"/api/v1/sessions/{new_parent}/stats", params={"child_id": child_id},
+    )
+    assert comparison.status_code == 200
+    assert comparison.json()["agent_comparison"]["child"]["agent_scope"]["parent_session_id"] == new_parent

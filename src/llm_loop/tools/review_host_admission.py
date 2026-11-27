@@ -126,6 +126,21 @@ class _Frozen:
     batch_plan_id: str = ""
     batch_index: int = -1
     batch_paths: tuple[str, ...] = ()
+    # ---- reviewer policy hot refresh ----
+    # reviewer_models：本次审查**被接纳时**冻结的 operator 候选链。异步重试只在这条
+    # 冻结链上推进，不再读 authority 的实时链——否则一次 refresh 会让在途重试的身份
+    # 相对其被接纳时的策略漂移。是否仍允许重试由 policy_digest 与当前策略的比对决定
+    # （撤销/漂移 ⇒ fail closed，见 _reserve_respawn）。
+    reviewer_models: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ReviewerPolicy:
+    """One consistent read of the reviewer policy (candidates, diagnostic, digest)."""
+
+    models: tuple[str, ...]
+    error: str
+    digest: str
 
 
 _ALLOWED = AdmissionDecision(True, "")
@@ -452,7 +467,12 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 
 # ── EVO-20261029-65f6fe21：自足语法单元剥离 ──
-_HEREDOC_OPENER_RE = re.compile(r"<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
+# here-string（``<<<``）不是 here-doc 引导（接力修复 2，2026-11-26 差分实测）：
+# 旧式无后顾的 ``<<`` 会从第二个 ``<`` 起命中 ``cat <<<'EOF'``，把其后的真实命令
+# 行当作「已配对 + 豁免」的 here-doc 体——EVO-20261125-86a9864e 之后整段移出反引号
+# 网（改动前由扫原始全文的反引号网兜住），受保护动作因此漏放。shell 里 here-string
+# 没有正文：其后直到同名终止符行都是普通命令行。``<<`` 前紧邻 ``<`` 时不再匹配。
+_HEREDOC_OPENER_RE = re.compile(r"(?<![<])<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
 _PAYLOAD_INTERPRETER_RE = (
     r"""\b(?P<interp>python[0-9.]*|(?:b|z|k|d|a)?sh|node|nodejs|ruby|perl|php|osascript|deno|bun|awk)\b"""
     r"""(?P<flags>(?:\s+-{1,2}[A-Za-z0-9][\w=.-]*)*?)"""
@@ -514,28 +534,87 @@ def _heredoc_head_exempts_head(head: str) -> bool:
     return "/" not in argv0 and argv0 in _HEREDOC_DATA_SINKS
 
 
+def _advance_quote_state(state: str | None, text: str) -> str | None:
+    """沿 shell 词法推进引号状态：None=顶层，其余为所在的引号字符。
+
+    EVO-20261125-86a9864e：只服务于「here-doc 引导是否位于 shell 顶层」的判定，
+    不是完整 shell 词法——顶层与双引号/反引号内反斜杠转义下一字符，单引号内
+    为字面；顶层词首 ``#`` 起注释到行尾。识别不了的形态停在非顶层（不脱敏，
+    保守方向）。
+    """
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if state is None:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch in "'\"`":
+                state = ch
+            elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
+                break
+        elif state == "'":
+            if ch == "'":
+                state = None
+        else:  # 双引号/反引号内
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == state:
+                state = None
+        i += 1
+    return state
+
+
 def _strip_heredoc_units(
-    text: str, payloads: list[str], exempt: list[bool] | None = None
+    text: str,
+    payloads: list[str],
+    exempt: list[bool] | None = None,
+    net_out: list[str] | None = None,
 ) -> str:
     """here-doc 体 → 占位 token（体逐行原样搬运；关闭行 `<<` 精确 / `<<-` 前导 tab）.
 
     P2-3（审查 REVISE 第二轮）：`<<` 前文本若含未闭合引号（说明 `<<WORD`
     在引号串/注释里），不当作 here-doc 引导——误吞后续骨架行会丢段结构；
     该行原样保留，由骨架 shlex fail-closed。
+
+    EVO-20261125-86a9864e（人工批准）：``net_out``（可选）镜像收集 shell 实际
+    解析的文本——反引号网的扫描面。带引号终止符的体在 shell 中不做展开，
+    其中的 Markdown 代码span（一对反引号）不是命令替换；故「终止符已配对 +
+    豁免 + 引导位于顶层 + opener 行整行收在顶层」的体不进镜像，其余（无引号
+    终止符/非数据接收者/引导落在跨行引号串内/opener 行尾留下未闭合引号/未配对）
+    照常进镜像。
     """
     lines = text.split("\n")
     out: list[str] = []
+    net: list[str] = []
+    quote: str | None = None  # 镜像文本在当前行起点的引号状态（None=顶层）
+
+    def _net_keep(piece: str) -> None:
+        nonlocal quote
+        if net_out is None:
+            return
+        net.append(piece)
+        quote = _advance_quote_state(quote, piece)
+
+    def _finish() -> str:
+        if net_out is not None:
+            net_out.extend(net)
+        return "\n".join(out)
+
     i = 0
     while i < len(lines):
         line = lines[i]
         m = _HEREDOC_OPENER_RE.search(line)
         if m is None:
             out.append(line)
+            _net_keep(line + "\n")
             i += 1
             continue
         head_txt = line[: m.start()]
         if head_txt.count("'") % 2 or head_txt.count('"') % 2 or "#" in head_txt:
             out.append(line)  # 开引号/注释内的 << 不是 here-doc 引导
+            _net_keep(line + "\n")
             i += 1
             continue
         delim = m.group(2)
@@ -551,7 +630,23 @@ def _strip_heredoc_units(
             and _HEREDOC_UNSAFE_LINE_RE.search(line) is None
             and _heredoc_head_exempts_head(head)
         )
+        # EVO-20261125-86a9864e：引导须位于 shell 顶层——不在跨行未闭合的引号串
+        # 内；否则 `<<` 不是 here-doc 引导，体内反引号在 shell 中真实执行，不得
+        # 从反引号网脱敏。
+        at_top_level = quote is None and _advance_quote_state(None, head_txt) is None
+        # 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，
+        # 2026-11-26）：opener 行须整行收在 shell 顶层。`<<WORD` 之后的行尾文本若
+        # 留下未闭合引号，shell 把后续各行当作该引号串的延续——属于命令行而非
+        # here-doc 体，双引号内的命令替换真实执行（2026-11-26 bash 实测）。此时
+        # 「体」既不豁免（内容网照扫）也不脱敏（留在反引号网扫描面）。
+        tail = line[m.end() :]
+        data_body = is_exempt and _advance_quote_state(None, tail) is None
         ph = f"__XPL_{len(payloads)}__"
+        # EVO-20261125-66cb3b21：引导之后、同一行上的文本在 shell 中会被正常解析
+        # （`; cmd`、`&& cmd`、重定向、注释…），必须留在骨架里供段网判定；旧实现把它
+        # 整段丢弃，同一行上其后的真实动作因此对段网不可见。
+        skeleton_line = (head + " " + ph) if head else ph
+        skeleton_line = (skeleton_line + " " + tail).strip()
         body: list[str] = []
         j = i + 1
         closed = False
@@ -563,20 +658,27 @@ def _strip_heredoc_units(
                 break
             body.append(cand)
             j += 1
+        _net_keep(line + "\n")
         if not closed:
             # 未闭合：体吞到结尾（shell 语义）；残余不进骨架（fail-closed）
             body.extend(lines[i + 1 :])
             payloads.append("\n".join(body))
             if exempt is not None:
-                exempt.append(is_exempt)
-            out.append((head + " " + ph).strip() if head else ph)
-            return "\n".join(out)
+                exempt.append(data_body)
+            out.append(skeleton_line)
+            for _bl in lines[i + 1 :]:
+                _net_keep(_bl + "\n")
+            return _finish()
         payloads.append("\n".join(body))
         if exempt is not None:
-            exempt.append(is_exempt)
-        out.append((head + " " + ph).strip() if head else ph)
+            exempt.append(data_body)
+        out.append(skeleton_line)
+        if not (data_body and at_top_level):
+            # 未豁免 / 非顶层 / opener 行未整行收在顶层：体照常进反引号网扫描面。
+            for _bl in body:
+                _net_keep(_bl + "\n")
         i = j + 1
-    return "\n".join(out)
+    return _finish()
 
 
 def _strip_interpreter_payloads(
@@ -627,21 +729,25 @@ def _strip_interpreter_payloads(
 
 
 def _strip_payload_units(
-    command: str, exempt: list[bool] | None = None
+    command: str,
+    exempt: list[bool] | None = None,
+    net_out: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """剥离自足语法单元（先 here-doc 体，后解释器 -c/-e 载荷）→ (骨架, payloads).
 
     骨架只承载 argv 结构与命令位分界（classify 的 segment 网只看骨架）。
     载荷内容级网（EVO-20261102-99717443 后的准确契约）：未豁免载荷仍进
     classify_host_shell 的载荷网（受保护动词 / python shell 调用递归）；
-    豁免载荷（quoted here-doc + 数据接收者体）跳过该网。反引号网
-    （_active_backtick_substitutions）不受豁免影响——始终扫描原始全文。
+    豁免载荷（quoted here-doc + 数据接收者体）跳过该网。``net_out``（可选）
+    收集反引号网（_active_backtick_substitutions）的扫描面：EVO-20261125-86a9864e
+    起，「终止符已配对 + 豁免 + 引导位于顶层」的 here-doc 体不再进该网（带引号
+    终止符的体不做展开）；解释器载荷与其余文本保持原样。
     exempt（可选）与 payloads 等长对齐：True=quoted here-doc 数据接收者体
     （纯数据，内容级网豁免）；False=解释器载荷/不豁免体（第三轮审查 P2-2：
     此 docstring 曾无条件断言"仍看原始全文"，已改为如上准确表述）。
     """
     payloads: list[str] = []
-    skeleton = _strip_heredoc_units(str(command or ""), payloads, exempt)
+    skeleton = _strip_heredoc_units(str(command or ""), payloads, exempt, net_out)
     skeleton = _strip_interpreter_payloads(skeleton, payloads, exempt)
     return skeleton, payloads
 
@@ -843,12 +949,28 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     the sink reads them (not plain data) and every other receiver
     (interpreter, unknown argv0, path-form argv0, piped/compound opener
     line, ``VAR=``/``env VAR=`` prefixed head) keeps the net (fail-closed).
+    EVO-20261125-86a9864e (human-approved): the backtick net scans only the
+    text bash actually parses. A PAIRED, exempt here-doc body whose opener
+    sits at shell top level is never expanded, so a Markdown code span (a
+    backtick pair) in a ``cat > file <<'EOF'`` body is not a command
+    substitution and is not scanned. Unquoted bodies, bodies whose ``<<``
+    lies inside a multi-line quoted string and unterminated bodies stay in
+    the net (backticks there really do execute). Relay fix 2026-11-26
+    (independent review P1): an opener line that leaves a quote open after
+    the ``<<WORD`` operator makes bash read the following lines as part of
+    that quoted string (command line, not body), so such bodies stay in the
+    backtick net AND lose the protected-keyword exemption. If the skeleton
+    fails to lex, the ValueError fallback scans the raw command text
+    (``value`` — not the reduced ``net_text``), because line-based heredoc
+    detection is untrustworthy once the skeleton fails to lex.
     """
     value = str(command or "").strip()
     if not value:
         return None
     payload_exempt: list[bool] = []
-    skeleton, payloads = _strip_payload_units(value, payload_exempt)
+    net_parts: list[str] = []
+    skeleton, payloads = _strip_payload_units(value, payload_exempt, net_parts)
+    net_text = "".join(net_parts) or value  # 反引号网扫描面（EVO-20261125-86a9864e）
     try:
         results = [
             _shell_segment_kind(tokens, depth=_depth)
@@ -863,7 +985,7 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
         # Backticks execute even inside double quotes. They are opaque to shlex
         # argv0 matching, so inspect their literal bodies separately.
         if _depth < 3:
-            for script in _active_backtick_substitutions(value):
+            for script in _active_backtick_substitutions(net_text):
                 results.append(classify_host_shell(script, _depth=_depth + 1))
             # EVO-20261029-65f6fe21：剥离载荷的内容级网——载荷文本含受保护
             # 动词时仍按保护效果分类（旧 ValueError 全文网的行为保持），
@@ -2523,6 +2645,47 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]
     raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
 
 
+def _assert_anchor_contained_by_head(repo: Path, base: str) -> None:
+    """EVO-20261127-e770b7cb (human-approved 2026-11-27, executing): a first-push
+    anchor must be contained by HEAD.
+
+    When the destination ref does not exist yet, the review anchor falls back to
+    the remote default branch (origin/main's current commit). If the branch's
+    baseline is BEHIND that anchor, the frozen delta ``<anchor>..<HEAD>`` renders
+    main's new commits as REVERSE DELETIONS, and the reviewer sees fabricated
+    P1 findings on code this branch never touched (production evidence
+    2026-11-27: the dd37be50 first code-gate round returned REVISE on such a
+    phantom P1). Fail closed with an actionable rebase instruction instead of
+    freezing the poisoned delta. Anchors on the branch's own remote head
+    (first_push=False) are unaffected: that delta is exactly the unpushed
+    commit set and cannot contain reverse deletions.
+    """
+    run = subprocess.run(
+        ["git", "--no-replace-objects", "-C", str(repo), "merge-base", "HEAD", base],
+        capture_output=True, timeout=12, check=False,
+    )
+    if run.returncode != 0:
+        raise ValueError(
+            "review_anchor_history_unrelated_fail_closed: 待审 HEAD 与 first-push 锚 "
+            f"{base[:12]} 无共同祖先（历史断裂或浅克隆）；无法证明分支包含锚，"
+            "先 fetch/对齐分支历史后再送审"
+        )
+    if run.stdout.decode("utf-8", "replace").strip() != base:
+        raise ValueError(
+            "review_base_behind_main_rebase_first: 分支基线落后 first-push 锚"
+            f"（远端默认分支，{base[:12]}）——锚不是 HEAD 的祖先，以它冻结的 diff "
+            "会把 main 的新提交渲染成反向删除（审查员会看到假改动、假 P1）。"
+            "先 git fetch && git rebase <remote>/main（或 merge）对齐基线，"
+            "再重新发起审查/push"
+        )
+
+
+def _assert_first_push_push_base(repo: Path, push_base: str, first_push: bool) -> None:
+    """EVO-20261127-e770b7cb: git_push 路径的 first-push 锚守卫（_target 内联瘦身）。"""
+    if first_push:
+        _assert_anchor_contained_by_head(repo, push_base)
+
+
 def _full_test_review_base(workdir: str) -> tuple[str, str]:
     """EVO-20261029-eb64b2de (human-approved 2026-10-29): push-basis anchor
     for full_test admission.
@@ -2573,6 +2736,13 @@ def _full_test_review_base(workdir: str) -> tuple[str, str]:
             "full_test_anchor_unresolved_fail_closed: 审查锚点（远端推送基）"
             f"暂时不可解析（{exc}）；稍后重试同一目标，或先 git fetch 再试"
         ) from exc
+    if first_push:
+        # EVO-20261127-e770b7cb: first-push 锚=远端默认分支（origin/main 当前值）。
+        # 分支基线落后它时，<anchor>..<HEAD> 的冻结 diff 会把 main 新提交渲染成
+        # "反向删除"，审查员看到从未发生过的假 P1（2026-11-27 实测：dd37be50
+        # 首轮代码闸因此 REVISE）。放在 except 包装之外——这条拒绝是结构性的
+        # （变基才可解），不得被换成"稍后重试"的暂时性失败话术。
+        _assert_anchor_contained_by_head(repo, base)
     return base, (dst_ref if first_push else "")
 
 
@@ -3763,7 +3933,12 @@ class HostReviewAdmission:
         """参与授权语义的策略面（只取影响"能否放行/放行给谁"的字段）。"""
         return {
             "reviewer_models": list(self._reviewer_models),
-            "reviewer_model_error": str(self._reviewer_model_error or ""),
+            # 诊断与阻断分离：候选链非空时，error 只是「上一次刷新被拒」的诊断，不
+            # 参与授权语义 ⇒ 不计入 digest（否则一次无效刷新会作废全部在途 grant）。
+            # 候选链为空（未配置/已撤销）时照旧计入。
+            "reviewer_model_error": (
+                str(self._reviewer_model_error or "") if not self._reviewer_models else ""
+            ),
             "async_retry_max": int(_REVIEWER_ASYNC_RETRY_MAX),
             "retry_min_remaining_s": float(_REVIEWER_RETRY_MIN_REMAINING_S),
             "retry_max": int(_REVIEWER_RETRY_MAX),
@@ -3778,6 +3953,91 @@ class HostReviewAdmission:
     def _compute_policy_digest(self) -> str:
         blob = json.dumps(self._policy_snapshot(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _reviewer_policy(self) -> _ReviewerPolicy:
+        """Read candidates and digest together under the guard (one consistent view)."""
+        with self._guard:
+            return _ReviewerPolicy(
+                models=self._reviewer_models,
+                error=str(self._reviewer_model_error or ""),
+                digest=self._policy_digest,
+            )
+
+    def refresh_reviewer_models(self, raw: str) -> dict[str, Any]:
+        """Runtime refresh of the operator's reviewer candidates (``refresh_config``).
+
+        The effective policy and the error diagnostic are handled apart on purpose:
+
+        * a valid list becomes the policy for NEW reviews at once and the
+          diagnostic is cleared;
+        * an empty list is an explicit operator revocation: the chain is emptied,
+          new reviews are refused and nothing is used as a fallback;
+        * an invalid list is NOT applied: the last effective chain keeps serving
+          new reviews and the error stays a diagnostic only.
+
+        Refreshing by itself never touches an already accepted review: each record
+        carries the candidates and the digest it was accepted under. Only a real
+        change of the effective policy (revocation or drift) fails them closed by
+        the existing rule (``review_policy_changed`` at mint/consume, no re-spawn).
+        The return value is the resulting policy snapshot, for honest receipts.
+        """
+        models, error = _configured_reviewer_models(raw)
+        revoked = not models and error == "reviewer_models_unconfigured"
+        with self._guard:
+            previous_models = self._reviewer_models
+            previous_digest = self._policy_digest
+            if models or revoked:
+                self._reviewer_models, self._reviewer_model_error = models, error
+            else:
+                # Invalid refresh: the effective chain is retained untouched.
+                self._reviewer_model_error = error
+            self._policy_digest = self._compute_policy_digest()
+            result: dict[str, Any] = {
+                "applied": bool(models) or revoked,
+                "changed": self._policy_digest != previous_digest,
+                "revoked": revoked,
+                "models": list(self._reviewer_models),
+                "previous_models": list(previous_models),
+                "reviewer_model_error": str(self._reviewer_model_error or ""),
+                "policy_digest": self._policy_digest,
+            }
+            result["note"] = self._refresh_note(result)
+        # Observability only: a revocation or drift invalidates in-flight grants and
+        # must stay explainable afterwards. A failed write never changes the policy.
+        caller = str(current_session_id.get() or "").strip()
+        if caller:
+            self._audit(
+                caller, "review_admission_reviewer_policy_refreshed",
+                {key: value for key, value in result.items() if key != "note"},
+            )
+        return result
+
+    @staticmethod
+    def _refresh_note(result: dict[str, Any]) -> str:
+        """Receipt text of refresh_reviewer_models: applied / unchanged / invalid / revoked."""
+        if result["revoked"]:
+            return (
+                "审查员候选已被运营者撤销（未配置）：新审查将被拒绝，不回退任何模型；"
+                "在途审查资格按既有规则不可签发/消费（需重新 start）。"
+            )
+        current = "、".join(result["models"])
+        if result["applied"]:
+            if result["changed"]:
+                return (
+                    "审查员候选已热更新："
+                    f"{'、'.join(result['previous_models']) or '（无）'} → {current}；"
+                    "仅新审查使用新候选，策略已漂移，在途审查资格按既有规则"
+                    "不可签发/消费（需重新 start）。"
+                )
+            return f"审查员候选已核验未变（{current}）。"
+        return (
+            f"审查员候选配置无效，未应用（{result['reviewer_model_error']}）；"
+            + (
+                f"保留上次有效候选 {current} 继续服务新审查。"
+                if current
+                else "此前无有效候选，新审查仍被拒绝。"
+            )
+        )
 
     def attach_runner(self, runner: Any) -> None:
         self._runner = runner
@@ -3977,9 +4237,9 @@ class HostReviewAdmission:
             try:
                 _git(repo, "cat-file", "-e", push_base + "^{commit}")
             except ValueError as exc:
-                # Remote moved ahead of this clone; the diff base must exist
-                # locally or the reviewed delta cannot be computed at all.
+                # Remote ahead of this clone: diff base must exist locally.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
+            _assert_first_push_push_base(repo, push_base, first_push)
             push_head = _push_src_commit(repo, refspec)
             push_batch: dict[str, Any] | None = None
             batch_header: list[tuple[str, str]] = []
@@ -4078,8 +4338,11 @@ class HostReviewAdmission:
         scope: str = "patch", paths: Sequence[str] | None = None,
         previous_child_id: str = "",
     ) -> dict[str, Any]:
-        if not parent or self._runner is None or self._reviewer_model_error:
-            return {"accepted": False, "reason": self._reviewer_model_error or "review_host_unavailable"}
+        # 每次接纳只取一次策略快照：下面的输入预算、spawn、冻结记录与回执全部用这
+        # 一份候选链，不再回头读实时链——并发 refresh 不得让同一次 start 混入两个身份。
+        policy = self._reviewer_policy()
+        if not parent or self._runner is None or not policy.models:
+            return {"accepted": False, "reason": policy.error or "review_host_unavailable"}
         scope_receipt, scope_paths, denial, knowledge = _start_preconditions(kind, scope, paths, workdir, command)
         if denial is not None:
             return denial
@@ -4105,37 +4368,16 @@ class HostReviewAdmission:
         if isinstance(prepared, dict):
             return prepared
         task, previous_row, coverage, out_scope, tier_counts = prepared
-        task_chars, model_budget, effective_cap = self._input_budget(task)
+        task_chars, model_budget, effective_cap = self._input_budget(task, policy.models)
         if task_chars > effective_cap:
             return self._refuse_too_large(
                 parent, kind, task_chars, effective_cap, model_budget, sections
             )
-        batch_meta = push_extra.get("push_batch") if kind == "git_push" else None
-        if batch_meta:
-            # EVO-20261115-34ae7c99(A)：分批资格判据——只有**全量增量本身确超
-            # duration 预算**才允许分批（不得借分批回避整量审查）。估算口径与
-            # _duration_gate 对齐：实测 wrapper + 全量材料字符数 + 安全余量。
-            wrapper = max(0, task_chars - len(material))
-            est_full = (
-                int(batch_meta["full_material_chars"])
-                + wrapper + _PUSH_BATCH_WRAPPER_ALLOWANCE_CHARS
-            ) / _REVIEWER_EST_CHARS_PER_SECOND
-            if est_full <= _REVIEWER_MAX_ESTIMATED_S:
-                self._audit(
-                    parent, "review_admission_push_batch_refused",
-                    {"kind": kind, "reason": "push_batch_full_review_required",
-                     "est_full_seconds": round(est_full, 1),
-                     "budget_seconds": _REVIEWER_MAX_ESTIMATED_S},
-                )
-                return {
-                    "accepted": False,
-                    "reason": (
-                        "push_batch_full_review_required: 全量增量估算 "
-                        f"{est_full:.0f}s ≤ 预算 {_REVIEWER_MAX_ESTIMATED_S:.0f}s，"
-                        "整量受审可行，不得分批（移除 paths 整量 start）"
-                    ),
-                    "kind": kind,
-                }
+        batch_refusal = self._push_batch_full_review_refusal(
+            parent, kind, push_extra, task_chars, len(material)
+        )
+        if batch_refusal is not None:
+            return batch_refusal
         estimated, review_deadline, refusal = self._duration_gate(
             parent, kind, task_chars, sections
         )
@@ -4145,10 +4387,14 @@ class HostReviewAdmission:
             self._reclaim_records(parent, kind)
             if self._active_records() >= self._max_records:
                 return {"accepted": False, "reason": "review_host_capacity"}
+            # 准备期间（材料冻结与预算定价都在锁外）策略被刷新/撤销 ⇒ 不再按已不是
+            # 当前的候选链 spawn（材料是按旧候选定价的）：如实拒绝，由调用方重新 start。
+            if policy.digest != self._policy_digest or not policy.models:
+                return self._policy_raced_refusal(parent, kind)
             # 已知代价（P2-5，接受）：首投 spawn 在锁内，有界重试最多 sleep
             # ~90s，期间其它调用方被串行化；换来"记录与子代理一一对应"的简单
             # 不变量。respawn 已改成锁内预占 + 锁外 spawn。
-            spawned = self._spawn_reviewer(parent, task, kind)
+            spawned = self._spawn_reviewer(parent, task, kind, policy.models)
             if not spawned.get("accepted"):
                 return spawned
             child = str(spawned["child_id"])
@@ -4159,6 +4405,7 @@ class HostReviewAdmission:
                 scope_paths=scope_paths, out_scope=out_scope, tier_counts=tier_counts,
                 review_deadline=review_deadline, previous_row=previous_row,
                 push_extra=push_extra, task_chars=task_chars, workdir=workdir,
+                reviewer_models=policy.models, policy_digest=policy.digest,
             ), reviewer_model=str(spawned["model"]))
             self._remember_material(child, task, material)
         return self._attach_prior_attempts(
@@ -4167,10 +4414,63 @@ class HostReviewAdmission:
                 scope_receipt=scope_receipt, task_chars=task_chars,
                 review_deadline=review_deadline, estimated=estimated,
                 coverage=coverage, push_remote_commit=push_remote_commit,
-                push_extra=push_extra, reviewer_model=str(spawned["model"]), warnings=knowledge,
+                push_extra=push_extra, reviewer_model=str(spawned["model"]),
+                reviewer_models=policy.models, warnings=knowledge,
             ),
             parent, kind, sha, target,
         )
+
+    def _push_batch_full_review_refusal(
+        self, parent: str, kind: str, push_extra: dict[str, Any],
+        task_chars: int, material_chars: int,
+    ) -> dict[str, Any] | None:
+        """分批资格判据（EVO-20261115-34ae7c99(A)；2026-11-26 自 ``start`` 抽出，行为不变）。
+
+        只有**全量增量本身确超 duration 预算**才允许分批（不得借分批回避整量审查）。
+        估算口径与 _duration_gate 对齐：实测 wrapper + 全量材料字符数 + 安全余量。
+        返回 None = 非分批请求或允许分批；否则为拒绝回执。
+        """
+        batch_meta = push_extra.get("push_batch") if kind == "git_push" else None
+        if not batch_meta:
+            return None
+        wrapper = max(0, task_chars - material_chars)
+        est_full = (
+            int(batch_meta["full_material_chars"])
+            + wrapper + _PUSH_BATCH_WRAPPER_ALLOWANCE_CHARS
+        ) / _REVIEWER_EST_CHARS_PER_SECOND
+        if est_full > _REVIEWER_MAX_ESTIMATED_S:
+            return None
+        self._audit(
+            parent, "review_admission_push_batch_refused",
+            {"kind": kind, "reason": "push_batch_full_review_required",
+             "est_full_seconds": round(est_full, 1),
+             "budget_seconds": _REVIEWER_MAX_ESTIMATED_S},
+        )
+        return {
+            "accepted": False,
+            "reason": (
+                "push_batch_full_review_required: 全量增量估算 "
+                f"{est_full:.0f}s ≤ 预算 {_REVIEWER_MAX_ESTIMATED_S:.0f}s，"
+                "整量受审可行，不得分批（移除 paths 整量 start）"
+            ),
+            "kind": kind,
+        }
+
+    def _policy_raced_refusal(self, parent: str, kind: str) -> dict[str, Any]:
+        """start 准备期间策略被刷新/撤销的拒绝回执：不 spawn、不登记记录。"""
+        self._audit_reviewer_unavailable(
+            parent, kind, "review_policy_changed",
+            "reviewer policy refreshed while this review was being prepared",
+        )
+        return {
+            "accepted": False,
+            "reason": "review_policy_changed",
+            "detail": (
+                "reviewer policy changed while this review was being prepared; "
+                "start again under the current policy"
+            ),
+            "kind": kind,
+        }
 
     def _start_target_failure(
         self, parent: str, kind: str, workdir: str, command: str, exc: Exception,
@@ -4188,7 +4488,8 @@ class HostReviewAdmission:
         scope_receipt: dict[str, Any], scope_paths: tuple[str, ...], out_scope: str,
         tier_counts: tuple[int, int] | None, review_deadline: float,
         previous_row: _Frozen | None, push_extra: dict[str, Any], task_chars: int,
-        workdir: str = "",
+        workdir: str = "", reviewer_models: Sequence[str] = (),
+        policy_digest: str = "",
     ) -> _Frozen:
         """构造 admission 冻结记录（2026-11-03 自 ``start`` 抽出，行为不变）。
 
@@ -4205,8 +4506,9 @@ class HostReviewAdmission:
             bound_unreviewed_untracked=untracked,
             deadline_at=now + review_deadline,
             estimated_s=_review_estimate_seconds(task_chars),
-            reviewer_model=self._reviewer_models[0],
-            policy_digest=self._policy_digest,
+            reviewer_model=tuple(reviewer_models)[0],
+            policy_digest=policy_digest,
+            reviewer_models=tuple(reviewer_models),
             previous_sha=previous_row.sha if previous_row is not None else "",
             previous_child_id=previous_row.child_id if previous_row is not None else "",
             content_fingerprint=push_extra.get("content_fingerprint", ""),
@@ -4235,6 +4537,7 @@ class HostReviewAdmission:
         estimated: float, coverage: dict[str, Any] | None,
         push_remote_commit: str, push_extra: dict[str, Any], reviewer_model: str,
         warnings: list[dict[str, Any]] | None = None,
+        reviewer_models: Sequence[str] = (),
     ) -> dict[str, Any]:
         """签发回执组装（2026-11-02 自 ``start`` 抽出，行为不变，只为棘轮归零）。"""
         receipt: dict[str, Any] = {
@@ -4246,7 +4549,8 @@ class HostReviewAdmission:
                 "deadline_seconds": round(review_deadline, 1),
                 "estimated_seconds": round(estimated, 1),
                 "over_deadline_estimate": estimated > review_deadline,
-                "models": list(self._reviewer_models),
+                # 被接纳时的候选链快照（与冻结记录同源），不是组装回执时的实时链。
+                "models": list(reviewer_models),
                 "async_retry_max": _REVIEWER_ASYNC_RETRY_MAX,
             },
         }
@@ -4535,6 +4839,35 @@ class HostReviewAdmission:
                     continue
         return False
 
+    def _reserve_respawn(
+        self, parent: str, child_id: str,
+    ) -> tuple[_Frozen, tuple[str, ...], int] | None:
+        """E4：锁内预占一次重试名额，并取回该审查被接纳时冻结的候选链。
+
+        只在冻结链上推进：冻结策略已不是当前策略（operator 撤销，或有效策略漂移）
+        时，该记录此后不可能再 mint，重试只会白烧一次审查——不预占、不 spawn
+        （沿用 review_policy_changed 的 fail-closed 语义）。没有冻结链的记录
+        （reviewer_models 为空）同样按不可重试处理。
+        """
+        with self._guard:
+            row = self._records.get(child_id)
+            if (
+                row is None or not row.task
+                or row.attempts >= _REVIEWER_ASYNC_RETRY_MAX
+            ):
+                return None
+            models = tuple(row.reviewer_models)
+            if not models or not row.policy_digest or row.policy_digest != self._policy_digest:
+                self._audit_reviewer_unavailable(
+                    parent, row.kind, "review_policy_changed",
+                    "frozen reviewer policy is no longer current; no re-spawn",
+                    child_id=child_id,
+                )
+                return None
+            reserved = row.attempts + 1
+            self._records[child_id] = replace(row, attempts=reserved)
+            return row, models, reserved
+
     def _respawn_reviewer(
         self, parent: str, child_id: str, label: str, remaining: float
     ) -> dict[str, Any] | None:
@@ -4552,44 +4885,39 @@ class HostReviewAdmission:
         # 检查在锁内、spawn 在锁外、计数在第二次加锁时 +1：两个并发 poll()
         # 都会通过 attempts 检查，各起一个 reviewer，先起的那个成了孤儿还
         # 继续占 runner 名额。预占后只有一路能过（RLock，与 start() 同款）。
-        with self._guard:
-            row = self._records.get(child_id)
-            if (
-                row is None or not row.task
-                or row.attempts >= _REVIEWER_ASYNC_RETRY_MAX
-            ):
-                return None
-            reserved = row.attempts + 1
-            self._records[child_id] = replace(row, attempts=reserved)
+        reserved_row = self._reserve_respawn(parent, child_id)
+        if reserved_row is None:
+            return None
+        row, models, reserved = reserved_row
         # Continue after the model actually selected by the initial spawn,
         # not after the count of asynchronous retries (the two differ on 429).
         if label == "reviewer_model_entitlement":
             try:
-                current_index = self._reviewer_models.index(row.reviewer_model)
+                current_index = models.index(row.reviewer_model)
             except ValueError:
                 return None  # unknown model identity cannot authorize a new child
             # P1-3：只推进到下一个**不同的** operator-approved 模型；列表已到尾就
             # fail closed（不再 clamp 回末位重试同一模型），并留下可核验的审计原因。
             next_index = current_index + 1
-            if next_index >= len(self._reviewer_models):
+            if next_index >= len(models):
                 self._audit_reviewer_unavailable(
                     parent, row.kind, "reviewer_models_exhausted",
                     f"current={row.reviewer_model}: no further operator-approved model",
                     child_id=child_id,
                 )
                 return None
-            model = self._reviewer_models[next_index]
+            model = models[next_index]
         else:
             # 429/超时等瞬时故障：列表里还有下一个就换下一个；已到链尾则同一
             # model 有界重试（attempt 预占已生效，不会无限重试）。
             if not str(row.reviewer_model or "").strip():
                 return None
             try:
-                current_index = self._reviewer_models.index(row.reviewer_model)
+                current_index = models.index(row.reviewer_model)
             except ValueError:
                 return None
-            if current_index + 1 < len(self._reviewer_models):
-                model = self._reviewer_models[current_index + 1]
+            if current_index + 1 < len(models):
+                model = models[current_index + 1]
             else:
                 model = row.reviewer_model
         runner = self._runner
@@ -4690,6 +5018,7 @@ class HostReviewAdmission:
                 cached_pass=True, reused_from=cached, reviewer_model=reviewed_model,
                 reviewer_observed_model=observed_model,
                 policy_digest=self._policy_digest,
+                reviewer_models=source.reviewer_models,
                 full_test_base=full_test_anchor[0] if kind == "full_test" else "",
                 full_test_first_push_ref=full_test_anchor[1] if kind == "full_test" else "",
             )
@@ -4740,7 +5069,9 @@ class HostReviewAdmission:
         }
         return previous_row, coverage, None
 
-    def _input_budget(self, task: str) -> tuple[int, int | None, int]:
+    def _input_budget(
+        self, task: str, reviewer_models: Sequence[str] | None = None,
+    ) -> tuple[int, int | None, int]:
         """Charge the spawn-time input budget (EVO-20261021-5bf26586).
 
         A frozen task that cannot fit the reviewer model's live registry budget
@@ -4761,7 +5092,9 @@ class HostReviewAdmission:
             task_ratio = _wire_chars_per_token(
                 [{"content": task}], _REVIEWER_REGISTRY_CHARS_PER_TOKEN
             )
-            for model in self._reviewer_models:
+            for model in (
+                self._reviewer_models if reviewer_models is None else tuple(reviewer_models)
+            ):
                 try:
                     registry_budget = probe(model)
                 except Exception:  # noqa: BLE001 — failed probe never widens a known cap
@@ -4866,9 +5199,17 @@ class HostReviewAdmission:
             receipt["split_plan"] = plan
         return estimated, deadline, receipt
 
-    def _spawn_reviewer(self, parent: str, task: str, kind: str) -> dict[str, Any]:
-        """Spawn with the historical bounded retry, using the model preference list."""
+    def _spawn_reviewer(
+        self, parent: str, task: str, kind: str,
+        reviewer_models: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """Spawn with the historical bounded retry, using the model preference list.
+
+        ``reviewer_models`` is the chain the admission was accepted under (start
+        passes its frozen snapshot); ``None`` keeps the live chain for direct callers.
+        """
         runner = self._runner
+        models = self._reviewer_models if reviewer_models is None else tuple(reviewer_models)
         if runner is None:  # 未挂 runner：与 start() 的 self._runner is None 同口径
             return {
                 "accepted": False,
@@ -4887,7 +5228,7 @@ class HostReviewAdmission:
                 # P1-3：entitlement（1311/无权限）把 operator 列表走完就 fail
                 # closed，不得重试同一 model；429/超时属瞬时抖动，允许在同一
                 # model 上有界重试（总次数仍受 _REVIEWER_RETRY_MAX 约束）。
-                if model_index >= len(self._reviewer_models):
+                if model_index >= len(models):
                     self._audit_reviewer_unavailable(
                         parent, kind, "reviewer_models_exhausted", last_failure,
                     )
@@ -4899,7 +5240,7 @@ class HostReviewAdmission:
                         ),
                         "reviewer_failure": "reviewer_models_exhausted",
                     }
-                model = self._reviewer_models[model_index]
+                model = models[model_index]
                 try:
                     started = runner.start(
                         task, inherit=False, depth=0, max_rounds=1,
@@ -4947,7 +5288,7 @@ class HostReviewAdmission:
                 time.sleep(delay)
                 slept += delay
                 attempt += 1
-                if model_index + 1 < len(self._reviewer_models):
+                if model_index + 1 < len(models):
                     # 列表里还有下一个 operator-approved 模型：换一个试（429 也
                     # 一样——被限流的模型换下一个通常比原地重试恢复得更快）。
                     model_index += 1
@@ -5424,6 +5765,7 @@ class HostReviewAdmission:
                     policy_digest=src.policy_digest,
                     reviewer_model=src.reviewer_model,
                     reviewer_observed_model=src.reviewer_observed_model,
+                    reviewer_models=src.reviewer_models,
                 )
                 self._records[child] = minted
                 self._audit(parent, "review_admission_derived_full_test", {

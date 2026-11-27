@@ -200,11 +200,134 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("env -u FOO cat <<'EOF'\ngit push origin main\nEOF", None),
     # P2-1：路径形态 argv0（basename 白名单命中）不算裸名白名单——不豁免。
     ("/tmp/cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    # ── EVO-20261125-86a9864e（人工批准 2026-11-25）：豁免 here-doc 数据体不进反引号网 ──
+    # 带引号终止符的体在 shell 中不做展开，Markdown 代码span（一对反引号）不是
+    # 命令替换——修复前反引号网扫原始全文，写文档命令被按受保护动作误拒
+    # （2026-11-25 17:11 实测）。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n## 标题\n\n- `nohup git push origin main 2>&1` 也被误报\nEOF", None),
+    ("tee /tmp/doc.md <<\"EOF\"\nit's `git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n`pytest -q`\nEOF", None),
+    # 同批闭合的漏放：体内撇号使原始全文扫描的引号状态失步，其后的真实反引号
+    # 替换曾被当作单引号内文本而漏判。
+    ("cat > /tmp/doc.md <<'EOF'\nit's fine\nEOF\necho `git push origin main`", "git_push"),
+    # 应拦仍拦：无引号终止符的体会做展开；非数据接收者；豁免体之外的真实动作。
+    ("cat > /tmp/doc.md <<EOF\n示例：`git push origin main`\nEOF", "git_push"),
+    ("bash <<'EOF'\n示例：`git push origin main`\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`\nEOF\ngit push origin main", "git_push"),
+    # opener 落在跨行未闭合引号串内：`<<` 不是 here-doc 引导，体内反引号在 shell
+    # 中真实执行——不得脱敏（前一条骨架词法失败，走原始全文兜底）。
+    ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF", "git_push"),
+    ("echo \"start\ncat > /tmp/doc.md <<'EOF'\n`git push origin main`\nEOF\nend\" ; echo \"\nx\"", "git_push"),
+    # 终止符未配对：体保守保留在反引号网扫描范围内。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：`git push origin main`", "git_push"),
+    # ── EVO-20261125-66cb3b21（人工批准 2026-11-25）：opener 行引导之后的文本进骨架 ──
+    # heredoc 引导之后、同一行上的文本在 shell 中会被正常解析执行；修前生成骨架时
+    # 被整段丢弃，段网看不到同一行上其后的真实动作（漏放）。
+    ("cat > /tmp/doc.md <<'EOF'; git push origin main\n示例\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF' && git push origin main\n示例\nEOF", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF'; pytest -q\n示例\nEOF", "full_test"),
+    ("cat > /tmp/doc.md <<'EOF'; git push origin main\n示例", "git_push"),
+    ("cat > /tmp/doc.md <<'EOF' > /tmp/out; git push origin main\n示例\nEOF", "git_push"),
+    # 既有数据接收者豁免形态结果不变：后续文本只是重定向或注释。
+    ("cat > /tmp/doc.md <<'EOF' > /tmp/out\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' 2>> /tmp/err\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' # 说明：git push origin main 会被拦\n示例\nEOF", None),
+    ("tee /tmp/a.md <<'EOF' >> /tmp/b.md\n示例：git push origin main\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF'\n示例\nEOF\necho done", None),
+    # ── 接力修复（独立审查 P1，subagent_3c3885323858 / subagent_801ecd8bf25d，2026-11-26）──
+    # opener 行须整行收在 shell 顶层：`<<WORD` 之后的行尾文本留下未闭合引号时，
+    # shell 把后续各行当作该引号串的延续（命令行，不是 here-doc 体；双引号内的
+    # 命令替换真实执行——2026-11-26 bash 实测）。体既不豁免也不脱敏。
+    ('cat > /tmp/doc.md <<\'EOF\' > "note\n`git push origin main` x"\nEOF', "git_push"),
+    ('cat > /tmp/doc.md <<\'EOF\' > "note\n`git push origin main` x"\nEOF\necho "a" "b"', "git_push"),
+    ("cat <<'EOF' 'arg\n`git push origin main`\nEOF\necho 'a' 'b'", "git_push"),
+    # 行尾引号已闭合 / 行尾注释里的撇号 / 无引号重定向：仍是合法数据体，照常豁免。
+    ('cat > /tmp/doc.md <<\'EOF\' > "a b"\n`git push origin main`\nEOF', None),
+    ("cat > /tmp/doc.md <<'EOF' # it's fine\n`git push origin main`\nEOF", None),
+    ("cat > /tmp/doc.md <<'EOF' 2>/dev/null\n`git push origin main`\nEOF", None),
+    # ── 66cb3b21 × 86a9864e 合并面（独立审查 subagent_801ecd8bf25d 的原样例）──
+    # 行尾含 `;` 即非豁免（修前修后都拦）；行尾只留下未闭合引号的形态见上一组，
+    # 两者都不依赖骨架词法失败的兜底。
+    ('cat > /tmp/doc.md <<\'EOF\'; echo "note\n`git push origin main`"\nEOF', "git_push"),
+    # 行尾文本进骨架后，合法文档写法（行尾重定向 / 注释）仍放行。
+    ("cat > /tmp/doc.md <<'EOF' > out.md\n示例：`git push origin main`\nEOF", None),
+    # ── 接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 不是 here-doc 引导 ──
+    # shell 里 `cat <<<'EOF'` 没有正文，其后直到 `EOF` 行都是普通命令行（bash 实测执行）。
+    # 旧引导正则从第二个 `<` 起命中，把这些行当作已配对豁免体：反引号形态在
+    # EVO-20261125-86a9864e 之后整段移出反引号网而漏放（改动前由原始全文网兜住）；
+    # 裸动词形态则是 main 上既有的内容网旧洞，同处一并闭合。
+    ("cat <<<'EOF'\n`git push origin main`\nEOF", "git_push"),
+    ("cat <<< 'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("cat <<<\"EOF\"\n`git push origin main`\nEOF", "git_push"),
+    ("cat >f <<<'EOF'\ngit push origin main\n", "git_push"),
+    ("cat <<<'EOF'\n`git push origin main`", "git_push"),
+    ("cat <<<'EOF'; git push origin main\nEOF", "git_push"),
+    # 真 here-doc 不受影响：here-string 之后的 `<<'X'` 仍是引导，带引号终止符的体照常豁免。
+    ("cat <<< 'EOF' <<'X'\n`git push origin main` 只是文档\nX", None),
+    ("cat <<'X'\n`git push origin main` 只是文档\nX", None),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
 ) -> None:
     assert classify_host_shell(command) == expected
+
+
+def test_heredoc_opener_line_with_unclosed_tail_quote_is_not_desensitized(tmp_path: Path) -> None:
+    """接力修复（独立审查 P1，2026-11-26）：opener 行尾留下未闭合引号时体不得脱敏."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    cmd = 'cat > /tmp/pr.md <<\'PREOF\' > "note\n`git push origin main` x"\nPREOF'
+    verdict = host.check_shell("author-1", cmd, str(repo))
+    assert verdict.blocked is True
+    # 对照：行尾引号闭合的同一写法仍是合法数据体。
+    ok = 'cat > /tmp/pr.md <<\'PREOF\' > "a b"\n`git push origin main` 只是文档\nPREOF'
+    assert host.check_shell("author-1", ok, str(repo)).allowed is True
+
+
+def test_opener_tail_text_stays_in_skeleton_and_unclosed_tail_quote_blocks(tmp_path: Path) -> None:
+    """66cb3b21 × 86a9864e 合并面：行尾文本进骨架后，行尾未闭合引号的体仍被拦.
+
+    行尾文本留在骨架里，会使骨架在该行留下未闭合引号；「opener 行整行收在顶层」
+    条件先于词法判定把体留在内容网与反引号网，不靠 ValueError 兜底碰巧拦住。
+    """
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    # 其后一行把骨架引号配平：骨架可以词法分析，必须由顶层条件本身拦下。
+    cmd = 'cat > /tmp/pr.md <<\'PREOF\' > "note\n`git push origin main` x"\nPREOF\necho "a" "b"'
+    assert host.check_shell("author-1", cmd, str(repo)).blocked is True
+    # 行尾的真实动作对段网可见（66cb3b21 的目标场景）。
+    tail_action = "cat > /tmp/pr.md <<'PREOF'; git push origin main\n正文\nPREOF"
+    assert host.check_shell("author-1", tail_action, str(repo)).blocked is True
+
+
+def test_here_string_lines_are_not_exempt_heredoc_body(tmp_path: Path) -> None:
+    """接力修复 2（合并审查 REVISE 后差分实测，2026-11-26）：here-string 之后的行不是 here-doc 体."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    # 应拦：`cat <<<'PREOF'` 没有正文，反引号命令替换与裸 push 都是其后的真实命令。
+    for blocked_cmd in (
+        "cat <<<'PREOF'\n`git push origin main`\nPREOF",
+        "cat <<< 'PREOF'\ngit push origin main\nPREOF",
+        "cat <<<'PREOF'\ngit push origin main\n",
+    ):
+        verdict = host.check_shell("author-1", blocked_cmd, str(repo))
+        assert verdict.blocked is True, blocked_cmd
+    # 应放：真 here-doc 的带引号终止符体仍是数据体（含 Markdown 代码span）。
+    ok = "cat <<< 'PREOF' <<'X'\n`git push origin main` 只是文档\nX"
+    assert host.check_shell("author-1", ok, str(repo)).allowed is True
+
+
+def test_exempt_heredoc_markdown_backtick_span_not_admitted_as_push(tmp_path: Path) -> None:
+    """EVO-20261125-86a9864e：写文档命令的体含 Markdown 代码span，不得按受保护动作拒绝."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    cmd = "cat > /tmp/pr.md <<'PREOF'\n## 说明\n\n- `git push origin main` 仍会被拦\nPREOF"
+    verdict = host.check_shell("author-1", cmd, str(repo))
+    assert verdict.allowed is True
+    # 应拦仍拦：同一入口下，真实 push 仍须有效审查资格。
+    denial = host.check_shell("author-1", "git push origin main", str(repo))
+    assert denial.blocked is True
 
 
 def test_no_durable_log_or_model_text_can_mint_live_child_attestation(tmp_path: Path) -> None:
@@ -4420,3 +4543,86 @@ def test_q09_wrong_fingerprint_still_rejected() -> None:
     sha = "d" * 64
     wrong = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nFINGERPRINT: {'e' * 16}\n"
     assert rha._qualifying_pass_p2(wrong, sha) is None
+
+
+# ── EVO-20261127-e770b7cb: first-push 锚落后远端 main → 拒绝并提示先变基 ──
+
+
+def _branch_behind_main_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """feature 分支停在旧基、main 前进一提交：返回 (repo, main_tip, old_base)。"""
+    repo = _repo(tmp_path)
+    old = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
+    (repo / "example.py").write_text("x = 3\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "main advanced"], check=True)
+    tip = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "main"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "feature"], check=True)
+    return repo, tip, old
+
+
+def test_first_push_anchor_behind_main_refused_with_rebase_hint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """first-push 锚=远端默认分支且分支落后它 → 显式拒绝并提示先变基。
+
+    生产实测（2026-11-27，dd37be50 首轮代码闸）：以落后锚冻结的 diff 把 main
+    新提交渲染成反向删除，审查员对分支从未触碰的代码给了假 P1 → REVISE。
+    该拒绝是结构性的（变基才可解），不得被包装成"稍后重试"的暂时性失败。"""
+    repo, tip, _old = _branch_behind_main_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (tip, True))
+    with pytest.raises(ValueError) as ei:
+        rha._full_test_review_base(str(repo))
+    assert "review_base_behind_main_rebase_first" in str(ei.value)
+    assert "rebase" in str(ei.value)
+
+
+def test_first_push_anchor_contained_by_head_allowed(tmp_path: Path, monkeypatch) -> None:
+    """分支包含 first-push 锚（基于最新 main）→ 正常放行并返回 dst_ref。"""
+    repo, tip, _old = _branch_behind_main_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "fresh", "main"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (tip, True))
+    base, ref = rha._full_test_review_base(str(repo))
+    assert base == tip
+    assert ref == "refs/heads/fresh"
+
+
+def test_first_push_anchor_history_unrelated_refused(tmp_path: Path, monkeypatch) -> None:
+    """HEAD 与锚无共同祖先（orphan 历史/浅克隆）→ fail-closed 拒绝。"""
+    repo, tip, _old = _branch_behind_main_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--orphan", "loner"], check=True)
+    (repo / "loner.txt").write_text("unrelated\n")
+    subprocess.run(["git", "-C", str(repo), "add", "loner.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "orphan root"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (tip, True))
+    with pytest.raises(ValueError) as ei:
+        rha._full_test_review_base(str(repo))
+    assert "review_anchor_history_unrelated_fail_closed" in str(ei.value)
+
+
+def test_assert_anchor_contained_by_head_unit(tmp_path: Path) -> None:
+    """_assert_anchor_contained_by_head 单元级正反例。"""
+    repo, tip, old = _branch_behind_main_repo(tmp_path)
+    with pytest.raises(ValueError) as ei:
+        rha._assert_anchor_contained_by_head(repo, tip)  # HEAD=feature（旧基），锚=tip
+    assert "review_base_behind_main_rebase_first" in str(ei.value)
+    rha._assert_anchor_contained_by_head(repo, old)  # old 是 HEAD 祖先 → 放行

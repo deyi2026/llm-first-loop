@@ -14,10 +14,24 @@
 
 1. 确认当前 GitHub 受保护 `main` 的精确 SHA、required checks、独立 Reviewer/R9 证据、候选与安装脚本 SHA256；不接受本地未合并候选。
 2. 先只读核验 `/`、`/Library` 到新专用根的每一级目录均 root-owned、非符号链接；除 macOS 精确 `/Library` 的 root:admin(GID80) 0775（无 other-write）特例外，全部须 `mode & 0022 == 0`。其他组写/其他写、符号链接或身份异常均 **HOLD**，不得修改 `/Library` 或 `/Library/Application Support` 的全局权限。再由系统管理员创建专用根、`bin`、`runtime/site` 及 `task-authority`，逐级设为 root-owned、非组/其他可写，复制**已核验受保护 main** 中的脚本为 root-owned 0555，校验安装 SHA256 一致；受信 Crypto site 的内容与来源也须核验并冻结。不得运行未经核验的 shell 安装脚本。
+   - 在安装新版受保护脚本后、首次 `issue-lane` 前，以本地管理员运行一次固定路径初始化（不读取或生成密钥）：
+
+     ```bash
+     sudo "/Library/Application Support/LFL-DualAgent/python/bin/python3.13" \
+       -I -S /Library/LFL-TaskHostIssuer/bin/task_lease_issuer.py \
+       --mode init-lane-gitconfig
+     ```
+
+     仅允许创建 `task-authority/gitconfig-safe-directories`（UID462 的主组、0644）；`INITIALIZED` 或 `ALREADY_INITIALIZED` 表示成功。已有文件必须是单链接、非符号链接、精确 owner/group/mode，内容及 inode 不改；不可信文件返回 HOLD，不自动修复或覆盖。再用 `sudo -u _lfl_dual_witness /bin/test -w /Library/LFL-TaskHostIssuer/task-authority/gitconfig-safe-directories` 验证实际签发 UID 的写权限。保留原签发器、密钥、信任根及所有收据；不放宽父目录权限。仅从已通过门禁的受保护 main 安装并运行，不在开发工作树执行 root 初始化。
+
 3. 以 UID462 在隔离 Python 下运行 `--mode keygen`（create-only）。生成的独立私钥不离开 `private/`；管理员从 `task-public.pending.pem` 复制公钥到 root-owned `public_key.pem`，写入并校验 root-owned `trust.json`。若已有密钥，拒绝覆盖。
 4. 以普通 LFL UID 验证私钥/审批目录不可读写、`trust.json`/公钥/状态不可写、收据可读；无特权直接运行签发器必须 `HOLD`。完成真实伪造签名、篡改、旧 epoch、已撤销、跨 Owner/Goal/Task/Lane、过期、路径越界和 Mac Seatbelt 拒写负测。
 5. 只在 Owner 明确批准的 Task/roots/verbs/TTL 内签发一次任务 Lease。先验证 LFL Goal/Task/Lane 的真实状态、owner session、HEAD/CAS、父 scope、项目路径与其他 Lane 排他，再由管理员将审核过的请求放入 **UID462 0600** `private/approvals/<approval_id>.json`。此文件不能由 Agent 或 LFL Web 写入；每个 approval_id 只能使用一次。
 6. 以 OS 管理员授权切换 UID462，执行已安装脚本 `--mode issue --approval-id <approval_id>`。签发器还会生成 issuer-owned session binding；**binding JSON 本身未签名**，其可信性依赖 UID462 文件所有权、权限和无符号链接检查，真正的 Lease/State 收据才带 Ed25519 签名。LFL 仅在 Run lease 获得后读取当前 session 的**唯一有效**受信绑定，并核对 workspace=Lane worktree、实际 Git HEAD/CAS 后激活 Task Context，Run 退出即清除。多个活跃绑定或不可信绑定一律 HOLD。只有签名租约、状态和审计均持久可见，且 LFL Runtime 在每次物理副作用前复验 Host 状态、Lane、父 scope 和 OS 权限，才允许任务执行。不得通过 Web 按钮自行铸造签名或由模型模拟 Owner 确认。
+
+### 日常开发文件操作
+
+在已签发、当前 Run 已激活的窄 Task lease 中，先用 `read_file(snapshot=true)` 读取已有文件；不存在返回 `TaskFileNotFound`，真正的 OS 权限拒绝仍是 `os_permission_required`。创建新文件复用现有受管 `execute_command` 和 Task sandbox（使用 no-clobber，例如 `set -C`，不覆盖已有文件）；不新增任意写文件或提权入口。创建后重新读取取得精确 `sha256:` 基线，再用 `edit_file(expected_snapshot_ref=...)` 修改，保留原有原子替换、WAL、版本冲突与撤销复检。测试命令和 `task_git_commit` 仍走既有受管入口。命令创建的效果以命令回执及随后文件观察核验，不冒充 FileService 编辑 WAL。Mac Seatbelt 是写隔离，不是读或网络隔离；Deepin bwrap 真机能力需另验收。
 
 ## 3. 签发与撤销合同
 

@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.git_repository_env import git_repository_env
+
 WORKTREE_PREFIX = "lfl-child-"
 META_FILENAME = ".lfl-worktree.json"
 # 默认值：孤儿 TTL 取 child 租约上限（600s）的量级放大，运行中的树不会被判孤儿。
@@ -36,8 +38,6 @@ ORPHAN_TTL_S = 24 * 3600
 MIN_FREE_BYTES = 512 * 1024 * 1024  # 512MB
 MAX_KEPT_DIRTY = 8
 _GIT_TIMEOUT_S = 30
-
-
 class WorktreeIsolationError(Exception):
     """prepare 阶段失败。reason_code 供上层原样透出，绝不降级。"""
 
@@ -125,6 +125,7 @@ def _git(cwd: str, *args: str, timeout: int = _GIT_TIMEOUT_S) -> tuple[int, str,
         proc = subprocess.run(
             ["git", *args],
             cwd=cwd,
+            env=git_repository_env(),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -313,6 +314,13 @@ def prepare_worktree(
     if rc != 0 or out != "true":
         raise WorktreeIsolationError(
             "NOT_GIT_WORKSPACE", f"parent_root 不是 git 工作树: {err or out or parent}"
+        )
+    # A directory inside another checkout is not itself the requested workspace.
+    # Git discovery otherwise registers children in the ancestor's shared metadata.
+    rc, top, err = _git(str(parent), "rev-parse", "--show-toplevel")
+    if rc != 0 or not top or Path(top).resolve() != parent:
+        raise WorktreeIsolationError(
+            "NOT_GIT_WORKSPACE", f"parent_root is not the exact Git worktree root: {err or top or parent}"
         )
 
     try:

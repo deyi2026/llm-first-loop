@@ -1,0 +1,34 @@
+{
+  "evolutions": ["EVO-20261127-9fd075f9", "EVO-20261127-e770b7cb"],
+  "goal": "GOAL-20261127-e311aaf4",
+  "lane": "lane-0d716835",
+  "branch": "fix/review-anchor-queue-precheck-20261127",
+  "head": "164516b2623e6c0e8ba8be759f6d53cb69a270f3",
+  "base_main": "6adcf90bd8cd7f67cd221dc42e76f805809c5f2f",
+  "command": "TMPDIR=/private/tmp bash scripts/ci_gate.sh",
+  "exit_code": 0,
+  "summary": "ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁 = 并行集 + serial_signal 串行补跑）；改动文件零诊断，新错误 0（ruff: new=0；pyright: new=0）",
+  "changed_files": [
+    "src/llm_loop/introspection/merge_queue.py",
+    "src/llm_loop/tools/review_host_admission.py",
+    "tests/unit/test_merge_queue.py",
+    "tests/unit/test_review_host_admission.py"
+  ],
+  "new_tests": 8,
+  "code_gate": {
+    "child_id": "subagent_41baa580bca5",
+    "qualification": "PASS",
+    "candidate_sha256": "7dff8a9147f4c9d5c1036d1bc04c5324287f9415617361d07dc5517b501d6f35"
+  },
+  "push_gate_first_round": {
+    "child_id": "subagent_46fe95a23185",
+    "qualification": "PASS_superseded_by_receipt_commit",
+    "candidate_sha256": "21b7ee970197b8cdff2ca0e444059c1bf1991b34d04485a31f441474bb705e11",
+    "note": "回执落盘改变整树摘要，push 前按 RULE-AI-28 对新产物重新发起 git_push 审查"
+  },
+  "guards_resolved": [
+    "function_size 棘轮：_target 瘦身回 170（内联守卫抽为 _assert_first_push_push_base）；run_preflight 93 行",
+    "runtime 环恒 0（R9-P2-06a）：merge_queue 不 import goal_coordination，lanes.jsonl 读取本地实现 _read_lane_statuses"
+  ],
+  "recorded_at": "2026-11-27T09:05:00+08:00"
+}
