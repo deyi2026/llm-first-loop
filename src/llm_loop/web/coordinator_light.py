@@ -53,6 +53,14 @@ class CoordinatorResumeApprovalBody(BaseModel):
     request_id: str
     require_binding: dict = {}
 
+
+class CoordinatorResumeJobBody(BaseModel):
+    """POST /resume-job 请求体（模块级）：真实 JobRegistry 权威接续."""
+
+    job_id: str
+    queue_id: str
+    expected_sha256: str  # 精确候选绑定（对照派工卡 payload_declared）
+
 _VALID_ROLES = {"orchestrator", "worker", "disabled"}
 _DEFAULT_ROLE = "disabled"
 _OP_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -241,8 +249,15 @@ def resume_on_job(
     poke: Callable[[str], object],
     require_binding: bool = False,
     current_run_generation: str | None = None,
+    require_artifact: bool = True,
 ) -> dict[str, Any]:
     """R34/R35：Job 权威回执接续——形状校验 + exit0 + 精确 SHA + 代次绑定分别核验.
+
+    - require_artifact=True（产物型 Job/CI，默认）：artifact_sha256 必须存在
+      且与 expected 一致；require_artifact=False（**进程型 Job**，来自
+      derive_job_receipt_from_registry）：进程事实无产物账，精确候选绑定由
+      expected_sha256 对照派工卡 payload_declared.candidate_sha256 在上游
+      核对，此处只核 exit0 与代次/owner 绑定（不虚产物事实）。
 
     - **authority 门槛（SA-LIVE-RECEIPT-AUTHORITY 边界①）**：只接受
       authority="job_authority" 的真实 Job 记录；队列终态投影（derive_job_receipt
@@ -295,12 +310,18 @@ def resume_on_job(
         return {"poked": False, "reason": f"job not exit0（exit={exit_code!r}）"}
 
     artifact_sha = job_record.get("artifact_sha256")
-    if not _is_sha256(artifact_sha):
-        return {"poked": False, "reason": "invalid artifact_sha256（须 64-hex）"}
-    if not _is_sha256(expected_sha256):
-        return {"poked": False, "reason": "invalid expected_sha256（须 64-hex）"}
-    if artifact_sha != expected_sha256:
-        return {"poked": False, "reason": "artifact sha mismatch"}
+    if require_artifact:
+        if not _is_sha256(artifact_sha):
+            return {"poked": False, "reason": "invalid artifact_sha256（须 64-hex）"}
+        if not _is_sha256(expected_sha256):
+            return {"poked": False, "reason": "invalid expected_sha256（须 64-hex）"}
+        if artifact_sha != expected_sha256:
+            return {"poked": False, "reason": "artifact sha mismatch"}
+    else:
+        # 进程型 Job：无产物账；expected_sha256 仍须为合法 SHA（上游对照
+        # 派工声明 candidate），不虚产物事实
+        if not _is_sha256(expected_sha256):
+            return {"poked": False, "reason": "invalid expected_sha256（须 64-hex）"}
 
     poked = bool(poke(owner))
     return {"poked": poked, "verified": True}
@@ -395,6 +416,66 @@ def derive_job_receipt(
     return {"found": False, "job_record": None}
 
 
+def derive_job_receipt_from_registry(
+    registry: Any,
+    job_id: str,
+    *,
+    owner_session: str = "",
+    expected_workspace_scope: str | None = None,
+) -> dict[str, Any]:
+    """从 JobRegistry/ExternalExecutionJournal 真实权威派生 Job 回执.
+
+    SA-LIVE-RECEIPT-AUTHORITY（主筹 2026-11-27 08:14 指正）：JobRegistry 是
+    既有真实 Job 终态权威（factory.job_terminal_predicate 同源）；本函数只做
+    只读投影——authority="job_authority"，state/exit_code 来自进程事实，
+    owner_session 经 owner-scoped snapshot 绑定（跨 owner 不可见），workspace
+    绑定同口径 realpath 归一。产物 SHA 不属于进程 Job 事实（journal 无产物
+    账）——精确候选绑定由派工卡 payload_declared 承载、接续时与 expected
+    对照（resume_on_job(require_artifact=False)）。重启后本地 handle 丢失，
+    仅 durable 孤儿可见（无 liveness/exit 事实）→ fail-closed 不派生。
+    """
+    snap = registry.snapshot(str(job_id), session_id=str(owner_session or ""))
+    if not isinstance(snap, dict) or not snap:
+        return {
+            "found": False,
+            "job_record": None,
+            "reason": "job not found in registry（owner-scoped 或重启后无可信终态事实）",
+        }
+    item_scope = str(snap.get("workspace_root") or "") or None
+    if expected_workspace_scope and item_scope:
+        try:
+            same = os.path.realpath(item_scope) == os.path.realpath(
+                expected_workspace_scope
+            )
+        except OSError:
+            same = item_scope == expected_workspace_scope
+        if not same:
+            return {
+                "found": False,
+                "job_record": None,
+                "reason": (
+                    f"workspace mismatch（job {item_scope!r} ≠ 可信 "
+                    f"{expected_workspace_scope!r}）"
+                ),
+            }
+    exit_code = snap.get("exit_code")
+    state = str(snap.get("state") or "")
+    receipt: dict[str, Any] = {
+        "authority": "job_authority",
+        "job_kind": "process",
+        "job_id": str(job_id),
+        "job_state": state,
+        "exit_code": exit_code if isinstance(exit_code, int) else None,
+        "owner_session": str(snap.get("session_id") or owner_session),
+        "workspace_root": item_scope,
+        "bound_run_generation": snap.get("origin_run_generation"),
+        "durable": bool(snap.get("durable")),
+    }
+    if state not in {"completed", "failed", "killed", "orphaned"}:
+        receipt["not_terminal"] = True
+    return {"found": True, "job_record": receipt}
+
+
 def verify_coordinator_access(settings: Any, token_header: Any) -> dict[str, Any]:
     """服务端可信身份核验（SA-LIGHT-COORDINATOR-P0-LIVE-WIRING）.
 
@@ -453,6 +534,121 @@ def _resume_binding_or_rejection(
             ),
         })
     return binding, None
+
+
+def _resume_job_from_registry(
+    request: Any,
+    body: CoordinatorResumeJobBody,
+    queue: Any,
+    poke: Callable[[str], object],
+) -> JSONResponse:
+    """resume-job 端点主体（自 build_coordinator_light_router 抽出）.
+
+    队列项权威（origin/scope 绑定+派工声明 candidate）→ JobRegistry
+    owner-scoped snapshot（authority="job_authority"）→ 未终态只回状态不
+    唤醒 → exit0+candidate 对照通过 → resume_on_job 唤醒 owner（进程型
+    require_artifact=False，无产物账不虚产物事实）。
+    """
+    engine = getattr(request.app.state, "engine", None)
+    trusted_scope = str(getattr(engine, "workspace_root", "") or "") or None
+    derived = derive_job_receipt(queue, body.queue_id, expected_workspace_scope=trusted_scope)
+    if not derived.get("found"):
+        return JSONResponse(
+            content={"ok": False, "error": "queue_item_not_found", "reason": derived.get("reason")},
+            status_code=404,
+        )
+    declared = derived["job_record"].get("payload_declared") or {}
+    owner = str(declared.get("owner_session") or derived["job_record"].get("session_id") or "")
+    candidate = str(declared.get("candidate_sha256") or "")
+    if not _is_sha256(candidate):
+        return JSONResponse(
+            content={"ok": False, "error": "派工卡无合法 candidate 绑定，不可接续（fail-closed）"},
+            status_code=409,
+        )
+    if candidate != body.expected_sha256:
+        return JSONResponse(
+            content={"ok": False, "error": "candidate mismatch（派工声明≠期望候选）"},
+            status_code=409,
+        )
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    jr = derive_job_receipt_from_registry(
+        JobRegistry.instance(),
+        body.job_id,
+        owner_session=owner,
+        expected_workspace_scope=trusted_scope,
+    )
+    if not jr.get("found"):
+        return JSONResponse(
+            content={"ok": False, "error": "job_not_found", "reason": jr.get("reason")},
+            status_code=404,
+        )
+    receipt = jr["job_record"]
+    if receipt.get("not_terminal"):
+        return JSONResponse(content={
+            "ok": True,
+            "resumed": False,
+            "reason": "job not terminal（只回状态不唤醒）",
+            "job_state": receipt.get("job_state"),
+            "queue_status": derived["job_record"].get("queue_status"),
+        })
+    # 绑定凭据：candidate 已与派工声明对照一致（409 早退兜底），填入
+    # receipt 供 require_binding 精确 SHA 核验（绑定源=派工卡声明）。
+    receipt["candidate_sha256"] = candidate
+    outcome = resume_on_job(
+        receipt,
+        expected_sha256=body.expected_sha256,
+        poke=lambda sid: poke(sid),
+        require_binding=True,
+        require_artifact=False,
+    )
+    return JSONResponse(content={"ok": bool(outcome.get("poked")), **outcome})
+
+
+def _dispatch_card_response(
+    request: Any,
+    body: CoordinatorDispatchBody,
+    queue: Any,
+    poke: Callable[[str], object],
+) -> JSONResponse:
+    """dispatch 端点主体：真实 dispatch_task_card（队列 enqueue_once 单事务）."""
+    engine = getattr(request.app.state, "engine", None)
+    settings = getattr(engine, "settings", None)
+    # 元字段权威：payload 不得覆盖 operation_id/target_session（否则
+    # 幂等键与派工声明漂移，回执对不上账）
+    result = dispatch_task_card(
+        {
+            **dict(body.payload),
+            "operation_id": body.operation_id,
+            "target_session": body.target_session,
+        },
+        inbox_dir=Path(_coordinator_data_dir(request)) / "coordinator_light",
+        poke=lambda sid: poke(sid),
+        settings={
+            "coordinator_light_role": str(getattr(settings, "coordinator_light_role", "") or ""),
+        },
+        queue=queue,
+    )
+    status_code = 409 if result.get("conflict") else 200
+    return JSONResponse(content={"ok": bool(result.get("accepted")), **result}, status_code=status_code)
+
+
+def _job_receipt_response(request: Any, queue: Any, queue_id: str) -> JSONResponse:
+    """job/{queue_id} 端点主体：队列终态投影（authority=queue_terminal）."""
+    engine = getattr(request.app.state, "engine", None)
+    trusted_scope = str(getattr(engine, "workspace_root", "") or "") or None
+    result = derive_job_receipt(queue, queue_id, expected_workspace_scope=trusted_scope)
+    if not result.get("found"):
+        return JSONResponse(
+            content={"ok": False, "error": "job_not_found", "reason": result.get("reason")},
+            status_code=404,
+        )
+    return JSONResponse(content={"ok": True, **result})
+
+
+def _coordinator_data_dir(request: Any) -> str:
+    engine = getattr(request.app.state, "engine", None)
+    return str(getattr(getattr(engine, "settings", None), "data_dir", "./data"))
 
 
 def build_coordinator_light_router(
@@ -517,26 +713,7 @@ def build_coordinator_light_router(
                 content={"ok": False, "error": "not_wired（queue/poke 依赖未注入，fail-closed）"},
                 status_code=503,
             )
-
-        engine = getattr(request.app.state, "engine", None)
-        settings = getattr(engine, "settings", None)
-        # 元字段权威：payload 不得覆盖 operation_id/target_session（否则
-        # 幂等键与派工声明漂移，回执对不上账）
-        result = dispatch_task_card(
-            {
-                **dict(body.payload),
-                "operation_id": body.operation_id,
-                "target_session": body.target_session,
-            },
-            inbox_dir=Path(_data_dir(request)) / "coordinator_light",
-            poke=lambda sid: poke(sid),
-            settings={
-                "coordinator_light_role": str(getattr(settings, "coordinator_light_role", "") or ""),
-            },
-            queue=queue,
-        )
-        status_code = 409 if result.get("conflict") else 200
-        return JSONResponse(content={"ok": bool(result.get("accepted")), **result}, status_code=status_code)
+        return _dispatch_card_response(request, body, queue, poke)
 
     @router.post("/resume-approval")
     def light_resume_approval(body: CoordinatorResumeApprovalBody, request: Request) -> Response:
@@ -573,15 +750,29 @@ def build_coordinator_light_router(
                 content={"ok": False, "error": "not_wired（queue 依赖未注入，fail-closed）"},
                 status_code=503,
             )
-        engine = getattr(request.app.state, "engine", None)
-        trusted_scope = str(getattr(engine, "workspace_root", "") or "") or None
-        result = derive_job_receipt(queue, queue_id, expected_workspace_scope=trusted_scope)
-        if not result.get("found"):
+        return _job_receipt_response(request, queue, queue_id)
+
+    @router.post("/resume-job")
+    def light_resume_job(body: CoordinatorResumeJobBody, request: Request) -> Response:
+        """真实 JobRegistry 权威接续（SA-LIVE-RECEIPT-AUTHORITY 主链条）.
+
+        1) 队列项权威：origin/scope 绑定 + 派工声明 candidate（精确候选绑定源）；
+        2) JobRegistry owner-scoped snapshot：authority="job_authority" 进程
+           终态事实（与 factory.job_terminal_predicate 同源）；
+        3) 未终态只回状态不唤醒；exit0+candidate 对照通过 → 唤醒 owner 会话
+           （进程型 require_artifact=False，无产物账不虚产物事实）。
+        """
+        denied = _guard(request)
+        if denied is not None:
+            return denied
+        queue = _queue_from(request)
+        poke = _poke_of(request)
+        if queue is None or poke is None:
             return JSONResponse(
-                content={"ok": False, "error": "job_not_found", "reason": result.get("reason")},
-                status_code=404,
+                content={"ok": False, "error": "not_wired（queue/poke 依赖未注入，fail-closed）"},
+                status_code=503,
             )
-        return JSONResponse(content={"ok": True, **result})
+        return _resume_job_from_registry(request, body, queue, poke)
 
     @router.post("/ci-continue")
     def light_ci_continue(request: Request) -> Response:

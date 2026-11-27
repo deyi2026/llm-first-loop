@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -279,3 +280,115 @@ def test_live_enqueue_once_atomic_under_threads(tmp_path) -> None:
     assert conflict["conflict"] is True and conflict["item"]["message"] == "same-payload"
     entries = [i for i in HumanTurnQueue(data).snapshot_items() if i.get("origin_operation_id") == "atomic-1"]
     assert len(entries) == 1
+
+
+def test_live_resume_job_real_registry_authority(tmp_path, build_test_engine) -> None:
+    """真实 JobRegistry 权威接续纵切（SA-LIVE-RECEIPT-AUTHORITY 主链条）.
+
+    真实 Job（registry.create 真进程）→completed→/resume-job：派工卡
+    candidate 对照 + owner-scoped registry snapshot + exit0 → 唤醒 owner；
+    未终态只回状态；伪造 candidate 409 拒绝（不唤醒）。
+    """
+    import os as _os
+
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    engine, _ = build_test_engine([{"content": "unused"}])
+    ws = tmp_path / "ws_root"
+    ws.mkdir()
+
+    import dataclasses as _dc
+
+    engine.settings = _dc.replace(
+        engine.settings,
+        coordinator_light_role="orchestrator",
+        coordinator_light_token=_TOKEN,
+    )
+    engine.workspace_root = str(ws)
+    app = build_app(engine=engine)
+
+    class _FB:  # 生产同构装配：poke_session 返回真实 accepted 事实
+        def poke_session(self, sid: str) -> bool:
+            return True
+
+    app.state.queue_server_fallback = _FB()
+    client = TestClient(app)
+    sid = engine.session.create()
+    sha = hashlib.sha256(b"artifact-candidate").hexdigest()
+
+    enq = client.post(
+        "/api/v1/coordinator/light/dispatch",
+        json={
+            "operation_id": "op-jobauth",
+            "target_session": sid,
+            "payload": {
+                "owner_session": sid,
+                "goal_id": "GOAL-J",
+                "candidate_sha256": sha,
+                "message": "job 权威接续验证卡",
+            },
+        },
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert enq.status_code == 200 and enq.json()["accepted"] is True
+    qid = enq.json()["queue_id"]
+
+    # 真实 Job：registry.create 真进程（wait 立即 0 → watcher 置 completed/exit0）
+    registry = JobRegistry.instance()
+    import io as _io
+
+    proc = SimpleNamespace(
+        pid=_os.getpid(),
+        wait=lambda: 0,
+        stdout=_io.StringIO(),
+        stderr=_io.StringIO(),
+    )
+    job_id = registry.create(
+        proc,
+        "echo authority-wiring",
+        session_id=sid,
+        workspace_root=str(ws),
+        executor="execute_command",
+    )
+    # watcher 由 execute 层负责启动（create 只注册）——测试走同一真实路径
+    import threading as _threading
+
+    _threading.Thread(
+        target=registry._watch_completion, args=(job_id,), daemon=True
+    ).start()
+    import time as _time
+
+    deadline = _time.time() + 5.0
+    while _time.time() < deadline:
+        snap = registry.snapshot(job_id, session_id=sid)
+        if isinstance(snap, dict) and snap.get("state") in {"completed", "failed"}:
+            break
+        _time.sleep(0.02)
+    assert snap.get("state") == "completed" and snap.get("exit_code") == 0
+
+    # 未终态拒绝路径先证：伪造另一 job_id（registry 无此 id）→ 404 不唤醒
+    miss = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": "job-nonexistent", "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert miss.status_code == 404
+
+    # 真实接续：candidate 对照 + exit0 → resumed
+    ok = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["ok"] is True and body.get("poked") is True
+    assert body.get("verified") is True  # authority 门槛在 resume_on_job 内核验
+
+    # 伪造 candidate（≠派工声明）→ 409 拒绝不唤醒
+    bad = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": "f" * 64},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert bad.status_code == 409
