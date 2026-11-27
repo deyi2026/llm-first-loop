@@ -210,3 +210,30 @@ def test_partial_fork_keeps_late_retraction_for_inherited_message():
     inherited = _truncate_events(events, 1)
     assert [e.seq for e in inherited] == [1, 2, 4]
     assert replay_session(inherited)["messages"][0]["content"] == "[RETRACTED]"
+
+
+def test_session_load_without_retractable_user_skips_event_replay(tmp_path: Path, monkeypatch):
+    sessions, events = _stores(tmp_path)
+    sid = sessions.create()
+    session = sessions.load(sid)
+    session.messages.extend([
+        Message(role="user", content="local web turn", source=MessageSource.USER),
+        Message(role="assistant", content="answer", source=MessageSource.SYSTEM),
+        Message(role="tool", content="not a retractable user", source=MessageSource.TOOL,
+                metadata={"human_turn_source_id": SOURCE_ID}),
+    ])
+    sessions.save(session)
+    events.append(sid, EVENT_MESSAGE_RETRACTED, {"source_id": SOURCE_ID})
+    calls = []
+    original = events.read_cached
+
+    def counted_read(session_id: str):
+        calls.append(session_id)
+        return original(session_id)
+
+    monkeypatch.setattr(events, "read_cached", counted_read)
+    loaded = sessions.load(sid)
+    assert [m.content for m in loaded.messages] == [
+        "local web turn", "answer", "not a retractable user",
+    ]
+    assert calls == [], "no user message can match a retraction"
