@@ -625,11 +625,11 @@ class SessionStore:
         )
         from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED
 
-        if history_page and not any(
+        if not any(
             message.role == "user" and (message.metadata or {}).get(HUMAN_TURN_SOURCE_ID_KEY)
             for message in session.messages
         ):
-            return session  # no row on this page can be affected by a retraction
+            return session  # no loaded user row can be affected by a retraction
         try:
             # Retraction overlay is a high-frequency read-path projection. EventStore
             # already provides an exact bounded replay cache keyed by durable tail seq;

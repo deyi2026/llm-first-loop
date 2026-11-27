@@ -402,3 +402,172 @@ def test_agents_tree_cache_is_per_engine_and_bounded():
         assert len(fs_tree_mod._agents_tree_cache) <= 8  # 有界（生产进程实际 = 1 个 engine）
     finally:
         fs_tree_mod._reset_agents_tree_cache_for_tests()
+
+
+@pytest.mark.parametrize("readers", [1, 4, 8, 40])
+def test_agents_tree_concurrent_cache_miss_builds_once(readers):
+    import asyncio
+    import json
+    import threading
+
+    import anyio.to_thread
+    from starlette.concurrency import run_in_threadpool
+
+    from llm_loop.web import fs_tree
+
+    fs_tree._reset_agents_tree_cache_for_tests()
+    entered = threading.Event()
+    release = threading.Event()
+    calls = {"list": 0, "topology": 0}
+    metas = [
+        SimpleNamespace(session_id=f"subagent_{i}", parent_id="parent",
+                        model_override="fake", created_at=None)
+        for i in range(12)
+    ]
+
+    def list_sessions():
+        calls["list"] += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return metas
+
+    def topology_snapshot(_sid):
+        calls["topology"] += 1
+        return {"local_active": False, "outcome": "success", "settlement_state": "collected"}
+
+    engine = SimpleNamespace(
+        session=SimpleNamespace(list_sessions=list_sessions),
+        subagent_runner=SimpleNamespace(topology_snapshot=topology_snapshot),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=engine)))
+
+    async def exercise():
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        old_tokens = limiter.total_tokens
+        limiter.total_tokens = 2
+        tasks = [asyncio.create_task(fs_tree.agents_tree(request)) for _ in range(readers)]
+        try:
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            assert entered.is_set()
+            # Other synchronous endpoints can still run with seven followers waiting.
+            assert await asyncio.wait_for(run_in_threadpool(lambda: "responsive"), 1) == "responsive"
+            if readers > 1:
+                tasks[0].cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await tasks[0]
+            release.set()
+            responses = await asyncio.wait_for(asyncio.gather(*tasks[1 if readers > 1 else 0:]), 5)
+            assert all(r.status_code == 200 for r in responses)
+            assert all(r.body == responses[0].body for r in responses)
+            assert len(json.loads(responses[0].body)["nodes"]) == len(metas)
+            assert calls == {"list": 1, "topology": len(metas)}
+            assert request.app.state._agents_tree_pending == {}
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            limiter.total_tokens = old_tokens
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        fs_tree._reset_agents_tree_cache_for_tests()
+
+
+def test_agents_tree_workspace_switch_discards_old_build():
+    import asyncio
+    import json
+    import threading
+
+    from llm_loop.web import fs_tree
+
+    fs_tree._reset_agents_tree_cache_for_tests()
+    entered = threading.Event()
+    release = threading.Event()
+    old_meta = SimpleNamespace(session_id="old", parent_id=None)
+    new_meta = SimpleNamespace(session_id="new", parent_id=None)
+
+    def old_list():
+        entered.set()
+        assert release.wait(timeout=5)
+        return [old_meta]
+
+    engine = SimpleNamespace(_workspace_epoch=0, session=SimpleNamespace(root="old", list_sessions=old_list))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=engine)))
+
+    async def exercise():
+        old = asyncio.create_task(fs_tree.agents_tree(request))
+        try:
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            assert entered.is_set()
+            engine._workspace_epoch += 1
+            engine.session = SimpleNamespace(root="new", list_sessions=lambda: [new_meta])
+            new = await asyncio.wait_for(fs_tree.agents_tree(request), 2)
+            assert new.status_code == 200
+            assert [n["id"] for n in json.loads(new.body)["nodes"]] == ["new"]
+            release.set()
+            assert (await asyncio.wait_for(old, 5)).status_code == 409
+            again = await fs_tree.agents_tree(request)
+            assert again.body == new.body
+        finally:
+            release.set()
+            await asyncio.gather(old, return_exceptions=True)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        fs_tree._reset_agents_tree_cache_for_tests()
+
+
+
+def test_agents_tree_concurrent_error_is_shared_and_retries():
+    import asyncio
+    import threading
+
+    from llm_loop.web import fs_tree
+
+    fs_tree._reset_agents_tree_cache_for_tests()
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def list_sessions():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            assert release.wait(timeout=5)
+            raise RuntimeError("transient")
+        return []
+
+    engine = SimpleNamespace(session=SimpleNamespace(list_sessions=list_sessions))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=engine)))
+
+    async def exercise():
+        tasks = [asyncio.create_task(fs_tree.agents_tree(request)) for _ in range(8)]
+        try:
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            assert entered.is_set()
+            release.set()
+            responses = await asyncio.wait_for(asyncio.gather(*tasks), 5)
+            assert all(r.status_code == 500 for r in responses)
+            assert calls == 1
+            assert fs_tree._agents_tree_cache == {}
+            assert (await fs_tree.agents_tree(request)).status_code == 200
+            assert calls == 2
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        fs_tree._reset_agents_tree_cache_for_tests()
