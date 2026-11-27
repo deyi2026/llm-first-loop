@@ -845,3 +845,51 @@ def test_host_binary_diff_guard_distinguishes_git_metadata_from_source_text(
         assert runner.started["review_isolated"] is True
         assert "+GIT binary patch" in runner.started["task"]
     assert not (audit / "verify_receipts.jsonl").exists()
+
+
+def test_merge_reuses_existing_exact_code_review_and_revalidates_it(host):
+    authority, runner, _, lane_id, *_ = host
+
+    class ExistingCodeReview:
+        def __init__(self):
+            self.valid = True
+            self.calls = []
+        def reusable_push_pass_for_merge(self, **kwargs):
+            self.calls.append(kwargs)
+            if not self.valid:
+                return None
+            return {
+                "source_child_id": "push-review-1",
+                "candidate_sha256": "candidate-digest",
+                "base_sha": kwargs["base_sha"], "head_sha": kwargs["head_sha"],
+                "worktree": str(Path(kwargs["worktree"]).resolve()),
+                "content_fingerprint": "content-fingerprint",
+                "reviewer_model": "glm/glm-5.3-flash",
+                "reviewer_observed_model": "glm-5.3-flash",
+                "policy_digest": "policy-digest", "scope": "tree", "created_at": 1.0,
+            }
+
+    existing = ExistingCodeReview()
+    reuse_authority = HostVerifyAuthority(
+        audit_dir=authority.audit_dir, repo_root=authority.repo_root,
+        runner=runner, escalation_store=authority.escalation_store,
+        reviewer_models_raw="glm/glm-5.3-flash", code_review_authority=existing,
+    )
+    started = reuse_authority.start_review(lane_id)
+    assert started["accepted"] is True and started["reused"] is True
+    assert started["reused_from_child_id"] == "push-review-1"
+    assert runner.started == {}  # no second model call
+    frozen, digest = reuse_authority._attest(started["child_id"], "owner-session")
+    assert frozen.reused_from == "push-review-1" and digest
+    request = reuse_authority.request(lane_id=lane_id, child_id=started["child_id"])
+    assert "复用同一精确候选" in request["justification"]
+    assert existing.calls[-1]["source_child_id"] == "push-review-1"
+    pending = reuse_authority.escalation_store.get(request["id"])
+    receipt_id = reuse_authority.issue(pending, approver="web:session:12345678")
+    receipts = load_receipts(authority.audit_dir / "verify_receipts.jsonl")
+    issued = receipts[receipt_id]
+    assert "host-code-review-reuse:push-review-1:" in issued["evidence"]
+
+    existing.valid = False
+    with pytest.raises(HostVerifyError, match="reused_code_review_no_longer_valid"):
+        reuse_authority._attest(started["child_id"], "owner-session")

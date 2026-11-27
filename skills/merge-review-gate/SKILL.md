@@ -24,6 +24,19 @@ description: 合并 main 审查闸（RULE-AI-34）——分支 Goal/任务收口
 4. `git merge-base main <branch>` 与 `git rev-parse main`——分支是否基于当前 main；落后 → rebase/merge main 并复跑受影响 gate 后再审。
 5. worktree 分支（含 fs_isolation 隔离 worktree）先确认成果已提交到分支 ref（worktree 树干净），再谈合并。
 
+## 已审候选复用（2026-11-27 用户批准）
+
+合并闸启动前，Host 先查同一进程内的 RULE-AI-28 `git_push` PASS。若且仅若同时满足以下条件，可复用原审查，不再 spawn 第二个 Reviewer：
+
+- 来源为已签发且由受管 push 入口消费、P0/P1=0 的独立 `git_push` PASS，`scope=tree`；不得使用 patch-scope、分批或仅全量测试 PASS。
+- 原审查冻结的远端 base、source head 与当前 lane 的 base/head 精确相同；review worktree 路径相同且当前 clean。
+- 按原审查的内容指纹算法，对当前 `base..head` commit tree 复算完全一致；不是仅比较分支名、commit message 或文件名。
+- 原 Reviewer requested/observed model 一致、策略 digest 未变、PASS 未过期且来源记录仍在 Host 内存中。
+
+命中后只跳过第二次模型代码审查；Host 仍冻结并复核 lane/base/head/worktree/diff，随后仍须浏览器人工批准和 Host 签发 verify receipt，merge queue 仍执行 base/merge-tree/path/verify 四项机检。此复用记录明确标注来源 child、模型、候选 SHA 与内容指纹。
+
+任一条件不满足、Host 重启导致来源记录丢失、候选有任何改动、策略撤销或 TTL 过期，均回退为原独立 merge Reviewer；只对新增/变化的候选增量审查，不得跨 PR、跨目标或跨 base 复用。Push/CI/合并阶段不得仅因阶段变化而重做同一份代码审查。
+
 ## 审查清单
 1. **完成证据**：done_when 逐条满足，evidence 真实。
 2. **分支卫生**：树干净、提交原子、无夹带（同 push 闸第 2 条精神）。

@@ -58,6 +58,8 @@ class _FrozenReview:
     # Display-only wall-clock deadline for the approval card. Enforcement stays
     # on the monotonic ``created`` clock in _attest; this never extends the TTL.
     expires_at: str
+    reused_from: str = ""
+    reuse_receipt_sha256: str = ""
 
 
 _GIT_OUTPUT_LIMIT = 100_000
@@ -151,11 +153,13 @@ class HostVerifyAuthority:
         self, *, audit_dir: str | Path, repo_root: str | Path,
         runner: Any, escalation_store: EscalationStore,
         reviewer_models_raw: str = "",
+        code_review_authority: Any = None,
     ) -> None:
         self.audit_dir = Path(audit_dir).resolve()
         self.repo_root = Path(repo_root).resolve()
         self.runner = runner
         self.escalation_store = escalation_store
+        self.code_review_authority = code_review_authority
         # The reviewer's model identity is operator configuration (the same
         # LFL_REVIEWER_MODELS the RULE-AI-28 reviewer uses): never the parent
         # session's current model, and never a built-in default.
@@ -215,6 +219,33 @@ class HostVerifyAuthority:
         if len(changed) > 12_000:
             raise HostVerifyError("review_scope_too_large")
         base, head = str(lane["base_main_sha"]), str(lane["head_sha"])
+        reuse = None
+        if self.code_review_authority is not None:
+            reuse = self.code_review_authority.reusable_push_pass_for_merge(
+                base_sha=base, head_sha=head, worktree=str(lane["worktree"]),
+                paths=changed.splitlines(),
+            )
+        if reuse is not None:
+            child = f"reused-code-review:{reuse['source_child_id']}"
+            model = str(reuse["reviewer_model"])
+            receipt_digest = hashlib.sha256(
+                json.dumps(reuse, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            created, created_wall = time.monotonic(), system_local_now()
+            expires_at = (created_wall + timedelta(seconds=_REVIEW_TTL_S)).isoformat(timespec="seconds")
+            frozen = _FrozenReview(
+                parent, lane_id, base, head, str(lane["branch"]), str(lane["worktree"]),
+                model, hashlib.sha256(diff.encode()).hexdigest(), created, expires_at,
+                reused_from=str(reuse["source_child_id"]), reuse_receipt_sha256=receipt_digest,
+            )
+            with self._lock:
+                self._reviews[child] = frozen
+            return {
+                "accepted": True, "child_id": child, "model": model, "lane_id": lane_id,
+                "reused": True, "reused_from_child_id": frozen.reused_from,
+                "detail": "复用同一 base/head/tree 的既有独立代码审查 PASS；Host 仍执行合并前置核验与人工批准",
+                "review_expires_at": expires_at,
+            }
         if not self._reviewer_models:
             # Refuse before any reviewer is spawned. An unconfigured Host must not
             # silently run the merge gate on whichever model the parent session
@@ -286,11 +317,30 @@ class HostVerifyAuthority:
             frozen = self._reviews.get(child_id)
         if frozen is None or frozen.parent != parent or time.monotonic() - frozen.created > _REVIEW_TTL_S:
             raise HostVerifyError("review_not_host_owned_or_expired")
-        terminal = self.runner.review_terminal_current(child_id, parent)
-        if not isinstance(terminal, dict) or terminal.get("review_isolated") is not True:
-            raise HostVerifyError("review_not_independent_terminal")
-        answer = str(terminal.get("final_answer") or "")
-        _parse_review(answer, lane_id=frozen.lane_id, base=frozen.base, head=frozen.head)
+        if frozen.reused_from:
+            if self.code_review_authority is None:
+                raise HostVerifyError("reused_code_review_authority_unavailable")
+            lane, changed, _ = self._lane(frozen.lane_id)
+            receipt = self.code_review_authority.reusable_push_pass_for_merge(
+                base_sha=frozen.base, head_sha=frozen.head, worktree=frozen.worktree,
+                paths=changed.splitlines(), source_child_id=frozen.reused_from,
+                record_audit=False,
+            )
+            if receipt is None:
+                raise HostVerifyError("reused_code_review_no_longer_valid")
+            receipt_digest = hashlib.sha256(
+                json.dumps(receipt, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            if receipt_digest != frozen.reuse_receipt_sha256 or receipt.get("reviewer_model") != frozen.model:
+                raise HostVerifyError("reused_code_review_binding_changed")
+            answer_digest = receipt_digest
+        else:
+            terminal = self.runner.review_terminal_current(child_id, parent)
+            if not isinstance(terminal, dict) or terminal.get("review_isolated") is not True:
+                raise HostVerifyError("review_not_independent_terminal")
+            answer = str(terminal.get("final_answer") or "")
+            _parse_review(answer, lane_id=frozen.lane_id, base=frozen.base, head=frozen.head)
+            answer_digest = hashlib.sha256(answer.encode("utf-8")).hexdigest()
         lane, _, diff = self._lane(frozen.lane_id)
         if hashlib.sha256(diff.encode()).hexdigest() != frozen.diff_sha256:
             raise HostVerifyError("review_diff_changed")
@@ -298,7 +348,7 @@ class HostVerifyAuthority:
             frozen.base, frozen.head, frozen.branch, frozen.worktree,
         ):
             raise HostVerifyError("lane_changed_after_review")
-        return frozen, hashlib.sha256(answer.encode("utf-8")).hexdigest()
+        return frozen, answer_digest
 
     def request(self, *, lane_id: str, child_id: str, scope: str = "") -> dict:
         parent = str(current_session_id.get() or "")
@@ -317,8 +367,10 @@ class HostVerifyAuthority:
         return self.escalation_store.create(
             tool_name="verify_receipt_issue", command=command,
             justification=(
-                f"独立只读 merge Reviewer（模型 {frozen.model}）已 PASS；"
-                "请求浏览器人工批准 Host 签发验证凭证，不授予审计账本通用写权限。"
+                (f"复用同一精确候选的独立代码审查 PASS（模型 {frozen.model}，来源 {frozen.reused_from}）；"
+                 "Host 已重新核验 lane/base/head/tree。" if frozen.reused_from else
+                 f"独立只读 merge Reviewer（模型 {frozen.model}）已 PASS；")
+                + "请求浏览器人工批准 Host 签发验证凭证，不授予审计账本通用写权限。"
                 f"审查有效期至 {frozen.expires_at}，过期后批准也无法签发，需重做审查。"
             ),
             session_id=parent, kind="verify_receipt",
@@ -356,8 +408,12 @@ class HostVerifyAuthority:
             lane_id=frozen.lane_id, base_sha=frozen.base, head_sha=frozen.head,
             scope=str(frozen_request.get("host_scope") or ""),
             reviewer=frozen.model,
-            evidence=(f"host-review:{child_id}:{digest}:"
-                      f"request:{rec.get('id', '')}:approver:{approver}"),
+            evidence=(
+                f"host-code-review-reuse:{frozen.reused_from}:{digest}:"
+                f"request:{rec.get('id', '')}:approver:{approver}"
+                if frozen.reused_from else
+                f"host-review:{child_id}:{digest}:request:{rec.get('id', '')}:approver:{approver}"
+            ),
         )
         return str(row["receipt_id"])
 
