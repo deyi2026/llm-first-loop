@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from pathlib import Path
 
 from llm_loop.browser.action import (
@@ -296,3 +297,30 @@ def test_review_admission_is_discoverable_full_and_compact_in_real_factory(
         command = tool_defs["execute_command"]["parameters"]["properties"]
         assert "command" in command and "workdir" in command
     assert engine.registry.get("review_admission")._authority is engine.registry._review_admission
+
+
+def test_registry_r9_parallel_only_admits_direct_official_gate(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    gate = repo / "scripts" / "ci_gate.sh"
+    gate.parent.mkdir()
+    gate.write_bytes((ROOT / "scripts" / "ci_gate.sh").read_bytes())
+    subprocess.run(["git", "-C", str(repo), "add", "scripts/ci_gate.sh"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "gate fixture"], check=True)
+    subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    registry, shell = ToolRegistry(), _FakeShell()
+    registry.register(shell)
+    registry.set_review_admission(HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS))
+    token = current_session_id.set("author-1")
+    try:
+        def invoke(command):
+            return registry.execute(ToolCall(id="r9", name="execute_command", arguments={"command": command, "workdir": str(repo)}))
+        assert invoke("bash scripts/ci_gate.sh").status == ToolResultStatus.SUCCESS
+        assert len(shell.calls) == 1
+        assert invoke("bash scripts/ci_gate.sh; git push origin main").status == ToolResultStatus.BLOCKED
+        gate.write_text("#!/bin/bash\nexit 0\n")
+        subprocess.run(["git", "-C", str(repo), "commit", "-qam", "changed gate"], check=True)
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+        assert invoke("bash scripts/ci_gate.sh").status == ToolResultStatus.BLOCKED
+        assert len(shell.calls) == 1
+    finally:
+        current_session_id.reset(token)
