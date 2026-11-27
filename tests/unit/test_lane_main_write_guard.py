@@ -2291,3 +2291,210 @@ def test_block_cd_physical_option_into_main_repo(tmp_path):
         workdir=None,
     )
     assert out is not None and out["reason"] == "lane_main_write_conflict"
+
+
+# --- update-ref 挪 main 指针（2026-11-25，RULE-AI-35 双向） ---
+
+
+def _repo_git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _origin_pair(tmp_path: Path, branch: str = "main") -> tuple[Path, str]:
+    """bare origin + 本地克隆（克隆落后 origin 一个提交）；返回 (克隆路径, 领先提交 sha)。"""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(
+        ["git", "-C", str(origin), "symbolic-ref", "HEAD", f"refs/heads/{branch}"],
+        check=True,
+    )
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", "-b", branch, str(clone)], check=True)
+    for key, value in (("user.email", "t@t"), ("user.name", "t"), ("commit.gpgsign", "false")):
+        subprocess.run(["git", "-C", str(clone), "config", key, value], check=True)
+    (clone / "a.txt").write_text("x")
+    subprocess.run(["git", "-C", str(clone), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(clone), "commit", "-qm", "init"], check=True)
+    subprocess.run(["git", "-C", str(clone), "remote", "add", "origin", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(clone), "push", "-q", "origin", branch], check=True)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(origin), str(other)], check=True)
+    for key, value in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(["git", "-C", str(other), "config", key, value], check=True)
+    (other / "a.txt").write_text("y")
+    subprocess.run(["git", "-C", str(other), "commit", "-qam", "pr-merged"], check=True)
+    subprocess.run(["git", "-C", str(other), "push", "-q", "origin", branch], check=True)
+    subprocess.run(["git", "-C", str(clone), "fetch", "-q", "origin"], check=True)
+    return clone, _repo_git(clone, "rev-parse", "refs/remotes/origin/" + branch)
+
+
+def _move(cmd: str, clone: Path, audit: str):
+    return guard_module.check_update_ref_main_move(
+        cmd, audit_dir=audit, session_id="sess-me", workdir=str(clone)
+    )
+
+
+def test_update_ref_main_to_remote_commit_denied_without_lanes(tmp_path):
+    """RULE-AI-35 应拦输入（2026-11-25 事故原形）：账本里没有他人 lane 也拦——
+    伤害来自被检出的 main 工作树停在旧树，与并行 lane 无关。"""
+    clone, head = _origin_pair(tmp_path)
+    audit = _ledger(tmp_path / "audit", [])
+    out = _move(f"git update-ref refs/heads/main {head}", clone, audit)
+    assert out is not None
+    assert out["reason"] == "main_ref_pointer_move"
+    assert out["reason_code"] == "main_update_ref_stale_worktree"
+    assert f"`git -C {clone} merge --ff-only origin/main`" in out["detail"]
+    assert f"新值 {head[:12]} 已在 origin/main 上" in out["detail"]
+    assert out["lanes"] == [] and out["stale_lanes"] == []
+
+
+def test_update_ref_main_variants_denied(tmp_path):
+    """RULE-AI-35 应拦输入的各种写法（含当天事件流水里的三种原样）。"""
+    clone, head = _origin_pair(tmp_path)
+    audit = _ledger(tmp_path / "audit", [])
+    stdin_script = (
+        "git update-ref --stdin <<'EOF'\nstart\n"
+        f"update refs/heads/main {head} {'0' * 40}\nprepare\ncommit\nEOF"
+    )
+    for cmd in (
+        f"git update-ref refs/heads/main {head}",
+        "git update-ref -m 'sync local main to origin/main (PR #119 merged)' "
+        f"refs/heads/main {head}",
+        f"git -C {clone} update-ref refs/heads/main {head}",
+        "git update-ref refs/heads/main origin/main",
+        "git update-ref refs/heads/main FETCH_HEAD",
+        f"git fetch origin 2>&1 | tail -2 && git update-ref refs/heads/main {head} && echo ok",
+        f"cd {clone} && git update-ref refs/heads/main {head}",
+        f"git update-ref main {head}",
+        f"git update-ref heads/main {head}",
+        f"git update-ref HEAD {head}",
+        f"M={clone}; git -C $M update-ref refs/heads/main {head}",
+        stdin_script,
+    ):
+        out = _move(cmd, clone, audit)
+        assert out is not None, cmd
+        assert out["reason_code"] == "main_update_ref_stale_worktree", cmd
+
+
+def test_update_ref_master_denied(tmp_path):
+    clone, head = _origin_pair(tmp_path, "master")
+    audit = _ledger(tmp_path / "audit", [])
+    out = _move(f"git update-ref refs/heads/master {head}", clone, audit)
+    assert out is not None and out["reason_code"] == "main_update_ref_stale_worktree"
+    assert "merge --ff-only origin/master" in out["detail"]
+
+
+def test_update_ref_local_only_commit_allowed(tmp_path):
+    """RULE-AI-35 应放行：plumbing 合并（method plumbing-merge-via-verified-tree-identity…）
+    把 main 挪到本地独有提交——不在 origin 上，不是“同步”；他人 lane 在场也不拦。"""
+    clone, _ = _origin_pair(tmp_path)
+    _repo_git(clone, "checkout", "-q", "-b", "lane")
+    (clone / "b.txt").write_text("b")
+    _repo_git(clone, "add", ".")
+    _repo_git(clone, "commit", "-qm", "lane")
+    local = _repo_git(clone, "rev-parse", "HEAD")
+    _repo_git(clone, "checkout", "-q", "main")
+    audit = _ledger(tmp_path / "audit", [_lane("lane-o", "active", "sess-other")])
+    out = _move(f"git update-ref refs/heads/main {local}", clone, audit)
+    assert out is None
+
+
+def test_update_ref_non_sync_targets_allowed(tmp_path):
+    """RULE-AI-35 应放行：别的分支、删 main 引用、没挪动、新值读不出、没给新值。"""
+    clone, head = _origin_pair(tmp_path)
+    audit = _ledger(tmp_path / "audit", [])
+    current = _repo_git(clone, "rev-parse", "refs/heads/main")
+    for cmd in (
+        f"git update-ref refs/heads/feat/x {head}",
+        "git update-ref -d refs/heads/main",
+        f"git update-ref refs/heads/main {current}",
+        "git update-ref refs/heads/main 0123456789012345678901234567890123456789",
+        "git update-ref refs/heads/main",
+    ):
+        assert _move(cmd, clone, audit) is None, cmd
+
+
+def test_update_ref_main_allowed_when_not_checked_out(tmp_path):
+    """RULE-AI-35 应放行：main 没被任何工作树检出（这里 HEAD 游离）→ 没有旧树后果。"""
+    clone, head = _origin_pair(tmp_path)
+    _repo_git(clone, "checkout", "-q", "--detach")
+    audit = _ledger(tmp_path / "audit", [])
+    assert _move(f"git update-ref refs/heads/main {head}", clone, audit) is None
+
+
+def test_update_ref_main_allowed_without_remote_tracking(tmp_path):
+    """RULE-AI-35 应放行：没有任何远端跟踪分支包含新值 → 无法证明是“同步”。"""
+    repo = _git_repo(tmp_path / "repo", "main")
+    _repo_git(repo, "checkout", "-q", "-b", "lane")
+    (repo / "b.txt").write_text("b")
+    _repo_git(repo, "add", ".")
+    _repo_git(repo, "commit", "-qm", "lane")
+    local = _repo_git(repo, "rev-parse", "HEAD")
+    _repo_git(repo, "checkout", "-q", "main")
+    audit = _ledger(tmp_path / "audit", [])
+    assert _move(f"git update-ref refs/heads/main {local}", repo, audit) is None
+
+
+def test_update_ref_is_not_a_commit_or_push_hit(tmp_path):
+    """回归：update-ref 进解析后不得被既有两条规则当成 commit/push 命中。"""
+    clone, head = _origin_pair(tmp_path)
+    audit = _ledger(tmp_path / "audit", [_lane("lane-o", "merging", "sess-other")])
+    # 这本账下 push main 会被收口规则拦——保证下面的 None 不是因为规则没开。
+    teeth = check_git_main_write(
+        "git push origin main", audit_dir=audit, session_id="sess-me", workdir=str(clone)
+    )
+    assert teeth is not None
+    for cmd in (
+        f"git update-ref refs/heads/main {head}",
+        f"git -C {clone} update-ref -m 'sync' refs/heads/main {head}",
+        "git update-ref -d refs/heads/main",
+        "M=/nope; git -C $M update-ref refs/heads/main origin/main",
+    ):
+        for verdict in (
+            check_git_main_write(cmd, audit_dir=audit, session_id="sess-me", workdir=str(clone)),
+            check_push_lane_block(cmd, audit_dir=audit, session_id="sess-me", workdir=str(clone)),
+        ):
+            assert verdict is None, cmd
+
+
+def test_tool_gate_denies_update_ref_main_via_wiring(tmp_path, monkeypatch):
+    """接线级（RULE-AI-35 实测）：命令闸入口在无他人 lane 时也拒 update-ref 挪 main，
+    并给出 ff-merge 替代；应放行的两条原样放行。"""
+    from types import SimpleNamespace
+
+    from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+
+    clone, head = _origin_pair(tmp_path)
+    audit = _ledger(tmp_path / "audit", [])
+    monkeypatch.setattr(
+        "llm_loop.config.load_settings", lambda: SimpleNamespace(audit_dir=Path(audit))
+    )
+    tool = ExecuteCommandTool()
+    result = tool._lane_main_write_gate(f"git update-ref refs/heads/main {head}", str(clone))
+    assert result is not None
+    assert result.error_type == "lane_main_write_denied"
+    assert "[main 直写拒绝] main_ref_pointer_move" in result.content
+    assert f"git -C {clone} merge --ff-only origin/main" in result.content
+    approved = f"git -C {clone} merge --ff-only origin/main"
+    assert tool._lane_main_write_gate(approved, str(clone)) is None
+    assert (
+        tool._lane_main_write_gate(f"git update-ref refs/heads/feat/x {head}", str(clone)) is None
+    )
+
+
+def test_ff_merge_updates_index_and_worktree_unlike_update_ref(tmp_path):
+    """拒绝文案里“完成则一并更新暂存区和工作树”的可执行依据（scratch 仓库实测入测）。"""
+    clone, head = _origin_pair(tmp_path)
+    old = _repo_git(clone, "rev-parse", "HEAD")
+    _repo_git(clone, "merge", "--ff-only", "origin/main")
+    assert _repo_git(clone, "rev-parse", "HEAD") == head
+    assert _repo_git(clone, "status", "--porcelain") == ""
+    assert (clone / "a.txt").read_text() == "y"
+    # 对照：update-ref 只移指针 → 旧树显示成反向“已暂存”，工作树停在旧内容
+    _repo_git(clone, "reset", "-q", "--hard", old)
+    _repo_git(clone, "update-ref", "refs/heads/main", head)
+    assert _repo_git(clone, "rev-parse", "HEAD") == head
+    assert _repo_git(clone, "status", "--porcelain") == "M  a.txt"
+    assert (clone / "a.txt").read_text() == "x"

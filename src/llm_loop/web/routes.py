@@ -111,6 +111,26 @@ router.include_router(provider_admin_router)
 router.include_router(local_runtime_router)
 router.include_router(video_router)
 router.include_router(coordination_board_router)
+# SA-LIGHT-COORDINATOR-P0-LIVE-WIRING：轻量主统筹真实 HTTP 入口（可信双开关
+# fail-closed，未配置=端点 403 语义整体关闭，普通聊天与既有部署零影响）。
+def _build_coordinator_router():
+    """coordinator_light router 装配（依赖注入断环 R9-P2-06a）：queue/poke 由
+    本模块供给，coordinator_light 不反向 import routes——消除
+    coordinator_light<->preview_routes<->routes runtime 环（恒 0 终态）."""
+    from llm_loop.web.coordinator_light import build_coordinator_light_router
+
+    def _queue_from(request: Request):
+        # lambda/函数体延迟绑定：模块加载期 _human_turn_queue 尚未定义
+        #（定义在下方 216 行区），端点调用时才解析
+        return _human_turn_queue(request)
+
+    def _poke_from(request: Request):
+        return lambda sid: _poke_queue_fallback(request, sid)
+
+    return build_coordinator_light_router(queue_from=_queue_from, poke_from=_poke_from)
+
+
+router.include_router(_build_coordinator_router())
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
@@ -298,11 +318,14 @@ def _human_turn_queue(request: Request) -> HumanTurnQueue:
     return q
 
 
-def _poke_queue_fallback(request: Request, session_id: str) -> None:
+def _poke_queue_fallback(request: Request, session_id: str) -> bool:
     """M1 事件唤醒挂点（SA-M1M3-20261125-1236，fail-open）：入队/run 终态后
     请兜底线程即时派发该目标，不等 15s tick + 60s min_age（正常空闲路径
     P95≤5s，兜底不再是正常路径）。fallback 未装配（测试注入引擎路径）或
     唤醒队列满时静默跳过——条目已持久，tick 兜底不丢。
+    返回值（SA-LIVE-RECEIPT-AUTHORITY）：True=poke 实际入唤醒队列（accepted）；
+    False=未装配/满丢/异常——调用方可区分真实唤醒事实，不虚报（此前恒 None，
+    bool() 恒 False 无法区分）。
     二审 P2-3 装配核对（SA-REVIEW-FIX-20261125）：生产装配点在
     web/__init__.py serve 流程（app.state.queue_server_fallback =
     QueueServerFallback(...) 预置后 start()），与请求侧共享同一实例；测试
@@ -312,9 +335,11 @@ def _poke_queue_fallback(request: Request, session_id: str) -> None:
     poke = getattr(fb, "poke_session", None)
     if callable(poke):
         try:
-            poke(session_id)
+            return bool(poke(session_id))
         except Exception:  # noqa: BLE001 - 唤醒失败不影响请求响应与队列事实
             logger.debug("queue fallback poke failed: sid=%s", session_id[:8])
+            return False
+    return False
 
 
 def _queue_terminal_callback(

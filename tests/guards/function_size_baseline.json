@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "head_commit": "dbbfecd0e",
+    "head_commit": "e6d3ca547",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
-    "生成时间": "2026-11-26",
+    "生成时间": "2026-11-27",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
     "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升；实测更高时按实测重定＝抬高，属 EVO-20261025-e0bff8ee 批准的红线放宽，须随 guard(r9) 提交逐条可见，不是静默放宽）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
@@ -182,6 +182,15 @@
         "rationale": "Cognitive telemetry 以追加 JSONL 形式记录运行事实。",
         "status": "observe",
         "tier": "T1"
+      },
+      "coordinator_light_cards": {
+        "owner": "web",
+        "paths": [
+          "src/llm_loop/web/coordinator_light.py"
+        ],
+        "rationale": "轻量主统筹任务卡 durable 落盘（R32 确定性派工）：tempfile+os.replace 原子替换，幂等键 operation_id（同键重复派工不重复落盘/唤醒）；无 fsync 栅栏，写失败异常上抛由调用方如实处置，保持 observe 不宣称完整 tier 合规。依据 durable-run-contract §10 以 guard(r9): 可见提交。",
+        "status": "observe",
+        "tier": "T2"
       },
       "compaction_recovery_gate": {
         "owner": "core",
@@ -1189,7 +1198,7 @@
     "src/llm_loop/resources/vendor_adapters/minimax.py::map_token_plan_remains_response": 130,
     "src/llm_loop/runtime/doctor.py::inspect_first_use": 189,
     "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 140,
-    "src/llm_loop/runtime/service_control.py::compose_lifecycle_evidence_view": 105,
+    "src/llm_loop/runtime/service_control.py::compose_lifecycle_evidence_view": 101,
     "src/llm_loop/runtime/service_control.py::compose_service_identity_view": 94,
     "src/llm_loop/runtime/service_control.py::run_action_worker": 287,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_predicate_evaluate": 169,
@@ -1223,7 +1232,7 @@
     "src/llm_loop/tools/review_host_admission.py::_source_snapshot": 15,
     "src/llm_loop/tools/review_host_admission.py::_source_snapshot_sections": 247,
     "src/llm_loop/tools/review_host_admission.py::poll": 67,
-    "src/llm_loop/tools/review_host_admission.py::start": 99,
+    "src/llm_loop/tools/review_host_admission.py::start": 87,
     "src/llm_loop/tools/safety.py::_scan_tokens": 230,
     "src/llm_loop/web/__init__.py::build_app": 144,
     "src/llm_loop/web/__init__.py::main": 142,
@@ -1248,7 +1257,9 @@
     "src/llm_loop/tools/review_host_admission.py::_target": 170,
     "src/llm_loop/runtime/service_control.py::accept_restart": 122,
     "src/llm_loop/cli.py::main": 139,
-    "src/llm_loop/terminal/shell.py::interactive_session": 181
+    "src/llm_loop/terminal/shell.py::interactive_session": 181,
+    "src/llm_loop/web/coordinator_light.py::build_coordinator_light_router": 134,
+    "src/llm_loop/web/coordinator_light.py::_resume_job_from_registry": 163
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",

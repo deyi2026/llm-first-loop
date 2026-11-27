@@ -724,6 +724,12 @@ class Settings:
     web_providers_module: str = ""
     web_providers_module_path: str = ""
 
+    # ── 轻量主统筹 P0（SA-LIGHT-COORDINATOR-P0-LIVE-WIRING-20261126）──
+    # 双字段均为空/缺省 = 端点整体 disabled（fail-closed，普通聊天与既有部署
+    # 零影响）；orchestrator 角色与访问令牌必须服务端显式配置才启用。
+    coordinator_light_role: str = ""
+    coordinator_light_token: str = ""
+
     # ── CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）──
     # CODEARTS_ENABLED=false 或凭证缺失时本组件不注册调度工具，对现有运行时零影响。
     # 凭证类字段（ak/sk/iam_token/webhook_secret）仅从 os.environ 读取，不落盘不日志。
