@@ -1,0 +1,60 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-chatgpt-model-role-wiring",
+  "summary": "Close the explicit planning/router role-consumption gap using the existing nonblocking child runner. No new dispatch authority, no hardcoded model, no Reviewer changes. User directed ChatGPT direct execution.",
+  "components": [
+    {
+      "component_id": "role-decision-wiring",
+      "paths": [
+        ".env.example",
+        "docs/DESIGN-20261125-pluggable-model-roles.md",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/llm/pool.py",
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/tools/builtin/spawn_subagent.py",
+        "src/llm_loop/tools/builtin/subagent_result.py",
+        "tests/unit/test_model_roles.py",
+        "tests/unit/test_subagent_model_roles.py",
+        "docs/governance/submissions/20261127-chatgpt-model-role-wiring.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "ModelClientPool, existing SubAgentRunner and durable child result; ProviderCallCoordinator retains call settlement.",
+      "disposition": "reuse existing model role registry and child admission; freeze candidate clients, permit only tool-less planning/router decisions, strict explicit model, bounded availability fallback, persistent receipts. No changes to deterministic dispatch or review authority.",
+      "evidence": [
+        "138 directed tests passed, including 1305, timeout/network, explicit selection, budget exhaustion, account billing, hot update, durable result and followup refusal.",
+        "52 architecture guard tests passed. Ruff passed. Independent review, full R9, CI and production acceptance are not yet complete."
+      ],
+      "verification_level": "Local directed tests and architecture guards; fake provider responses exercise real child entry and result paths. Production latency and model calls not yet verified.",
+      "model_evidence_veto_recovery_exit": "Any independent P0/P1 or gate failure blocks delivery. Tool calls, truncation, unavailable roles and nonretryable errors fail without tool execution.",
+      "rollback_route": "Revert this isolated patch; existing default execution and reviewer paths unchanged; older readers ignore optional receipt fields.",
+      "declaration_id": "decl-role-decision-wiring"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-role-decision-wiring",
+      "g1": {
+        "necessity": "Planning/router mappings existed but no production consumer. Explicit short role decision path is needed without creating a new scheduler or hardcoding providers."
+      },
+      "g2": {
+        "authority_owner": "Existing operator model-role configuration and ProviderRegistry; child admission and tool scope stay with SubAgentRunner. Host reviewer admission is separate.",
+        "relationship": "reuse",
+        "non_duplication": "Reuse existing async spawn, session lease, provider settlement and result journal. No new service, authority or automatic classifier."
+      },
+      "g3": {
+        "model_evidence": [
+          "138 directed tests passed; 52 architecture guards passed.",
+          "Independent Reviewer and full R9 pending; no production claims."
+        ],
+        "recovery_or_reason": "Fail closed on missing role or tool response, bounded candidate count, strict explicit model. Retain prior code if independent review or full gate fails."
+      },
+      "g4": {
+        "rollback": "Revert patch and redeploy in normal managed release; no state migration.",
+        "verification": [
+          "Verify A.5 staged coverage, independent review, original full R9, protected PR CI and main CI.",
+          "After deployment verify actual configured role calls, 4-8 parallel runs and latency; no claim before evidence."
+        ]
+      }
+    }
+  ]
+}

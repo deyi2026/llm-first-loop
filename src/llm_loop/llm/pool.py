@@ -142,6 +142,15 @@ class ModelClientPool:
                 out.append(canonical)
         return out
 
+    def role_client_snapshot(self, role: str) -> tuple[tuple[str, LLMClient], ...]:
+        """Freeze ordered clients for one role decision under the existing pool lock."""
+        with self._guard:
+            registry = self.registry
+            return tuple(
+                (ref, self.get_resolved_client(ref, registry=registry)[0])
+                for ref in self.role_candidates(role, registry=registry)
+            )
+
     def registry_generation(self) -> int:
         """Registry 热重载代数（每次 replace_registry +1；观测用，不参与路由）."""
         with self._guard:

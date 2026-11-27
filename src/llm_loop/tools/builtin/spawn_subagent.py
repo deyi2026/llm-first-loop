@@ -207,6 +207,14 @@ class SpawnSubAgentTool:
                     "模型注册表校验/路由，程序不替模型选择厂家。"
                 ),
             },
+            "model_role": {
+                "type": "string",
+                "enum": ["planning", "router"],
+                "description": (
+                    "可选：使用运营者配置的角色候选池进行无工具短研判。仅输入 task/context，"
+                    "不执行工具、不续话、不授予审查身份；显式 model 优先且不替补。"
+                ),
+            },
             "max_rounds": {
                 "type": "integer",
                 "minimum": 1,
@@ -329,13 +337,10 @@ class SpawnSubAgentTool:
         depth = next_subagent_depth()
         from llm_loop.tools.arg_coerce import coerce_str_list
         acceptance = coerce_str_list(kwargs.get("acceptance"))
-        model = str(kwargs.get("model", "") or "").strip()
-        max_rounds, mr_err = _parse_max_rounds(kwargs.get("max_rounds"))
-        if mr_err:
-            return _fail(self.name, mr_err)
-
-        if not task:
-            return _fail(self.name, "[参数错误] 缺少必填参数 'task'（子任务描述）")
+        options = _parse_spawn_model_options(kwargs, task, self.name)
+        if isinstance(options, ToolResult):
+            return options
+        model, model_role, max_rounds = options
 
         # EVO-20260914-1eb26afa: 显式能力需求声明 → child 启动前矩阵比对早失败。
         # 不声明则不比对（零回归）；拒绝只针对"必然失败"的显式缺口。
@@ -436,6 +441,8 @@ class SpawnSubAgentTool:
             # 未声明保持既有调用面零变化（tests/test_write_scope_spawn.py 契约）。
             if max_rounds is not None:
                 start_kwargs["max_rounds"] = max_rounds
+            if model_role:
+                start_kwargs["model_role"] = model_role
             started = self._runner.start(
                 **start_kwargs, **_required_write_scope_kwargs(reqs, write_scope_declared)
             )
@@ -493,6 +500,21 @@ class SpawnSubAgentTool:
             tool_call_id="",
             tool_name=self.name,
         )
+
+def _parse_spawn_model_options(kwargs: dict, task: str, tool_name: str):
+    model = str(kwargs.get("model", "") or "").strip()
+    model_role = str(kwargs.get("model_role", "") or "").strip()
+    if model_role and model_role not in {"planning", "router"}:
+        return _fail(tool_name, "model_role_not_allowed")
+    max_rounds, mr_err = _parse_max_rounds(kwargs.get("max_rounds"))
+    if mr_err:
+        return _fail(tool_name, mr_err)
+
+    if not task:
+        return _fail(tool_name, "[参数错误] 缺少必填参数 'task'（子任务描述）")
+
+    return model, model_role, max_rounds
+
 
 def _parse_max_rounds(raw) -> tuple[int | None, str | None]:
     """2026-11-06 建议④：子代理轮次预算解析（None=不限；1..200；超界给错误文案）。"""
