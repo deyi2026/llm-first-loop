@@ -591,8 +591,9 @@ def _crypto() -> tuple[Any, Any]:
     return ECC, eddsa
 
 
-def _check_installed() -> None:
-    require(os.getuid() == _ISSUER_UID and os.geteuid() == _ISSUER_UID, "issuer_uid_invalid")
+def _check_installed(*, bootstrap: bool = False) -> None:
+    expected_uid = 0 if bootstrap else _ISSUER_UID
+    require(os.getuid() == expected_uid and os.geteuid() == expected_uid, "issuer_uid_invalid")
     require(bool(sys.flags.isolated and sys.flags.no_site), "issuer_python_not_isolated")
     installed = _BASE.parent / "bin" / "task_lease_issuer.py"
     info = installed.lstat()
@@ -630,6 +631,44 @@ def _check_installed() -> None:
             and (not private or st.st_mode & 0o077 == 0),
             "issuer_directory_untrusted",
         )
+
+
+def _initialize_lane_gitconfig(directory: Path, gid: int) -> str:
+    """Create only the missing issuer allowlist; never rewrite an existing file.
+
+    Called by the installed root-only bootstrap after the trusted path checks.
+    No key, approval, binding, or lease is opened by this operation.
+    """
+    name = "gitconfig-safe-directories"
+    parent_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        require(_trusted_root_ancestor(directory, os.fstat(parent_fd)),
+                "issuer_directory_untrusted")
+        try:
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=parent_fd)
+        except FileExistsError:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=parent_fd)
+            try:
+                st = os.fstat(fd)
+                require(stat.S_ISREG(st.st_mode) and st.st_nlink == 1
+                        and st.st_uid == _ISSUER_UID and st.st_gid == gid
+                        and stat.S_IMODE(st.st_mode) == 0o644,
+                        "issuer_lane_gitconfig_untrusted")
+            finally:
+                os.close(fd)
+            return "ALREADY_INITIALIZED"
+        try:
+            os.fchown(fd, _ISSUER_UID, gid)
+            os.fchmod(fd, 0o644)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.fsync(parent_fd)
+        return "INITIALIZED"
+    finally:
+        os.close(parent_fd)
 
 
 def _read_owned(path: Path, *, mode_private: bool) -> bytes:
@@ -881,7 +920,7 @@ def _issue_lane_request(raw: bytes, digest: str, key: Any, eddsa: Any) -> dict[s
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("keygen", "issue", "revoke", "lane-request", "issue-lane"), required=True)
+    parser.add_argument("--mode", choices=("keygen", "issue", "revoke", "lane-request", "issue-lane", "init-lane-gitconfig"), required=True)
     parser.add_argument("--approval-id", default="")
     parser.add_argument("--lease-id", default="")
     parser.add_argument("--repo", default="")
@@ -901,6 +940,20 @@ def main(argv: list[str] | None = None) -> int:
                 task_id=args.task_id, session_id=args.session_id, ttl_seconds=args.ttl_seconds,
             )
             print(canonical(request).decode("utf-8"))
+            return 0
+        if args.mode == "init-lane-gitconfig":
+            require(not args.approval_id and not args.lease_id and not args.repo
+                    and not args.workspace and not args.lane_id and not args.task_id
+                    and not args.session_id and not args.request_sha256
+                    and args.ttl_seconds == _LANE_DEFAULT_TTL,
+                    "issuer_bootstrap_arguments_invalid")
+            _check_installed(bootstrap=True)
+            import pwd
+
+            account = pwd.getpwuid(_ISSUER_UID)
+            require(account.pw_name == "_lfl_dual_witness", "issuer_uid_invalid")
+            result = {"decision": _initialize_lane_gitconfig(_BASE, account.pw_gid)}
+            print(json.dumps(result, sort_keys=True))
             return 0
         _check_installed()
         ecc_module, eddsa = _crypto()

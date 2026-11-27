@@ -1,0 +1,56 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-task-file-bootstrap-p0",
+  "summary": "Correct missing-file diagnostics and initialize the existing Host issuer allowlist without expanding authority.",
+  "components": [
+    {
+      "component_id": "task-file-bootstrap-p0",
+      "paths": [
+        "src/llm_loop/tools/builtin/read_file.py",
+        "tests/unit/test_task_file_tools.py",
+        "scripts/host_task_lease_issuer.py",
+        "tests/unit/test_host_task_lease_issuer.py",
+        "docs/governance/HOST-TASK-LEASE-BOOTSTRAP-20261119.md",
+        "docs/governance/submissions/20261127-task-file-bootstrap-p0.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "reuse-existing-task-authority",
+      "owning_subsystem": "Existing Task lease file tools, Task sandbox, FileService and installed UID462 issuer.",
+      "disposition": "Classify ENOENT only after existing scope checks. Reuse fenced execute_command no-clobber creation, SHA256 edit CAS/WAL. Root-only installed issuer initializes one fixed missing allowlist with O_EXCL; existing trusted file preserved; no signer or new permission surface.",
+      "evidence": [
+        "Red missing-file regression reproduced; targeted read/edit/version/revoke tests passed.",
+        "Actual Mac Seatbelt with test authority: create/no-clobber/read/edit/stale SHA/build/outside root/revoke.",
+        "106 targeted tests passed; bootstrap tests exercise idempotence, links, mode and nonroot rejection."
+      ],
+      "verification_level": "Offline fixture authority and real Mac sandbox; real root installation, production signed file flow, Deepin and full delivery gates pending.",
+      "model_evidence_veto_recovery_exit": "Keep actual OS denials, unknown effects and stale versions fail-closed. No automatic retry or replacement of an untrusted allowlist.",
+      "rollback_route": "Protected revert and retain prior installed issuer, existing allowlist, keys and receipts; revoke affected leases."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-existing-task-authority",
+      "g1": {
+        "necessity": "Missing files incorrectly trigger OS permission guidance; first lane issue fails when fixed allowlist is not initialized."
+      },
+      "g2": {
+        "authority_owner": "Existing Host UID462, local administrator, live Task/Lane and FileService.",
+        "relationship": "reuse",
+        "non_duplication": "No new lease, signer, ledger, arbitrary write tool or approval mechanism."
+      },
+      "g3": {
+        "model_evidence": [
+          "Actual red/green tests, existing sandbox integration and bootstrap idempotence/negative cases."
+        ],
+        "recovery_or_reason": "Unknown metadata remains denied; preserve existing bytes and do not bypass version, WAL or revocation checks."
+      },
+      "g4": {
+        "rollback": "Protected revert, retain prior issuer and keys; revoke exact lease.",
+        "verification": [
+          "Independent GLM-5.3-flash review, original R9, CI and protected main.",
+          "Install reviewed exact SHA, verify real UID462 initialization and one signed file workflow; Deepin actual compatibility separately."
+        ]
+      }
+    }
+  ]
+}

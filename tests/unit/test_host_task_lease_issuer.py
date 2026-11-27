@@ -501,3 +501,64 @@ def test_one_owner_approval_two_real_run_activations_and_revocation(
     finally:
         current_workspace_root.reset(ws)
         current_session_id.reset(sid)
+
+
+def test_lane_gitconfig_bootstrap_create_once_and_preserve_existing(tmp_path, monkeypatch):
+    monkeypatch.setattr(issuer, "_ISSUER_UID", os.getuid())
+    monkeypatch.setattr(issuer, "_trusted_root_ancestor", lambda path, st: stat.S_ISDIR(st.st_mode))
+    gid = os.getgid()
+    target = tmp_path / "gitconfig-safe-directories"
+    assert issuer._initialize_lane_gitconfig(tmp_path, gid) == "INITIALIZED"
+    assert target.read_bytes() == b""
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    target.write_text("[safe]\n\tdirectory = /test/worktree\n")
+    before = target.stat()
+    assert issuer._initialize_lane_gitconfig(tmp_path, gid) == "ALREADY_INITIALIZED"
+    assert target.read_text() == "[safe]\n\tdirectory = /test/worktree\n"
+    assert target.stat().st_ino == before.st_ino
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    target.chmod(0o666)
+    with pytest.raises(issuer.IssuerHoldError, match="issuer_lane_gitconfig_untrusted"):
+        issuer._initialize_lane_gitconfig(tmp_path, gid)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o666
+
+
+def test_lane_gitconfig_bootstrap_denies_links_without_modifying_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(issuer, "_ISSUER_UID", os.getuid())
+    monkeypatch.setattr(issuer, "_trusted_root_ancestor", lambda path, st: stat.S_ISDIR(st.st_mode))
+    other = tmp_path / "untouched"
+    other.write_text("unchanged")
+    other.chmod(0o644)
+    target = tmp_path / "gitconfig-safe-directories"
+    target.symlink_to(other)
+    with pytest.raises(OSError):
+        issuer._initialize_lane_gitconfig(tmp_path, os.getgid())
+    target.unlink()
+    os.link(other, target)
+    with pytest.raises(issuer.IssuerHoldError, match="issuer_lane_gitconfig_untrusted"):
+        issuer._initialize_lane_gitconfig(tmp_path, os.getgid())
+    assert other.read_text() == "unchanged"
+
+
+def test_lane_gitconfig_bootstrap_nonroot_and_extra_args_denied(monkeypatch, capsys):
+    monkeypatch.setattr(issuer.os, "getuid", lambda: 501)
+    monkeypatch.setattr(issuer.os, "geteuid", lambda: 501)
+    monkeypatch.setattr(issuer, "_crypto", lambda: pytest.fail("bootstrap must not load signing keys"))
+    assert issuer.main(["--mode", "init-lane-gitconfig"]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "issuer_uid_invalid"
+    assert issuer.main(["--mode", "init-lane-gitconfig", "--workspace", "/tmp"]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "issuer_bootstrap_arguments_invalid"
+
+
+def test_lane_gitconfig_bootstrap_dispatch_never_loads_crypto(tmp_path, monkeypatch, capsys):
+    import pwd
+
+    monkeypatch.setattr(issuer, "_BASE", tmp_path)
+    checks = []
+    monkeypatch.setattr(issuer, "_check_installed", lambda **kwargs: checks.append(kwargs))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="_lfl_dual_witness", pw_gid=20))
+    monkeypatch.setattr(issuer, "_initialize_lane_gitconfig", lambda directory, gid: "ALREADY_INITIALIZED" if directory == tmp_path and gid == 20 else pytest.fail("wrong bootstrap target"))
+    monkeypatch.setattr(issuer, "_crypto", lambda: pytest.fail("bootstrap must not load signing keys"))
+    assert issuer.main(["--mode", "init-lane-gitconfig"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"decision": "ALREADY_INITIALIZED"}
+    assert checks == [{"bootstrap": True}]

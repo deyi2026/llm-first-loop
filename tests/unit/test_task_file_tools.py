@@ -400,3 +400,83 @@ def test_native_task_real_run_generation_takeover_denies_write(tool_env, tmp_pat
     assert result.status == ToolResultStatus.UNAUTHORIZED
     assert result.error_type == "E4_GENERATION_AUTHORITY"
     assert target.read_text() == "original text\n"
+
+
+def test_task_read_missing_target_is_not_os_permission_prompt(tool_env):
+    _a, b, _c, target, _authority, _journal, _binding = tool_env
+    assert ReadFileTool().execute(path=str(target), snapshot=True).status == ToolResultStatus.SUCCESS
+    missing = b / "not-created.txt"
+    assert not missing.exists()
+    result = ReadFileTool().execute(path=str(missing), snapshot=True)
+    assert result.status == ToolResultStatus.FAILURE, result.content
+    assert result.error_type == "TaskFileNotFound", result.content
+    assert not missing.exists()
+
+
+def test_task_read_existing_os_denial_stays_unauthorized(tool_env, monkeypatch):
+    import os
+
+    _a, _b, _c, target, _authority, _journal, _binding = tool_env
+    original = os.access
+    monkeypatch.setattr(os, "access", lambda path, mode: False if str(path) == str(target) else original(path, mode))
+    result = ReadFileTool().execute(path=str(target), snapshot=True)
+    assert result.status == ToolResultStatus.UNAUTHORIZED
+    assert result.error_type == "os_permission_required"
+    assert "original text" not in result.content
+
+
+def test_task_read_missing_outside_scope_or_revoked_stays_denied(tool_env):
+    _a, b, c, _target, authority, _journal, _binding = tool_env
+    result = ReadFileTool().execute(path=str(c / "missing.txt"), snapshot=True)
+    assert result.status == ToolResultStatus.UNAUTHORIZED
+    assert result.error_type != "TaskFileNotFound"
+    authority.revoked = True
+    result = ReadFileTool().execute(path=str(b / "missing.txt"), snapshot=True)
+    assert result.status == ToolResultStatus.UNAUTHORIZED
+    assert result.error_type == "authority_lease_revoked"
+
+
+def test_task_existing_tools_create_read_edit_build_and_revoke(tool_env):
+    import shlex
+    import sys
+
+    from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+    from llm_loop.tools.sandbox import sandbox_exec_available
+
+    if sys.platform != "darwin" or not sandbox_exec_available():
+        pytest.skip("requires real macOS Seatbelt")
+    a, b, c, _target, authority, journal, _binding = tool_env
+    task = current_task_execution.get()
+    assert isinstance(task, TrustedTaskExecution)
+    tool = ExecuteCommandTool(sandbox_mode="sandbox-exec", safety_audit_dir=task.lanes._dir, timeout_s=10)
+    target = b / "created.txt"
+    path = shlex.quote(str(target))
+    command = f"set -C; printf 'initial\\n' > {path}"
+    assert ReadFileTool().execute(path=str(target), snapshot=True).error_type == "TaskFileNotFound"
+    created = tool.execute(command=command, workdir=str(a))
+    assert created.status == ToolResultStatus.SUCCESS, created.content
+    assert target.read_text() == "initial\n"
+    duplicate = tool.execute(command=f"set -C; printf 'overwrite\\n' > {path}", workdir=str(a))
+    assert duplicate.status != ToolResultStatus.SUCCESS
+    assert target.read_text() == "initial\n"
+    read = ReadFileTool().execute(path=str(target), snapshot=True)
+    assert read.status == ToolResultStatus.SUCCESS, read.content
+    ref = _ref(read)
+    edit = EditFileTool().run({"path": str(target), "old_string": "initial", "new_string": "updated", "expected_snapshot_ref": ref})
+    assert edit.status == ToolResultStatus.SUCCESS, edit.content
+    assert journal.events == [("prepared", str(target)), ("observed", str(target))]
+    stale = EditFileTool().run({"path": str(target), "old_string": "updated", "new_string": "stale", "expected_snapshot_ref": ref})
+    assert stale.error_type == "VersionConflict"
+    assert target.read_text() == "updated\n"
+    built = tool.execute(command=f"grep -qx updated {path}", workdir=str(a))
+    assert built.status == ToolResultStatus.SUCCESS, built.content
+    forbidden = c / "outside.txt"
+    denied = tool.execute(command=f"set -C; printf forbidden > {shlex.quote(str(forbidden))}", workdir=str(a))
+    assert denied.status != ToolResultStatus.SUCCESS
+    assert not forbidden.exists()
+    authority.revoked = True
+    after_revoke = b / "after-revoke.txt"
+    denied = tool.execute(command=f"set -C; printf forbidden > {shlex.quote(str(after_revoke))}", workdir=str(a))
+    assert denied.status != ToolResultStatus.SUCCESS
+    assert not after_revoke.exists()
+    assert ReadFileTool().execute(path=str(target), snapshot=True).error_type == "authority_lease_revoked"
