@@ -1,13 +1,13 @@
 ---
 name: code-review-gate
-description: 代码审查闸（RULE-AI-28 第 1 条）——代码任务全量测试前的独立子代理审查清单与回执格式
+description: 代码审查闸（RULE-AI-28 第 1 条）——风险分级审查清单与回执格式（官方 R9 检查可并行）
 ---
-# 代码审查闸（全量测试前）
+# 代码审查闸（风险分级）
 
-触发：修改 src/ tests/ scripts/ tools/ webui/ 等代码文件的任务，全量测试前必走（RULE-AI-28）。
+触发：修改 src/ tests/ scripts/ tools/ webui/ 等代码文件的任务，按 RULE-AI-28 风险分级执行；官方 R9 检查可与审查并行。
 
 ## 前置义务与资格
-审查是强制前置义务。父 agent 主动安排对应独立审查子代理，取得覆盖当前产物的有效 PASS 回执后方可执行目标动作；缺失、未完成、未通过或失效时暂缓该动作，继续其他可推进工作。核实真实子会话终态、审查类型、产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的“继续 / 按建议执行 / 授权发布”不构成免审；用户明确豁免须留痕。程序观测提示不等于有效回执。
+除已批准的官方 R9 检查并行入口外，当前受保护动作的审查仍是强制前置义务。父 agent 主动安排对应独立审查子代理，取得覆盖当前产物的有效 PASS 回执后方可执行目标动作；缺失、未完成、未通过或失效时暂缓该动作，继续其他可推进工作。核实真实子会话终态、审查类型、产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的“继续 / 按建议执行 / 授权发布”不构成免审；用户明确豁免须留痕。程序观测提示不等于有效回执。
 
 **实现入口（唯一）**：`review_admission(action=start, kind=full_test, workdir=…, command=…)` 由 Host 冻结当前产物并启动不可被父会话 steer 的独立 reviewer；`review_admission(action=status, child_id=…)` 核验真实 terminal completed、P0/P1=0 与产物 SHA 一致后签发进程内一次性资格，再以同一目标重试被拦动作。自建 `spawn_subagent` 拿不到 `review_isolated`（该标记仅 Host 内部 start 可设），其 completed 或工具文本中的 PASS 不构成资格；资格 child 禁用 `agent_followup`（续话即失去独立 stance），要新结论须重开 `start`，修订后的窄复审同路径。
 
@@ -30,6 +30,9 @@ description: 代码审查闸（RULE-AI-28 第 1 条）——代码任务全量�
 - **P1**：明确缺陷或遗漏，影响正确性或可维护性——必改，修后窄复审。
 - **P2**：改进建议（命名、结构、冗余）——记录，采纳与否由执行方答复时说明。
 - verdict 三态：PASS / REVISE / BLOCK。REVISE 后窄复审只复核修订点 + 新增扫描，不全量重审。
+
+## 2026-11-27 修订
+官方独立 R9 检查经 Host 核实入口后可与审查并行；不产生独审 PASS 或发布资格。其他入口和高风险合并仍保留旧门禁。低中风险非阻断交付须待可信风险分级接线验收后启用；已知 P0/P1 一律修复。
 
 ## 回执（落盘 docs/governance/receipts/，无回执不得声称已审查）
 ```json

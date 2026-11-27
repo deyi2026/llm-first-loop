@@ -4626,3 +4626,65 @@ def test_assert_anchor_contained_by_head_unit(tmp_path: Path) -> None:
         rha._assert_anchor_contained_by_head(repo, tip)  # HEAD=feature（旧基），锚=tip
     assert "review_base_behind_main_rebase_first" in str(ei.value)
     rha._assert_anchor_contained_by_head(repo, old)  # old 是 HEAD 祖先 → 放行
+
+
+def test_direct_official_r9_does_not_require_or_mint_review(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    gate = repo / "scripts" / "ci_gate.sh"
+    gate.parent.mkdir()
+    gate.write_bytes((Path(__file__).resolve().parents[2] / "scripts" / "ci_gate.sh").read_bytes())
+    subprocess.run(["git", "-C", str(repo), "add", "scripts/ci_gate.sh"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "gate fixture"], check=True)
+    subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    events = []
+    def audit(parent, event, payload):
+        events.append((parent, event, payload))
+        return False  # unavailable audit must not become a test-only dependency
+    host._audit = audit  # type: ignore[method-assign]
+    assert host.check_shell("author-1", "bash scripts/ci_gate.sh", str(repo)).allowed
+    assert events[0][1] == "review_admission_r9_parallel"
+    assert events[0][2]["review_qualification"] == "not_evaluated"
+    assert events[0][2]["release_qualified"] is False
+    assert not host.check_shell("author-1", "git push origin main", str(repo)).allowed
+    for command in ("bash scripts/ci_gate.sh; git push origin main",
+                    "bash scripts/ci_gate.sh && pytest -q", "env X=1 bash scripts/ci_gate.sh",
+                    "bash scripts/ci_gate.sh\npytest -q", "bash scripts/ci_gate.sh --release"):
+        assert not host.check_shell("author-1", command, str(repo)).allowed, command
+    assert not host.check_shell("author-1", "bash scripts/ci_gate.sh", str(gate.parent)).allowed
+    gate.write_text("#!/bin/bash\nexit 1\n")
+    assert not host.check_shell("author-1", "bash scripts/ci_gate.sh", str(repo)).allowed
+    subprocess.run(["git", "-C", str(repo), "commit", "-qam", "forged gate"], check=True)
+    subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    assert not host.check_shell("author-1", "bash scripts/ci_gate.sh", str(repo)).allowed
+    gate.unlink()
+    replacement = repo / "other.sh"
+    replacement.write_text("#!/bin/bash\nexit 0\n")
+    gate.symlink_to(replacement)
+    assert not host.check_shell("author-1", "bash scripts/ci_gate.sh", str(repo)).allowed
+
+
+def test_real_push_risk_audit_never_mints_qualification(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "restore", "example.py"], check=True)
+    base = _commit(repo, "README.md", "original documentation\n", "docs baseline")
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(remote)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
+    head = _commit(repo, "README.md", "updated documentation\n", "docs candidate")
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin feature"
+    receipt = host.start("author-1", "git_push", workdir=str(repo), command=command)
+    assert receipt["accepted"], receipt
+    risk = receipt["risk_audit"]
+    assert risk["base_sha"] == base and risk["candidate_sha"] == head
+    assert risk["tier"] == "low" and risk["mode"] == "shadow_only"
+    assert risk["review_required"] is True and risk["release_qualified"] is False
+    assert not host.check_shell("author-1", command, str(repo)).allowed
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {receipt['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    assert host.check_shell("author-1", command, str(repo)).allowed

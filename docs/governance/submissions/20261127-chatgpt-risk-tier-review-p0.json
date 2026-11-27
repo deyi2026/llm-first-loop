@@ -1,0 +1,62 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-chatgpt-risk-tier-review-p0",
+  "summary": "Operator approved risk-tier review policy. P0 removes serial review prerequisite only for verified direct original R9 check; no push, merge, publication, user permission or review authority change.",
+  "components": [
+    {
+      "component_id": "parallel-r9-admission",
+      "paths": [
+        "docs/ai_rules.md",
+        "skills/code-review-gate/SKILL.md",
+        "src/llm_loop/tools/registry.py",
+        "src/llm_loop/tools/review_gate.py",
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_review_host_admission.py",
+        "tests/unit/test_review_host_wiring.py",
+        "docs/governance/submissions/20261127-chatgpt-risk-tier-review-p0.json",
+        "src/llm_loop/tools/review_risk.py",
+        "tests/unit/test_review_risk.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "HostReviewAdmission and existing ToolRegistry; no new authority or service.",
+      "disposition": "Reuse shell classifier, canonical workdir, deployed official script SHA256 pin and audit event. Real frozen push range shadow classification only; no permit or release receipt. Keep existing review for other full-test entrypoints and protected actions.",
+      "evidence": [
+        "Earlier 374 regression tests passed on pre-pin candidate.",
+        "27 targeted tests passed after pin and shadow classification, including real bare-remote push receipt and denial before independent PASS, forged ref, historical protected/mode change.",
+        "Ruff PASS; independent review, final full R9, CI and production acceptance pending."
+      ],
+      "verification_level": "Targeted local tests; actual production deployment not verified.",
+      "model_evidence_veto_recovery_exit": "This change is high risk. Independent PASS and full original R9 required before protected merge. Unknown script or workdir falls back to existing admission.",
+      "rollback_route": "Revert isolated patch and redeploy through existing managed release.",
+      "declaration_id": "decl-parallel-r9"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-parallel-r9",
+      "g1": {
+        "necessity": "Reviewer timeout blocks full test even though tests can find defects independently. User approved removing serial dependency."
+      },
+      "g2": {
+        "authority_owner": "HostReviewAdmission; existing sandbox, user authorization and release controls remain authoritative.",
+        "relationship": "reuse",
+        "non_duplication": "One narrow test admission branch and read-only shadow classification using existing frozen remote base/candidate; no additional scheduler, grant or trust store."
+      },
+      "g3": {
+        "model_evidence": [
+          "Earlier 374 regression tests passed on pre-pin candidate.",
+          "27 targeted tests passed after pin and shadow classification, including real bare-remote push receipt and denial before independent PASS, forged ref, historical protected/mode change.",
+          "Ruff PASS; independent review, final full R9, CI and production acceptance pending."
+        ],
+        "recovery_or_reason": "Noncanonical command or modified script retains existing strict admission. Audit outage cannot mint review or release qualification."
+      },
+      "g4": {
+        "rollback": "Revert patch; no migration.",
+        "verification": [
+          "A.5, full R9, independent review, protected CI and merge, production positive and negative tests.",
+          "Separate phase for deterministic low/mid-risk push/merge; not enabled by this patch."
+        ]
+      }
+    }
+  ]
+}
