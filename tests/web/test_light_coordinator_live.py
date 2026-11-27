@@ -354,6 +354,7 @@ def test_live_resume_job_real_registry_authority(tmp_path, build_test_engine) ->
         session_id=sid,
         workspace_root=str(ws),
         executor="execute_command",
+        origin_operation_id="op-jobauth",
     )
     _crun.reset(_gen_token)
     # watcher 由 execute 层负责启动（create 只注册）——测试走同一真实路径
@@ -528,6 +529,7 @@ def test_live_resume_job_rejects_stale_or_unbound_jobs(tmp_path, build_test_engi
         session_id=sid,
         workspace_root=str(ws),
         executor="execute_command",
+        origin_operation_id="op-stale",
     )
     _cr2.reset(tok2)
     _tg = __import__("threading").Thread(
@@ -551,7 +553,9 @@ def test_live_resume_job_rejects_stale_or_unbound_jobs(tmp_path, build_test_engi
         json={"job_id": old_job, "queue_id": qid, "expected_sha256": sha},
         headers={"X-Coordinator-Token": _TOKEN},
     )
-    assert other.status_code == 409 and "已接续其他" in other.text
+    assert other.status_code == 409 and (
+        "已接续其他" in other.text or "mismatch" in other.text
+    )  # stale Job：代次/operation 任一守卫先拒均合法（幂等面在其后）
 
 
 def test_live_resume_job_real_subprocess_end_to_end(tmp_path, build_test_engine) -> None:
@@ -617,6 +621,7 @@ def test_live_resume_job_real_subprocess_end_to_end(tmp_path, build_test_engine)
         session_id=sid,
         workspace_root=str(ws),
         executor="execute_command",
+        origin_operation_id="op-subproc",
     )
     _crun.reset(tok)
     import threading as _threading
@@ -637,3 +642,218 @@ def test_live_resume_job_real_subprocess_end_to_end(tmp_path, build_test_engine)
     )
     assert ok.status_code == 200, ok.text
     assert ok.json().get("poked") is True
+
+
+# ---------------------------------------------------------------------------
+# SA-PR145-FINAL-ATOMIC-RESUME 三例 P1 负测（主筹 2026-11-27 11:41 隔离测试
+# 实失败三例的收口固化）：①无关联 Job 冒认；②并发双唤醒；③cards 写失败
+# 重放。真实 _resume_job_from_registry 路径 + 临时目录 + 内存 poke 计数，
+# 零生产副作用。
+# ---------------------------------------------------------------------------
+
+
+class _CountingFallback:
+    """poke 计数替身（真实 accepted 事实口径：返回 True 计数一次）."""
+
+    def __init__(self) -> None:
+        self.wake: list[str] = []
+        self._lock = threading.Lock()
+
+    def poke_session(self, sid: str) -> bool:
+        with self._lock:
+            self.wake.append(sid)
+        return True
+
+
+def _atomic_resume_harness(tmp_path, build_test_engine, *, operation_id: str):
+    """公共 harness：engine+token+真实 fallback 计数 + 派工卡（含
+    bound_run_generation）→ 返回 (client, engine, sid, sha, qid, fb)."""
+    engine, _ = build_test_engine([{"content": "unused"}])
+    ws = tmp_path / "ws_root"
+    ws.mkdir()
+    import dataclasses as _dc
+
+    engine.settings = _dc.replace(
+        engine.settings,
+        coordinator_light_role="orchestrator",
+        coordinator_light_token=_TOKEN,
+    )
+    engine.workspace_root = str(ws)
+    app = build_app(engine=engine)
+    fb = _CountingFallback()
+    app.state.queue_server_fallback = fb
+    client = TestClient(app)
+    sid = engine.session.create()
+    sha = hashlib.sha256(b"artifact-candidate").hexdigest()
+    enq = client.post(
+        "/api/v1/coordinator/light/dispatch",
+        json={
+            "operation_id": operation_id,
+            "target_session": sid,
+            "payload": {
+                "owner_session": sid,
+                "goal_id": "GOAL-ATOMIC",
+                "candidate_sha256": sha,
+                "bound_run_generation": "run-atomic",
+                "message": "原子接续验证卡",
+            },
+        },
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert enq.status_code == 200 and enq.json()["accepted"] is True
+    return client, engine, sid, sha, enq.json()["queue_id"], fb, ws
+
+
+def _completed_job(registry, sid: str, ws, *, operation_id: str, gen: str = "run-atomic") -> str:
+    import io as _io
+    import os as _os
+
+    from llm_loop.core.run_context import current_run_generation as _crun
+
+    token = _crun.set(gen)
+    proc = SimpleNamespace(pid=_os.getpid(), wait=lambda: 0, stdout=_io.StringIO(), stderr=_io.StringIO())
+    job_id = registry.create(
+        proc,
+        "echo atomic-resume",
+        session_id=sid,
+        workspace_root=str(ws),
+        executor="execute_command",
+        origin_operation_id=operation_id,
+    )
+    _crun.reset(token)
+    import threading as _threading
+    import time as _time
+
+    _threading.Thread(target=registry._watch_completion, args=(job_id,), daemon=True).start()
+    deadline = _time.time() + 5.0
+    while _time.time() < deadline:
+        snap = registry.snapshot(job_id, session_id=sid)
+        if isinstance(snap, dict) and snap.get("state") in {"completed", "failed"}:
+            break
+        _time.sleep(0.02)
+    assert snap.get("state") == "completed" and snap.get("exit_code") == 0
+    return job_id
+
+
+def test_p1_unbound_job_cannot_claim_operation(tmp_path, build_test_engine) -> None:
+    """P1-1：同 owner/scope/同 generation 但创建时未绑定 operation 的成功 Job
+    → 409 operation binding mismatch，零唤醒（不可冒认）."""
+
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    client, engine, sid, sha, qid, fb, ws = _atomic_resume_harness(
+        tmp_path, build_test_engine, operation_id="op-bound"
+    )
+    registry = JobRegistry.instance()
+    # 无关联 Job：同 owner/scope/gen，但 create 不传 origin_operation_id
+    unbound = _completed_job(registry, sid, ws, operation_id="")
+    r = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": unbound, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert r.status_code == 409 and "operation binding mismatch" in r.text
+    before = len(fb.wake)  # dispatch 入队 poke 已计一次；拒绝不再增加
+    # 关联 Job → 正常接续（对照：守卫不误伤）
+    good = _completed_job(registry, sid, ws, operation_id="op-bound")
+    r2 = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": good, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert r2.status_code == 200 and r2.json().get("poked") is True
+    assert len(fb.wake) == before + 1  # 仅对照接续新增一次
+
+
+def test_p1_concurrent_resume_wakes_once(tmp_path, build_test_engine) -> None:
+    """P1-2：并发两次同一接续请求（Barrier 同步）→ 恰一次唤醒、一次幂等拒绝
+    （wake_count==1，原子标记单赢家）."""
+    import threading as _threading
+
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    client, engine, sid, sha, qid, fb, ws = _atomic_resume_harness(
+        tmp_path, build_test_engine, operation_id="op-conc"
+    )
+    job_id = _completed_job(JobRegistry.instance(), sid, ws, operation_id="op-conc")
+    barrier = _threading.Barrier(2)
+    results: list = []
+    lock = threading.Lock()
+
+    def _go() -> None:
+        barrier.wait()
+        r = client.post(
+            "/api/v1/coordinator/light/resume-job",
+            json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+            headers={"X-Coordinator-Token": _TOKEN},
+        )
+        with lock:
+            results.append((r.status_code, r.json()))
+
+    threads = [_threading.Thread(target=_go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    poked = [b for _, b in results if b.get("poked") is True]
+    assert len(poked) == 1, f"并发双唤醒: {results}"
+    before = len(fb.wake)
+    r_after = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert r_after.json().get("duplicate") is True
+    assert len(fb.wake) == before  # 并发后重复请求零新增唤醒
+    assert len(results) == 2
+    # 非赢家必然 duplicate（原子幂等拒绝重放）
+    dup = [b for _, b in results if b.get("poked") is not True]
+    assert dup and (dup[0].get("duplicate") is True or dup[0].get("poked") is False)
+
+
+def test_p1_cards_write_failure_never_replays(tmp_path, build_test_engine) -> None:
+    """P1-3：cards 审计写失败（OSError）不影响接续事实（幂等权威在队列原子
+    标记）；重复请求 duplicate 不重放（wake_count==1）；重启重载同样幂等."""
+
+    import llm_loop.web.coordinator_light as _cl
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    client, engine, sid, sha, qid, fb, ws = _atomic_resume_harness(
+        tmp_path, build_test_engine, operation_id="op-writefail"
+    )
+    job_id = _completed_job(JobRegistry.instance(), sid, ws, operation_id="op-writefail")
+
+    orig = _cl._atomic_write_json
+
+    def _boom(*a, **k):
+        raise OSError("simulated disk full")
+
+    _cl._atomic_write_json = _boom
+    try:
+        r1 = client.post(
+            "/api/v1/coordinator/light/resume-job",
+            json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+            headers={"X-Coordinator-Token": _TOKEN},
+        )
+        assert r1.status_code == 200 and r1.json().get("poked") is True
+        wake_after_first = len(fb.wake)  # dispatch poke + 接续 poke
+    finally:
+        _cl._atomic_write_json = orig
+
+    r2 = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert r2.status_code == 200 and r2.json().get("duplicate") is True
+    assert r2.json().get("poked") is False
+    assert len(fb.wake) == wake_after_first  # 重复请求零新增唤醒
+
+    # 重启恢复：新队列实例重载 → 异 Job conflict / 同 job duplicate 均不重放
+    engine_settings_data = str(engine.settings.data_dir)
+    q_restarted = HumanTurnQueue(engine_settings_data, workspace_scope=str(ws))
+    m_same = q_restarted.mark_resumed_once(qid, job_id)
+    assert m_same["duplicate"] is True and m_same.get("marked") is False
+    m_other = q_restarted.mark_resumed_once(qid, "job-other")
+    assert m_other.get("conflict") is True and m_other.get("marked") is False

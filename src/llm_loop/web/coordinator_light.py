@@ -405,6 +405,9 @@ def derive_job_receipt(
             "workspace_scope": item_scope,
             "workspace_epoch": it.get("workspace_epoch"),
             "session_id": it.get("session_id"),
+            # SA-PR145-FINAL-ATOMIC-RESUME：创建时冻结的派工 operation_id
+            # （enqueue_once 盖章 origin_operation_id）——Job 关联核验凭据
+            "origin_operation_id": it.get("origin_operation_id"),
             # 派工声明面（payload_declared）：非实际 Job/产物权威，消费方
             # 不得当作 CI/合并凭证
             "payload_declared": {
@@ -496,6 +499,9 @@ def derive_job_receipt_from_registry(
         "owner_session": snap_session,
         "workspace_root": item_scope,
         "bound_run_generation": snap.get("origin_run_generation"),
+        # SA-PR145-FINAL-ATOMIC-RESUME：创建时即绑定的派工 operation_id——
+        # resume-job 精确关联凭据（空=创建方未关联，一律拒绝接续）
+        "origin_operation_id": str(snap.get("origin_operation_id") or ""),
         "durable": bool(snap.get("durable")),
     }
     if state not in {"completed", "failed", "killed", "orphaned"}:
@@ -598,32 +604,18 @@ def _resume_job_from_registry(
             status_code=409,
         )
     # SA-PR145-EXACT-JOB-BINDING：派工卡必须带 bound_run_generation（派工时
-    # 冻结的代次绑定）——缺失即不可证明"该 Job 对应本 operation"，HOLD。
+    # 冻结的代次绑定）与 origin_operation_id（enqueue_once 盖章）——缺失即
+    # 不可证明"该 Job 对应本 operation"，HOLD。
     bound_generation = str(declared.get("bound_run_generation") or "")
     if not bound_generation:
         return JSONResponse(
             content={"ok": False, "error": "派工卡无 bound_run_generation，不可证明 Job 对应关系（HOLD）"},
             status_code=409,
         )
-    # 重复接续幂等（复用既有 cards 审计附件面，不新增账本）：同 job 已接续 →
-    # duplicate 不重放；已接续其他 job → 409（一卡一 Job）。
-    card_path = (
-        Path(_coordinator_data_dir(request)) / "coordinator_light" / "cards"
-        / f"{derived['job_record'].get('payload_declared', {}).get('card_id') or body.queue_id}.json"
-    )
-    card_fact = _read_card_fact(card_path)
-    resumed_job = str(card_fact.get("resumed_job_id") or "")
-    if resumed_job:
-        if resumed_job == str(body.job_id):
-            return JSONResponse(content={
-                "ok": True,
-                "resumed": False,
-                "duplicate": True,
-                "reason": "该 Job 已接续过（幂等，不重放唤醒）",
-                "owner_session": owner,
-            })
+    card_operation = str(derived["job_record"].get("origin_operation_id") or "")
+    if not card_operation:
         return JSONResponse(
-            content={"ok": False, "error": "卡片已接续其他 Job（一卡一 Job，拒绝重绑）"},
+            content={"ok": False, "error": "派工卡无 origin_operation_id 盖章（HOLD）"},
             status_code=409,
         )
     from llm_loop.tools.builtin.job_registry import JobRegistry
@@ -661,10 +653,61 @@ def _resume_job_from_registry(
                 f"≠ 派工卡 bound_run_generation={bound_generation!r}，旧/不相关 Job 不可接续）"
             ),
         }, status_code=409)
+    # SA-PR145-FINAL-ATOMIC-RESUME（P1-1）：精确 operation 关联核验——Job 创建
+    # 时盖章的 origin_operation_id 必须非空且等于派工卡 origin_operation_id。
+    # 空/不等=同 owner/scope/代次但无关联的任意 Job → 409 拒绝（不可冒认）。
+    job_operation = str(receipt.get("origin_operation_id") or "")
+    if not job_operation or job_operation != card_operation:
+        return JSONResponse(content={
+            "ok": False,
+            "resumed": False,
+            "reason": (
+                f"operation binding mismatch（Job origin_operation_id={job_operation!r} "
+                f"≠ 派工卡 origin_operation_id={card_operation!r}，无关联 Job 不可接续）"
+            ),
+        }, status_code=409)
+    # SA-PR145-FINAL-ATOMIC-RESUME（P1-2/P1-3）：全部核验通过后一次性原子接续
+    # 标记——幂等权威面在队列条目自身（_exclusive_locked flock+fresh reload
+    # 单事务），cards 审计附件不可作权威、best-effort 写非原子。标记成功后才
+    # 允许 poke；duplicate（同 job 重放）/conflict（异 Job 重绑）/persist
+    # 不确定一律不唤醒（fail-closed）。拒绝路径在标记之前早退，零回滚。
+    mark = queue.mark_resumed_once(body.queue_id, str(body.job_id))
+    if mark.get("missing"):
+        return JSONResponse(
+            content={"ok": False, "error": "queue_item_not_found", "reason": "queue item missing"},
+            status_code=404,
+        )
+    if mark.get("duplicate") and not mark.get("conflict"):
+        return JSONResponse(content={
+            "ok": True,
+            "resumed": False,
+            "poked": False,
+            "duplicate": True,
+            "reason": "该 Job 已接续过（原子幂等，不重放唤醒）",
+            "owner_session": owner,
+        })
+    if mark.get("conflict"):
+        return JSONResponse(
+            content={
+                "ok": False,
+                "error": "卡片已接续其他 Job（一卡一 Job，拒绝重绑）",
+                "resumed_job_id": mark.get("resumed_job_id"),
+            },
+            status_code=409,
+        )
+    if mark.get("persist_uncertain"):
+        return JSONResponse(
+            content={
+                "ok": False,
+                "error": "persist_uncertain（接续标记落盘不确定，fail-closed 不唤醒；"
+                "磁盘若实际已写，重入走 duplicate 幂等）",
+            },
+            status_code=503,
+        )
     # 进程型 Job 无产物/候选账：不把派工声明 candidate 填入回执自证（原缺陷
-    # L597 已删）。接续合法性=代次绑定核验（上方 409 早退）+ candidate 请求
-    # 对照（派工声明 vs body.expected）；require_binding=False——不虚称候选
-    # 资格/CI PASS（CI continuation 保持 501）。
+    # L597 已删）。接续合法性=代次+operation 双绑定核验（上方 409 早退）+
+    # candidate 请求对照（派工声明 vs body.expected）；require_binding=False——
+    # 不虚称候选资格/CI PASS（CI continuation 保持 501）。
     outcome = resume_on_job(
         receipt,
         expected_sha256=body.expected_sha256,
@@ -674,11 +717,20 @@ def _resume_job_from_registry(
         require_artifact=False,  # 进程型 Job 无产物账——不虚产物事实
     )
     if outcome.get("poked"):
+        # cards 仅纯审计（best-effort）：幂等权威在队列原子标记，写失败不影响
+        # 接续事实与重放防护
         with contextlib.suppress(OSError):
+            card_path = (
+                Path(_coordinator_data_dir(request)) / "coordinator_light" / "cards"
+                / f"{derived['job_record'].get('payload_declared', {}).get('card_id') or body.queue_id}.json"
+            )
             card_path.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write_json(
-                card_path, {**card_fact, "resumed_job_id": str(body.job_id)}
+                card_path, {**_read_card_fact(card_path), "resumed_job_id": str(body.job_id)}
             )
+    if not outcome.get("poked"):
+        # 唤醒未发生（resume_on_job 内部核验拒绝）→ 回滚标记保持"未接续"
+        queue.mark_resumed_once(body.queue_id, "")
     return JSONResponse(content={"ok": bool(outcome.get("poked")), **outcome})
 
 

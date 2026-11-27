@@ -821,6 +821,46 @@ class HumanTurnQueue:
                     return True
             return False
 
+    def mark_resumed_once(self, queue_id: str, job_id: str) -> dict[str, Any]:
+        """一次性原子接续标记（SA-PR145-FINAL-ATOMIC-RESUME）.
+
+        在 _exclusive_locked（flock+fresh reload 全局互斥）内核验并标记
+        ``resumed_job_id``——接续幂等权威面在队列条目自身（cards 审计附件
+        不可作权威、best-effort 写非原子）：
+        - 首次标记并成功落盘 → ``{"marked": True}``（调用方此后才允许 poke）；
+        - 已标记同 job → ``duplicate=True``（不重放唤醒）；
+        - 已标记异 job → ``conflict=True``（一卡一 Job）；
+        - 持久化失败 → 内存标记回滚 + ``persist_uncertain=True``（fail-closed：
+          未确认落盘不触发唤醒；磁盘若实际已写，fresh reload 后重入走
+          duplicate 分支同样不重放——双保险幂等）；
+        - queue_id 不存在 → ``missing=True``。
+        """
+        with self._exclusive_locked():
+            for it in self._items:
+                if it.get("queue_id") != queue_id:
+                    continue
+                resumed = str(it.get("resumed_job_id") or "")
+                if resumed:
+                    return {
+                        "marked": False,
+                        "duplicate": True,
+                        "conflict": resumed != str(job_id),
+                        "resumed_job_id": resumed,
+                    }
+                it["resumed_job_id"] = str(job_id)
+                try:
+                    self._save()
+                except QueuePersistError as exc:
+                    it.pop("resumed_job_id", None)
+                    return {
+                        "marked": False,
+                        "duplicate": False,
+                        "persist_uncertain": True,
+                        "error": str(exc),
+                    }
+                return {"marked": True, "duplicate": False}
+            return {"marked": False, "duplicate": False, "missing": True}
+
     def compact(self, keep_n: int = TERMINAL_HISTORY_KEEP_N) -> None:
         """终态条目滚动清理（保最近 keep_n 条终态历史）."""
         with self._exclusive_locked():
