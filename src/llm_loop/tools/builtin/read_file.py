@@ -107,6 +107,26 @@ class ReadFileTool:
             FileService(artifact_store=artifact_store) if artifact_store is not None else None
         )
 
+    def _task_read_denied(self, target: Path, reason_code: str) -> ToolResult:
+        # Only classify absence after the signed scope, protected roots,
+        # owner and Lane checks have passed. Never turn OS denial into access.
+        if reason_code == "os_permission_required":
+            try:
+                target.lstat()
+            except FileNotFoundError:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[任务读取失败] 目标文件不存在；可用受管 execute_command 在授权工作树内无覆盖创建，再 read_file(snapshot=true)。",
+                    tool_call_id="", tool_name=self.name, error_type="TaskFileNotFound",
+                )
+            except OSError:
+                pass  # Uncertain or denied metadata access remains unauthorized.
+        return ToolResult(
+            status=ToolResultStatus.UNAUTHORIZED,
+            content=f"[任务授权拒绝] {reason_code}",
+            tool_call_id="", tool_name=self.name, error_type=reason_code,
+        )
+
     def _task_read(self, kwargs: dict) -> ToolResult:
         """Task-only read scope and exact SHA baseline; legacy path unchanged."""
         from llm_loop.tools.task_execution import TaskExecutionError, TrustedTaskExecution
@@ -138,11 +158,7 @@ class ReadFileTool:
         try:
             root = task.authorize_file(str(target), "read")
         except TaskExecutionError as exc:
-            return ToolResult(
-                status=ToolResultStatus.UNAUTHORIZED,
-                content=f"[任务授权拒绝] {exc.reason_code}",
-                tool_call_id="", tool_name=self.name, error_type=exc.reason_code,
-            )
+            return self._task_read_denied(target, exc.reason_code)
         snapshot = bool(kwargs.get("snapshot", False))
         if snapshot and sensitive_path_reason(target) is not None:
             return ToolResult(
