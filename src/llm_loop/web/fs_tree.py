@@ -24,6 +24,7 @@ B. 会话树: GET /api/v1/agents/tree（会话→子代理层级）
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -38,6 +39,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from llm_loop import security_guard
 from llm_loop.timekeeping import system_local_now
@@ -790,12 +792,18 @@ def fs_restore(request: Request, token: str = "") -> JSONResponse:
 # 响应（不重算）；TTL 过期重算；仅缓存成功（200）
 # 响应，list 失败/异常不入缓存（下次调用即重算）。
 # JSON 响应字节等价：缓存 payload 为 dict（插入序确定），
-# 重包 JSONResponse 序列化字节与首次相同。键控 id(engine)
-# 并在值中持有 engine 强引用作身份校验（id 复用不会跨
-# engine 串数据；有界 8 条防泄漏，生产进程实际=1 个 engine）。
+# 重包 JSONResponse 序列化字节与首次相同。键控 engine 身份与工作区版本，
+# 并持有 engine 强引用防止 id 复用串数据；有界 8 条。
 _AGENTS_TREE_CACHE_TTL_SECONDS = 30.0
 _agents_tree_cache_lock = threading.Lock()
-_agents_tree_cache: dict[int, tuple[float, object, dict[str, object]]] = {}
+_AgentsTreeScope = tuple[int, int, str]
+_AgentsTreeResult = tuple[int, dict[str, object]]
+_agents_tree_cache: dict[_AgentsTreeScope, tuple[float, object, dict[str, object]]] = {}
+
+
+def _agents_tree_scope(engine: Any) -> _AgentsTreeScope:
+    return (id(engine), getattr(engine, "_workspace_epoch", 0),
+            str(getattr(getattr(engine, "session", None), "root", "")))
 
 
 def _reset_agents_tree_cache_for_tests() -> None:
@@ -805,7 +813,7 @@ def _reset_agents_tree_cache_for_tests() -> None:
 
 def _agents_tree_cache_get(engine: object) -> dict[str, object] | None:
     with _agents_tree_cache_lock:
-        entry = _agents_tree_cache.get(id(engine))
+        entry = _agents_tree_cache.get(_agents_tree_scope(engine))
         if entry is None:
             return None
         cached_at, cached_engine, payload = entry
@@ -816,15 +824,53 @@ def _agents_tree_cache_get(engine: object) -> dict[str, object] | None:
         return payload
 
 
-def _agents_tree_cache_put(engine: object, payload: dict[str, object]) -> None:
+def _agents_tree_cache_put(
+    engine: object, payload: dict[str, object], *, scope: _AgentsTreeScope | None = None
+) -> None:
     with _agents_tree_cache_lock:
-        _agents_tree_cache[id(engine)] = (time.monotonic(), engine, payload)
+        current = _agents_tree_scope(engine)
+        if scope is not None and scope != current:
+            return
+        _agents_tree_cache[current] = (time.monotonic(), engine, payload)
         while len(_agents_tree_cache) > 8:
             _agents_tree_cache.pop(next(iter(_agents_tree_cache)))
 
 
+async def _collect_agents_tree(engine: Any, scope: _AgentsTreeScope) -> _AgentsTreeResult:
+    status, payload = await run_in_threadpool(_build_agents_tree, engine)
+    if _agents_tree_scope(engine) != scope:
+        return 409, {"error": "workspace_changed"}
+    if status == 200:
+        _agents_tree_cache_put(engine, payload, scope=scope)
+    return status, payload
+
+
+def _agents_tree_task(request: Request, engine: Any, scope: _AgentsTreeScope) -> asyncio.Task[_AgentsTreeResult]:
+    # App-owned, loop-scoped in-flight tasks. Waiters never occupy worker threads.
+    state = request.app.state
+    pending = getattr(state, "_agents_tree_pending", None)
+    if pending is None:
+        pending = {}
+        state._agents_tree_pending = pending
+    key = (asyncio.get_running_loop(), scope)
+    task = pending.get(key)
+    if task is not None and not task.done():
+        return task
+    task = asyncio.create_task(_collect_agents_tree(engine, scope))
+    pending[key] = task
+
+    def cleanup(done: asyncio.Task[_AgentsTreeResult]) -> None:
+        if pending.get(key) is done:
+            pending.pop(key, None)
+        if not done.cancelled():
+            done.exception()  # observe errors even if all request waiters disconnected
+
+    task.add_done_callback(cleanup)
+    return task
+
+
 @fs_router.get("/api/v1/agents/tree")
-def agents_tree(request: Request) -> JSONResponse:
+async def agents_tree(request: Request) -> JSONResponse:
     """会话→子代理层级树（对齐 DSH agents 树）.
 
     数据源: Session.parent_id + subagent_ 前缀会话（runner 创建）。
@@ -833,14 +879,23 @@ def agents_tree(request: Request) -> JSONResponse:
     事实；runner 缺失或拓扑未知时字段缺省——不伪造 inactive。
     """
     engine = _engine_from(request)
+    scope = _agents_tree_scope(engine)
     cached_payload = _agents_tree_cache_get(engine)
-    if cached_payload is not None:
+    if cached_payload is not None and _agents_tree_scope(engine) == scope:
         return JSONResponse(content=cached_payload)
+    # Shield the shared build from an individual browser timeout/disconnect.
+    status, payload = await asyncio.shield(_agents_tree_task(request, engine, scope))
+    if _engine_from(request) is not engine or _agents_tree_scope(engine) != scope:
+        return JSONResponse(status_code=409, content={"error": "workspace_changed"})
+    return JSONResponse(status_code=status, content=payload)
+
+
+def _build_agents_tree(engine: Any) -> _AgentsTreeResult:
     topology = getattr(engine, "subagent_runner", None)
     try:
         metas = engine.session.list_sessions()
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": "list_failed", "detail": f"会话列表失败: {exc}"})
+        return 500, {"error": "list_failed", "detail": f"会话列表失败: {exc}"}
     # 2026-09-22 CPU 契约修复：节点字段全部来自 SessionMeta（同一解析缓存），
     # 不再逐会话全量 load（460 会话/324MB 时每请求 2.2s CPU，1s 心跳 ×
     # 多标签页即饱和事件循环）。topology 事实仍按 sid 附着，语义不变。
@@ -872,6 +927,4 @@ def agents_tree(request: Request) -> JSONResponse:
             nodes.append(node)
         except Exception:  # noqa: BLE001 — 单会话拓扑附着失败跳过（节点仍返回）
             nodes.append({"id": sid, "parent_id": getattr(meta, "parent_id", None)})
-    payload: dict[str, object] = {"nodes": nodes}
-    _agents_tree_cache_put(engine, payload)
-    return JSONResponse(content=payload)
+    return 200, {"nodes": nodes}

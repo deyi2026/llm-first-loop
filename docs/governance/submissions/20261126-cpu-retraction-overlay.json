@@ -1,0 +1,48 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-cpu-retraction-overlay",
+  "summary": "Two measured Web CPU hot paths: skip impossible retraction replay on ordinary session loads and coalesce concurrent Agent tree builds using the existing cache. Isolated candidate based on 279c8ce6; no production acceptance or release claim.",
+  "components": [
+    {
+      "component_id": "session-retraction-read-fast-path",
+      "paths": [
+        "src/llm_loop/core/session.py",
+        "tests/unit/test_message_retraction.py",
+        "docs/governance/submissions/20261126-cpu-retraction-overlay.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing SessionStore retraction overlay and canonical EventStore reads.",
+      "disposition": "Reuse the existing no-retractable-user predicate for full session reads as well as indexed pages. When any user message has a nonempty human turn source identifier, preserve the original canonical read and overlay behavior. No new cache, polling interval, authority, or persisted schema.",
+      "evidence": [
+        "New regression fails on deployed code because read_cached is called even though no user row can match; passes with the candidate. Existing retraction and selective-read tests pass.",
+        "50 directed tests passed, including engine ingress, retraction, event reads, history revisions, history pagination and session statistics; Ruff and diff checks passed.",
+        "Isolated synthetic matrix uses the deployed SessionStore/EventStore/Web handlers, four 100-message and four 2000-message sessions, fixed 48 statistics and 24 history reads per case, and 0/1/4/8 concurrent usage-event writers. No model calls or production data. At eight writers, statistics full event reads 16 to 0, p95 27.24 to 12.84 ms, process CPU 0.142 to 0.074 seconds. These short samples are diagnostic, not production Run acceptance.",
+        "The original three-path tree e041bf78d3ddd49659cb5e0bcf44f87b5c9203b1 received native GLM-5.3-Flash Host PASS, child subagent_f7b2b5d8d2d2, artifact_reviewed=true, candidate_sha256=8d5a0e891e223240226acbb841fd4185681c8e19de2d1e90a472e51aca318a09. This historical qualification does not cover the integrated candidate."
+      ],
+      "verification_level": "Integrated targeted 100 passed across 10 modules; final integrated independent review, original full R9, remote CI and production 0/1/4/8 Run acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Retraction matching and canonical audit are unchanged. Any potentially retractable user row takes the existing path. Independent review must check malformed or legacy metadata and retraction correctness before delivery.",
+      "rollback_route": "Protected revert of this isolated change and regression test; no data migration or production state edit."
+    },
+    {
+      "component_id": "agents-tree-concurrent-build-coalescing",
+      "paths": [
+        "src/llm_loop/web/fs_tree.py",
+        "tests/web/test_fs_tree.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing display-only Agent tree projection and bounded TTL cache.",
+      "disposition": "Reuse the existing Agent tree projection and 30-second, eight-entry successful cache. Coalesce cold/expired reads into one app-owned, loop- and workspace-scoped shielded async task with one worker-thread build. Followers do not consume worker tokens; cancellation of a waiter does not cancel the build. Cache identity includes engine, workspace epoch and session root; changed workspace results are discarded. No change to settlement truth, TTL or polling interval.",
+      "evidence": [
+        "Production Gen458 PID81280 native 2-second sample and existing SIGUSR1 Python stack diagnostic captured three concurrent agents_tree/topology_snapshot/settlement_committed paths, including one full EventStore read. A single stack snapshot does not establish CPU share.",
+        "Eight concurrent cold reads reproduced duplicate list_sessions and topology calls on deployed code (2 builds, 24 topology calls for 12 nodes); candidate produced 1 build and 12 calls, with identical successful response bytes. RED/GREEN evidence retained in isolated task data.",
+        "Integrated 100 directed tests passed across 10 modules, including cache expiry, failure recovery, per-engine cache isolation, lineage, settlement/restart, retraction and history/statistics; Ruff and diff checks passed.",
+        "Generation 460 PID8307 production SIGUSR1 diagnostic (sess4533) found at least 26 of 37 application threads in agents_tree/topology_snapshot/settlement_committed/EventStore.last_seq. CPU samples 101-123%; services/status exceeded 20s. Isolated composer profile showed 1.544s including Learning fold, stable journal cache subsequently hit in 0.1ms. This identifies concurrent topology scans as a primary observed contention path, not a complete CPU attribution.",
+        "Current main ce1a4e93 isolated candidate: 35 directed tests passed (sess4547), including 1/4/8/40 simultaneous cold readers with two worker tokens, exactly one topology build, unrelated worker request completes while build blocked, cancelled waiter, shared failure and retry, workspace switch rejection, existing cache TTL and retraction/architecture regression. Ruff passed. These are concurrent read tests, not live model Run acceptance."
+      ],
+      "verification_level": "Current-main 35 directed tests passed; original full R9, independent review, remote CI, protected merge and actual 0/1/4/8 Run acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Only successful same-scope payloads are cached; failure shared only for in-flight waiters, then retry. Individual disconnect does not cancel shared build. Workspace change rejects old result. No execution, ownership or settlement authority introduced.",
+      "rollback_route": "Protected revert of isolated async coalescing and regression; no state migration."
+    }
+  ],
+  "declarations": []
+}
