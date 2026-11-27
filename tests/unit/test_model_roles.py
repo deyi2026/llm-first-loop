@@ -272,3 +272,17 @@ def test_reviewer_refresh_without_managed_dotenv_uses_process_values(monkeypatch
     assert reviewer_models_for_refresh(json.dumps({"reviewer": ["backup/reviewer"]}), "") == (
         "backup/reviewer", ""
     )
+
+
+def test_role_client_snapshot_keeps_old_clients_until_next_decision(monkeypatch):
+    pool = ModelClientPool(
+        registry=_registry(monkeypatch),
+        default_client=object(),  # type: ignore[arg-type]
+        model_roles_raw=json.dumps({"planning": ["primary/planner", "backup/planner"]}),
+    )
+    before = pool.role_client_snapshot("planning")
+    pool.replace_model_roles(json.dumps({"planning": ["backup/planner"]}))
+    after = pool.role_client_snapshot("planning")
+    assert [ref for ref, _ in before] == ["primary/planner", "backup/planner"]
+    assert [ref for ref, _ in after] == ["backup/planner"]
+    assert before[1][1] is after[0][1]

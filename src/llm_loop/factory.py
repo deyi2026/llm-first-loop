@@ -916,7 +916,7 @@ def _attach_dialog_probes(perceive_tool: Any, operation_tool: Any, actuator: Any
     operation_tool.attach_dialog_state_probe(probe)
 
 
-def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner: Any, job_registry: Any) -> None:
+def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner: Any, job_registry: Any, registry: Any) -> None:
     """把三个只读事实源接到装配点（engine 拓扑面 + coordination_status 的 running 段）.
 
     DESIGN-20261103 §6.4 N1。设计稿里的 ``from llm_loop.subagent import get_runner``
@@ -929,6 +929,8 @@ def _wire_coordination_sources(correction_ctx: Any, engine: Any, subagent_runner
     engine.subagent_runner = subagent_runner
     correction_ctx.subagent_runner = subagent_runner
     correction_ctx.job_registry = job_registry
+    registry.add_session_cancel_hook(subagent_runner.cancel_parent)
+    registry.add_async_obligation_hook(subagent_runner.pending_obligations)
 
 
 def _wire_host_review_and_verify(
@@ -3015,6 +3017,7 @@ def build_engine(
         artifact_store=_artifact_store,
         provider_call_coordinator=provider_call_coordinator,
         llm_resolver=model_pool.get_client,
+        role_clients_resolver=model_pool.role_client_snapshot,
         context_limits_resolver=_child_context_limits,
         archive_store=archive,
         parent_session_provider=_subagent_parent_session,
@@ -3025,9 +3028,7 @@ def build_engine(
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面与 coordination_status 的 running 段都在这个装配点接线。
-    _wire_coordination_sources(correction_ctx, engine, subagent_runner, _job_registry)
-    registry.add_session_cancel_hook(subagent_runner.cancel_parent)
-    registry.add_async_obligation_hook(subagent_runner.pending_obligations)
+    _wire_coordination_sources(correction_ctx, engine, subagent_runner, _job_registry, registry)
     registry.register(
         # EVO-20261108-b5fead21 ③: 注入本地 skills 目录提供器，spawn 派单时对
         # 引用了被完整性门禁隐藏技能的任务文本做前置披露警告（纯披露不拦截）。

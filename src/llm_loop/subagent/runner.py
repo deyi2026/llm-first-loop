@@ -52,12 +52,13 @@ from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.fleet.coordinator import ProjectCoordinator
 from llm_loop.fleet.store import WorkerLease
 from llm_loop.introspection.claims.events import write_event
-from llm_loop.llm.client import LLMClient
+from llm_loop.llm.client import LLMClient, LLMResponse
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMError,
     LLMHTTPError,
     LLMProjectionError,
+    classify_llm_error,
     is_overflow_error,
 )
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
@@ -232,6 +233,8 @@ class SubAgentResult:
     # exhausted_without_verdict（未收敛）。两者对父级处置（整合 vs 重派）不同；
     # 非 truncated 恒为空串，legacy outcome/truncated 语义不变。
     truncation_detail: str = ""
+    model_role: str = ""
+    model_attempts: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """保持 legacy flags 与结构化 outcome 一致，禁止构造“截断但 completed”。"""
@@ -284,6 +287,7 @@ class _SubAgentHandle:
     depth: int
     generation: str
     review_isolated: bool = False  # P0-B genuine reviewer never accepts parent steer
+    model_role: str = ""  # Frozen, tool-less decision; never a review authority.
     state: str = "running"
     result: SubAgentResult | None = None
     cancel_requested: bool = False
@@ -438,6 +442,7 @@ class SubAgentRunner:
         artifact_store: WorkspaceArtifactStore | None = None,
         provider_call_coordinator: ProviderCallCoordinator | None = None,
         llm_resolver: Callable[[str], LLMClient] | None = None,
+        role_clients_resolver: Callable[[str], tuple[tuple[str, LLMClient], ...]] | None = None,
         context_limits_resolver: Callable[[str], tuple[int, int | None, float] | None] | None = None,
         archive_store: ArchiveStore | None = None,
         parent_session_provider: Callable[[str], Session | None] | None = None,
@@ -454,6 +459,7 @@ class SubAgentRunner:
     ) -> None:
         self.llm = llm
         self._llm_resolver = llm_resolver
+        self._role_clients_resolver = role_clients_resolver
         # Optional model-registry facts and existing ArchiveStore; fake/legacy
         # runners without a qualified window retain their exact original wire.
         self._context_limits_resolver = context_limits_resolver
@@ -658,12 +664,15 @@ class SubAgentRunner:
             "depth": result.depth,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
+            **({"model_role": result.model_role, "model_attempts": result.model_attempts}
+               if result.model_role else {}),
         }
 
     @staticmethod
     def _result_from_payload(payload: dict[str, object]) -> SubAgentResult:
         raw_calls = payload.get("tool_calls")
         raw_reports = payload.get("reports")
+        raw_attempts = payload.get("model_attempts")
 
         def _int_value(key: str) -> int:
             value = payload.get(key)
@@ -692,6 +701,9 @@ class SubAgentRunner:
             depth=_int_value("depth"),
             tokens_in=_int_value("tokens_in"),
             tokens_out=_int_value("tokens_out"),
+            model_role=str(payload.get("model_role") or ""),
+            model_attempts=[dict(item) for item in raw_attempts if isinstance(item, dict)]
+            if isinstance(raw_attempts, list) else [],
         )
 
     def delivery_snapshot(self, child_session_id: str) -> dict[str, object] | None:
@@ -897,6 +909,8 @@ class SubAgentRunner:
                 child_handle = self._handles.get(resolved_target)
                 if child_handle is not None and child_handle.review_isolated:
                     return False, "独立审查 child 禁止父会话 steer（review_isolated）", resolved_target
+                if child_handle is not None and child_handle.model_role:
+                    return False, "角色研判输入已冻结，请新建研判任务", resolved_target
                 generation = self._local_generation_by_child.get(resolved_target, "")
                 if not generation:
                     return False, "目标 child 缺少可归因 execution generation", resolved_target
@@ -930,6 +944,8 @@ class SubAgentRunner:
         """Durably project current-generation parent steer at a safe child step boundary."""
         with self._children_guard:
             local_handle = self._handles.get(child_sid)
+            if local_handle is not None and local_handle.model_role:
+                return 0
             if local_handle is not None and local_handle.review_isolated:
                 # Even a preexisting/durable mailbox injection cannot enter a
                 # Host-designated independent review. Ordinary child unaffected.
@@ -1359,6 +1375,14 @@ class SubAgentRunner:
                 self._prune_handles_locked()
         return result
 
+    @staticmethod
+    def _ack_child_startup(state: dict[str, object] | None, event: threading.Event | None,
+                           ok: bool, detail: str) -> None:
+        if state is not None:
+            state.update({"ok": ok, "detail": detail})
+        if event is not None:
+            event.set()
+
     def _run_reserved_child(
         self,
         *,
@@ -1374,6 +1398,8 @@ class SubAgentRunner:
         model_label: str = "",
         startup_event: threading.Event | None = None,
         startup_state: dict[str, object] | None = None,
+        model_role: str = "",
+        role_clients: tuple[tuple[str, LLMClient], ...] = (),
     ) -> SubAgentResult:
         """在已登记的 child sid 上执行迷你循环；不负责 topology cleanup。"""
 
@@ -1396,10 +1422,7 @@ class SubAgentRunner:
                 parent_sid = self._parent_by_child.get(sid, "")
             with self.session_store.run_owned_session(sid) as owned_sess:
                 if owned_sess is None:
-                    if startup_state is not None:
-                        startup_state.update({"ok": False, "detail": "child_run_lease_busy"})
-                    if startup_event is not None:
-                        startup_event.set()
+                    self._ack_child_startup(startup_state, startup_event, False, "child_run_lease_busy")
                     return SubAgentResult(
                         final_answer=(
                             "[状态: failure] 子代理会话正由另一执行者持有，当前 worker 未执行任何动作。"
@@ -1413,10 +1436,7 @@ class SubAgentRunner:
                 if parent_sid and parent_sid != sid:
                     owned_sess.parent_id = parent_sid
                 if not generation:
-                    if startup_state is not None:
-                        startup_state.update({"ok": False, "detail": "child_generation_missing"})
-                    if startup_event is not None:
-                        startup_event.set()
+                    self._ack_child_startup(startup_state, startup_event, False, "child_generation_missing")
                     return SubAgentResult(
                         final_answer="[状态: failure] 子代理执行代际缺失，当前 worker 未执行任何动作。",
                         outcome="failed",
@@ -1437,10 +1457,7 @@ class SubAgentRunner:
                 )
                 self._refresh_topology_state(sid)
                 if not started:
-                    if startup_state is not None:
-                        startup_state.update({"ok": False, "detail": "topology_start_not_durable"})
-                    if startup_event is not None:
-                        startup_event.set()
+                    self._ack_child_startup(startup_state, startup_event, False, "topology_start_not_durable")
                     return SubAgentResult(
                         final_answer=(
                             "[状态: failure] 子代理 topology/generation 启动事实未持久化，"
@@ -1457,6 +1474,7 @@ class SubAgentRunner:
                             context=context,
                             depth=depth,
                             acceptance=acceptance,
+                            **({"model_role": model_role} if model_role else {}),
                         )
                     except BaseException as exc:  # noqa: BLE001 - startup must be acknowledged
                         if startup_state is not None:
@@ -1483,10 +1501,8 @@ class SubAgentRunner:
                             result=failed,
                         )
                         raise
-                    if startup_state is not None:
-                        startup_state.update({"ok": True, "detail": "durable_start_ready"})
-                    if startup_event is not None:
-                        startup_event.set()
+                    self._ack_child_startup(startup_state, startup_event, True, "durable_start_ready")
+                    role_attempts: list[dict] = []
                     try:
                         result = self._execute_subagent(
                             owned_sess,
@@ -1495,6 +1511,8 @@ class SubAgentRunner:
                             cancel_event=cancel_event,
                             llm_client=llm_client,
                             model_label=model_label,
+                            **({"role_clients": role_clients, "role_attempts": role_attempts}
+                               if model_role else {}),
                         )
                     except BaseException as exc:  # noqa: BLE001 - persist exact failure then preserve API
                         failed = SubAgentResult(
@@ -1511,6 +1529,8 @@ class SubAgentRunner:
                             result=failed,
                         )
                         raise
+                    result.model_role = model_role
+                    result.model_attempts = role_attempts
                     self._persist_terminal_result(
                         child_id=sid,
                         parent_id=parent_sid,
@@ -1784,6 +1804,52 @@ class SubAgentRunner:
             )
         )
 
+    @staticmethod
+    def _role_start_refusal(role: str, review_isolated: bool, required_tools: list[str] | None,
+                            inherit: bool, fs_isolation: bool) -> str:
+        if not role:
+            return ""
+        if role not in {"planning", "router"} or review_isolated:
+            return "model_role_not_allowed"
+        if required_tools or inherit or fs_isolation:
+            return "model_role_requires_toolless_input"
+        return ""
+
+    def _resolve_start_models(self, model: str, model_role: str, depth: int,
+                              max_rounds: int | None) -> tuple[LLMClient, str, tuple[tuple[str, LLMClient], ...], int | None] | dict:
+        role_clients: tuple[tuple[str, LLMClient], ...] = ()
+        requested_model = str(model or "").strip()
+        inherited_model = (
+            str(current_model_label.get() or "").strip()
+            if self._llm_resolver is not None
+            else ""
+        )
+        child_model_ref = requested_model or inherited_model
+        try:
+            if model_role:
+                if requested_model:
+                    client, label = self._resolve_child_llm(requested_model)
+                    role_clients = ((label, client),)
+                elif self._role_clients_resolver is not None:
+                    role_clients = self._role_clients_resolver(model_role)
+                if not role_clients:
+                    raise ValueError("model_role_unavailable")
+                child_model_label, child_llm = role_clients[0]
+                max_rounds = min(len(role_clients), max_rounds or len(role_clients))
+            else:
+                child_llm, child_model_label = self._resolve_child_llm(child_model_ref)
+        except Exception as exc:  # noqa: BLE001 - reject before reserving child resources
+            return {
+                "accepted": False,
+                "child_id": "",
+                "state": "refused",
+                "depth": depth,
+                "model": child_model_ref,
+                "detail": f"child_model_unavailable:{type(exc).__name__}:{exc}",
+            }
+
+        return child_llm, child_model_label, role_clients, max_rounds
+
     def start(
         self,
         task: str,
@@ -1802,10 +1868,19 @@ class SubAgentRunner:
         # SurfaceRequirements 解析出的 WriteScope）；None=未声明（继承父，
         # 零行为变化）。置于签名末尾，同样只以 keyword 传入。
         required_write_scope: WriteScope | None = None,
+        model_role: str = "",
     ) -> dict:
         """启动 background child；review_isolated 仅由可信 Host 内部调用。"""
         if depth >= self.max_depth:
             return self._start_failure_result(depth, f"递归深度超限（已达上限 {self.max_depth}）")
+
+        # Role selection is an availability policy, not an authorization claim.
+        # These short decisions consume only the supplied input and never execute tools.
+        refusal = self._role_start_refusal(model_role, review_isolated, required_tools, inherit, fs_isolation)
+        if refusal:
+            return self._start_failure_result(depth, refusal)
+        if model_role:
+            required_tools = []
 
         # EVO-20261012-bb3022f4 (E4): requires.tools 声明即程序级强制白名单，
         # 在预留任何 child 资源前计算并拒绝（fail-fast，不静默截断）。
@@ -1828,24 +1903,10 @@ class SubAgentRunner:
             child_scope, child_write_scope
         )
 
-        requested_model = str(model or "").strip()
-        inherited_model = (
-            str(current_model_label.get() or "").strip()
-            if self._llm_resolver is not None
-            else ""
-        )
-        child_model_ref = requested_model or inherited_model
-        try:
-            child_llm, child_model_label = self._resolve_child_llm(child_model_ref)
-        except Exception as exc:  # noqa: BLE001 - reject before reserving child resources
-            return {
-                "accepted": False,
-                "child_id": "",
-                "state": "refused",
-                "depth": depth,
-                "model": child_model_ref,
-                "detail": f"child_model_unavailable:{type(exc).__name__}:{exc}",
-            }
+        resolved = self._resolve_start_models(model, model_role, depth, max_rounds)
+        if isinstance(resolved, dict):
+            return resolved
+        child_llm, child_model_label, role_clients, max_rounds = resolved
 
         parent_sid = current_session_id.get()
         # Explicit Host canary authorization never turns into a full-powered
@@ -1862,7 +1923,7 @@ class SubAgentRunner:
             parent_budget, canary_profile, depth, inherit, fs_isolation,
             required_tools, child_model_label, parent_sid,
         )
-        if canary_denied:
+        if canary_denied or (is_canary and model_role):
             return self._start_failure_result(depth, "subagent_canary_child_scope_denied")
         if is_canary:
             # The child is a no-tool one-fact diagnostic, not a general
@@ -1904,6 +1965,7 @@ class SubAgentRunner:
         # the caller. Reviewer's parent cannot alter its input via agent_message.
         if review_isolated:
             handle.review_isolated = True
+        handle.model_role = model_role
 
         # EVO-20261016-ac47e850: 声明式 git worktree 隔离。prepare 失败即拒绝
         # （带 reason_code），绝不降级共享工作区——无声丢隔离比失败更糟。
@@ -2029,6 +2091,8 @@ class SubAgentRunner:
                             startup_state=startup_state,
                             llm_client=child_llm,
                             model_label=child_model_label,
+                            **({"model_role": model_role, "role_clients": role_clients}
+                               if model_role else {}),
                         )
                     except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
                         result = self._worker_terminal_from_exception(
@@ -2165,6 +2229,7 @@ class SubAgentRunner:
             "state": "running",
             "depth": depth,
             "model": child_model_label,
+            **({"model_role": model_role} if model_role else {}),
             "tool_scope": (
                 "full(excluding spawn_subagent)"
                 if child_scope is None
@@ -2176,7 +2241,8 @@ class SubAgentRunner:
                 else {}
             ),
             "worktree": worktree_lease.path if worktree_lease is not None else "",
-            "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
+            "detail": ("角色研判已启动，输入冻结；父代理可继续决策" if model_role
+                       else "child 已启动，父代理可继续决策并通过 agent_message 中途 steer"),
         }
 
     def review_finished_current(
@@ -2491,6 +2557,38 @@ class SubAgentRunner:
         now = datetime.now(last.tzinfo) if last.tzinfo else datetime.now()
         return now - last > timedelta(seconds=self.FOLLOWUP_WINDOW_S)
 
+    def _followup_denial(self, child_sess_probe: Session, sid: str, per_child: int, per_parent: int) -> tuple[bool, str, SubAgentResult | None] | None:
+        """Check frozen role input and the existing continuation budgets."""
+        if any(
+            msg.metadata.get("model_role")
+            and msg.metadata.get("injection_kind") == "subagent_task"
+            for msg in child_sess_probe.messages
+        ):
+            return False, "角色研判不允许续话；请新建有界研判任务", None
+        if per_child >= self.FOLLOWUP_MAX_PER_CHILD:
+            return (
+                False,
+                f"续话窗口已用尽: {sid} 已续话 {per_child}/{self.FOLLOWUP_MAX_PER_CHILD} 次。"
+                f"请用 spawn_subagent 新开 child（全新会话，需在 task 中带上必要上下文）。",
+                None,
+            )
+        if per_parent >= self.FOLLOWUP_TOTAL_PER_PARENT:
+            return (
+                False,
+                f"父会话续话总预算已用尽: {per_parent}/{self.FOLLOWUP_TOTAL_PER_PARENT}。"
+                "请用 spawn_subagent 新开 child。",
+                None,
+            )
+        if self._followup_window_expired(child_sess_probe):
+            return (
+                False,
+                f"续话窗口已过期: {sid} 终止已超过 {int(self.FOLLOWUP_WINDOW_S)}s。"
+                "请用 spawn_subagent 新开 child。",
+                None,
+            )
+
+        return None
+
     def followup_current(
         self, child_id: str, instruction: str
     ) -> tuple[bool, str, SubAgentResult | None]:
@@ -2562,27 +2660,9 @@ class SubAgentRunner:
             self.session_store.load(requester) if requester != sid else child_sess_probe
         )
         per_child, per_parent = self._followup_usage(child_sess_probe, parent_sess)
-        if per_child >= self.FOLLOWUP_MAX_PER_CHILD:
-            return (
-                False,
-                f"续话窗口已用尽: {sid} 已续话 {per_child}/{self.FOLLOWUP_MAX_PER_CHILD} 次。"
-                f"请用 spawn_subagent 新开 child（全新会话，需在 task 中带上必要上下文）。",
-                None,
-            )
-        if per_parent >= self.FOLLOWUP_TOTAL_PER_PARENT:
-            return (
-                False,
-                f"父会话续话总预算已用尽: {per_parent}/{self.FOLLOWUP_TOTAL_PER_PARENT}。"
-                "请用 spawn_subagent 新开 child。",
-                None,
-            )
-        if self._followup_window_expired(child_sess_probe):
-            return (
-                False,
-                f"续话窗口已过期: {sid} 终止已超过 {int(self.FOLLOWUP_WINDOW_S)}s。"
-                "请用 spawn_subagent 新开 child。",
-                None,
-            )
+        denial = self._followup_denial(child_sess_probe, sid, per_child, per_parent)
+        if denial is not None:
+            return denial
 
         # ── 同会话续话执行（受限轮数；记账标记先落盘再执行，保证失败也计费）──
         # 与 run() 相同的 child LLM 解析（继承父 run 模型；失败则拒绝、不执行）
@@ -2910,6 +2990,7 @@ class SubAgentRunner:
         context: str,
         depth: int,
         acceptance: list[str] | None,
+        model_role: str = "",
     ) -> None:
         """Persist the exact delegated input before background execution is acknowledged."""
         sys_prompt = (
@@ -2922,7 +3003,9 @@ class SubAgentRunner:
         if acceptance:
             items = "\n".join(f"{i}. {a}" for i, a in enumerate(acceptance, 1))
             sys_prompt += f"\n\n验收条件（供交付核对）：\n{items}"
-        if "kind=method" not in task:
+        if model_role:
+            sys_prompt += "\n\n仅基于给定输入研判，直接输出结论；不调用工具、不执行派工或审批。"
+        elif "kind=method" not in task:
             # Method discovery bridge (EVO-20261010 canary R2, 3/3 scenarios):
             # without this line subagents never searched method cards on their own
             # (0/17 searches in R1); with it they do bounded discovery first and,
@@ -2942,6 +3025,7 @@ class SubAgentRunner:
                     InjectionLayer.PROGRAM_RECOVERY,
                     injection_kind="subagent_task",
                     subagent_depth=depth,
+                    **({"model_role": model_role} if model_role else {}),
                 ),
             )
         )
@@ -3233,6 +3317,75 @@ class SubAgentRunner:
         )
         return projected, ""
 
+    def _finish_text_response(self, sess: Session, resp: LLMResponse, model_label: str,
+                              rounds: int, depth: int, tool_trace: list[dict], truncated: bool,
+                              tokens_in: int, tokens_out: int) -> SubAgentResult | None:
+        """Persist a final text response, or continue if newer parent input arrived."""
+        answer = (resp.content or "").strip()
+        stale_assistant = (
+            Message(
+                role="assistant",
+                content=answer,
+                source=MessageSource.USER,
+                reasoning_content=resp.reasoning_content,
+                model_used=model_label,
+                metadata=(
+                    {"provider_replay": resp.provider_replay}
+                    if resp.provider_replay
+                    else {}
+                ),
+            )
+            if answer
+            else None
+        )
+        if self._inject_pending_agent_messages(
+            sess,
+            sess.session_id,
+            preceding_assistant=stale_assistant,
+        ):
+            # 该“final”在新 steer 到达前生成，不能直接结算；下一轮基于
+            # 真实时序 assistant(old) -> agent_message 继续决策。
+            return None
+        if not answer:
+            return SubAgentResult(
+                final_answer="[状态: failure] 子代理未返回工具调用，也未返回可交付的最终文本。",
+                outcome="failed",
+                rounds=rounds,
+                tool_calls=tool_trace,
+                depth=depth,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
+        # durable child history 必须包含 terminal assistant；父级收到的 final_answer
+        # 与子会话可审计/可恢复终态保持同一事实源。
+        sess.messages.append(
+            Message(
+                role="assistant",
+                content=answer,
+                source=MessageSource.USER,
+                reasoning_content=resp.reasoning_content,
+                model_used=model_label,
+                metadata=(
+                    {"provider_replay": resp.provider_replay}
+                    if resp.provider_replay
+                    else {}
+                ),
+            )
+        )
+        with suppress(Exception):
+            self.session_store.save(sess)
+        return SubAgentResult(
+            final_answer=answer,
+            outcome="completed",
+            rounds=rounds,
+            tool_calls=tool_trace,
+            truncated=truncated,
+            depth=depth,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+        )
+
+
     def _execute_subagent(
         self,
         sess: Session,
@@ -3241,6 +3394,8 @@ class SubAgentRunner:
         cancel_event: threading.Event | None = None,
         llm_client: LLMClient | None = None,
         model_label: str = "",
+        role_clients: tuple[tuple[str, LLMClient], ...] = (),
+        role_attempts: list[dict] | None = None,
     ) -> SubAgentResult:
         """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
         effective_rounds = (
@@ -3270,6 +3425,9 @@ class SubAgentRunner:
                     tokens_out=tokens_out,
                 )
             rounds += 1
+            if role_clients:
+                model_label, active_llm = role_clients[rounds - 1]
+                current_model_label.set(model_label)
             # fleet slice 3: 每轮边界的租约心跳——只要子代理真实活着并在推进，
             # expires_at 就被机械延长。R1 起 renew 失败不再仅 fail-soft：权威
             # （TTL/supersede）一旦丢失即粘性围栏本 session 的全部副作用，
@@ -3289,7 +3447,7 @@ class SubAgentRunner:
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
                 )
-            if rounds > 1:
+            if rounds > 1 and not role_clients:
                 # 非首轮 LLM 决策前再扫一次，缩小消息恰好在上个 boundary 后到达
                 # 的竞态窗口。首轮不注入，避免 task user 后连续 user wire。
                 self._inject_pending_agent_messages(sess, sess.session_id)
@@ -3299,6 +3457,7 @@ class SubAgentRunner:
             # 格式事实，不注入任何内容导向）。首轮不注入（rounds>=2）。
             if (
                 rounds >= 2
+                and not role_clients
                 and not convergence_reminder_sent
                 and effective_rounds - rounds
                 <= convergence_reminder_threshold(effective_rounds)
@@ -3374,6 +3533,9 @@ class SubAgentRunner:
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
                 )
+            if role_clients and sub_schemas:
+                raise RuntimeError("model_role_tool_scope_violation")
+            attempt_started = time.monotonic()
             _provider_call_coordinator = self.provider_call_coordinator
             _provider_call = (
                 _provider_call_coordinator.open_shadow_call_for_client(
@@ -3392,13 +3554,14 @@ class SubAgentRunner:
                 resp = subagent_provider_chat(
                     self,
                     active_llm,
-                    lambda _msgs=msgs, _schemas=sub_schemas: active_llm.chat(
+                    lambda _msgs=msgs, _schemas=sub_schemas, _llm=active_llm: _llm.chat(
                         _msgs, tools=_schemas
                     ),
                     {},
                     owner_ref=f"subagent:{sess.session_id}:round:{rounds}",
                     provider_call=_provider_call,
-                    attempt_kind=ProviderAttemptKind.PRIMARY,
+                    attempt_kind=(ProviderAttemptKind.FALLBACK if role_clients and rounds > 1
+                                  else ProviderAttemptKind.PRIMARY),
                     site_index=0,
                 )
                 self._record_observed_model(sess.session_id, resp)
@@ -3410,6 +3573,25 @@ class SubAgentRunner:
                 if _provider_call_coordinator is not None:
                     _provider_call_coordinator.settle_shadow_call(
                         _provider_call, ProviderCallOutcome.ERROR
+                    )
+                if role_clients:
+                    semantics = classify_llm_error(exc) if isinstance(exc, LLMError) else None
+                    reason = semantics.kind if semantics is not None else type(exc).__name__
+                    if role_attempts is not None:
+                        role_attempts.append({
+                            "model": model_label, "outcome": "error", "reason": reason,
+                            "provider_code": semantics.provider_code if semantics else None,
+                            "elapsed_ms": round((time.monotonic() - attempt_started) * 1000),
+                        })
+                    if (semantics is not None and semantics.fallback_eligible
+                            and reason != "empty_response"
+                            and rounds < effective_rounds):
+                        continue
+                    return SubAgentResult(
+                        final_answer=f"[状态: failure] 角色研判未完成：{model_label} ({reason})",
+                        outcome="failed", rounds=rounds, depth=depth,
+                        tokens_in=int(getattr(exc, "prompt_tokens", 0) or 0),
+                        tokens_out=int(getattr(exc, "completion_tokens", 0) or 0),
                     )
                 # LLM 调用失败时根本没有 assistant tool declaration，因此不能伪造
                 # role=tool 错误帧；否则下一轮会形成 orphan tool protocol。失败事实
@@ -3552,6 +3734,13 @@ class SubAgentRunner:
                 continue
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens
+            if role_clients and role_attempts is not None:
+                role_attempts.append({
+                    "model": model_label, "observed_model": resp.observed_model,
+                    "provider": resp.provider, "outcome": "response",
+                    "elapsed_ms": round((time.monotonic() - attempt_started) * 1000),
+                    "tokens_in": resp.prompt_tokens, "tokens_out": resp.completion_tokens,
+                })
 
             # Stop 可能发生在 LLM HTTP 调用期间；响应返回后先检查 cancel，再决定
             # 是否执行刚声明的工具，避免“用户已停止但副作用仍继续”。
@@ -3566,71 +3755,19 @@ class SubAgentRunner:
                     tokens_out=tokens_out,
                 )
 
+            if role_clients and (resp.tool_calls or resp.truncated or resp.finish_reason in {"length", "max_tokens"}):
+                return SubAgentResult(
+                    final_answer="[状态: failure] 角色研判返回工具调用或截断结果；未执行工具、未重放。",
+                    outcome="failed", rounds=rounds, depth=depth,
+                    tokens_in=tokens_in, tokens_out=tokens_out,
+                )
             # 无工具调用 → 最终回答
             if not resp.tool_calls:
-                answer = (resp.content or "").strip()
-                stale_assistant = (
-                    Message(
-                        role="assistant",
-                        content=answer,
-                        source=MessageSource.USER,
-                        reasoning_content=resp.reasoning_content,
-                        model_used=model_label,
-                        metadata=(
-                            {"provider_replay": resp.provider_replay}
-                            if resp.provider_replay
-                            else {}
-                        ),
-                    )
-                    if answer
-                    else None
-                )
-                if self._inject_pending_agent_messages(
-                    sess,
-                    sess.session_id,
-                    preceding_assistant=stale_assistant,
-                ):
-                    # 该“final”在新 steer 到达前生成，不能直接结算；下一轮基于
-                    # 真实时序 assistant(old) -> agent_message 继续决策。
+                final = self._finish_text_response(sess, resp, model_label, rounds, depth,
+                                                   tool_trace, truncated, tokens_in, tokens_out)
+                if final is None:
                     continue
-                if not answer:
-                    return SubAgentResult(
-                        final_answer="[状态: failure] 子代理未返回工具调用，也未返回可交付的最终文本。",
-                        outcome="failed",
-                        rounds=rounds,
-                        tool_calls=tool_trace,
-                        depth=depth,
-                        tokens_in=tokens_in,
-                        tokens_out=tokens_out,
-                    )
-                # durable child history 必须包含 terminal assistant；父级收到的 final_answer
-                # 与子会话可审计/可恢复终态保持同一事实源。
-                sess.messages.append(
-                    Message(
-                        role="assistant",
-                        content=answer,
-                        source=MessageSource.USER,
-                        reasoning_content=resp.reasoning_content,
-                        model_used=model_label,
-                        metadata=(
-                            {"provider_replay": resp.provider_replay}
-                            if resp.provider_replay
-                            else {}
-                        ),
-                    )
-                )
-                with suppress(Exception):
-                    self.session_store.save(sess)
-                return SubAgentResult(
-                    final_answer=answer,
-                    outcome="completed",
-                    rounds=rounds,
-                    tool_calls=tool_trace,
-                    truncated=truncated,
-                    depth=depth,
-                    tokens_in=tokens_in,
-                    tokens_out=tokens_out,
-                )
+                return final
 
             # ── 执行工具（真实执行，复用 registry）──
             # 约束 C1 与主循环同构：assistant(tool_calls) 声明必须先进入子会话，
