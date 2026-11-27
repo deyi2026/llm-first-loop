@@ -147,6 +147,12 @@
 无法判定（无 audit_dir / 无法解析分支 / 读账本失败 / 无法证明闲置可回收）→
 放行或按 live 计，不把"无法判定"伪造成"无冲突"（fail-open，与命令闸的错误处理
 一致：拒绝必须基于已证事实）。
+
+2026-11-25（用户确认的同步规矩）新增第二条规则，**不以他人 live lane 为条件**：
+``git update-ref`` 把 main/master 挪到远端跟踪分支上已有的提交，而该分支正被某个
+工作树检出 → 拒绝（update-ref 只移指针，被检出的工作树会停在旧树）。解析器把
+update-ref 也收进动词，但它不计入 commit/push 命中。见
+:func:`check_update_ref_main_move`。
 """
 from __future__ import annotations
 
@@ -213,7 +219,7 @@ _PUSH_FLAGS_WITH_VALUE = frozenset(
 def _git_verbs(
     command: str, workdir: str | None = None
 ) -> list[tuple[str, list[str], str | None]]:
-    """抽出 ``(verb, refspec_tokens, 目标仓库路径)``；仅识别 commit/push。
+    """抽出 ``(verb, refspec_tokens, 目标仓库路径)``；动词识别 commit/push/update-ref。
 
     ``-C`` 按 git 语义**顺序链式**解析（后段相对前段）；无法解析时返回哨兵
     ``""``（调用方按"目标仓库不明"保守当 main 处理，不静默放行）。
@@ -621,7 +627,7 @@ def _git_verbs(
                 j += 1
             else:
                 j += 1
-        if j < len(tokens) and tokens[j] in ("commit", "push"):
+        if j < len(tokens) and tokens[j] in ("commit", "push", "update-ref"):
             if target is None:
                 # 无任何重定向 → 以 shell 层 cd 链落点为判定 cwd；无 cd 段时即
                 # workdir 参数（None 保持 None，历史行为不变）。
@@ -1106,6 +1112,9 @@ def _main_write_targets(
     verb: str, refspecs: list[str], workdir: str | None
 ) -> tuple[list[str], bool]:
     """命令触碰的 main/master 分支名，以及是否 ``--all``/``--mirror``。"""
+    if verb == "update-ref":
+        # 不是 commit/push：挪 main 指针由 check_update_ref_main_move 单独判定。
+        return [], False
     if verb == "commit":
         branch = _current_branch(workdir)
         return ([branch] if branch in _MAIN_BRANCHES else []), False
@@ -1598,6 +1607,8 @@ def _collect_main_write_hits(
             target_workdir = workdir
         if basis_workdir is None and target_workdir:
             basis_workdir = target_workdir
+        if verb == "update-ref":
+            continue  # 指针移动不是 commit/push 命中（见 check_update_ref_main_move）
         branches, is_all = _main_write_targets(verb, refs, target_workdir)
         if unresolved_cwd and not branches:  # 目标仓库不明 → 保守当 main
             branches = ["main"]
@@ -1805,3 +1816,192 @@ def check_push_lane_block(
     now = datetime.now().astimezone()
     live, stale = _split_stale_lanes(others, workdir=basis_workdir, now=now)
     return _push_lane_denial(pushes, push_all, push_delete_main, live, stale, now)
+
+
+# --- update-ref 挪 main 指针（2026-11-25 用户确认的同步规矩） ------------------------
+# 会话在 GitHub 合并 PR 后用 `git update-ref refs/heads/main <sha>` 把本地 main
+# 拨到 origin/main。update-ref 只移指针，不更新正被检出 main 的那个工作树的
+# 暂存区和工作树：旧树显示成反向“已暂存”（几十个文件），运行期工作树停在旧代码；
+# 事后补 ff-merge 回“Already up to date”，修不回来。2026-11-25 一天七次（06:37 到 21:22）。
+# 同一目的由 `git -C <主检出> merge --ff-only origin/main` 安全完成：这是 git 自己的
+# 行为——做得到就一并更新暂存区和工作树，做不到就整体拒绝、什么都不动。
+# 不在本规则内（已知、未覆盖）：`git branch -f main` / `fetch origin main:main`
+# （main 被检出时 git 自己拒绝）、`reset --soft/--mixed <commit>` 挪 main（同一类
+# 后果，未收）、`update-ref -d` 删 main 引用、`--stdin -z` 脚本。
+
+# `git update-ref --stdin`（非 -z）脚本里的 update 行：update SP <ref> SP <new> [SP <old>]
+_UPDATE_REF_STDIN_UPDATE_RE = re.compile(
+    r"^[ \t]*update[ \t]+(\S+)(?:[ \t]+(\S+))?(?:[ \t]+(\S+))?[ \t]*$", re.MULTILINE
+)
+
+
+def _update_ref_positional(refs: list[str]) -> tuple[list[str], list[str]]:
+    """拆 update-ref 的位置参数与 flag（`-m <reason>` 连同取值一起跳过）。"""
+    args: list[str] = []
+    flags: list[str] = []
+    i = 0
+    while i < len(refs):
+        token = refs[i]
+        if token == "-m":
+            i += 2
+            continue
+        if token.startswith("-"):
+            flags.append(token)
+        else:
+            args.append(token)
+        i += 1
+    return args, flags
+
+
+def _update_ref_branch(ref: str, flags: list[str], workdir: str | None) -> str | None:
+    """update-ref 的目标 ref 归一到 main/master 短名；不是（或读不出）返回 None。
+
+    `HEAD` / `@` 按 symbolic-ref 跟随：在 main 检出里挪 HEAD 就是挪 main。
+    `--no-deref` 下写 HEAD 只是把 HEAD 自身改成游离，不算。
+    """
+    name = ref.strip().lstrip("+")
+    for prefix in ("refs/heads/", "heads/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+    if name in _MAIN_BRANCHES:
+        return name
+    if name in ("HEAD", "@") and "--no-deref" not in flags:
+        head = _git_out(["symbolic-ref", "--quiet", "HEAD"], workdir)
+        for branch in _MAIN_BRANCHES:
+            if head == "refs/heads/" + branch:
+                return branch
+    return None
+
+
+def _main_checkout_worktree(workdir: str | None, branch: str) -> str | None:
+    """`branch` 正被哪个工作树检出 → 该工作树路径；没检出 / 读不出返回 None。
+
+    只有正被检出的分支，指针被挪时才会有“暂存区和工作树停在旧树”的后果。
+    """
+    if not workdir:
+        return None
+    out = _git_out(["worktree", "list", "--porcelain"], workdir)
+    if out is None:
+        return None
+    current = ""
+    for line in out.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current = value
+        elif key == "branch" and value == "refs/heads/" + branch and current:
+            return current
+    return None
+
+
+def _update_ref_main_moves(
+    verbs: list[tuple[str, list[str], str | None]], command: str, workdir: str | None
+) -> list[tuple[str, str, str | None]]:
+    """收集 update-ref 挪 main/master 的 ``(分支, 新值 token, 目标仓库)``。
+
+    新值 token 为 ``""`` = 看得出在挪 main 但命令文本里读不出新值。`-C` 链不可
+    解析时以命令 workdir 为目标仓库（与 lane 规则“目标仓库不明 → 保守处理”同向）。
+    """
+    moves: list[tuple[str, str, str | None]] = []
+    for verb, refs, cwd_override in verbs:
+        if verb != "update-ref":
+            continue
+        # `-C $VAR` 这类解析不出真实目录的，按命令 workdir 判（shell 里变量会展开）。
+        if cwd_override and os.path.isdir(cwd_override):
+            target: str | None = cwd_override
+        else:
+            target = workdir
+        args, flags = _update_ref_positional(refs)
+        if "-d" in flags or "--delete" in flags:
+            continue  # 删除 main 引用不是“同步”
+        if "--stdin" in flags:
+            for match in _UPDATE_REF_STDIN_UPDATE_RE.finditer(command):
+                branch = _update_ref_branch(match.group(1), [], target)
+                if branch:
+                    moves.append((branch, match.group(2) or "", target))
+            continue
+        if not args:
+            continue
+        branch = _update_ref_branch(args[0], flags, target)
+        if branch:
+            moves.append((branch, args[1] if len(args) > 1 else "", target))
+    return moves
+
+
+def _update_ref_remote_containing(new: str, branch: str, workdir: str | None) -> str | None:
+    """新值若是“远端跟踪分支上已有的提交”，返回该 ref（如 ``origin/main``）。
+
+    返回 None = 不是，或读不出：新值解析不了、本地没有这个分支、新值与现值相同
+    （没有移动）、没有任何远端跟踪分支包含它。
+    """
+    new_sha = _rev_sha(new, workdir)
+    if not new_sha or not workdir:
+        return None
+    current = _git_out(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], workdir)
+    if not current or new_sha == current:
+        return None
+    tracking = _git_out(
+        ["for-each-ref", "--format=%(refname)", f"refs/remotes/*/{branch}"], workdir
+    )
+    for ref in (tracking or "").split():
+        if _is_ancestor(new_sha, ref, workdir) is True:
+            return ref
+    return None
+
+
+def check_update_ref_main_move(
+    command: str,
+    *,
+    audit_dir: str,
+    session_id: str,
+    workdir: str | None,
+) -> dict[str, Any] | None:
+    """判定命令是否用 ``git update-ref`` 把 main/master 指针挪到远端已有的提交。
+
+    与 :func:`check_git_main_write` 不同，本规则**不以他人 live lane 为条件**：
+    伤害来自“正被检出的 main 工作树停在旧树”，与有没有并行 lane 无关。拒绝必须
+    同时成立：
+    ① update-ref 的目标是 main/master（含被 main 检出的 ``HEAD``）；
+    ② 该分支正被某个工作树检出：bare 或未被检出的仓库挪指针没有这个后果；
+    ③ 新值是远端跟踪分支上已有的提交：挪过去等于“同步”，ff-merge 可替代。
+       本地独有提交（已过合并闸的 plumbing 合并，见 method
+       ``plumbing-merge-via-verified-tree-identity-when-others-staged-files-block``）
+       不在本规则内。
+    任一无法判定 → 放行（拒绝只基于已证事实）。返回 None=放行；dict 结构同
+    ``check_git_main_write``，``reason=main_ref_pointer_move``、
+    ``reason_code=main_update_ref_stale_worktree``。
+    """
+    if not command or not audit_dir:
+        return None
+    verbs = _git_verbs(command, workdir)
+    if not verbs:
+        return None
+    proven: list[tuple[str, str, str, str, str]] = []
+    for branch, new, target in _update_ref_main_moves(verbs, command, workdir):
+        checkout = _main_checkout_worktree(target, branch)
+        remote_ref = _update_ref_remote_containing(new, branch, target)
+        if checkout and remote_ref:
+            proven.append((branch, new, target or "", checkout, remote_ref))
+    if not proven:
+        return None
+    branch, new, target, checkout, remote_ref = proven[0]
+    new_sha = _rev_sha(new, target) or new
+    others = _active_other_lanes(audit_dir, session_id)
+    live, stale = _split_stale_lanes(others, workdir=target, now=datetime.now().astimezone())
+    remote = remote_ref.removeprefix("refs/remotes/")
+    detail = (
+        f"命令用 git update-ref 挪 refs/heads/{branch}，而 {branch} 正检出在 {checkout}："
+        "update-ref 只移指针，不更新该检出的暂存区和工作树，会把旧树显示成反向“已暂存”、"
+        "运行期工作树停在旧代码。"
+        f"新值 {new_sha[:12]} 已在 {remote} 上——"
+        f"同步本地 {branch} 请用 `git -C {checkout} merge --ff-only {remote}`"
+        "（完成则一并更新暂存区和工作树；因未提交改动、未跟踪文件同名或无法快进被拒时"
+        "停下问人）。不要用 update-ref / branch -f / reset --soft 挪 main 指针。"
+    )
+    return {
+        "reason": "main_ref_pointer_move",
+        "reason_code": "main_update_ref_stale_worktree",
+        "operation": f"update-ref {branch} -> {new_sha[:12]}",
+        "detail": detail + _stale_note(stale),
+        "lanes": live[:5],
+        "stale_lanes": _stale_payload(stale),
+    }
