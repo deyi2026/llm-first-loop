@@ -1,7 +1,7 @@
 """RULE-AI-28 mandatory review obligation and observational evidence hints.
 
-The model must obtain an independent PASS for the current artifact before the
-target action. These receipt annotations are observations, not admission proof:
+The model must obtain an independent PASS for protected release actions.
+The verified official R9 check may run independently of review. These receipt annotations are observations, not admission proof:
 a VERDICT substring is unverified tool text, not an authenticated child result.
 Only observation recording is best-effort; its failure never waives review.
 """
@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import cast
 
 GATE_NOTE_PREFIX = "[RULE-AI-28 闸]"
-REVIEW_GATE_OBLIGATION = "代码任务进入全量测试、文稿对外发表或 git push 前，必须取得对应独立审查子代理覆盖当前产物的有效 PASS 回执；未满足时暂缓该动作。"
+REVIEW_GATE_OBLIGATION = "官方独立 R9 检查（仓库根目录直接 bash scripts/ci_gate.sh，Host 核实入口）可与审查并行；其他全量测试入口、文稿发表和 git push 暂保留独立审查覆盖当前产物的有效 PASS 前置义务。测试通过不等于审查通过或发布授权。"
 ARTICLE_REVIEW_OBLIGATION = "涉及文稿发表前，按 RULE-AI-28 取得专门独立审查子代理覆盖当前产物的有效 PASS 回执；未满足时暂缓发表。"
 
 
@@ -193,9 +193,14 @@ def classify_review_gate_command(command: str) -> str | None:
 
 def review_gate_note(action_kind: str, machine_fact: str, *, action_label: str) -> str:
     """Report the obligation and unverified observation without claiming admission."""
+    obligation = (
+        "官方 R9 检查可与审查并行（由 Host 核实入口）；其他全量测试入口仍须独立审查 PASS"
+        if action_kind == "full_test" else
+        "审查是强制前置义务，须先取得对应独立审查子代理覆盖当前产物的有效 PASS 回执"
+    )
     return (
         f"{GATE_NOTE_PREFIX} 动作={action_label}（{action_kind}）｜"
-        "审查是强制前置义务，须先取得对应独立审查子代理覆盖当前产物的有效 PASS 回执｜"
+        f"{obligation}｜"
         f"观测线索（审查资格未核验）: {machine_fact}｜"
         "本行不是审查通过凭据或免审许可；具体执行状态以本工具回执为准"
     )

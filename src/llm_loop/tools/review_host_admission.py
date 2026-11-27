@@ -31,6 +31,7 @@ from llm_loop.security_guard import has_strong_secret, is_template_name, sensiti
 from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
 from llm_loop.tools.review_report import is_placeholder_finding, rejected_receipt
+from llm_loop.tools.review_risk import classify_commit_risk
 
 
 @dataclass(frozen=True)
@@ -3287,6 +3288,36 @@ def _full_test_target_for_command(workdir: str, command: str) -> tuple[str, str]
     return f"full_test:{dest}:command:{_digest(command.encode('utf-8'))}", ""
 
 
+# Pin the deployed policy's official gate bytes, not a candidate-writable Git ref.
+# If the gate changes, the old strict admission remains until the new pin is reviewed.
+_OFFICIAL_R9_GATE_SHA256 = "f0474dc361b9fe2cc5b4b1a5ce98988e4bf45a526c85ea64dac824bdbd744e14"
+
+
+def _direct_r9_check_evidence(workdir: str, command: str) -> dict[str, str] | None:
+    """Recognize only the standalone official gate; never a shell wrapper or push.
+
+    This is test admission, not review qualification, user authorization or a
+    release receipt. Candidate code is still subject to the existing sandbox.
+    """
+    if command.strip(" \t") != "bash scripts/ci_gate.sh":
+        return None
+    try:
+        root = Path(workdir).expanduser().resolve(strict=True)
+        if Path(_git(root, "rev-parse", "--show-toplevel").decode().strip()).resolve() != root:
+            return None
+        gate = root / "scripts" / "ci_gate.sh"
+        if gate.resolve(strict=True) != gate or not gate.is_file():
+            return None
+        committed = _git(root, "show", "HEAD:scripts/ci_gate.sh")
+        if (_digest(committed) != _OFFICIAL_R9_GATE_SHA256
+                or gate.stat().st_size != len(committed) or gate.read_bytes() != committed):
+            return None
+        head = _git(root, "rev-parse", "HEAD").decode().strip()
+        return {"head": head, "gate_sha256": _digest(committed)}
+    except (OSError, RuntimeError, ValueError, UnicodeError, subprocess.TimeoutExpired):
+        return None
+
+
 def _head_commit_of(workdir: str) -> str:
     """当前 git HEAD commit id（bookkeeping 用；失败返回空串，调用方 fail-closed）。"""
     if not workdir:
@@ -4303,10 +4334,10 @@ class HostReviewAdmission:
                 extra_scope_header=tuple(batch_header),
             )
             dest = _push_target(command, true_dir)
-            push_extra = {"src_commit": push_head,
-                          "first_push": "1" if first_push else "",
+            push_extra = {"src_commit": push_head, "first_push": "1" if first_push else "",
                           "target_ref": dst_ref if first_push else "",
-                          "content_fingerprint": reviewed_fp, "push_content_fingerprint": pushed_fp}
+                          "content_fingerprint": reviewed_fp, "push_content_fingerprint": pushed_fp,
+                          "risk_repo": true_dir}
             if push_batch is not None:
                 push_extra["push_batch"] = push_batch
         else:
@@ -4574,6 +4605,7 @@ class HostReviewAdmission:
             receipt["push_remote_commit"] = push_remote_commit
             # EVO-20261022-331eee17: the frozen range follows the push target.
             receipt["push_src_commit"] = push_extra.get("src_commit", "")
+            receipt["risk_audit"] = classify_commit_risk(_git, Path(push_extra.get("risk_repo", "")), push_remote_commit, receipt["push_src_commit"])
             # 2026-11-02：内容侧绑定（见 _end_state_fingerprint 的 docstring）。
             receipt["commit_independent_sha256"] = push_extra.get("content_fingerprint", "")
             if push_extra.get("first_push"):
@@ -5923,6 +5955,17 @@ class HostReviewAdmission:
         if warning is not None:
             self._audit(parent, "review_admission_knowledge_warning", warning)
 
+    def _admit_direct_r9_check(self, parent: str, workdir: str, command: str, target: str) -> bool:
+        evidence = _direct_r9_check_evidence(workdir, command)
+        if evidence is None:
+            return False
+        # Audit failure cannot create a PASS or block a test-only action.
+        self._audit(parent, "review_admission_r9_parallel", {
+            **evidence, "target": target,
+            "review_qualification": "not_evaluated", "release_qualified": False,
+        })
+        return True
+
     def check_shell(self, parent: str, command: str, workdir: str) -> AdmissionDecision:
         kind = classify_host_shell(command)
         if kind is None:
@@ -5941,6 +5984,8 @@ class HostReviewAdmission:
         full_test_target, invalid = _full_test_target_for_command(workdir, command) if kind == "full_test" else ("", "")
         if invalid:
             return self._deny(invalid)
+        if kind == "full_test" and self._admit_direct_r9_check(parent, workdir, command, full_test_target):
+            return AdmissionDecision(True, "R9 test-only admission; review not evaluated")
         scopes = self._pending_scopes(
             parent, kind, **({"target": full_test_target} if kind == "full_test" else {})
         )
@@ -6234,7 +6279,7 @@ class ReviewAdmissionTool:
 
     name = "review_admission"
     description = (
-        "RULE-AI-28 Host 硬准入操作：action=start 对当前代码全量测试、git push"
+        "RULE-AI-28 Host 审查操作（独立官方 R9 检查可与审查并行）：action=start 对当前代码全量测试、git push"
         "或浏览器文稿发表生成 Host 冻结任务并启动独立受管 Reviewer（模型由宿主配置）；"
         "action=status 根据真实 child_id 查询终态并由 Host 内存签发一次性资格。"
         "单纯自述PASS、任意JSON、旧审查回执、未经检查的不同目标均无效。"
