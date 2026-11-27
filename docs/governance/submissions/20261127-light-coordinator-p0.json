@@ -119,6 +119,25 @@
       "rollback_route": "revert commit removes doc"
     },
     {
+      "component_id": "job-registry-authority",
+      "paths": [
+        "src/llm_loop/tools/builtin/job_registry.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "tools",
+      "disposition": "reuse",
+      "evidence": [
+        "JobRegistry is the real process-job terminal authority: create() registers a live process only after the durable launch fact commits via ExternalExecutionJournal; JobDurabilityError is raised when the launch fact is unavailable (no silent in-memory fallback when durable mode is configured)",
+        "launch-fact binding carries command_sha256/origin_run_generation/pid/pgid and a canonicalized workspace_root; durable ids are UUID-backed with duplicate-id rejection under the same lock",
+        "concurrency is bounded by JOB_MAX_CONCURRENT (JobLimitExceeded with a wait/authorization/ops adjustment path) and an in-flight _creating reservation inside the lock prevents limit races",
+        "derive_job_receipt_from_registry projects these real process facts (exit_code/owner/artifact binding) as authority=job_authority — the only record shape resume_on_job accepts; queue-terminal projections stay rejected"
+      ],
+      "verification_level": "unit+integration",
+      "model_evidence_veto_recovery_exit": "job authority comes exclusively from process/journal facts; model text or payload_declared SHAs never upgrade a receipt to job_authority",
+      "rollback_route": "revert commit: coordinator falls back to queue-terminal-only receipts (resume_on_job rejects without job_authority — fail-closed, no partial activation)",
+      "declaration_id": "coord-p0-authority"
+    },
+    {
       "component_id": "this-manifest",
       "paths": [
         "docs/governance/submissions/20261127-light-coordinator-p0.json"
