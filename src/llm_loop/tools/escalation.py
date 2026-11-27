@@ -406,10 +406,20 @@ class EscalationStore:
         return None
 
     def list(self, status: str = "", limit: int = 50, before_id: str = "") -> list[dict]:
+        return self._select(self._load(), status, limit, before_id)
+
+    def list_with_pending_count(
+        self, status: str = "", limit: int = 50, before_id: str = ""
+    ) -> tuple[list[dict], int]:
+        """Project a list and its global pending count from one verified snapshot."""
+        records = self._load()
+        return self._select(records, status, limit, before_id), self._count_pending(records)
+
+    @staticmethod
+    def _select(records: list[dict], status: str, limit: int, before_id: str) -> list[dict]:
         # R4（M1.1 复审）: before_id 稳定游标——返回比该记录更旧的记录，待审
         # 队列可单调读完且新记录到达不使页偏移。游标记录已不在列表（被消费/
         # 挤出保留窗口）时降级从头读取，由调用方按 id 去重合并，不静默吞页。
-        records = self._load()
         if before_id:
             for i, rec in enumerate(records):
                 if rec.get("id") == before_id:
@@ -430,10 +440,14 @@ class EscalationStore:
         return out
 
     def pending_count(self) -> int:
+        return self._count_pending(self._load())
+
+    @staticmethod
+    def _count_pending(records: list[dict]) -> int:
         # 未验证记录不可审批，不计入可操作 pending（防伪造刷量）。
         return sum(
             1
-            for r in self._load()
+            for r in records
             if r.get("status") == "pending" and not r.get("_sig_unverified")
         )
 

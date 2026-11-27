@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     # R3: 启动即写 manifest（身份 + 配置指纹 + providers source/effective hashes 的唯一事实源）
     manifest = build_manifest(args.service, ec, report)
     mf_path = write_manifest(manifest, report.data_dir)
-    print(f"[runtime-launch] manifest: {mf_path} "
+    print(f"[runtime-launch] manifest: {mf_path if mf_path is not None else 'skipped (identity mismatch)'} "
           f"config_hash={manifest['config_hash'][:12]}", file=sys.stderr)
     runpy.run_module(_SERVICES[args.service], run_name="__main__")
     return 0

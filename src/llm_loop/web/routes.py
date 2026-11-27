@@ -2996,8 +2996,9 @@ def escalation_list(request: Request, limit: int = 50, status: str = "", before_
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     store = EscalationStore(base / "audit" / "escalation_requests.json")
     try:
-        items = store.list(status=status or "", limit=limit, before_id=before_id)
-        pending = store.pending_count()
+        items, pending = store.list_with_pending_count(
+            status=status or "", limit=limit, before_id=before_id
+        )
     except (OSError, ValueError):  # noqa: PERF203 — 统一 503 出口
         # ESC-08（FR-08）: 存储损坏/权限/IO 错误必须如实 503——伪装成 200 空列表
         # 会让审批者误以为"没有待审"，静默漏批/漏拒。路径/IO 细节只入服务端日志。
@@ -3096,8 +3097,8 @@ def _decide_escalation_with_host_verify(
         )
 
 
-@router.post("/api/v1/escalation/review")
-async def escalation_review(request: Request) -> Response:
+@router.post("/api/v1/escalation/review", name="escalation_review")
+async def _escalation_review_route(request: Request) -> Response:
     """web 提权审批（人工决定端点；批准 = 铸造一次性令牌，拒绝 = 记录理由）.
 
     请求体见 schemas.EscalationReviewRequest；幂等约束: 仅 pending 可决，
@@ -3111,15 +3112,20 @@ async def escalation_review(request: Request) -> Response:
     - 展示-审批绑定（防 TOCTOU）: expected_sha256 必填且须等于待审记录的
       command_sha256，否则 409 stale_review（提示重新打开详情）。
     """
-    from pathlib import Path
-
-    from llm_loop.tools.escalation import EscalationStore
     from llm_loop.web.schemas import EscalationReviewRequest
 
     try:
         payload = EscalationReviewRequest.model_validate_json(await request.body())
     except Exception as exc:  # noqa: BLE001 — 参数校验失败统一 400
         return JSONResponse(content={"error": f"参数校验失败: {exc}"}, status_code=400)
+
+    # File locks, fsync and Host issuance are synchronous. Keep them off the
+    # ASGI event loop without changing the decision/CAS or human-auth contract.
+    return await asyncio.to_thread(escalation_review, request, payload)
+
+
+def escalation_review(request: Request, payload: Any) -> Response:
+    from llm_loop.tools.escalation import EscalationStore
 
     remote_addr = request.client.host if request.client else ""
     client_claimed_by = (payload.decided_by or payload.reviewer or "").strip()[:200]

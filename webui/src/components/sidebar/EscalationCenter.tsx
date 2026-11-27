@@ -3,7 +3,7 @@
 // EscalationPanel   = 侧栏"提权"页（历史 + 待决列表，与弹窗共用数据层）
 // 后端契约: GET /api/v1/escalation/list, GET /api/v1/escalation/detail,
 //           POST /api/v1/escalation/review
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { zh } from "../../i18n/zh";
 import { isAuthRequired, reportUnauthorized } from "../../core/authSession";
 import { mainViewStore, sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
@@ -55,6 +55,21 @@ interface DetailResp {
 }
 
 const POLL_MS = 5000;
+const READ_TIMEOUT_MS = 10000;
+const REVIEW_TIMEOUT_MS = 15000;
+
+// Keep the deadline active until the body is read, not merely until headers arrive.
+async function fetchBounded(url: string, init: RequestInit = {}, timeoutMs = READ_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const body: unknown = await response.json().catch(() => null);
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Watcher 与展开的审批面板可能同一时刻请求；只共享在途读取，
 // 不缓存已完成结果，避免审批状态被旧快照遮蔽。
@@ -78,16 +93,18 @@ async function fetchEscalationsUncached(): Promise<ListResp> {
   try {
     // ESC-07（FR-07）: 待审队列用 pending 专用查询穿透历史窗口；
     // 历史视图保持"最新 50 条"。两请求并行，任一失败按整次加载失败处理。
-    const [allR, pendingR] = await Promise.all([
-      fetch("/api/v1/escalation/list?limit=50"),
-      fetch("/api/v1/escalation/list?status=pending&limit=50"),
+    const [allResult, pendingResult] = await Promise.all([
+      fetchBounded("/api/v1/escalation/list?limit=50"),
+      fetchBounded("/api/v1/escalation/list?status=pending&limit=50"),
     ]);
+    const allR = allResult.response;
+    const pendingR = pendingResult.response;
     reportUnauthorized(allR.status);
     reportUnauthorized(pendingR.status);
-    if (!allR.ok || !pendingR.ok) {
+    if (!allR.ok || !pendingR.ok || !allResult.body || !pendingResult.body) {
       // ESC-08: 503 等失败态不得折叠成"空列表"——否则审批者会误读为
       // "没有待审"，恰是后端 503 改造要消除的歧义。读出 error 字段如实上抛。
-      const body = (await pendingR.json().catch(() => ({}))) as { error?: string };
+      const body = (pendingResult.body || {}) as { error?: string };
       return {
         requests: [],
         pendingRequests: [],
@@ -95,8 +112,11 @@ async function fetchEscalationsUncached(): Promise<ListResp> {
         error: body.error || `审批面板读取失败（${allR.status}/${pendingR.status}），请检查服务端`,
       };
     }
-    const all = (await allR.json()) as { requests?: EscalationRequest[]; pending_count?: number };
-    const pend = (await pendingR.json()) as { requests?: EscalationRequest[]; pending_count?: number };
+    const all = allResult.body as { requests?: EscalationRequest[]; pending_count?: number };
+    const pend = pendingResult.body as { requests?: EscalationRequest[]; pending_count?: number };
+    if (!Array.isArray(all.requests) || !Array.isArray(pend.requests)) {
+      return { requests: [], pendingRequests: [], pending_count: 0, error: "审批列表响应不可读" };
+    }
     return {
       requests: all.requests || [],
       pendingRequests: pend.requests || [],
@@ -109,8 +129,8 @@ async function fetchEscalationsUncached(): Promise<ListResp> {
 
 async function fetchEscalationDetail(id: string): Promise<DetailResp | { error: string; status: number }> {
   try {
-    const r = await fetch(`/api/v1/escalation/detail?id=${encodeURIComponent(id)}`);
-    const d = (await r.json().catch(() => ({}))) as Partial<DetailResp> & { error?: string };
+    const { response: r, body } = await fetchBounded(`/api/v1/escalation/detail?id=${encodeURIComponent(id)}`);
+    const d = (body || {}) as Partial<DetailResp> & { error?: string };
     // 注意：后端 detail 成功响应含 escalation 的 status 字段（approved/pending/…），
     // 失败判别只能用 error 字段/HTTP 码，不得用 "status" in d（否则成功永远被判失败）。
     if (!r.ok || typeof d.error === "string") {
@@ -126,22 +146,58 @@ async function fetchEscalationDetail(id: string): Promise<DetailResp | { error: 
   }
 }
 
+interface ReviewResult {
+  ok: boolean;
+  message: string;
+  stale: boolean;
+  loginRequired: boolean;
+  uncertain?: boolean;
+  settled?: boolean;
+  materialChanged?: boolean;
+}
+
+async function verifyEscalation(id: string, decision: "approved" | "denied", sha: string): Promise<ReviewResult> {
+  const unknown = (message: string): ReviewResult => ({ ok: false, message, stale: false, loginRequired: false, uncertain: true });
+  try {
+    const { response, body } = await fetchBounded(`/api/v1/escalation/detail?id=${encodeURIComponent(id)}`);
+    const row = body as Partial<EscalationRequest> | null;
+    if (!response.ok || !row || row.id !== id || !sha || !row.command_sha256 || row._sig_unverified) {
+      return unknown("审批结果尚无法核实，请查询状态，不要重复提交。");
+    }
+    // IDs bind immutable command material. A different verified fingerprint is
+    // not evidence that the original POST failed. Never unlock or resend it.
+    if (row.command_sha256 !== sha) {
+      return { ...unknown("审批材料指纹已变化，原审批结果无法核实。请返回来源会话核对，必要时重新发起审批；不要重复提交旧请求。"), stale: true, materialChanged: true };
+    }
+    if (row.status === "pending") return unknown("仍显示待审批，但原请求可能仍在处理；请查询状态，不要重复提交。");
+    if (row.status === "approved" || row.status === "denied" || row.status === "consumed" || row.status === "expired") {
+      const approved = row.status !== "denied";
+      const actual = statusBadge(row.status).text;
+      return { ok: approved === (decision === "approved"), message: `已核实实际状态：${actual}`, stale: true, loginRequired: false, settled: true };
+    }
+  } catch { /* a read failure is not evidence that the decision failed */ }
+  return unknown("审批结果尚无法核实，请查询状态，不要重复提交。");
+}
+
 async function reviewEscalation(
   id: string,
   decision: "approved" | "denied",
   note: string,
   expectedSha256: string
-): Promise<{ ok: boolean; message: string; stale: boolean; loginRequired: boolean }> {
+): Promise<ReviewResult> {
   try {
-    const r = await fetch("/api/v1/escalation/review", {
+    const { response: r, body } = await fetchBounded("/api/v1/escalation/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // P0-5 展示-审批绑定：expected_sha256 必须等于列表返回的 command_sha256，
       // 确保批准的就是展示给审批者的那条命令（缺字段时后端 400 兜底提示）。
       body: JSON.stringify({ id, decision, note, expected_sha256: expectedSha256 }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (r.ok) return { ok: true, message: decision === "approved" ? "已批准（AI 将收到受管审批结果）" : "已拒绝（AI 将收到拒绝理由）", stale: false, loginRequired: false };
+    }, REVIEW_TIMEOUT_MS);
+    const d = (body || {}) as { ok?: boolean; error?: string; request?: Partial<EscalationRequest> };
+    if (r.ok && d.ok === true && d.request?.id === id && d.request.command_sha256 === expectedSha256 && d.request.status === decision) {
+      return { ok: true, message: decision === "approved" ? "已批准（AI 将收到受管审批结果）" : "已拒绝（AI 将收到拒绝理由）", stale: false, loginRequired: false, settled: true };
+    }
+    if (r.ok || !body || r.status >= 500) return await verifyEscalation(id, decision, expectedSha256);
     const error = String((d as { error?: string }).error || "");
     if (r.status === 403 && (error === "human_auth_required" || error === "human_channel_required")) {
       return {
@@ -157,10 +213,50 @@ async function reviewEscalation(
     if (r.status === 400 && error.includes("missing_expected_sha256")) {
       return { ok: false, message: "⚠️ 审批缺少命令哈希绑定，请重新打开详情后再试", stale: false, loginRequired: false };
     }
+    if (r.status === 409) return await verifyEscalation(id, decision, expectedSha256);
     return { ok: false, message: `⚠️ ${error || `失败(${r.status})`}`, stale: false, loginRequired: false };
-  } catch (err) {
-    return { ok: false, message: `请求失败: ${String(err)}`, stale: false, loginRequired: false };
+  } catch {
+    return await verifyEscalation(id, decision, expectedSha256);
   }
+}
+
+// Both entry points share per-request state. A synchronous reservation prevents
+// double clicks and simultaneous submissions from the watcher and the sidebar.
+type ReviewState = { phase: "busy" | "unknown" | "settled"; decision: "approved" | "denied"; sha: string; message: string; materialChanged?: boolean };
+let reviewStates = new Map<string, ReviewState>();
+const reviewListeners = new Set<() => void>();
+function subscribeReviews(listener: () => void) {
+  reviewListeners.add(listener);
+  return () => {
+    reviewListeners.delete(listener);
+    // Settled rows need not outlive all views; unknown and in-flight rows must.
+    if (!reviewListeners.size) reviewStates = new Map([...reviewStates].filter(([, s]) => s.phase !== "settled"));
+  };
+}
+function setReviewState(id: string, state?: ReviewState) {
+  reviewStates = new Map(reviewStates);
+  if (state) reviewStates.set(id, state);
+  else reviewStates.delete(id);
+  reviewListeners.forEach((listener) => listener());
+}
+function useReviewState(id: string) {
+  return useSyncExternalStore(subscribeReviews, () => reviewStates.get(id));
+}
+function finishReview(id: string, state: ReviewState, result: ReviewResult) {
+  setReviewState(id, result.uncertain || result.settled ? { ...state, phase: result.uncertain ? "unknown" : "settled", message: result.message, materialChanged: result.materialChanged } : undefined);
+  return result;
+}
+function submitReview(id: string, decision: "approved" | "denied", note: string, sha: string) {
+  if (reviewStates.has(id)) return null;
+  const state: ReviewState = { phase: "busy", decision, sha, message: "正在提交审批，请稍候…" };
+  setReviewState(id, state);
+  return reviewEscalation(id, decision, note, sha).then((result) => finishReview(id, state, result));
+}
+function checkReview(id: string) {
+  const state = reviewStates.get(id);
+  if (state?.phase !== "unknown") return;
+  setReviewState(id, { ...state, phase: "busy", message: "正在核实审批状态…" });
+  return verifyEscalation(id, state.decision, state.sha).then((result) => finishReview(id, state, result));
 }
 
 function EscalationLoginPrompt() {
@@ -233,9 +329,10 @@ function statusBadge(status: string): { text: string; cls: string } {
 
 /** Navigation is not approval or execution. Recovery drafts contain only a
  * request reference, never a command or authority copied from an old record. */
-function EscalationOrigin({ req, onNavigate }: {
+function EscalationOrigin({ req, onNavigate, materialChanged }: {
   req: EscalationRequest;
   onNavigate?: () => void;
+  materialChanged?: boolean;
 }) {
   const sessions = useSessions();
   const currentId = useCurrentSessionId();
@@ -244,7 +341,7 @@ function EscalationOrigin({ req, onNavigate }: {
   const sid = req.session_id;
   const title = sessions.find((s) => s.session_id === sid)?.title;
   const recoverable = /^[A-Za-z0-9-]{6,80}$/.test(req.id) && ["pending", "approved", "expired"].includes(req.status);
-  const needsNew = req.status === "expired" || !!req._sig_unverified;
+  const needsNew = req.status === "expired" || !!req._sig_unverified || !!materialChanged;
   const open = async (recover: boolean) => {
     if (!sid || busy) return;
     setBusy(true);
@@ -276,7 +373,9 @@ function EscalationOrigin({ req, onNavigate }: {
       if (recover) {
         prefillComposer(
           "请核对本会话中提权申请 " + req.id +
-          " 的原始任务和当前状态。若仍待审批则继续等待；若凭证有效则按原范围处理；" +
+          " 的原始任务和当前状态。" + (materialChanged
+            ? "审批材料指纹已变化，原提交结果不确定。先核对原请求及执行事实，不得复用旧审批；仅在确认操作尚未完成且仍有必要时，使用核实后的材料重新发起人工审批。"
+            : "若仍待审批则继续等待；若凭证有效则按原范围处理；") +
           "若审批或签发材料已失效、签发失败，且操作尚未完成、仍有必要，请重新核验并用原申请类型发起人工审批。" +
           "不要复用过期凭证、重复已完成操作或执行未获批准的命令。"
         );
@@ -312,15 +411,18 @@ function EscalationOrigin({ req, onNavigate }: {
 // ── 待决卡片（弹窗与面板共用）──
 function PendingCard({
   req,
-  busy,
   onDecide,
   onNavigate,
+  onRefresh,
 }: {
   req: EscalationRequest;
-  busy: boolean;
   onDecide: (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => void;
   onNavigate?: () => void;
+  onRefresh: () => void;
 }) {
+  const review = useReviewState(req.id);
+  const busy = review?.phase === "busy";
+  const locked = !!review;
   const [note, setNote] = useState("");
   // ESC-05（FR-05）: 截断命令必须先看完整原文才能批准——
   // "看到多少"决定"能否负责任地点批准"。
@@ -367,7 +469,7 @@ function PendingCard({
         <span className={`v2-evo-status ${badge.cls}`}>{badge.text}</span>
         <span style={{ opacity: 0.6, fontSize: 11 }}>{fmtTime(req.created_at)}</span>
       </div>
-      <EscalationOrigin req={req} onNavigate={onNavigate} />
+      <EscalationOrigin req={req} onNavigate={onNavigate} materialChanged={review?.materialChanged} />
       <div className="v2-esc-cmd" data-testid={`esc-cmd-${req.id}`}>
         <code>{req.command}</code>
       </div>
@@ -412,7 +514,7 @@ function PendingCard({
         <button
           type="button"
           className="v2-evo-btn approve"
-          disabled={busy || !viewedFull}
+          disabled={locked || !viewedFull}
           title={mustReadFull && !viewedFull ? "请先查看完整命令再批准（列表展示为截断内容）" : undefined}
           data-testid={`esc-approve-${req.id}`}
           onClick={() => onDecide(req.id, "approved", note, req.command_sha256 || "")}
@@ -422,12 +524,18 @@ function PendingCard({
         <button
           type="button"
           className="v2-evo-btn reject"
-          disabled={busy}
+          disabled={locked}
           onClick={() => onDecide(req.id, "denied", note, req.command_sha256 || "")}
         >
           {busy ? "处理中…" : "拒绝"}
         </button>
       </div>
+      {review && <div className="v2-esc-hash" role="status" data-testid={`esc-review-state-${req.id}`}>{review.message}</div>}
+      {review?.phase === "unknown" && (
+        <button type="button" className="v2-evo-btn" data-testid={`esc-check-${req.id}`} onClick={() => {
+          void checkReview(req.id)?.then((result) => { if (result.settled || result.stale) onRefresh(); });
+        }}>查询审批状态</button>
+      )}
     </div>
   );
 }
@@ -436,7 +544,6 @@ function PendingCard({
 export function EscalationWatcher({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { data, reload } = useEscalations(true);
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
   const [resultMsg, setResultMsg] = useState("");
   const [loginRequired, setLoginRequired] = useState(false);
   const prevPendingRef = useRef<Set<string>>(new Set());
@@ -462,10 +569,11 @@ export function EscalationWatcher({ onNavigate }: { onNavigate?: () => void } = 
   const mutedPending = pending.filter((r) => mutedIds.has(r.id));
 
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
-    setBusy(true);
+    const submission = submitReview(id, decision, note, expectedSha256);
+    if (!submission) return;
     setResultMsg("正在提交审批，请稍候…");
     setLoginRequired(false);
-    void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
+    void submission.then((res) => {
       setResultMsg(res.message);
       setLoginRequired(res.loginRequired);
       if (res.ok) {
@@ -474,7 +582,6 @@ export function EscalationWatcher({ onNavigate }: { onNavigate?: () => void } = 
       }
       // stale_review：待审内容已变化 → 刷新列表让用户基于最新命令重新决定。
       if (res.ok || res.stale) reload();
-      setBusy(false);
     });
   };
 
@@ -527,7 +634,7 @@ export function EscalationWatcher({ onNavigate }: { onNavigate?: () => void } = 
           {pending
             .filter((r) => !mutedIds.has(r.id))
             .map((r) => (
-              <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} onNavigate={() => {
+              <PendingCard key={r.id} req={r} onDecide={decide} onRefresh={reload} onNavigate={() => {
                 setMutedIds((prev) => new Set([...prev, ...pending.map((item) => item.id)]));
                 setNewArrival(false);
                 onNavigate?.();
@@ -547,18 +654,17 @@ export function EscalationWatcher({ onNavigate }: { onNavigate?: () => void } = 
 // ── 侧栏面板 ──
 export function EscalationPanel({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { data, reload } = useEscalations(true);
-  const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
   const [loginRequired, setLoginRequired] = useState(false);
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
-    setBusy(true);
+    const submission = submitReview(id, decision, note, expectedSha256);
+    if (!submission) return;
     setActionMsg("正在提交审批，请稍候…");
     setLoginRequired(false);
-    void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
+    void submission.then((res) => {
       setActionMsg(res.message);
       setLoginRequired(res.loginRequired);
       if (res.ok || res.stale) reload();
-      setBusy(false);
     });
   };
   // ESC-07（FR-07）: 待审走专用 pending 查询；历史保持"最新 50 条"窗口。
@@ -579,10 +685,10 @@ export function EscalationPanel({ onNavigate }: { onNavigate?: () => void } = {}
   const loadMore = () => {
     const oldest = pending[pending.length - 1];
     if (!oldest) return;
-    void fetch(`/api/v1/escalation/list?status=pending&limit=50&before_id=${encodeURIComponent(oldest.id)}`)
-      .then((r) => r.json())
-      .then((d: { requests?: EscalationRequest[] }) => {
-        if (Array.isArray(d.requests)) setExtraPages((prev) => [...prev, ...d.requests!]);
+    void fetchBounded(`/api/v1/escalation/list?status=pending&limit=50&before_id=${encodeURIComponent(oldest.id)}`)
+      .then(({ response, body }) => response.ok ? body as { requests?: EscalationRequest[] } | null : null)
+      .then((d) => {
+        if (Array.isArray(d?.requests)) setExtraPages((prev) => [...prev, ...d.requests!]);
       })
       .catch(() => {
         /* 网络异常：保持现状，下一轮轮询恢复 */
@@ -616,7 +722,7 @@ export function EscalationPanel({ onNavigate }: { onNavigate?: () => void } = {}
         {/* R2: 只有确认无待审（非错误态且权威计数为 0）才显示空态提示 */}
         {!data?.error && pendingCount === 0 && <div className="v2-tree-loading">（无待审批提权申请）</div>}
         {pending.map((r) => (
-          <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} onNavigate={onNavigate} />
+          <PendingCard key={r.id} req={r} onDecide={decide} onRefresh={reload} onNavigate={onNavigate} />
         ))}
         {hasMore && (
           <button type="button" className="v2-evo-btn" data-testid="esc-load-more" onClick={loadMore}>

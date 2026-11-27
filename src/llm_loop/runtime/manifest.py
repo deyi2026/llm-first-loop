@@ -327,8 +327,20 @@ def _existing_live_service_manifest(
     return "llm_loop" in command
 
 
-def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
+def _managed_manifest_rejected(manifest: dict, data_dir: str | Path) -> bool:
+    # A shadow identity mismatch may run for diagnostics, but must not publish
+    # itself as the live identity of an existing managed deployment.
+    return (
+        manifest.get("identity_ok") is False
+        and (Path(data_dir) / "runtime" / "managed_service_deployment.json").is_file()
+    )
+
+
+def write_manifest(manifest: dict, data_dir: str | Path) -> Path | None:
     """原子写 <data_dir>/runtime/runtime_manifest.json（tmp + rename）。"""
+    if _managed_manifest_rejected(manifest, data_dir):
+        logger.warning("Skipping managed runtime manifest from mismatched identity (pid=%s)", manifest.get("pid"))
+        return None
     rt_dir = Path(data_dir) / "runtime"
     rt_dir.mkdir(parents=True, exist_ok=True)
     out = rt_dir / "runtime_manifest.json"
@@ -355,7 +367,7 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
                 manifest.get("pid"),
             )
             return out
-        specific_tmp = specific.with_suffix(specific.suffix + ".tmp")
+        specific_tmp = specific.with_name(f"{specific.name}.{os.getpid()}.tmp")
         specific_tmp.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -423,6 +435,9 @@ def write_runtime_manifest(service: str, data_dir: str | Path | None = None) -> 
         ec = resolve_effective(service)
         manifest = build_manifest(service, ec, report)
         target_data_dir = data_dir or report.data_dir
+        if _managed_manifest_rejected(manifest, target_data_dir):
+            logger.warning("Skipping managed runtime manifest from mismatched identity (pid=%s)", manifest.get("pid"))
+            return None
         from .knowledge_health import (
             ensure_knowledge_baseline,
             inspect_knowledge_health,

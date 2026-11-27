@@ -259,6 +259,108 @@ describe("EscalationWatcher 可见审批反馈", () => {
   });
 });
 
+describe("提权审批非阻塞及结果核实", () => {
+  it("单条审批不锁其他卡片，弹窗和侧栏共享同一请求的提交锁", async () => {
+    const first = makeReq({ id: "esc-parallel-a", command: "echo a", command_truncated: false });
+    const second = makeReq({ id: "esc-parallel-b", command: "echo b", command_truncated: false });
+    const posts: string[] = [];
+    let settle!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/escalation/review")) {
+        posts.push(JSON.parse(String(init?.body)).id);
+        return new Promise<Response>((resolve) => { settle = resolve; });
+      }
+      return listMock([first, second])(input);
+    }));
+    render(<><EscalationWatcher /><EscalationPanel /></>);
+    await waitFor(() => expect(screen.getAllByTestId("esc-approve-esc-parallel-a")).toHaveLength(2));
+    const [a, aOther] = screen.getAllByTestId("esc-approve-esc-parallel-a");
+    fireEvent.click(a);
+    expect(a).toBeDisabled();
+    expect(aOther).toBeDisabled();
+    fireEvent.click(aOther);
+    expect(posts).toEqual([first.id]);
+    screen.getAllByTestId("esc-approve-esc-parallel-b").forEach((button) => expect(button).toBeEnabled());
+    await act(async () => { settle(ok({ error: "human_channel_required" }, 403)); });
+    expect(a).toBeEnabled();
+  });
+
+  it("响应体超时后只读核实，待审不代表可重发，重新挂载仍锁定", async () => {
+    const req = makeReq({ id: "esc-body-timeout", command: "echo timeout", command_truncated: false });
+    let status = "pending";
+    let posts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/escalation/review")) {
+        posts++;
+        return { ok: true, status: 200, json: () => new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }) } as Response;
+      }
+      if (url.includes("/api/v1/escalation/detail")) return ok({ ...req, status });
+      return listMock([req])(input);
+    }));
+    const view = render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-approve-esc-body-timeout")).toBeEnabled());
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByTestId("esc-approve-esc-body-timeout"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      expect(screen.getByTestId("esc-review-state-esc-body-timeout")).toHaveTextContent("不要重复提交");
+      expect(screen.getByTestId("esc-approve-esc-body-timeout")).toBeDisabled();
+      view.unmount();
+    } finally { vi.useRealTimers(); }
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-check-esc-body-timeout")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-approve-esc-body-timeout")).toBeDisabled();
+    status = "consumed";
+    fireEvent.click(screen.getByTestId("esc-check-esc-body-timeout"));
+    await waitFor(() => expect(screen.getByTestId("esc-review-state-esc-body-timeout")).toHaveTextContent("令牌已使用"));
+    expect(posts).toBe(1);
+  });
+
+  it("超时后同一编号的可信详情指纹变化：旧请求保持锁定，来源会话恢复，新编号可独立审批", async () => {
+    const original = makeReq({ id: "esc-changed-material", command: "echo old", command_truncated: false });
+    const changed = { ...original, command: "echo changed", command_sha256: "cd".repeat(32) };
+    const fresh = makeReq({ id: "esc-fresh-material", command: "echo fresh", command_sha256: "ef".repeat(32), command_truncated: false });
+    let rows = [original];
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/escalation/review")) {
+        const id = JSON.parse(String(init?.body)).id;
+        posts.push(id);
+        if (id === fresh.id) return ok({ error: "human_channel_required" }, 403);
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+      }
+      if (url.includes("/api/v1/escalation/detail")) return ok(changed);
+      return listMock(rows)(input);
+    }));
+    render(<EscalationPanel />);
+    const oldButton = await screen.findByTestId(`esc-approve-${original.id}`);
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(oldButton);
+      rows = [changed, fresh];
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      expect(screen.getByTestId(`esc-review-state-${original.id}`)).toHaveTextContent("审批材料指纹已变化");
+      expect(screen.getByTestId(`esc-review-state-${original.id}`)).toHaveTextContent("不要重复提交旧请求");
+      expect(screen.getByTestId(`esc-approve-${original.id}`)).toBeDisabled();
+      expect(screen.getByTestId(`esc-origin-${original.id}`)).toHaveTextContent("重新发起审批");
+      expect(screen.getByTestId(`esc-approve-${fresh.id}`)).toBeEnabled();
+      fireEvent.click(screen.getByTestId(`esc-check-${original.id}`));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByTestId(`esc-approve-${original.id}`)).toBeDisabled();
+      expect(posts).toEqual([original.id]);
+      fireEvent.click(screen.getByTestId(`esc-approve-${fresh.id}`));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(posts).toEqual([original.id, fresh.id]);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("ESC-08 存储故障前端如实呈现", () => {
   it("list 503 → 错误横幅（esc-store-error）而非歧义空列表", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

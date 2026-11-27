@@ -1,0 +1,52 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261126-escalation-nonblocking",
+  "summary": "P0 escalation approval responsiveness: isolate synchronous decision I/O from the ASGI loop, reduce duplicate verified ledger reads, bound browser requests and reconcile unknown outcomes without automatic resubmission, and prevent identity-mismatched probes from publishing managed runtime manifests. No authorization or decision semantics are relaxed. Independent review, full R9, remote CI and production acceptance are pending until separately evidenced.",
+  "components": [
+    {
+      "component_id": "escalation-web-and-ledger",
+      "paths": ["src/llm_loop/web/routes.py", "src/llm_loop/tools/escalation.py", "tests/test_escalation_m1_web.py", "tests/test_escalation_review_gate.py"],
+      "control_machinery": false,
+      "owning_subsystem": "web-adapter-and-escalation-store",
+      "disposition": "modify",
+      "evidence": ["Targeted backend regression: human authentication, command SHA binding, one-time token, duplicate decision rejection, slow approval concurrent with eight read-only HTTP requests, and one verified ledger snapshot per list response."],
+      "verification_level": "targeted-regression; independent review and full R9 pending",
+      "model_evidence_veto_recovery_exit": "If any decision or authentication regression is found, stop delivery and correct or revert the candidate; do not bypass the existing approval gate.",
+      "rollback_route": "Revert the isolated candidate; no ledger schema migration."
+    },
+    {
+      "component_id": "escalation-webui",
+      "paths": ["webui/src/components/sidebar/EscalationCenter.tsx", "webui/src/components/sidebar/EscalationCenter.test.tsx"],
+      "control_machinery": false,
+      "owning_subsystem": "webui-frontend",
+      "disposition": "modify",
+      "evidence": ["TypeScript and targeted Vitest cover independent per-request controls, cross-entry duplicate submission protection, bounded response body, and read-only recovery after unknown outcomes."],
+      "verification_level": "targeted-regression; full WebUI and production acceptance pending",
+      "model_evidence_veto_recovery_exit": "Unknown outcomes remain locked for read-only verification; the source session remains the recovery path for invalid or expired requests.",
+      "rollback_route": "Revert the candidate and rebuild the WebUI; no persistent UI schema change."
+    },
+    {
+      "component_id": "runtime-manifest-isolation",
+      "paths": ["src/llm_loop/runtime/manifest.py", "src/llm_loop/runtime/launch.py", "tests/unit/test_runtime_manifest_live_guard.py"],
+      "control_machinery": false,
+      "owning_subsystem": "runtime-identity",
+      "disposition": "modify",
+      "evidence": ["Targeted regression preserves managed manifests from mismatched shadow probes and permits isolated diagnostic manifests; this is an observation integrity fix, not a service startup or authorization gate."],
+      "verification_level": "targeted-regression; real managed deployment acceptance pending",
+      "model_evidence_veto_recovery_exit": "Inspect actual listener and deployment identity if publication is skipped; correct the runtime root or use an isolated diagnostic data directory.",
+      "rollback_route": "Revert the candidate; no runtime manifest format migration."
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": ["docs/governance/submissions/20261126-escalation-nonblocking.json"],
+      "control_machinery": false,
+      "owning_subsystem": "host-governance",
+      "disposition": "add",
+      "evidence": ["This manifest records the touched paths and pending verification stages without asserting an independent PASS."],
+      "verification_level": "mechanical-presence-coverage-check",
+      "model_evidence_veto_recovery_exit": "Correct the manifest if the coverage checker rejects it.",
+      "rollback_route": "Revert this manifest with the candidate."
+    }
+  ],
+  "declarations": []
+}

@@ -87,6 +87,27 @@ def test_pending_filter_returns_only_pending(client, store):
     assert keep in ids and gone not in ids
 
 
+def test_list_and_count_use_one_verified_snapshot(client, store, monkeypatch):
+    _login(client)
+    keep = _mk_pending(store, _CMD)
+    gone = _mk_pending(store, f"{_CMD} --done")
+    store.decide(gone, "denied")
+    original = EscalationStore._load
+    loads = 0
+
+    def counted(self):
+        nonlocal loads
+        loads += 1
+        return original(self)
+
+    monkeypatch.setattr(EscalationStore, "_load", counted)
+    response = client.get(f"{_LIST}?status=pending&limit=1")
+    assert response.status_code == 200
+    assert loads == 1
+    assert response.json()["pending_count"] == 1
+    assert response.json()["requests"][0]["id"] == keep
+
+
 # ---------------------------------------------------------------- ESC-08 ----
 
 

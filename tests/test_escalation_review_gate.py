@@ -15,9 +15,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import threading
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -74,6 +77,45 @@ def _review_lines(isolated_data_dir) -> list[dict]:
     if not f.exists():
         return []
     return [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_slow_approval_does_not_block_web_event_loop(client, store, monkeypatch):
+    """A held approval lock/slow Host issuer must not stop other HTTP requests."""
+    rid, sha = _pending(store, "echo nonblocking-approval")
+    token = _login(client)
+    entered, release = threading.Event(), threading.Event()
+    original = EscalationStore.decide
+
+    def slow_decide(self, *args, **kwargs):
+        entered.set()
+        assert release.wait(3), "approval blocked the event loop"
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(EscalationStore, "decide", slow_decide)
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=client.app, client=("testclient", 50000)),
+            base_url="http://testserver", cookies={SESSION_COOKIE_NAME: token},
+        ) as ac:
+            task = asyncio.create_task(ac.post(_REVIEW, json={
+                "id": rid, "decision": "approved", "expected_sha256": sha,
+            }))
+            try:
+                assert await asyncio.to_thread(entered.wait, 2), (
+                    task.result().text if task.done() else "approval did not enter decision"
+                )
+                responses = await asyncio.wait_for(asyncio.gather(
+                    ac.get("/health"),
+                    *(ac.get(_LIST, params={"limit": 1}) for _ in range(7)),
+                ), timeout=2)
+                assert all(response.status_code == 200 for response in responses)
+                assert not task.done()
+            finally:
+                release.set()
+            assert (await task).status_code == 200
+
+    asyncio.run(exercise())
 
 
 # ── 1. AI 通道（Bearer-only）不得审批 ──

@@ -93,3 +93,20 @@ def test_ps_failure_fails_open(tmp_path: Path, monkeypatch) -> None:
     write_manifest({"service": "feishu", "pid": os.getpid()}, tmp_path)
     now = json.loads((rt_dir / "runtime_manifest.feishu.json").read_text())
     assert now["pid"] == os.getpid()
+
+
+def test_mismatched_probe_cannot_publish_managed_runtime_manifest(tmp_path: Path) -> None:
+    rt_dir = tmp_path / "runtime"
+    rt_dir.mkdir()
+    (rt_dir / "managed_service_deployment.json").write_text("{}")
+    live = {"service": "web", "pid": 12345, "identity_ok": True}
+    for name in ("runtime_manifest.json", "runtime_manifest.web.json"):
+        (rt_dir / name).write_text(json.dumps(live))
+    assert write_manifest({"service": "web", "pid": os.getpid(), "identity_ok": False}, tmp_path) is None
+    for name in ("runtime_manifest.json", "runtime_manifest.web.json"):
+        assert json.loads((rt_dir / name).read_text()) == live
+
+
+def test_mismatched_probe_can_write_isolated_diagnostic_manifest(tmp_path: Path) -> None:
+    result = write_manifest({"service": "web", "pid": os.getpid(), "identity_ok": False}, tmp_path)
+    assert result is not None and result.exists()
