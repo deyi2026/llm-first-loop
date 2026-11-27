@@ -821,7 +821,9 @@ class HumanTurnQueue:
                     return True
             return False
 
-    def mark_resumed_once(self, queue_id: str, job_id: str) -> dict[str, Any]:
+    def mark_resumed_once(
+        self, queue_id: str, job_id: str, *, unmark: bool = False
+    ) -> dict[str, Any]:
         """一次性原子接续标记（SA-PR145-FINAL-ATOMIC-RESUME）.
 
         在 _exclusive_locked（flock+fresh reload 全局互斥）内核验并标记
@@ -834,12 +836,35 @@ class HumanTurnQueue:
           未确认落盘不触发唤醒；磁盘若实际已写，fresh reload 后重入走
           duplicate 分支同样不重放——双保险幂等）；
         - queue_id 不存在 → ``missing=True``。
+
+        ``unmark=True``（独审 P1 修复）：显式清除已存在标记——resume_on_job
+        在标记之后拒绝唤醒时（如 candidate 不匹配/poke 失败），调用方以
+        ``mark_resumed_once(queue_id, "", unmark=True)`` 回滚"未接续"事实，
+        使重试仍可正常接续（清除落盘失败同样 persist_uncertain fail-closed；
+        未有标记时 unmark 为幂等 no-op 返回 ``unmarked=False``）。
         """
         with self._exclusive_locked():
             for it in self._items:
                 if it.get("queue_id") != queue_id:
                     continue
                 resumed = str(it.get("resumed_job_id") or "")
+                if unmark:
+                    if not resumed:
+                        return {"marked": False, "unmarked": False, "duplicate": False}
+                    had = resumed
+                    it.pop("resumed_job_id", None)
+                    try:
+                        self._save()
+                    except Exception as exc:  # noqa: BLE001 — 清除失败回滚内存并如实 uncertain
+                        it["resumed_job_id"] = had
+                        return {
+                            "marked": False,
+                            "unmarked": False,
+                            "duplicate": True,
+                            "persist_uncertain": True,
+                            "error": str(exc),
+                        }
+                    return {"marked": False, "unmarked": True, "duplicate": False}
                 if resumed:
                     return {
                         "marked": False,
@@ -850,7 +875,7 @@ class HumanTurnQueue:
                 it["resumed_job_id"] = str(job_id)
                 try:
                     self._save()
-                except QueuePersistError as exc:
+                except Exception as exc:  # noqa: BLE001 — 任何持久化异常同样回滚+uncertain（独审 P2-2）
                     it.pop("resumed_job_id", None)
                     return {
                         "marked": False,

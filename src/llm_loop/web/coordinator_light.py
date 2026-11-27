@@ -730,7 +730,7 @@ def _resume_job_from_registry(
             )
     if not outcome.get("poked"):
         # 唤醒未发生（resume_on_job 内部核验拒绝）→ 回滚标记保持"未接续"
-        queue.mark_resumed_once(body.queue_id, "")
+        queue.mark_resumed_once(body.queue_id, "", unmark=True)
     return JSONResponse(content={"ok": bool(outcome.get("poked")), **outcome})
 
 

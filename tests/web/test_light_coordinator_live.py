@@ -857,3 +857,46 @@ def test_p1_cards_write_failure_never_replays(tmp_path, build_test_engine) -> No
     assert m_same["duplicate"] is True and m_same.get("marked") is False
     m_other = q_restarted.mark_resumed_once(qid, "job-other")
     assert m_other.get("conflict") is True and m_other.get("marked") is False
+
+
+def test_resume_rollback_after_refusal_allows_clean_retry(tmp_path, build_test_engine) -> None:
+    """独审 P1 回归：标记后 resume_on_job 拒绝（candidate 不匹配）→ unmark
+    回滚有效（响应不含误导性 duplicate），重试（正确 candidate）正常接续
+    （不卡死 duplicate；拒绝路径零唤醒）."""
+
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    client, engine, sid, sha, qid, fb, ws = _atomic_resume_harness(
+        tmp_path, build_test_engine, operation_id="op-retry"
+    )
+    job_id = _completed_job(JobRegistry.instance(), sid, ws, operation_id="op-retry")
+
+    # post-mark 拒绝路径：poke 返回 False（唤醒失败）→ resume_on_job poked
+    # False → unmark 回滚（回滚后不得虚报 duplicate）
+    class _FailPoke:
+        def poke_session(self, sid: str) -> bool:
+            return False
+
+    app_state = client.app.state
+    app_state.queue_server_fallback = _FailPoke()
+    wake_before_bad = len(fb.wake)  # dispatch 入队 poke 历史；拒绝请求零新增
+    r_bad = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert r_bad.status_code == 200
+    body_bad = r_bad.json()
+    assert body_bad.get("poked") is False
+    assert body_bad.get("duplicate") is not True  # 回滚后不得虚报 duplicate
+    assert len(fb.wake) == wake_before_bad  # poke 失败：零新增唤醒
+
+    # 重试（恢复真实 fallback，正确 candidate）→ 正常接续（回滚有效，不卡死）
+    app_state.queue_server_fallback = fb
+    r_ok = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert r_ok.status_code == 200 and r_ok.json().get("poked") is True
+    assert fb.wake.count(sid) == 2  # dispatch poke + 正确接续 poke，恰两次
