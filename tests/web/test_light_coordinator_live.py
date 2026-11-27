@@ -325,6 +325,7 @@ def test_live_resume_job_real_registry_authority(tmp_path, build_test_engine) ->
                 "owner_session": sid,
                 "goal_id": "GOAL-J",
                 "candidate_sha256": sha,
+                "bound_run_generation": "run-live-1",
                 "message": "job 权威接续验证卡",
             },
         },
@@ -333,10 +334,14 @@ def test_live_resume_job_real_registry_authority(tmp_path, build_test_engine) ->
     assert enq.status_code == 200 and enq.json()["accepted"] is True
     qid = enq.json()["queue_id"]
 
-    # 真实 Job：registry.create 真进程（wait 立即 0 → watcher 置 completed/exit0）
+    # 真实 Job：registry.create 真进程（wait 立即 0 → watcher 置 completed/exit0）；
+    # origin_run_generation 以 contextvar 盖章=run-live-1（与派工卡声明匹配）
     registry = JobRegistry.instance()
     import io as _io
 
+    from llm_loop.core.run_context import current_run_generation as _crun
+
+    _gen_token = _crun.set("run-live-1")
     proc = SimpleNamespace(
         pid=_os.getpid(),
         wait=lambda: 0,
@@ -350,6 +355,7 @@ def test_live_resume_job_real_registry_authority(tmp_path, build_test_engine) ->
         workspace_root=str(ws),
         executor="execute_command",
     )
+    _crun.reset(_gen_token)
     # watcher 由 execute 层负责启动（create 只注册）——测试走同一真实路径
     import threading as _threading
 
@@ -392,3 +398,242 @@ def test_live_resume_job_real_registry_authority(tmp_path, build_test_engine) ->
         headers={"X-Coordinator-Token": _TOKEN},
     )
     assert bad.status_code == 409
+
+    # SA-PR145-EXACT-JOB-BINDING 幂等：同 job 二次接续 → duplicate 不重放
+    dup = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert dup.status_code == 200
+    dup_body = dup.json()
+    assert dup_body.get("duplicate") is True and dup_body.get("resumed") is False
+
+
+def test_live_resume_job_rejects_stale_or_unbound_jobs(tmp_path, build_test_engine) -> None:
+    """主筹隔离负测实证三路径收口：同 owner/scope 旧代次 Job、缺 workspace_root、
+    缺 session_id 一律拒绝（不同 owner 任意旧成功 Job 不可冒认当前候选）."""
+    import io as _io
+    import os as _os
+    import time as _time
+    from types import SimpleNamespace
+
+    from llm_loop.core.run_context import current_run_generation as _crun
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    engine, _ = build_test_engine([{"content": "unused"}])
+    ws = tmp_path / "ws_root"
+    ws.mkdir()
+    import dataclasses as _dc
+
+    engine.settings = _dc.replace(
+        engine.settings,
+        coordinator_light_role="orchestrator",
+        coordinator_light_token=_TOKEN,
+    )
+    engine.workspace_root = str(ws)
+    app = build_app(engine=engine)
+
+    class _FB:
+        def poke_session(self, sid: str) -> bool:
+            return True
+
+    app.state.queue_server_fallback = _FB()
+    client = TestClient(app)
+    sid = engine.session.create()
+    sha = "a" * 64
+
+    enq = client.post(
+        "/api/v1/coordinator/light/dispatch",
+        json={
+            "operation_id": "op-stale",
+            "target_session": sid,
+            "payload": {
+                "owner_session": sid,
+                "goal_id": "GOAL-J",
+                "candidate_sha256": sha,
+                "bound_run_generation": "run-new",
+                "message": "旧代次拒绝验证卡",
+            },
+        },
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert enq.status_code == 200
+    qid = enq.json()["queue_id"]
+
+    registry = JobRegistry.instance()
+
+    def _mk_job(run_gen: str, *, session_id: str = sid, workspace_root: str = str(ws)):
+        tok = _crun.set(run_gen)
+        try:
+            return registry.create(
+                SimpleNamespace(pid=_os.getpid(), wait=lambda: 0, stdout=_io.StringIO(), stderr=_io.StringIO()),
+                "echo stale-probe",
+                session_id=session_id,
+                workspace_root=workspace_root,
+                executor="execute_command",
+            )
+        finally:
+            _crun.reset(tok)
+
+    old_job = _mk_job("run-old")
+    _thread_probe = __import__("threading").Thread(
+        target=registry._watch_completion, args=(old_job,), daemon=True
+    )
+    _thread_probe.start()
+    deadline = _time.time() + 5.0
+    while _time.time() < deadline:
+        snap = registry.snapshot(old_job, session_id=sid)
+        if isinstance(snap, dict) and snap.get("state") in {"completed", "failed"}:
+            break
+        _time.sleep(0.02)
+    assert snap.get("state") == "completed"
+
+    # ① 同 owner/scope 旧代次 Job → 409 generation mismatch（不唤醒）
+    stale = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": old_job, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert stale.status_code == 409
+    assert "generation mismatch" in stale.text
+
+    # ② job 缺 workspace_root → 归属不明拒绝（404/409，不唤醒）
+    noscope_job = _mk_job("run-new", workspace_root="")
+    noscope = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": noscope_job, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert noscope.status_code in (404, 409)
+    assert "workspace" in noscope.text
+
+    # ③ job 缺 session_id → owner 绑定缺失拒绝（不回退派工声明）
+    nosess_job = _mk_job("run-new", session_id="")
+    nosess = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": nosess_job, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert nosess.status_code in (404, 409)
+    assert "session_id" in nosess.text
+
+    # ④ 已接续其他 Job 的卡片 → 409 一卡一 Job（先接续匹配代次的真 Job）
+    from llm_loop.core.run_context import current_run_generation as _cr2
+
+    tok2 = _cr2.set("run-new")
+    good_job = registry.create(
+        SimpleNamespace(pid=_os.getpid(), wait=lambda: 0, stdout=_io.StringIO(), stderr=_io.StringIO()),
+        "echo stale-probe-good",
+        session_id=sid,
+        workspace_root=str(ws),
+        executor="execute_command",
+    )
+    _cr2.reset(tok2)
+    _tg = __import__("threading").Thread(
+        target=registry._watch_completion, args=(good_job,), daemon=True
+    )
+    _tg.start()
+    deadline = _time.time() + 5.0
+    while _time.time() < deadline:
+        gsnap = registry.snapshot(good_job, session_id=sid)
+        if isinstance(gsnap, dict) and gsnap.get("state") in {"completed", "failed"}:
+            break
+        _time.sleep(0.02)
+    ok = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": good_job, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert ok.status_code == 200 and ok.json().get("poked") is True
+    other = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": old_job, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert other.status_code == 409 and "已接续其他" in other.text
+
+
+def test_live_resume_job_real_subprocess_end_to_end(tmp_path, build_test_engine) -> None:
+    """真正 subprocess 纵切：Popen 真进程经 registry 监听置 completed →
+    resume-job 端点唤醒（替换 SimpleNamespace 假 proc，可宣称真实进程执行）."""
+    import hashlib as _hl
+    import subprocess as _sp
+    import time as _time
+
+    from llm_loop.core.run_context import current_run_generation as _crun
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    engine, _ = build_test_engine([{"content": "unused"}])
+    ws = tmp_path / "ws_root"
+    ws.mkdir()
+    import dataclasses as _dc
+
+    engine.settings = _dc.replace(
+        engine.settings,
+        coordinator_light_role="orchestrator",
+        coordinator_light_token=_TOKEN,
+    )
+    engine.workspace_root = str(ws)
+    app = build_app(engine=engine)
+
+    class _FB:
+        def poke_session(self, sid: str) -> bool:
+            return True
+
+    app.state.queue_server_fallback = _FB()
+    client = TestClient(app)
+    sid = engine.session.create()
+    sha = _hl.sha256(b"real-subprocess-candidate").hexdigest()
+
+    enq = client.post(
+        "/api/v1/coordinator/light/dispatch",
+        json={
+            "operation_id": "op-subproc",
+            "target_session": sid,
+            "payload": {
+                "owner_session": sid,
+                "goal_id": "GOAL-J",
+                "candidate_sha256": sha,
+                "bound_run_generation": "run-sub",
+                "message": "真进程接续验证卡",
+            },
+        },
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert enq.status_code == 200
+    qid = enq.json()["queue_id"]
+
+    registry = JobRegistry.instance()
+    real_proc = _sp.Popen(
+        [_sp.sys.executable, "-c", "import time; time.sleep(0.2)"],
+        stdout=_sp.PIPE,
+        stderr=_sp.PIPE,
+    )
+    tok = _crun.set("run-sub")
+    job_id = registry.create(
+        real_proc,
+        "python -c sleep",
+        session_id=sid,
+        workspace_root=str(ws),
+        executor="execute_command",
+    )
+    _crun.reset(tok)
+    import threading as _threading
+
+    _threading.Thread(target=registry._watch_completion, args=(job_id,), daemon=True).start()
+    deadline = _time.time() + 10.0
+    while _time.time() < deadline:
+        snap = registry.snapshot(job_id, session_id=sid)
+        if isinstance(snap, dict) and snap.get("state") in {"completed", "failed"}:
+            break
+        _time.sleep(0.05)
+    assert snap.get("state") == "completed" and snap.get("exit_code") == 0
+
+    ok = client.post(
+        "/api/v1/coordinator/light/resume-job",
+        json={"job_id": job_id, "queue_id": qid, "expected_sha256": sha},
+        headers={"X-Coordinator-Token": _TOKEN},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json().get("poked") is True
