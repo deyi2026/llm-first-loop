@@ -5,6 +5,20 @@ from __future__ import annotations
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
 
+def _append_model_role_receipt(parts: list[str], result) -> list:
+    model_role = getattr(result, "model_role", "")
+    if model_role:
+        attempts = getattr(result, "model_attempts", [])
+        parts.append(f"[模型角色] {model_role}; attempts={len(attempts)}")
+        for attempt in attempts:
+            parts.append(
+                f"  - {attempt.get('model')}: {attempt.get('outcome')} "
+                f"{attempt.get('reason', '')} observed={attempt.get('observed_model', '')} "
+                f"elapsed_ms={attempt.get('elapsed_ms')}"
+            )
+    return list(getattr(result, "reports", []) or [])
+
+
 class SubAgentResultTool:
     """父代理唯一的 child handle 查询/await 操作。"""
 
@@ -110,7 +124,7 @@ class SubAgentResultTool:
             f"rounds={getattr(result, 'rounds', 0)} tools={len(getattr(result, 'tool_calls', []) or [])} "
             f"tokens_in={getattr(result, 'tokens_in', 0)} tokens_out={getattr(result, 'tokens_out', 0)}",
         ]
-        result_reports = list(getattr(result, "reports", []) or [])
+        result_reports = _append_model_role_receipt(parts, result)
         truncation_detail = str(getattr(result, "truncation_detail", "") or "")
         if outcome == "truncated":
             # EVO-20261108-b5fead21 ②: 截断细分给父级可程序化消费的处置口径。
