@@ -1,0 +1,156 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261125-ctp-wave3",
+  "summary": "CTP（合作目标校准协议）第三波交付入库：36h11 读码器 v0（计划任务 B3，仅合成图与近正对位形）；可配置读出闸门与 K7 影子通道（B4）；V4 / V7 / V8 一致性 runner 骨架与机器可读回执（B7，合成样本，回执标 simulated）；追溯矩阵相应更新。测试准入审查 r1 的 P1（一致性 runner 对不可用上限静默放行）已修订并加回归钉。不改动 llm_loop 运行时，不新增权限、否决或恢复出口，不冻结任何门槛数值（[TBD-V4a] 至 [TBD-V4d] 仍待实测与工作组裁决）。真实打印件端到端探针（B8）不在本次范围。",
+  "components": [
+    {
+      "component_id": "ctp-wave3-plan-and-review-record",
+      "paths": [
+        "docs/PLAN-20261123-ctp-implementation.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md"
+      ],
+      "owning_subsystem": "既有文档面：CTP 实施计划（基线表与变更历史）与独立审查发现/处置归档。不进入运行时。",
+      "disposition": "计划第 1.1 节与变更历史追加 Wave-3 交付与执行回执；第 1.2 节把「版本控制」「代码实现」两条基线行更新为当前事实（Wave-2 已随 PR #117 入库；B3 / B4 / B7 已落地，B8 未落地）并把 as-of 更新为 2026-11-25。归档第 15 节记录测试准入审查 r1 的发现、处置，以及修订前后在同一组不可用配置上的对照实测；第 16 节记录候选重放到 main 6349346d 之后的测试准入复审 r3（PASS，P2 四条只归档）。",
+      "evidence": [
+        "docs/PLAN-20261123-ctp-implementation.md 第 1.1、1.2 节与第 16 章",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15、16 节"
+      ],
+      "verification_level": "文档行；其中引用的用例数取自同一分支的回归回执。计划 0.3d 行、归档第 15 节与本清单首版在测试准入 r3 切片内；计划 0.3e 行、归档第 16 节与本清单的本次更新在 r3 之后写入，由 git_push 审查与合并审查按 lane 全量 diff 复核。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-reader-v0",
+      "paths": [
+        "ctp/src/ctp_reader/__init__.py",
+        "ctp/src/ctp_reader/config.py",
+        "ctp/src/ctp_reader/decode36h11.py",
+        "ctp/src/ctp_reader/errors.py",
+        "ctp/src/ctp_reader/image.py",
+        "ctp/src/ctp_reader/pose.py",
+        "ctp/src/ctp_reader/reader.py",
+        "ctp/src/ctp_contract/errors.py",
+        "ctp/src/ctp_registry/record.py",
+        "ctp/docs/reader-v0-notes.md",
+        "ctp/docs/NOTICE-36h11.md",
+        "ctp/tests/reader_testkit.py",
+        "ctp/tests/test_reader_decode.py",
+        "ctp/tests/test_reader_observe.py",
+        "ctp/tests/test_error_propagation.py"
+      ],
+      "owning_subsystem": "ctp/src/ctp_reader：36h11 读码器 v0（计划任务 B3），仅被 ctp/tests 引用；另含契约与注册表两个异常基类的只读字段修正（ctp_contract.errors、ctp_registry.record）。",
+      "disposition": "输入图像经解码（decode36h11）、位姿（pose）到读码器封装（reader）与 C-5 读取输出契约自检。按 lane 登记的执行期约定，解码在纠错能力内进行，超出即按 unknown_version 拒读且不输出 ID。v0 只承诺合成图与近正对位形，平面 PnP 二义性未消解；边界逐条写在读码器说明里。ContractError / RegistryError 由 frozen dataclass 改为字段只读的普通 dataclass，修复异常在传播中丢失错误码的问题，并以回归钉钉住。36h11 的归属与许可见 NOTICE-36h11。",
+      "evidence": [
+        "ctp/docs/reader-v0-notes.md",
+        "ctp/src/ctp_reader/reader.py",
+        "ctp/docs/NOTICE-36h11.md",
+        "ctp/receipts/20261125-wave3-pytest.md"
+      ],
+      "verification_level": "随 CTP 专项回归执行并计入 343 passed；相关测试函数在追溯矩阵中逐个具名。真实打印件未测（B8 未做）。仓库级全量门禁以本 PR 的远端 CI 为准。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：库形态原型，未被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-read-gate",
+      "paths": [
+        "ctp/src/ctp_reader/gate.py",
+        "ctp/docs/gate-notes.md",
+        "ctp/tests/test_gate.py"
+      ],
+      "owning_subsystem": "ctp/src/ctp_reader/gate.py：可配置读出闸门（计划任务 B4），被读码器封装调用。",
+      "disposition": "读出闸门按两项阈值判定读数是否达标：低于阈值不解码、不输出。按 lane 登记的执行期约定，阈值必填、无默认值，[TBD-V4a] / [TBD-V4b] 禁止硬编码；影子通道仅测试构建开启（K7）。阈值不可用或上限未配置时只能给出 indeterminate，不能判通过。该约定待契约闸 G2 追认。",
+      "evidence": [
+        "ctp/docs/gate-notes.md",
+        "ctp/src/ctp_reader/gate.py",
+        "ctp/receipts/20261125-wave3-pytest.md"
+      ],
+      "verification_level": "随 CTP 专项回归执行并计入 343 passed；含阈值类型与范围的应拦用例。合成样本口径，不构成门槛证据。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：未被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-conformance-runners",
+      "paths": [
+        "ctp/src/ctp_conformance/__init__.py",
+        "ctp/src/ctp_conformance/_runner.py",
+        "ctp/src/ctp_conformance/receipt.py",
+        "ctp/src/ctp_conformance/synth.py",
+        "ctp/src/ctp_conformance/v4.py",
+        "ctp/src/ctp_conformance/v7.py",
+        "ctp/src/ctp_conformance/v8.py",
+        "ctp/docs/conformance-runner-notes.md",
+        "ctp/tests/conformance_stubs.py",
+        "ctp/tests/conftest.py",
+        "ctp/tests/test_conformance_receipt.py",
+        "ctp/tests/test_conformance_v4.py",
+        "ctp/tests/test_conformance_v7.py",
+        "ctp/tests/test_conformance_v8.py",
+        "ctp/tests/test_integration_reader_conformance.py"
+      ],
+      "owning_subsystem": "ctp/src/ctp_conformance：V4 / V7 / V8 一致性 runner 骨架与机器可读回执（计划任务 B7），仅被 ctp/tests 引用；conftest.py 与 conformance_stubs.py 为测试辅助。",
+      "disposition": "用合成样本驱动读码器协议并输出机器可读回执；回执顶层 simulated 恒为 true，不产生门槛证据。裁决三值：任一硬断言失败为 fail，无失败但有未演练样本或未配置上限为 indeterminate，否则 pass。V8 的伪造类与几何互证未实现，标 not_exercisable。测试准入审查 r1 的 P1 已修订：提供了但不可用的上限（None、NaN、bool、非数值、正负无穷、越界）按未配置处理并在回执 notes 留痕，不得判 pass；必填分组阈值缺失或不可用则拒绝运行；V8 的 include_forgery 只接受 JSON 布尔。conftest.py 把测试目录追加到 sys.path，取舍（仅 append、不引入顶层名 tests）写在模块 docstring。",
+      "evidence": [
+        "ctp/docs/conformance-runner-notes.md",
+        "ctp/src/ctp_conformance/v4.py",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15、16 节",
+        "ctp/receipts/20261125-wave3-pytest.md"
+      ],
+      "verification_level": "随 CTP 专项回归执行并计入 343 passed，其中 r1 修订的回归钉 27 例；修订前后在同一组不可用配置上的对照实测见归档第 15 节。全部为合成样本，不构成 V4 / V7 / V8 门槛证据。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：未被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-trace-matrix-update",
+      "paths": [
+        "docs/trace/trace.csv",
+        "docs/trace/trace.md",
+        "docs/trace/coverage-summary.md"
+      ],
+      "owning_subsystem": "既有文档面 docs/trace：规范条目与测试用例的追溯矩阵（计划任务 A3）。",
+      "disposition": "矩阵同步 Wave-3：读码器 / 读出闸门 / 一致性 runner / 集成 / 异常传播回归钉逐名入表，并计入测试准入审查 r1 修订新增的 3 个回归钉。规范覆盖测试函数 167 → 170，矩阵数据行 225 → 228；条目级覆盖为 covered 13、partial 11、pending 35，其余待实测、待裁决或待实现，均如实标注。",
+      "evidence": [
+        "docs/trace/coverage-summary.md",
+        "artifacts/ctp-review-20261123/code-review-20261123-findings.md 第 15、16 节"
+      ],
+      "verification_level": "矩阵机检测试（每个测试函数具名、文档计数等于 AST 实测、证据行号指向 def 行）随 CTP 专项回归通过。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不新增否决或恢复出口：机检测试失败与仓库其他测试失败走同一条门禁路径。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "ctp-wave3-regression-receipt",
+      "paths": [
+        "ctp/receipts/20261125-wave3-pytest.md"
+      ],
+      "owning_subsystem": "测试回执文档面 ctp/receipts。",
+      "disposition": "CTP 专项定向回归（ctp/tests 全集）回执：343 passed，命令、被测提交、审查链、切片声明与输出 verbatim 均在文件内。不是仓库级全量门禁。",
+      "evidence": [
+        "ctp/receipts/20261125-wave3-pytest.md"
+      ],
+      "verification_level": "文档；数字取自执行输出（本次 job job-f3c5835129ef40c69db0，退出码 0；候选重放到 main 6349346d 之后复跑，与重放前一致）。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    },
+    {
+      "component_id": "a5-manifest-self",
+      "paths": [
+        "docs/governance/submissions/20261125-ctp-wave3.json"
+      ],
+      "owning_subsystem": "治理提交清单，A.5 架构提交审查的机械覆盖对象。",
+      "disposition": "本清单自身，随 PR 入库。",
+      "evidence": [
+        "docs/governance/architecture-submission-v0.1.schema.json"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py 本地预检通过（base 为 origin 主干，head 为含本清单的提交；变更路径被 7 个组件精确划分、无遗漏无多余）。",
+      "control_machinery": false,
+      "model_evidence_veto_recovery_exit": "不涉及模型裁决、否决或恢复出口：不被 llm_loop 运行时或任何服务加载。",
+      "rollback_route": "经同一受保护 PR revert 对应提交即可；无数据迁移、无运行时引用。"
+    }
+  ],
+  "declarations": []
+}
