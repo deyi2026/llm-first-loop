@@ -37,8 +37,9 @@ def _response(text="decision", observed="actual-model"):
                        prompt_tokens=12, completion_tokens=3)
 
 
-def _runner(tmp_path, candidates, explicit=None):
-    store = SessionStore(tmp_path / "sessions", event_store=EventStore(tmp_path / "events", enabled=True))
+def _runner(tmp_path, candidates, explicit=None, *, journal_enabled=True):
+    store = SessionStore(tmp_path / "sessions", event_store=EventStore(
+        tmp_path / "events", enabled=journal_enabled))
     default = DecisionClient(_response("must not use default"))
     runner = SubAgentRunner(llm=default, registry=ToolRegistry(), session_store=store,
                             llm_resolver=explicit, role_clients_resolver=candidates)
@@ -172,3 +173,51 @@ def test_role_account_billing_is_not_fallback(tmp_path):
     assert final.outcome == "failed"
     assert final.model_attempts[0]["reason"] == "account_billing"
     assert not backup.calls
+
+
+@pytest.mark.parametrize("journal_enabled", [True, False])
+def test_role_crash_preserves_attempt_receipt(tmp_path, monkeypatch, journal_enabled):
+    class WorkerCrash(BaseException):
+        pass
+
+    first = DecisionClient(LLMTimeoutError("timeout"))
+    second = DecisionClient(_response())
+    runner, default = _runner(
+        tmp_path, lambda role: (("p/first", first), ("q/second", second)),
+        journal_enabled=journal_enabled,
+    )
+
+    def crash_after_response(*args, **kwargs):
+        raise WorkerCrash("after provider response")
+
+    monkeypatch.setattr(runner, "_finish_text_response", crash_after_response)
+    started = runner.start(task="decide", model_role="planning")
+    assert started["accepted"], started
+    child_id = started["child_id"]
+    final = _settle(runner, child_id)
+    assert final.outcome == "failed"
+    assert "WorkerCrash" in final.final_answer
+    assert final.model_role == "planning"
+    assert [a["model"] for a in final.model_attempts] == ["p/first", "q/second"]
+    assert final.model_attempts[0]["reason"] == "timeout"
+    assert final.model_attempts[1]["observed_model"] == "actual-model"
+    assert len(first.calls) == len(second.calls) == 1 and not default.calls
+    receipt = SubAgentResultTool(runner).execute(child_id=child_id)
+    assert "[模型角色]" in receipt.content and "q/second" in receipt.content
+    if journal_enabled:
+        restarted = SubAgentRunner(llm=default, registry=ToolRegistry(),
+                                   session_store=runner.session_store)
+        recovered = _settle(restarted, child_id)
+        assert recovered.outcome == "failed"
+        assert recovered.model_role == final.model_role
+        assert recovered.model_attempts == final.model_attempts
+
+
+def test_role_origin_metadata_accepts_extra_fields():
+    from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
+
+    metadata = origin_metadata(InjectionLayer.PROGRAM_RECOVERY,
+                               injection_kind="subagent_task", model_role="router")
+    assert metadata["model_role"] == "router"
+    assert metadata["injection_kind"] == "subagent_task"
+    assert metadata["program_origin"] is True

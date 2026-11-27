@@ -1400,6 +1400,7 @@ class SubAgentRunner:
         startup_state: dict[str, object] | None = None,
         model_role: str = "",
         role_clients: tuple[tuple[str, LLMClient], ...] = (),
+        role_attempts: list[dict] | None = None,
     ) -> SubAgentResult:
         """在已登记的 child sid 上执行迷你循环；不负责 topology cleanup。"""
 
@@ -1477,15 +1478,10 @@ class SubAgentRunner:
                             **({"model_role": model_role} if model_role else {}),
                         )
                     except BaseException as exc:  # noqa: BLE001 - startup must be acknowledged
-                        if startup_state is not None:
-                            startup_state.update(
-                                {
-                                    "ok": False,
-                                    "detail": f"durable_start_failed:{type(exc).__name__}",
-                                }
-                            )
-                        if startup_event is not None:
-                            startup_event.set()
+                        self._ack_child_startup(
+                            startup_state, startup_event, False,
+                            f"durable_start_failed:{type(exc).__name__}",
+                        )
                         failed = SubAgentResult(
                             final_answer=(
                                 f"[状态: failure] 子代理 durable startup 异常: "
@@ -1493,6 +1489,7 @@ class SubAgentRunner:
                             ),
                             outcome="failed",
                             depth=depth,
+                            model_role=model_role,
                         )
                         self._persist_terminal_result(
                             child_id=sid,
@@ -1502,7 +1499,8 @@ class SubAgentRunner:
                         )
                         raise
                     self._ack_child_startup(startup_state, startup_event, True, "durable_start_ready")
-                    role_attempts: list[dict] = []
+                    if role_attempts is None:
+                        role_attempts = []
                     try:
                         result = self._execute_subagent(
                             owned_sess,
@@ -1521,6 +1519,8 @@ class SubAgentRunner:
                             ),
                             outcome="failed",
                             depth=depth,
+                            model_role=model_role,
+                            model_attempts=role_attempts,
                         )
                         self._persist_terminal_result(
                             child_id=sid,
@@ -1775,6 +1775,9 @@ class SubAgentRunner:
         startup_event: threading.Event,
         startup_state: dict[str, object],
         exc: BaseException,
+        *,
+        model_role: str = "",
+        role_attempts: list[dict] | None = None,
     ) -> SubAgentResult:
         """_worker 后台异常路径统一收口：startup 握手补齐 + 真实 terminal。
 
@@ -1801,6 +1804,8 @@ class SubAgentRunner:
                 final_answer=(f"[状态: failure] 子代理后台执行异常: {type(exc).__name__}: {exc}"),
                 outcome="failed",
                 depth=depth,
+                model_role=model_role,
+                model_attempts=list(role_attempts or []),
             )
         )
 
@@ -2055,16 +2060,11 @@ class SubAgentRunner:
                     if child_scope is not None
                     else None
                 )
-                # DESIGN-20261030 §5.3 C5: 写侧 scope 注入（仅当有效 scope 非
-                # None 时 set，与 _scope_tok 条件 set 模式一致）。延迟 import：
-                # write_scope 核心未就绪时本分支不可达（计算面已拒绝或返回
-                # None），不拖垮既有 import 面。
-                if child_write_scope is not None:
-                    from llm_loop.core.run_context import current_write_scope
-
-                    _wscope_tok = current_write_scope.set(child_write_scope)
-                else:
-                    _wscope_tok = None
+                # DESIGN-20261030 §5.3 C5: 仅在有效写侧 scope 存在时注入。
+                from llm_loop.core.run_context import current_write_scope
+                _wscope_tok = (
+                    current_write_scope.set(child_write_scope) if child_write_scope is not None else None
+                )
                 _cancel_tok = child_cancel_event.set(cancel_event)
                 # EVO-20261016-ac47e850: 声明式隔离时 child 施工面切到 worktree；
                 # journal/session 落盘位置不受影响（session_store 决定）。
@@ -2076,6 +2076,7 @@ class SubAgentRunner:
                 # EVO-20261012-32e89b46: 注入共享载体（值语义 set 会随每次派发
                 # copy_context() 快照丢失，累计恒归零）。
                 _wait_tok = child_wait_budget_used.set(WaitBudget())
+                role_attempts: list[dict] = []
                 try:
                     try:
                         result = self._run_reserved_child(
@@ -2091,12 +2092,13 @@ class SubAgentRunner:
                             startup_state=startup_state,
                             llm_client=child_llm,
                             model_label=child_model_label,
-                            **({"model_role": model_role, "role_clients": role_clients}
-                               if model_role else {}),
+                            **({"model_role": model_role, "role_clients": role_clients,
+                                "role_attempts": role_attempts} if model_role else {}),
                         )
                     except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
                         result = self._worker_terminal_from_exception(
-                            sid, depth, startup_event, startup_state, exc
+                            sid, depth, startup_event, startup_state, exc,
+                            model_role=model_role, role_attempts=role_attempts,
                         )
                     # EVO-20261016-ac47e850: 终态释放隔离树（干净删/脏保留），
                     # 报告附加到 result——父会话据此决定是否显式合并（不自动合并）。
@@ -2128,8 +2130,6 @@ class SubAgentRunner:
                     if _wscope_tok is not None:
                         # DESIGN-20261030 §5.3 C5/T16: worker 退出统一恢复，
                         # 杜绝 child write scope 泄漏（与 _scope_tok 同模式）。
-                        from llm_loop.core.run_context import current_write_scope
-
                         current_write_scope.reset(_wscope_tok)
                     if _scope_tok is not None:
                         current_tool_discovery_scope.reset(_scope_tok)
