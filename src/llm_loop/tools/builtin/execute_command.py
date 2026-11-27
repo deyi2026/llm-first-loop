@@ -1601,6 +1601,9 @@ class ExecuteCommandTool:
 
         存在他人 active lane 时拒绝 git commit/push main（并行会话合并闸竞争
         防护）；无冲突/无法判定时放行（拒绝必须基于已证事实）。
+        另有一条不以他人 lane 为条件的规则（2026-11-25）：update-ref 把 main 挪到
+        远端已有的提交 → 拒绝并提示改用 `git -C <主检出> merge --ff-only origin/main`
+        （update-ref 不更新被检出工作树的暂存区/工作树，见 check_update_ref_main_move）。
         """
         try:
             from llm_loop.config import load_settings
@@ -1615,9 +1618,18 @@ class ExecuteCommandTool:
         except Exception:  # noqa: BLE001 — 无会话上下文（测试/独立进程）→ 保守按空会话
             sid = ""
         try:
-            from llm_loop.core.lane_main_write_guard import check_git_main_write
+            from llm_loop.core.lane_main_write_guard import (
+                check_git_main_write,
+                check_update_ref_main_move,
+            )
 
-            decision = check_git_main_write(
+            # 先判不以他人 live lane 为条件的指针移动规则，再判 lane 规则。
+            decision = check_update_ref_main_move(
+                command,
+                audit_dir=audit_dir,
+                session_id=sid,
+                workdir=workdir,
+            ) or check_git_main_write(
                 command,
                 audit_dir=audit_dir,
                 session_id=sid,
