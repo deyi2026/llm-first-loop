@@ -1,0 +1,163 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-light-coordinator-p0",
+  "summary": "Light coordinator P0 real dispatch/resume/receipt wiring: coordinator_light HTTP endpoints wired to the existing HumanTurnQueue durable authority (enqueue_once idempotent atomic transaction, flock+fresh-reload global write mutex), JobRegistry/ExternalExecutionJournal as the real process-job terminal authority (authority=job_authority receipts; queue-terminal projections are never CI/merge credentials), dependency-injection decoupling of the coordinator_light<->preview_routes<->routes runtime cycle, and fail-closed workspace/owner/binding enforcement on resume paths.",
+  "components": [
+    {
+      "component_id": "coordinator-light-endpoints",
+      "paths": [
+        "src/llm_loop/web/coordinator_light.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "web",
+      "disposition": "reuse",
+      "evidence": [
+        "verify_coordinator_access dual-switch fail-closed (role default disabled, constant-time token compare)",
+        "derive_job_receipt separates queue-terminal authority (origin/scope bound) from payload_declared claims; derive_job_receipt_from_registry reads JobRegistry/ExternalExecutionJournal real process facts as authority=job_authority",
+        "resume_on_job authority gate rejects non-job_authority records; require_binding fail-closed; require_artifact=False only for process jobs whose candidate binding is checked against the dispatch card",
+        "missing workspace_scope stamp rejected; cross-workspace mismatch rejected (realpath-normalized)"
+      ],
+      "verification_level": "unit+integration",
+      "model_evidence_veto_recovery_exit": "Model evidence never grants resume; veto/recovery is the fail-closed HOLD+reason path; exit is human review via governance receipts",
+      "rollback_route": "revert commit; endpoints return 503 not_wired when dependencies are not injected (no partial activation)",
+      "declaration_id": "coord-p0-authority"
+    },
+    {
+      "component_id": "coordinator-http-router-wiring",
+      "paths": [
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "web",
+      "disposition": "reuse",
+      "evidence": [
+        "dependency injection (_build_coordinator_router supplies queue/poke) removes the runtime import cycle; _poke_queue_fallback now returns the real accepted fact (bool) instead of an uninformative None"
+      ],
+      "verification_level": "unit+integration",
+      "model_evidence_veto_recovery_exit": "not_wired 503 fail-closed when injection absent; model evidence cannot flip wiring",
+      "rollback_route": "revert commit restores previous router include order",
+      "declaration_id": "coord-p0-authority"
+    },
+    {
+      "component_id": "queue-authority-hardening",
+      "paths": [
+        "src/llm_loop/web/human_turn_queue.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "web",
+      "disposition": "reuse",
+      "evidence": [
+        "enqueue_once idempotent atomic transaction (flock+fresh-reload) removes the cross-lock double-dispatch window",
+        "snapshot freshness contract used by coordinator derives receipts from durable facts only"
+      ],
+      "verification_level": "unit+integration",
+      "model_evidence_veto_recovery_exit": "queue terminal facts are the only receipt source; model output is never marked as job authority",
+      "rollback_route": "revert commit; queue schema unchanged (additive field only)",
+      "declaration_id": "coord-p0-authority"
+    },
+    {
+      "component_id": "coordinator-token-config",
+      "paths": [
+        "src/llm_loop/config.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "web",
+      "disposition": "reuse",
+      "evidence": [
+        "coordinator_light_role/coordinator_light_token settings; default disabled keeps normal chat unaffected"
+      ],
+      "verification_level": "unit",
+      "model_evidence_veto_recovery_exit": "missing config = disabled endpoints (403); model evidence cannot enable",
+      "rollback_route": "revert commit removes fields (additive)",
+      "declaration_id": "coord-p0-authority"
+    },
+    {
+      "component_id": "guard-baseline",
+      "paths": [
+        "tests/guards/function_size_baseline.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "guards",
+      "disposition": "reuse",
+      "evidence": [
+        "precise registration of extracted functions (build_coordinator_light_router 139 < 144 ratchet), no inflation; cycles registry stays empty"
+      ],
+      "verification_level": "guard",
+      "model_evidence_veto_recovery_exit": "ratchet only-decrease; raises require guard(r9) visible commits",
+      "rollback_route": "revert commit restores prior baseline",
+      "declaration_id": "coord-p0-authority"
+    },
+    {
+      "component_id": "light-coordinator-tests",
+      "paths": [
+        "tests/web/test_light_coordinator.py",
+        "tests/web/test_light_coordinator_live.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "web",
+      "disposition": "new_authority",
+      "evidence": [
+        "86+ tests: dispatch idempotency/conflict, approval binding fail-closed, queue-terminal≠job-authority negative tests, real JobRegistry process-job authority wiring (create→watch→completed→resume-job exit0 wake), cross-workspace/forged-candidate rejections"
+      ],
+      "verification_level": "unit+integration",
+      "model_evidence_veto_recovery_exit": "negative tests pin the veto paths (origin/scope/authority/binding); recovery = fail-closed HOLD with queryable reason",
+      "rollback_route": "revert commit removes tests only"
+    },
+    {
+      "component_id": "design-doc",
+      "paths": [
+        "docs/design/DESIGN-20261126-light-coordinator-p0-v2.1.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs",
+      "disposition": "new_authority",
+      "evidence": [
+        "design v2.1 (R31-R35) source of the implemented contract"
+      ],
+      "verification_level": "docs",
+      "model_evidence_veto_recovery_exit": "docs only; no runtime authority",
+      "rollback_route": "revert commit removes doc"
+    },
+    {
+      "component_id": "this-manifest",
+      "paths": [
+        "docs/governance/submissions/20261127-light-coordinator-p0.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "governance",
+      "disposition": "new_authority",
+      "evidence": [
+        "A.5 exact-coverage manifest for this submission (partitions all changed paths)"
+      ],
+      "verification_level": "gate",
+      "model_evidence_veto_recovery_exit": "mechanical coverage checker; model prose never satisfies coverage",
+      "rollback_route": "revert commit removes manifest",
+      "declaration_id": "coord-p0-authority"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "coord-p0-authority",
+      "g1": {
+        "necessity": "Coordination resume chains previously required a coordinator model call with no deterministic直达 path; real queue/job authority wiring removes that bottleneck without adding infrastructure."
+      },
+      "g2": {
+        "authority_owner": "web",
+        "relationship": "reuse",
+        "non_duplication": "Queue terminal facts stay in HumanTurnQueue; process-job terminal facts stay in JobRegistry/ExternalExecutionJournal (factory.job_terminal_predicate same source); coordinator_light only projects receipts and never writes its own job ledger."
+      },
+      "g3": {
+        "model_evidence": [
+          "Review PASS text and dispatch-card declared SHAs are recorded as declared/payload_declared only; they never satisfy the job-authority gate (authority=job_authority required, exit0 from process facts)."
+        ],
+        "recovery_or_reason": "Recovery: durable queue entries + JobRegistry journal survive restarts; unmatched/unknown/mismatched bindings HOLD with queryable reasons for human recovery."
+      },
+      "g4": {
+        "rollback": "git revert of this submission removes endpoints/wiring; default-disabled config keeps the deployed surface inert.",
+        "verification": [
+          "tests/web/test_light_coordinator.py + test_light_coordinator_live.py (87 tests) incl. real JobRegistry create→watch→completed→resume-job wiring and all negative boundaries; pyright/ruff changed-file clean."
+        ]
+      }
+    }
+  ]
+}

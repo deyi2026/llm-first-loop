@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "9ebae0941",
+    "head_commit": "5c24675df",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1258,7 +1258,7 @@
     "src/llm_loop/runtime/service_control.py::accept_restart": 122,
     "src/llm_loop/cli.py::main": 139,
     "src/llm_loop/terminal/shell.py::interactive_session": 181,
-    "src/llm_loop/web/coordinator_light.py::build_coordinator_light_router": 139
+    "src/llm_loop/web/coordinator_light.py::build_coordinator_light_router": 134
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
