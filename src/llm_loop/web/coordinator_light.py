@@ -193,6 +193,16 @@ def dispatch_task_card(
     }
 
 
+def _read_card_fact(card_path: Path) -> dict[str, Any]:
+    """读卡片审计附件事实（resumed_job_id 等）；缺失/损坏返回空 dict（幂等面）."""
+    fact: dict[str, Any] = {}
+    with contextlib.suppress(json.JSONDecodeError, TypeError, OSError):
+        parsed = json.loads(card_path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict):
+            fact = parsed
+    return fact
+
+
 def resume_on_approval(
     store: Any,
     request_id: str,
@@ -442,6 +452,14 @@ def derive_job_receipt_from_registry(
             "reason": "job not found in registry（owner-scoped 或重启后无可信终态事实）",
         }
     item_scope = str(snap.get("workspace_root") or "") or None
+    if expected_workspace_scope and not item_scope:
+        # SA-PR145-EXACT-JOB-BINDING：job 缺 workspace 绑定 → 归属不明拒绝
+        # （不跳过校验；跨工作区陈旧 Job 不可采信）
+        return {
+            "found": False,
+            "job_record": None,
+            "reason": "missing workspace_root（job 无工作区绑定，归属不明不可采信）",
+        }
     if expected_workspace_scope and item_scope:
         try:
             same = os.path.realpath(item_scope) == os.path.realpath(
@@ -460,13 +478,22 @@ def derive_job_receipt_from_registry(
             }
     exit_code = snap.get("exit_code")
     state = str(snap.get("state") or "")
+    snap_session = str(snap.get("session_id") or "")
+    if not snap_session:
+        # SA-PR145-EXACT-JOB-BINDING：job 缺 session_id（owner 绑定）→ 不回退
+        # 派工声明（回退=同 owner 任意 Job 可冒认），归属不明拒绝
+        return {
+            "found": False,
+            "job_record": None,
+            "reason": "missing session_id（job 无 owner 绑定，不可采信）",
+        }
     receipt: dict[str, Any] = {
         "authority": "job_authority",
         "job_kind": "process",
         "job_id": str(job_id),
         "job_state": state,
         "exit_code": exit_code if isinstance(exit_code, int) else None,
-        "owner_session": str(snap.get("session_id") or owner_session),
+        "owner_session": snap_session,
         "workspace_root": item_scope,
         "bound_run_generation": snap.get("origin_run_generation"),
         "durable": bool(snap.get("durable")),
@@ -570,6 +597,35 @@ def _resume_job_from_registry(
             content={"ok": False, "error": "candidate mismatch（派工声明≠期望候选）"},
             status_code=409,
         )
+    # SA-PR145-EXACT-JOB-BINDING：派工卡必须带 bound_run_generation（派工时
+    # 冻结的代次绑定）——缺失即不可证明"该 Job 对应本 operation"，HOLD。
+    bound_generation = str(declared.get("bound_run_generation") or "")
+    if not bound_generation:
+        return JSONResponse(
+            content={"ok": False, "error": "派工卡无 bound_run_generation，不可证明 Job 对应关系（HOLD）"},
+            status_code=409,
+        )
+    # 重复接续幂等（复用既有 cards 审计附件面，不新增账本）：同 job 已接续 →
+    # duplicate 不重放；已接续其他 job → 409（一卡一 Job）。
+    card_path = (
+        Path(_coordinator_data_dir(request)) / "coordinator_light" / "cards"
+        / f"{derived['job_record'].get('payload_declared', {}).get('card_id') or body.queue_id}.json"
+    )
+    card_fact = _read_card_fact(card_path)
+    resumed_job = str(card_fact.get("resumed_job_id") or "")
+    if resumed_job:
+        if resumed_job == str(body.job_id):
+            return JSONResponse(content={
+                "ok": True,
+                "resumed": False,
+                "duplicate": True,
+                "reason": "该 Job 已接续过（幂等，不重放唤醒）",
+                "owner_session": owner,
+            })
+        return JSONResponse(
+            content={"ok": False, "error": "卡片已接续其他 Job（一卡一 Job，拒绝重绑）"},
+            status_code=409,
+        )
     from llm_loop.tools.builtin.job_registry import JobRegistry
 
     jr = derive_job_receipt_from_registry(
@@ -592,16 +648,37 @@ def _resume_job_from_registry(
             "job_state": receipt.get("job_state"),
             "queue_status": derived["job_record"].get("queue_status"),
         })
-    # 绑定凭据：candidate 已与派工声明对照一致（409 早退兜底），填入
-    # receipt 供 require_binding 精确 SHA 核验（绑定源=派工卡声明）。
-    receipt["candidate_sha256"] = candidate
+    # SA-PR145-EXACT-JOB-BINDING：真实代次绑定核验——Job 的 origin_run_generation
+    # （registry 创建时盖章）必须等于派工卡 bound_run_generation（派工时冻结）。
+    # 不等=旧/不相关 Job（同 owner 旧成功 Job 不可冒认当前候选）→ 409 拒绝。
+    job_generation = str(receipt.get("bound_run_generation") or "")
+    if job_generation != bound_generation:
+        return JSONResponse(content={
+            "ok": False,
+            "resumed": False,
+            "reason": (
+                f"generation mismatch（Job origin_run_generation={job_generation!r} "
+                f"≠ 派工卡 bound_run_generation={bound_generation!r}，旧/不相关 Job 不可接续）"
+            ),
+        }, status_code=409)
+    # 进程型 Job 无产物/候选账：不把派工声明 candidate 填入回执自证（原缺陷
+    # L597 已删）。接续合法性=代次绑定核验（上方 409 早退）+ candidate 请求
+    # 对照（派工声明 vs body.expected）；require_binding=False——不虚称候选
+    # 资格/CI PASS（CI continuation 保持 501）。
     outcome = resume_on_job(
         receipt,
         expected_sha256=body.expected_sha256,
         poke=lambda sid: poke(sid),
-        require_binding=True,
-        require_artifact=False,
+        require_binding=False,
+        current_run_generation=bound_generation,
+        require_artifact=False,  # 进程型 Job 无产物账——不虚产物事实
     )
+    if outcome.get("poked"):
+        with contextlib.suppress(OSError):
+            card_path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write_json(
+                card_path, {**card_fact, "resumed_job_id": str(body.job_id)}
+            )
     return JSONResponse(content={"ok": bool(outcome.get("poked")), **outcome})
 
 
