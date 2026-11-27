@@ -17,6 +17,8 @@ from llm_loop.tools.review_host_admission import (
     HostReviewAdmission,
     _browser_binding,
     _classify_reviewer_failure,
+    _end_state_fingerprint,
+    _Frozen,
     _full_test_snapshot,
     _page_controls,
     _page_visible_text,
@@ -4688,3 +4690,123 @@ def test_real_push_risk_audit_never_mints_qualification(tmp_path: Path) -> None:
     runner.state = "completed"
     assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
     assert host.check_shell("author-1", command, str(repo)).allowed
+
+
+def test_merge_can_reuse_exact_tree_scope_push_pass_without_second_review(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+    git("init", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.invalid")
+    (repo / "README.md").write_text("base\n")
+    git("add", "README.md")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(remote)], check=True)
+    git("remote", "add", "origin", str(remote))
+    git("checkout", "-qb", "feature")
+    (repo / "README.md").write_text("reviewed candidate\n")
+    git("commit", "-qam", "candidate")
+    head = git("rev-parse", "HEAD")
+    paths = ("README.md",)
+    fingerprint = _end_state_fingerprint(repo, base, head, paths, (), (), push_side=True)
+    assert fingerprint
+
+    authority = HostReviewAdmission(reviewer_models_raw="glm/glm-5.3-flash")
+    class DurableEvents:
+        enabled = True
+        def append(self, parent, event, payload):
+            self.last = (parent, event, payload)
+            return {"event_id": "event-1"}
+    events = DurableEvents()
+    authority._event_store = events
+    # Exercise the real Host target path, including git -C from a different cwd.
+    # The frozen base/worktree must describe the reviewed Git repository, not
+    # the caller's cwd or a value supplied by the reviewer.
+    import shlex
+    runner = FakeChildRunner()
+    runner.parent = "push-session"
+    authority.attach_runner(runner)
+    caller = tmp_path / "caller"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(caller)], check=True)
+    receipt = authority.start(
+        "push-session", "git_push", workdir=str(caller),
+        command=f"git -C {shlex.quote(str(repo))} push origin feature", scope="tree",
+    )
+    assert receipt["accepted"], receipt
+    frozen = authority._records[receipt["child_id"]]
+    assert frozen.content_fingerprint == fingerprint
+    row = dataclasses.replace(
+        frozen, granted=True, consumed=True, state="settled", reviewer_model="glm/glm-5.3-flash",
+        reviewer_observed_model="glm-5.3-flash",
+    )
+    assert row.approved_base == base and row.approved_head == head
+    assert row.approved_worktree == str(repo.resolve())
+    authority._records.clear()
+    authority._records["review-child"] = dataclasses.replace(row, consumed=False)
+    assert authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo), paths=paths,
+    ) is None
+    authority._records["review-child"] = row
+
+    reused = authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo), paths=paths,
+    )
+    assert reused is not None
+    assert reused["source_child_id"] == "review-child"
+    assert reused["reviewer_model"] == "glm/glm-5.3-flash"
+    assert events.last[1] == "review_admission_reused_for_merge"
+
+    # Any identity, policy, scope, freshness or content change revokes reuse.
+    assert authority.reusable_push_pass_for_merge(
+        base_sha="0" * 40, head_sha=head, worktree=str(repo), paths=paths,
+    ) is None
+    assert authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo / "other"), paths=paths,
+    ) is None
+    authority._policy_digest = "new-policy"
+    assert authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo), paths=paths,
+    ) is None
+
+
+def test_merge_reuse_rejects_partial_batch_stale_or_unattested_pass(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+    git("init", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.invalid")
+    (repo / "README.md").write_text("base\n")
+    git("add", "README.md")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    (repo / "README.md").write_text("candidate\n")
+    git("commit", "-qam", "candidate")
+    head = git("rev-parse", "HEAD")
+    fingerprint = _end_state_fingerprint(repo, base, head, ("README.md",), (), (), push_side=True)
+    authority = HostReviewAdmission(reviewer_models_raw="glm/glm-5.3-flash")
+    row = _Frozen(
+        "git_push", "push-session", "target", "sha", child_id="review-child",
+        granted=True, consumed=True, created_at=time.time(), scope="tree", reviewer_model="glm/glm-5.3-flash",
+        reviewer_observed_model="glm-5.3-flash", policy_digest=authority._policy_digest,
+        reviewer_models=authority._reviewer_models, content_fingerprint=fingerprint,
+        approved_head=head, approved_base=base, approved_worktree=str(repo.resolve()),
+        batch_plan_id="batch-1",
+    )
+    authority._records["review-child"] = row
+    assert authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo), paths=("README.md",),
+    ) is None
+    authority._records["review-child"] = dataclasses.replace(row, batch_plan_id="", created_at=time.time() - 90000)
+    assert authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo), paths=("README.md",),
+    ) is None
+    authority._records["review-child"] = dataclasses.replace(row, batch_plan_id="", reviewer_observed_model="")
+    assert authority.reusable_push_pass_for_merge(
+        base_sha=base, head_sha=head, worktree=str(repo), paths=("README.md",),
+    ) is None

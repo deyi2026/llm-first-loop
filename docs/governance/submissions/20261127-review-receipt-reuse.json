@@ -1,0 +1,59 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261127-review-receipt-reuse",
+  "summary": "Avoid duplicate model review across push and merge phases by reusing an exact, current, Host-attested tree-scope git_push PASS. Host merge checks and human approval remain mandatory.",
+  "components": [
+    {
+      "component_id": "exact-review-reuse",
+      "paths": [
+        "docs/ai_rules.md",
+        "skills/merge-review-gate/SKILL.md",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/introspection/host_verify_issuer.py",
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_host_verify_issuer.py",
+        "tests/unit/test_review_host_admission.py",
+        "docs/governance/submissions/20261127-review-receipt-reuse.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "HostReviewAdmission and HostVerifyAuthority; existing Provider/Runner and merge receipt pipeline.",
+      "disposition": "Persist source push base/head/worktree on the Host-frozen review record. Reuse only a granted and consumed git_push PASS, when exact base/head/worktree/tree scope/content fingerprint, current policy digest, reviewer requested/observed identity, TTL and non-batch status all match. Host still revalidates lane and diff, requests browser approval, and issues the existing verify receipt. Any missing/stale/restarted/changed state falls back to a fresh merge review.",
+      "evidence": [
+        "3 focused tests passed, including exact reuse, no second reviewer spawn, host revalidation and human-approved verify receipt evidence.",
+        "Ruff and Pyright on production source passed.",
+        "Combined-tree original gate found start function size 87 to 88; fixed by carrying exact reviewed base and canonical Git root in existing Host-frozen push metadata, without changing baseline. 5 targeted tests passed, including real git -C cross-checkout binding and architecture ratchet. The final isolated candidate adds the consumed-admission requirement; three focused reuse tests passed including rejection of a granted but unconsumed PASS. Final full gate pending."
+      ],
+      "verification_level": "Host-level unit tests exercise actual code-review record reuse and verify-receipt issuance; no production deployment claim.",
+      "model_evidence_veto_recovery_exit": "No reuse for patch scope, batch, stale or revoked policy, mismatched model, different worktree/base/head or changed tree. Reviewer unavailable does not create PASS.",
+      "rollback_route": "Revert this isolated patch; original fresh merge reviewer remains fallback. No persistent schema migration.",
+      "declaration_id": "decl-exact-review-reuse"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-exact-review-reuse",
+      "g1": {
+        "necessity": "The same exact candidate was independently reviewed before push; a second full code review before merge repeats cost without new evidence. Merge still needs Host integration checks."
+      },
+      "g2": {
+        "authority_owner": "Existing HostReviewAdmission PASS record and HostVerifyAuthority; browser human approval remains the issuance owner.",
+        "relationship": "reuse",
+        "non_duplication": "No new reviewer service or receipt authority. Reuse the exact in-process source PASS and existing merge receipt pipeline."
+      },
+      "g3": {
+        "model_evidence": [
+          "3 focused tests passed; Ruff/Pyright passed.",
+          "Final broad regression and original full R9 pending."
+        ],
+        "recovery_or_reason": "If any binding or trust condition is missing, spawn the original independent merge reviewer; never widen scope."
+      },
+      "g4": {
+        "rollback": "Revert patch; no migration.",
+        "verification": [
+          "A.5, final full R9, independent review of this new high-risk gate change, protected CI and merge.",
+          "Production positive/negative validation with a previously reviewed identical push and a changed-head rejection."
+        ]
+      }
+    }
+  ]
+}

@@ -580,7 +580,7 @@ k3（Kimi，经 model_catalog 回执核验）"。
 2. **审查面**（清单承载于 skill，本条只挂义务）：完成证据真实性（done_when 逐条可判真、evidence 指向真实回执）、分支树干净无夹带、提交清单与任务声明一致、基于当前 main（落后先 rebase/merge 并复跑受影响 gate）、合并方式（ff 优先，冲突解决点留痕并窄复审）、合并后 main 冒烟与分支处置。
 3. **回执**：三态 verdict（PASS/REVISE/BLOCK）落盘 `docs/governance/receipts/`（gate=merge：goal_id、branch、commits、merge_mode、main_sha_after、branch_disposition）；Goal complete 的 evidence 引用本闸回执。无落盘回执不得声称"已合并通过"。
 4. **暂缓合并的显式路径**：仅两类且须 Goal/checkpoint 留痕——a) 用户明确指示暂缓（如"攒批一起 push"，注明触发条件）；b) Goal 创建时已声明"长期实验/对照，不合并"。不存在静默不合并。
-5. **与既有闸的关系**：代码闸（RULE-AI-28(1)）管改得对不对，本闸管并入 main 的完整性与时机，push 闸（RULE-AI-28(3)）管出仓安全——三者串联，互不豁免互不替代。"先不 push"不等于"先不合并"：push 攒批是 push 闸侧的显式留痕暂缓，不解除本条合并义务。
+5. **与既有闸的关系**：代码闸（RULE-AI-28(1)）管改得对不对，本闸管并入 main 的完整性与时机，push 闸（RULE-AI-28(3)）管出仓安全——三者串联，互不豁免互不替代。 已有且由受管 push 入口消费的代码审查 PASS 可在本闸复用，但必须由 Host 验证同一远端 base、source head、tree scope、worktree、内容指纹、Reviewer 身份、策略 digest 与 TTL 全部精确匹配；命中只跳过第二次模型审查，仍执行 Host lane/基线/树核验、人工批准和 merge queue 四项机检。任一条件不符则只审增量或重新审查。阶段变化本身不构成重复审查理由。"先不 push"不等于"先不合并"：push 攒批是 push 闸侧的显式留痕暂缓，不解除本条合并义务。
 
 **程序角色**：无新增（模型侧行为规则）。未来可在 update_goal(goal complete) 路径加分支上下文观测提示（检测当前 worktree 非 main 即提示合并闸前置），属演进候选，不阻塞本条义务。
 

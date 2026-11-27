@@ -106,6 +106,8 @@ class _Frozen:
     # HEAD 做树对象逐字节比对；空字符串 = 未记录（旧记录/非 push 记录），派生侧
     # fail-closed，绝不猜。
     approved_head: str = ""
+    approved_base: str = ""
+    approved_worktree: str = ""
     # derived_from：派生资格的来源 push 记录 child_id；非派生记录为空。只用于
     # 审计与回执披露，不参与 _same_admission / _consume 的权威判据。
     derived_from: str = ""
@@ -186,6 +188,8 @@ def _same_admission(left: _Frozen, right: _Frozen) -> bool:
         and left.consumed == right.consumed
         and left.full_test_base == right.full_test_base
         and left.full_test_first_push_ref == right.full_test_first_push_ref
+        and left.approved_base == right.approved_base
+        and left.approved_worktree == right.approved_worktree
     )
 _PUBLISH_LABEL_RE = re.compile(
     r"^(?:publish(?:\s+(?:now|post|article))?|post(?:\s+(?:now|article))?|"
@@ -4337,7 +4341,7 @@ class HostReviewAdmission:
             push_extra = {"src_commit": push_head, "first_push": "1" if first_push else "",
                           "target_ref": dst_ref if first_push else "",
                           "content_fingerprint": reviewed_fp, "push_content_fingerprint": pushed_fp,
-                          "risk_repo": true_dir}
+                          "risk_repo": str(repo), "review_base": push_base}
             if push_batch is not None:
                 push_extra["push_batch"] = push_batch
         else:
@@ -4544,6 +4548,8 @@ class HostReviewAdmission:
             previous_child_id=previous_row.child_id if previous_row is not None else "",
             content_fingerprint=push_extra.get("content_fingerprint", ""),
             approved_head=str(push_extra.get("src_commit") or ""),
+            approved_base=str(push_extra.get("review_base") or "") if kind == "git_push" else "",
+            approved_worktree=str(push_extra.get("risk_repo") or "") if kind == "git_push" else "",
             head_commit=_head_commit_of(workdir),
             full_test_base=push_extra.get("full_test_base", "") if kind == "full_test" else "",
             full_test_first_push_ref=(
@@ -5473,6 +5479,73 @@ class HostReviewAdmission:
         parts = [p.strip() for p in raw.split(",") if p.strip()]
         unique = list(dict.fromkeys(parts))
         return unique[0] if len(unique) == 1 else ""
+
+    def reusable_push_pass_for_merge(
+        self, *, base_sha: str, head_sha: str, worktree: str,
+        paths: Sequence[str], source_child_id: str = "", record_audit: bool = True,
+    ) -> dict[str, Any] | None:
+        """Reuse an existing exact tree-scope git-push PASS for merge review.
+
+        This skips only the second model review. HostVerifyAuthority still freezes
+        and rechecks lane/base/head/diff, and the browser approval plus verify
+        receipt remain mandatory. Any missing, stale, partial, batched, revoked,
+        cross-worktree or content-mismatched evidence fails closed.
+        """
+        if not base_sha or not head_sha or not worktree or not paths:
+            return None
+        resolved_worktree = str(Path(worktree).expanduser().resolve())
+        committed_paths = tuple(sorted(set(str(path) for path in paths)))
+        content_fingerprint = _end_state_fingerprint(
+            Path(resolved_worktree), base_sha, head_sha, committed_paths, (), (), push_side=True,
+        )
+        if not content_fingerprint:
+            return None
+        now = time.time()
+        with self._guard:
+            rows = list(self._records.items())
+            policy_digest = self._policy_digest
+            selected: tuple[str, _Frozen] | None = None
+            for child_id, row in reversed(rows):
+                if source_child_id and child_id != source_child_id:
+                    continue
+                if not (
+                    row.kind == "git_push" and row.granted and row.consumed and row.scope == "tree"
+                    and not row.scope_paths and not row.batch_plan_id
+                    and row.approved_base == base_sha and row.approved_head == head_sha
+                    and row.approved_worktree == resolved_worktree
+                    and row.content_fingerprint == content_fingerprint
+                    and row.created_at > 0 and now - row.created_at <= _RECORD_TTL_SECONDS
+                    and row.policy_digest and row.policy_digest == policy_digest
+                    and row.reviewer_model and row.reviewer_observed_model
+                    and not self._reviewer_model_denial(row.reviewer_model, row.reviewer_observed_model)
+                    and row.reviewer_model in row.reviewer_models
+                ):
+                    continue
+                selected = (child_id, row)
+                break
+        if selected is None:
+            return None
+        child_id, row = selected
+        receipt = {
+            "source_child_id": child_id,
+            "candidate_sha256": row.sha,
+            "base_sha": row.approved_base,
+            "head_sha": row.approved_head,
+            "worktree": row.approved_worktree,
+            "content_fingerprint": row.content_fingerprint,
+            "reviewer_model": row.reviewer_model,
+            "reviewer_observed_model": row.reviewer_observed_model,
+            "policy_digest": row.policy_digest,
+            "scope": row.scope,
+            "created_at": row.created_at,
+        }
+        if record_audit and not self._audit(
+            current_session_id.get() or row.parent,
+            "review_admission_reused_for_merge",
+            {**receipt, "merge_base_sha": base_sha, "merge_head_sha": head_sha},
+        ):
+            return None
+        return receipt
 
     @staticmethod
     def _reviewer_model_denial(expected: str, observed: str) -> str:

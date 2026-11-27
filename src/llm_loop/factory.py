@@ -952,6 +952,7 @@ def _wire_host_review_and_verify(
         reviewer_models_raw=reviewer_models_configured(
             settings.model_roles_raw, settings.reviewer_models_raw
         ),
+        code_review_authority=host_review,
     )
     engine.host_verify_authority = authority
     registry.register(MergeReviewStartTool(authority))
