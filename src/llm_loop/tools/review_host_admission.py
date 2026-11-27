@@ -2645,6 +2645,47 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]
     raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
 
 
+def _assert_anchor_contained_by_head(repo: Path, base: str) -> None:
+    """EVO-20261127-e770b7cb (human-approved 2026-11-27, executing): a first-push
+    anchor must be contained by HEAD.
+
+    When the destination ref does not exist yet, the review anchor falls back to
+    the remote default branch (origin/main's current commit). If the branch's
+    baseline is BEHIND that anchor, the frozen delta ``<anchor>..<HEAD>`` renders
+    main's new commits as REVERSE DELETIONS, and the reviewer sees fabricated
+    P1 findings on code this branch never touched (production evidence
+    2026-11-27: the dd37be50 first code-gate round returned REVISE on such a
+    phantom P1). Fail closed with an actionable rebase instruction instead of
+    freezing the poisoned delta. Anchors on the branch's own remote head
+    (first_push=False) are unaffected: that delta is exactly the unpushed
+    commit set and cannot contain reverse deletions.
+    """
+    run = subprocess.run(
+        ["git", "--no-replace-objects", "-C", str(repo), "merge-base", "HEAD", base],
+        capture_output=True, timeout=12, check=False,
+    )
+    if run.returncode != 0:
+        raise ValueError(
+            "review_anchor_history_unrelated_fail_closed: 待审 HEAD 与 first-push 锚 "
+            f"{base[:12]} 无共同祖先（历史断裂或浅克隆）；无法证明分支包含锚，"
+            "先 fetch/对齐分支历史后再送审"
+        )
+    if run.stdout.decode("utf-8", "replace").strip() != base:
+        raise ValueError(
+            "review_base_behind_main_rebase_first: 分支基线落后 first-push 锚"
+            f"（远端默认分支，{base[:12]}）——锚不是 HEAD 的祖先，以它冻结的 diff "
+            "会把 main 的新提交渲染成反向删除（审查员会看到假改动、假 P1）。"
+            "先 git fetch && git rebase <remote>/main（或 merge）对齐基线，"
+            "再重新发起审查/push"
+        )
+
+
+def _assert_first_push_push_base(repo: Path, push_base: str, first_push: bool) -> None:
+    """EVO-20261127-e770b7cb: git_push 路径的 first-push 锚守卫（_target 内联瘦身）。"""
+    if first_push:
+        _assert_anchor_contained_by_head(repo, push_base)
+
+
 def _full_test_review_base(workdir: str) -> tuple[str, str]:
     """EVO-20261029-eb64b2de (human-approved 2026-10-29): push-basis anchor
     for full_test admission.
@@ -2695,6 +2736,13 @@ def _full_test_review_base(workdir: str) -> tuple[str, str]:
             "full_test_anchor_unresolved_fail_closed: 审查锚点（远端推送基）"
             f"暂时不可解析（{exc}）；稍后重试同一目标，或先 git fetch 再试"
         ) from exc
+    if first_push:
+        # EVO-20261127-e770b7cb: first-push 锚=远端默认分支（origin/main 当前值）。
+        # 分支基线落后它时，<anchor>..<HEAD> 的冻结 diff 会把 main 新提交渲染成
+        # "反向删除"，审查员看到从未发生过的假 P1（2026-11-27 实测：dd37be50
+        # 首轮代码闸因此 REVISE）。放在 except 包装之外——这条拒绝是结构性的
+        # （变基才可解），不得被换成"稍后重试"的暂时性失败话术。
+        _assert_anchor_contained_by_head(repo, base)
     return base, (dst_ref if first_push else "")
 
 
@@ -4189,9 +4237,9 @@ class HostReviewAdmission:
             try:
                 _git(repo, "cat-file", "-e", push_base + "^{commit}")
             except ValueError as exc:
-                # Remote moved ahead of this clone; the diff base must exist
-                # locally or the reviewed delta cannot be computed at all.
+                # Remote ahead of this clone: diff base must exist locally.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
+            _assert_first_push_push_base(repo, push_base, first_push)
             push_head = _push_src_commit(repo, refspec)
             push_batch: dict[str, Any] | None = None
             batch_header: list[tuple[str, str]] = []

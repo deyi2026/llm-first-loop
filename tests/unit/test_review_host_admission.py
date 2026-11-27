@@ -4543,3 +4543,86 @@ def test_q09_wrong_fingerprint_still_rejected() -> None:
     sha = "d" * 64
     wrong = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nFINGERPRINT: {'e' * 16}\n"
     assert rha._qualifying_pass_p2(wrong, sha) is None
+
+
+# ── EVO-20261127-e770b7cb: first-push 锚落后远端 main → 拒绝并提示先变基 ──
+
+
+def _branch_behind_main_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """feature 分支停在旧基、main 前进一提交：返回 (repo, main_tip, old_base)。"""
+    repo = _repo(tmp_path)
+    old = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
+    (repo / "example.py").write_text("x = 3\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "main advanced"], check=True)
+    tip = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "main"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "feature"], check=True)
+    return repo, tip, old
+
+
+def test_first_push_anchor_behind_main_refused_with_rebase_hint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """first-push 锚=远端默认分支且分支落后它 → 显式拒绝并提示先变基。
+
+    生产实测（2026-11-27，dd37be50 首轮代码闸）：以落后锚冻结的 diff 把 main
+    新提交渲染成反向删除，审查员对分支从未触碰的代码给了假 P1 → REVISE。
+    该拒绝是结构性的（变基才可解），不得被包装成"稍后重试"的暂时性失败。"""
+    repo, tip, _old = _branch_behind_main_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (tip, True))
+    with pytest.raises(ValueError) as ei:
+        rha._full_test_review_base(str(repo))
+    assert "review_base_behind_main_rebase_first" in str(ei.value)
+    assert "rebase" in str(ei.value)
+
+
+def test_first_push_anchor_contained_by_head_allowed(tmp_path: Path, monkeypatch) -> None:
+    """分支包含 first-push 锚（基于最新 main）→ 正常放行并返回 dst_ref。"""
+    repo, tip, _old = _branch_behind_main_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "fresh", "main"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (tip, True))
+    base, ref = rha._full_test_review_base(str(repo))
+    assert base == tip
+    assert ref == "refs/heads/fresh"
+
+
+def test_first_push_anchor_history_unrelated_refused(tmp_path: Path, monkeypatch) -> None:
+    """HEAD 与锚无共同祖先（orphan 历史/浅克隆）→ fail-closed 拒绝。"""
+    repo, tip, _old = _branch_behind_main_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--orphan", "loner"], check=True)
+    (repo / "loner.txt").write_text("unrelated\n")
+    subprocess.run(["git", "-C", str(repo), "add", "loner.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "orphan root"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://x.invalid/r.git"],
+        check=True,
+    )
+    monkeypatch.setattr(rha, "_push_base_commit", lambda *a, **k: (tip, True))
+    with pytest.raises(ValueError) as ei:
+        rha._full_test_review_base(str(repo))
+    assert "review_anchor_history_unrelated_fail_closed" in str(ei.value)
+
+
+def test_assert_anchor_contained_by_head_unit(tmp_path: Path) -> None:
+    """_assert_anchor_contained_by_head 单元级正反例。"""
+    repo, tip, old = _branch_behind_main_repo(tmp_path)
+    with pytest.raises(ValueError) as ei:
+        rha._assert_anchor_contained_by_head(repo, tip)  # HEAD=feature（旧基），锚=tip
+    assert "review_base_behind_main_rebase_first" in str(ei.value)
+    rha._assert_anchor_contained_by_head(repo, old)  # old 是 HEAD 祖先 → 放行

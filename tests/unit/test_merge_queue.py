@@ -524,3 +524,92 @@ def test_issue_verify_receipt_idempotent_reissue(tmp_path: Path) -> None:
     assert len(receipts) == 1
     assert receipts[r2["receipt_id"]]["scope"] == "re-verified"
     assert len(p.read_text(encoding="utf-8").splitlines()) == 2  # append-only 未删历史
+
+
+# ── EVO-20261127-9fd075f9: S0 预检忽略已终态 lane 的遗留队列项 ──
+
+
+def _write_lane_row(store: MergeQueueStore, lane_id: str, status: str) -> None:
+    path = Path(store.receipts_path).parent / "lanes.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"lane_id": lane_id, "status": status}) + "\n")
+
+
+def test_preflight_ignores_leftover_entry_of_terminal_lane(
+    store: MergeQueueStore, repo: Path
+) -> None:
+    """closed lane 的遗留队列项不再阻塞共享路径的入队预检。
+
+    2026-11-27 实测：closed lane（被 PR 取代、未合并）的 ready_for_confirm
+    遗留项把所有共享 paths 的新入队全部挡成 paths_overlap。终态 lane 的队列项
+    永远不会被 confirm 合入，不是真实的串行冲突源。"""
+    h0 = _head(repo)
+    _enqueue(store, "lane-zombie", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-z")
+    _write_receipt(store, "vr-b", "lane-b", h0)
+    _enqueue(
+        store, "lane-b", head=h0, base=h0, paths=["src/a.py", "src/b.py"], verify_ref="vr-b"
+    )
+    _write_lane_row(store, "lane-zombie", "closed")
+    _write_lane_row(store, "lane-b", "open")
+
+    assert store.request_preflight("lane-b", expected_version=1)["ok"] is True
+    result = store.run_preflight("lane-b", expected_version=2)
+    assert result["verdict"] == "pass"
+    check = next(c for c in result["checks"] if c["check"] == "paths_disjoint")
+    # 被剔除者必须披露，不静默
+    assert check["evidence"]["skipped_terminal_lanes"] == [
+        {"lane_id": "lane-zombie", "lane_status": "closed"}
+    ]
+    assert check["evidence"]["checked_against"] == []
+
+
+def test_preflight_still_blocks_overlap_with_active_lane(
+    store: MergeQueueStore, repo: Path
+) -> None:
+    """在途（open）lane 的重叠照旧拦截——剔除只对「明确读到终态」生效。"""
+    h0 = _head(repo)
+    _enqueue(store, "lane-active", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-a")
+    _write_receipt(store, "vr-b", "lane-b", h0)
+    _enqueue(store, "lane-b", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-b")
+    _write_lane_row(store, "lane-active", "open")
+    _write_lane_row(store, "lane-b", "open")
+
+    store.request_preflight("lane-b", expected_version=1)
+    result = store.run_preflight("lane-b", expected_version=2)
+    assert result["verdict"] == "fail"
+    assert result["reason_codes"] == ["paths_overlap"]
+
+
+def test_preflight_missing_lanes_ledger_fails_closed(
+    store: MergeQueueStore, repo: Path
+) -> None:
+    """lanes.jsonl 缺失 → lane 状态不可判定 → 保守保留他人队列项（fail-closed）。"""
+    h0 = _head(repo)
+    _enqueue(store, "lane-active", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-a")
+    _write_receipt(store, "vr-b", "lane-b", h0)
+    _enqueue(store, "lane-b", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-b")
+
+    store.request_preflight("lane-b", expected_version=1)
+    result = store.run_preflight("lane-b", expected_version=2)
+    assert result["verdict"] == "fail"
+    assert result["reason_codes"] == ["paths_overlap"]
+    check = next(c for c in result["checks"] if c["check"] == "paths_disjoint")
+    assert "skipped_terminal_lanes" not in check["evidence"]
+
+
+def test_preflight_unparsable_lane_row_fails_closed(
+    store: MergeQueueStore, repo: Path
+) -> None:
+    """lanes.jsonl 只有坏行 → 该 lane 状态不可知 → 保守保留（不因解析失败误放）。"""
+    h0 = _head(repo)
+    _enqueue(store, "lane-active", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-a")
+    _write_receipt(store, "vr-b", "lane-b", h0)
+    _enqueue(store, "lane-b", head=h0, base=h0, paths=["src/a.py"], verify_ref="vr-b")
+    path = Path(store.receipts_path).parent / "lanes.jsonl"
+    path.write_text("not-json\n", encoding="utf-8")
+
+    store.request_preflight("lane-b", expected_version=1)
+    result = store.run_preflight("lane-b", expected_version=2)
+    assert result["verdict"] == "fail"
+    assert result["reason_codes"] == ["paths_overlap"]

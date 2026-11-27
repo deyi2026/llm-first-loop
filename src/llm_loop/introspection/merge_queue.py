@@ -71,6 +71,10 @@ _FALLBACK_LOCK = threading.Lock()
 
 QUEUE_STATUSES = ("queued", "preflight", "ready_for_confirm", "merging", "merged", "failed", "aborted")
 QUEUE_TERMINAL_STATUSES = ("merged", "failed", "aborted")
+# lane 账本终态（与 goal_coordination._TERMINAL_LANE_STATUSES 同口径；刻意本地
+# 定义——goal_coordination 反向依赖本模块，顶层互 import 会新增 runtime 环，
+# R9-P2-06a 恒 0 终态：环计数只减不增）。
+_LANE_TERMINAL_STATUSES = frozenset({"merged", "closed", "abandoned"})
 # 全局串行：同一时刻至多一条。ready_for_confirm 不占槽——S0 无执行器推进，
 # 若让"机检全过待人工确认"继续持槽，人不在场时整个队列会被一个项卡死。
 SLOT_STATUSES = ("preflight", "merging")
@@ -433,8 +437,16 @@ def check_merge_tree_clean(repo_root: str, entry: dict, main_head: str) -> dict:
     return _check(CHECK_MERGE_TREE, True, "", {"main_head": main_head, "head_sha": theirs})
 
 
-def check_paths_disjoint(entry: dict, others: list[dict]) -> dict:
-    """机检 c: lane 声明 paths 与其他在途队列项的 paths 是否交叉（复用 task_claim.overlapping_paths）。"""
+def check_paths_disjoint(
+    entry: dict, others: list[dict], *, skipped_terminal_lanes: list[dict] | None = None
+) -> dict:
+    """机检 c: lane 声明 paths 与其他在途队列项的 paths 是否交叉（复用 task_claim.overlapping_paths）。
+
+    EVO-20261127-9fd075f9: lane 账本已终态（merged/closed/abandoned）的遗留队列项
+    由 run_preflight 在快照阶段剔除，不进 others；``skipped_terminal_lanes`` 把被
+    剔除者写进 evidence（可审计、不静默）。lane 账本不可读时不剔除（fail-closed），
+    evidence 无该键。
+    """
     mine = [str(p) for p in entry.get("paths") or []]
     overlaps: list[dict] = []
     for other in others:
@@ -444,8 +456,73 @@ def check_paths_disjoint(entry: dict, others: list[dict]) -> dict:
             overlaps.append({"lane_id": other.get("lane_id"), "shared_paths": shared})
     if overlaps:
         return _check(CHECK_PATHS, False, "paths_overlap", {"overlaps": overlaps})
-    checked = [str(o.get("lane_id")) for o in others]
-    return _check(CHECK_PATHS, True, "", {"checked_against": checked})
+    evidence: dict = {"checked_against": [str(o.get("lane_id")) for o in others]}
+    if skipped_terminal_lanes:
+        evidence["skipped_terminal_lanes"] = skipped_terminal_lanes
+    return _check(CHECK_PATHS, True, "", evidence)
+
+
+def _split_others_by_lane_terminal(
+    rows: list[dict], entry: dict, audit_dir: str
+) -> tuple[list[dict], list[dict]]:
+    """在途队列行快照，并剔除 lane 账本已终态的遗留行（EVO-20261127-9fd075f9）。
+
+    终态（merged/closed/abandoned）lane 的队列项永远不会被 confirm 合入，
+    不是真实串行冲突源；2026-11-27 实测 closed lane 的 ready_for_confirm 遗留项
+    把共享 paths 的新入队全部挡成 paths_overlap（假阻塞）。fail-closed 边界：
+    只在「明确读到终态」时剔除；lane 账本缺失/读失败/坏行导致的不可判定
+    一律保留原行（与预检整体 fail-closed 口径一致）。
+
+    返回 (others, skipped_terminal_lanes)：后者供机检 c 写进 evidence 披露，
+    不静默。
+    """
+    others_all = [
+        dict(r) for r in rows
+        if r is not entry
+        and str(r.get("status")) not in QUEUE_TERMINAL_STATUSES
+    ]
+    lane_map = _read_lane_statuses(audit_dir)
+    skipped: list[dict] = []
+    for r in others_all:
+        lid = str(r.get("lane_id") or "")
+        lane_st = str(lane_map.get(lid) or "")
+        if lane_st in _LANE_TERMINAL_STATUSES:
+            skipped.append({"lane_id": lid, "lane_status": lane_st})
+    skipped_ids = {s["lane_id"] for s in skipped}
+    others = [
+        r for r in others_all
+        if str(r.get("lane_id") or "") not in skipped_ids
+    ]
+    return others, skipped
+
+
+def _read_lane_statuses(audit_dir: str) -> dict[str, str]:
+    """只读 audit_dir/lanes.jsonl → {lane_id: status}（同 id 取最后一行=最新）。
+
+    口径与 goal_coordination._lane_status_map 一致（刻意不 import——两模块
+    顶层互依赖会新增 runtime 环，R9-P2-06a 恒 0 终态）。文件缺失/读失败/
+    坏行返回空或部分映射：调用方对「查不到状态」的行一律保留（fail-closed），
+    不把「读不到」冒充「已判定终态」。
+    """
+    path = Path(audit_dir) / "lanes.jsonl"
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict) and row.get("lane_id"):
+                    out[str(row["lane_id"])] = str(row.get("status") or "")
+    except OSError:
+        return {}
+    return out
 
 
 def _parse_iso(raw: object) -> datetime | None:
@@ -1071,11 +1148,9 @@ class MergeQueueStore:
                     f"run_preflight 仅接受 preflight 态（当前 {entry.get('status')}）"
                 )
             snapshot_entry = dict(entry)
-            others = [
-                dict(r) for r in rows
-                if r is not entry
-                and str(r.get("status")) not in QUEUE_TERMINAL_STATUSES
-            ]
+            others, skipped_terminal_lanes = _split_others_by_lane_terminal(
+                rows, entry, str(self._dir)
+            )
         # ——锁外执行机检（含 git 子进程，不阻塞账本读写）——
         head = str(main_head or "").strip()
         probe: dict = {}
@@ -1087,7 +1162,9 @@ class MergeQueueStore:
         checks = [
             check_base_main_current(snapshot_entry, head, probe=probe or None),
             check_merge_tree_clean(self.repo_root, snapshot_entry, head),
-            check_paths_disjoint(snapshot_entry, others),
+            check_paths_disjoint(
+                snapshot_entry, others, skipped_terminal_lanes=skipped_terminal_lanes
+            ),
             check_verify_covers_base(snapshot_entry, receipts, layer=verify_layer),
         ]
         verdict = "pass" if all(c["verdict"] == "pass" for c in checks) else "fail"
