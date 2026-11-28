@@ -138,3 +138,23 @@ def test_tree_skips_topology_for_root_sessions(build_test_engine) -> None:
 
     assert plain not in calls  # 根会话零 topology 调用
     assert calls == [] or all(c != plain for c in calls)
+
+
+def test_tree_prefers_display_only_topology(build_test_engine) -> None:
+    engine, _ = build_test_engine([])
+    parent = engine.session.create()
+    child = engine.session.create()
+    _set_parent(engine, child, parent)
+
+    class DisplayRunner:
+        def topology_snapshot(self, _sid):
+            raise AssertionError("Web must not call the authoritative settlement path")
+
+        def topology_display_snapshot(self, sid):
+            assert sid == child
+            return {"local_active": False, "outcome": "completed", "settlement_state": "collected"}
+
+    engine.subagent_runner = DisplayRunner()
+    node = _nodes(engine, child)[child]
+    assert node["settlement"] == "collected"
+    assert node["activity"] == "inactive"

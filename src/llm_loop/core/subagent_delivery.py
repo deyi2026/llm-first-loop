@@ -11,8 +11,9 @@ from __future__ import annotations
 import threading
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from llm_loop.event_log.model import (
     EVENT_SUBAGENT_CANCEL_REQUESTED,
@@ -81,6 +82,12 @@ class SubAgentDeliveryJournal:
         ] = OrderedDict()
         self._settlement_cache_lock = threading.Lock()
         self._settlement_cache_max_parents = 128
+        # Separate display cache: source stamps include same-tail replacement.
+        # Never share these projections with the authoritative collection cache.
+        self._display_settlement_cache: OrderedDict[
+            str, tuple[int, tuple[object, ...], frozenset[tuple[str, str, str, str]]]
+        ] = OrderedDict()
+        self._display_settlement_lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -208,7 +215,9 @@ class SubAgentDeliveryJournal:
                 wanted=wanted,
             )
 
-        durable_last = int(last_seq_fn(parent_id) or 0)
+        last_seq = cast(Callable[[str], int | None], last_seq_fn)
+        read_cached = cast(Callable[[str], list[Any] | None], read_cached_fn)
+        durable_last = int(last_seq(parent_id) or 0)
         store_id = id(store)
         # Serialize cold derived-index builds.  This intentionally prevents several
         # overlapping browser polls from parsing/scanning the same large parent log
@@ -219,13 +228,45 @@ class SubAgentDeliveryJournal:
                 self._settlement_cache.move_to_end(parent_id)
                 return wanted in cached[2]
 
-            events = list(read_cached_fn(parent_id) or [])
+            events = list(read_cached(parent_id) or [])
             settled = self._settled_bindings_from_events(events)
-            snapshot_last = int(getattr(events[-1], "seq", 0) or 0) if events else 0
+            snapshot_last = int(cast(int, getattr(events[-1], "seq", 0)) or 0) if events else 0
             self._settlement_cache[parent_id] = (store_id, snapshot_last, settled)
             self._settlement_cache.move_to_end(parent_id)
             while len(self._settlement_cache) > self._settlement_cache_max_parents:
                 self._settlement_cache.popitem(last=False)
+            return wanted in settled
+
+    def settlement_committed_for_display(
+        self, *, child_id: str, parent_id: str, generation: str, result_id: str,
+    ) -> bool:
+        """Same binding fold over the display projection; never authorizes collection."""
+        store = self.event_store
+        if not self.enabled or store is None or not store.exists(parent_id):
+            return False
+        read = getattr(store, "read_settlement_events_for_display", None)
+        if not callable(read):
+            return self.settlement_committed(
+                child_id=child_id, parent_id=parent_id, generation=generation, result_id=result_id,
+            )
+        read_events = cast(Callable[[str], list[Any]], read)
+        wanted = (child_id, parent_id, generation, result_id)
+        stamp_fn = getattr(store, "history_source_stamp", None)
+        if not callable(stamp_fn):
+            return self._settlement_committed_uncached(read_events(parent_id), wanted=wanted)
+        source_stamp = cast(Callable[[str], tuple[object, ...] | None], stamp_fn)
+        with self._display_settlement_lock:
+            before = source_stamp(parent_id)
+            cached = self._display_settlement_cache.get(parent_id)
+            if before is not None and cached is not None and cached[:2] == (id(store), before):
+                self._display_settlement_cache.move_to_end(parent_id)
+                return wanted in cached[2]
+            self._display_settlement_cache.pop(parent_id, None)
+            settled = self._settled_bindings_from_events(read_events(parent_id))
+            if before is not None and before == source_stamp(parent_id) and len(settled) <= 2048:
+                self._display_settlement_cache[parent_id] = (id(store), before, settled)
+                while len(self._display_settlement_cache) > self._settlement_cache_max_parents:
+                    self._display_settlement_cache.popitem(last=False)
             return wanted in settled
 
     @staticmethod
@@ -242,7 +283,7 @@ class SubAgentDeliveryJournal:
             tool_call_id = str(payload.get("tool_call_id") or "")
             if not tool_call_id:
                 continue
-            seq = int(getattr(event, "seq", 0) or 0)
+            seq = int(cast(int, getattr(event, "seq", 0)) or 0)
             if (
                 event_type == "message.appended"
                 and str(payload.get("tool_name") or "") == "subagent_result"
