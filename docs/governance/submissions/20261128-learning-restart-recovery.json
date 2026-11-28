@@ -1,0 +1,76 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261128-learning-restart-recovery",
+  "summary": "Recover confirmed-dead pre-restart actions and refresh Learning admission heartbeat during active work. No new authority, restart path or retry loop.",
+  "components": [
+    {
+      "component_id": "pre-restart-terminal-recovery",
+      "paths": [
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/runtime/unified_release.py",
+        "tests/unit/test_service_control_prestart_recovery.py",
+        "tests/unit/test_unified_release_four.py",
+        "docs/governance/submissions/20261128-learning-restart-recovery.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "reuse-service-lifecycle-authority",
+      "owning_subsystem": "ManagedServiceDeploymentStore, service barrier ownership, unified_release coordinator",
+      "disposition": "Reuse existing store lease, terminal action transition and owner-scoped barrier release. Reconcile only confirmed-dead pre-restart workers; preserve fail-closed running/physical transitions and no automatic restart replay. Inline failure detail only when durable evidence write fails before side effects.",
+      "evidence": [
+        "Production gen461 action svc-aeebb848a3ca4243bfee0769019187a2 waited for idle; worker became zombie after failure evidence PermissionError; four owned barriers released through existing lifecycle authority without physical restart.",
+        "Two delayed Learning jobs learn:8bc7b16e67dc and learn:733998b708ef subsequently saved.",
+        "Regression covers dead/zombie versus live/running worker, evidence write failure and owner-scoped barrier release.",
+        "Candidate 294eab5fa59413b60d3bd4d6eb127559ac7f3ca1; combined focused regression 202 passed, final heartbeat tests 9 passed, architecture guards 52 passed, changed-file Ruff and Pyright clean. Original R9 job-280f8da3fbef48ba9dfb completed exit 0 (2026-11-28 15:17 +08:00), durable terminal PASS, not FLAKY-PASS: xdist 17490 passed/207 skipped/3 xfailed, serial_signal 8 passed/2 skipped, serial_perf 6 passed/2 skipped, WebUI 754 passed, tier0 341 passed/2 skipped, architecture report passed. This receipt binds the code/test tree at 294eab5fa59413b60d3bd4d6eb127559ac7f3ca1; only this evidence manifest is added afterwards. Valid review qualification, remote CI and live acceptance pending."
+      ],
+      "verification_level": "Production incident recovery and isolated regression; candidate deployment pending.",
+      "model_evidence_veto_recovery_exit": "Keep exact independent reviewer identity and qualification fail-closed. If liveness or physical side effects uncertain, do not release barriers or replay restart.",
+      "rollback_route": "Revert only corresponding fix through protected main and next coordinated release. No data migration; preserve terminal actions and learning records."
+    },
+    {
+      "component_id": "learning-admission-heartbeat",
+      "paths": [
+        "src/llm_loop/methods/learning_plane.py",
+        "tests/unit/test_learning_queue_observability.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing LearningPlane worker loop and admission heartbeat",
+      "disposition": "Refresh draining heartbeat on existing worker wait loop at bounded cadence; preserve foreground preemption and admission decisions, no additional journal scan or thread. Queue count remains snapshot hint.",
+      "evidence": [
+        "Observed stale blocked heartbeat while admitted jobs executed and saved; actual barrier count zero.",
+        "Regression simulates long worker call and old service barrier, checks refresh without extra journal scan.",
+        "Candidate 294eab5fa59413b60d3bd4d6eb127559ac7f3ca1; combined focused regression 202 passed, final heartbeat tests 9 passed, architecture guards 52 passed, changed-file Ruff and Pyright clean. Original R9 job-280f8da3fbef48ba9dfb completed exit 0 (2026-11-28 15:17 +08:00), durable terminal PASS, not FLAKY-PASS: xdist 17490 passed/207 skipped/3 xfailed, serial_signal 8 passed/2 skipped, serial_perf 6 passed/2 skipped, WebUI 754 passed, tier0 341 passed/2 skipped, architecture report passed. This receipt binds the code/test tree at 294eab5fa59413b60d3bd4d6eb127559ac7f3ca1; only this evidence manifest is added afterwards. Valid review qualification, remote CI and live acceptance pending."
+      ],
+      "verification_level": "Isolated regression and observed production symptom; live fix acceptance pending.",
+      "model_evidence_veto_recovery_exit": "On blocking finding or regression stop, fix or revert; do not alter admission policy for display.",
+      "rollback_route": "Revert only corresponding fix through protected main and next coordinated release. No data migration; preserve terminal actions and learning records."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reuse-service-lifecycle-authority",
+      "g1": {
+        "necessity": "Confirmed-dead pre-restart worker and failed EvidenceRef persistence left live services blocked without restart side effects. Existing coordinator needs deterministic terminal recovery."
+      },
+      "g2": {
+        "authority_owner": "Existing ManagedServiceDeploymentStore lifecycle lease and action owner",
+        "relationship": "reuse",
+        "non_duplication": "No new lock, signer, approval, scheduler, state store, retry or physical restart path. Exact action ownership and pre-restart status constrain recovery; unknown liveness remains live."
+      },
+      "g3": {
+        "model_evidence": [
+          "Candidate 294eab5fa59413b60d3bd4d6eb127559ac7f3ca1; combined focused regression 202 passed, final heartbeat tests 9 passed, architecture guards 52 passed, changed-file Ruff and Pyright clean. Original R9 job-280f8da3fbef48ba9dfb completed exit 0 (2026-11-28 15:17 +08:00), durable terminal PASS, not FLAKY-PASS: xdist 17490 passed/207 skipped/3 xfailed, serial_signal 8 passed/2 skipped, serial_perf 6 passed/2 skipped, WebUI 754 passed, tier0 341 passed/2 skipped, architecture report passed. This receipt binds the code/test tree at 294eab5fa59413b60d3bd4d6eb127559ac7f3ca1; only this evidence manifest is added afterwards. Valid review qualification, remote CI and live acceptance pending.",
+          "Earlier independent review texts found P0=0/P1=0, but Host qualification REVISE or DENIED; no valid PASS claimed."
+        ],
+        "recovery_or_reason": "Fail closed after physical restart may have begun. Preserve inline failure detail when evidence persistence fails before side effects. Blocking finding or test failure prevents delivery."
+      },
+      "g4": {
+        "rollback": "Revert only corresponding fix through protected main and next coordinated release. No data migration; preserve terminal actions and learning records.",
+        "verification": [
+          "Verify exact candidate and A.5 coverage before push.",
+          "Require original R9 terminal exit and valid independent review, protected CI/merge and main CI.",
+          "After coordinated deployment verify service manifests, Web health, no orphan barriers, fresh Learning heartbeat, actual admitted-to-saved job and no duplicate restart."
+        ]
+      }
+    }
+  ]
+}

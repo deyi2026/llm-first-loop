@@ -158,6 +158,7 @@ class LearningPlane:
         self._hb_key: tuple[str, str] | None = None
         self._hb_since: float = time.time()
         self._hb_last_write = 0.0
+        self._hb_queued_hint = 0
 
     # ---------- lifecycle ----------
 
@@ -326,6 +327,9 @@ class LearningPlane:
                 self._stop.wait(self._poll_interval_s)
                 continue
             progressed = False
+            # Reuse this batch snapshot; heartbeat refresh must not scan the
+            # journal while an admitted job is executing.
+            self._hb_queued_hint = len(jobs)
             for job in jobs:
                 if self._stop.is_set():
                     return
@@ -348,6 +352,22 @@ class LearningPlane:
                 reason = self._admission_block_reason(jobs[0]) or "governor_or_transport"
                 self._write_admission_heartbeat("blocked", reason, len(jobs))
                 self._stop.wait(self._poll_interval_s)
+
+    def _wait_for_learning_worker(self, worker: threading.Thread) -> bool:
+        """Start an admitted worker and keep its admission heartbeat fresh.
+
+        Return True on foreground preemption. Use the existing poll loop and
+        heartbeat throttle, without an additional thread or journal read.
+        """
+        self._write_admission_heartbeat("draining", None, self._hb_queued_hint)
+        worker.start()
+        while True:
+            worker.join(self._preempt_poll_s)
+            if not worker.is_alive():
+                return False
+            if self.foreground_busy():
+                return True
+            self._write_admission_heartbeat("draining", None, self._hb_queued_hint)
 
     def _effective_model(self, source_model: str) -> str:
         """学习通道实际使用的模型引用（override 优先，缺省回落 source_model）."""
@@ -549,15 +569,7 @@ class LearningPlane:
                 name=f"lfl-learning-reflect:{job.job_id}",
                 daemon=True,
             )
-            worker.start()
-            preempted = False
-            while True:
-                worker.join(self._preempt_poll_s)
-                if not worker.is_alive():
-                    break
-                if self.foreground_busy():  # foreground always wins, mid-call included
-                    preempted = True
-                    break
+            preempted = self._wait_for_learning_worker(worker)
             if preempted:
                 # Yield immediately: abandon the reflection worker (it settles
                 # itself), requeue the job, and let ``finally`` release the
@@ -654,15 +666,7 @@ class LearningPlane:
             name=f"lfl-memory-extract:{job.job_id}",
             daemon=True,
         )
-        worker.start()
-        preempted = False
-        while True:
-            worker.join(self._preempt_poll_s)
-            if not worker.is_alive():
-                break
-            if self.foreground_busy():  # foreground always wins, mid-call included
-                preempted = True
-                break
+        preempted = self._wait_for_learning_worker(worker)
         if preempted:
             self._track_straggler(worker)
             self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
