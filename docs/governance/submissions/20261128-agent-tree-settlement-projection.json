@@ -6,6 +6,7 @@
     {
       "component_id": "display-only-settlement-projection",
       "paths": [
+        "docs/governance/submissions/20261128-agent-tree-settlement-projection.json",
         "src/llm_loop/core/subagent_delivery.py",
         "src/llm_loop/event_log/store.py",
         "src/llm_loop/event_log/usage_projection.py",
