@@ -993,6 +993,39 @@ def _durable_detail(store: ManagedServiceDeploymentStore, detail: str) -> tuple[
     return full[:2000], store.evidence.write_full(full)
 
 
+_PRE_RESTART_STATUSES = frozenset({
+    "accepted", "waiting_for_requester_exit", "waiting_for_idle",
+})
+
+
+def _transition_detail(
+    store: ManagedServiceDeploymentStore,
+    action: ServiceControlAction,
+    status: str,
+    detail: str,
+) -> tuple[str, str]:
+    """Keep a zero-side-effect failure durable even if the reason store is denied.
+
+    The action record itself is an atomic durable source. On this narrow
+    recovery path retain the entire reason inline, never a truncated reason
+    or a stale/pretended EvidenceRef. Physical-restart transitions retain
+    the existing evidence requirement.
+    """
+    if not detail:
+        return "", action.reason_ref
+    try:
+        return _durable_detail(store, detail)
+    except OSError:
+        if status != "failed" or action.status not in _PRE_RESTART_STATUSES:
+            raise
+        logger.warning(
+            "reason store unavailable for pre-restart failure %s; "
+            "retaining complete reason in durable action",
+            action.action_id, exc_info=True,
+        )
+        return str(detail), ""
+
+
 # --------------------------------------------------------------------------
 # svc_deploy N2：问题类 → 可执行下一步（单点映射，纯函数零 IO）
 #
@@ -1391,7 +1424,9 @@ class ManagedServiceDeploymentStore:
                 dataclasses.replace(action, worker_pid=pid, updated_at=_local_now())
             )
 
-    def _reap_stale_waiting_actions_unlocked(self) -> None:
+    def _reap_stale_waiting_actions_unlocked(
+        self, *, action_id: str | None = None, confirmed_dead_only: bool = False,
+    ) -> None:
         """Fail waiting actions whose detached worker died; defense in depth.
 
         生命周期加固（GOAL-20261008-f143e051）：优先按 worker_pid 存活判定——
@@ -1407,17 +1442,17 @@ class ManagedServiceDeploymentStore:
         )
         pid_grace_before = now_ts - _STALE_PID_GRACE_S
         accepted_no_pid_before = now_ts - _STALE_ACCEPTED_NO_PID_GRACE_S
-        for path in sorted(self.actions_dir.glob("*.json")):
+        paths = (
+            [self.action_path(action_id)] if action_id is not None
+            else sorted(self.actions_dir.glob("*.json"))
+        )
+        for path in paths:
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 action = ServiceControlAction.from_dict(raw)
             except (OSError, ValueError):
                 continue
-            if action.status not in {
-                "accepted",
-                "waiting_for_requester_exit",
-                "waiting_for_idle",
-            }:
+            if action.status not in _PRE_RESTART_STATUSES:
                 continue
             try:
                 updated_ts = datetime.fromisoformat(action.updated_at).timestamp()
@@ -1432,6 +1467,8 @@ class ManagedServiceDeploymentStore:
                 reap_detail = (
                     f"stale waiting state reaped: worker pid {action.worker_pid} dead"
                 )
+            elif confirmed_dead_only:
+                continue
             elif (
                 action.status == "accepted"
                 and action.worker_pid == 0
@@ -1449,17 +1486,30 @@ class ManagedServiceDeploymentStore:
                 reap_detail = "stale waiting state reaped: detached worker presumed dead"
             if not reap_detail:
                 continue
-            self._write_action_unlocked(
-                dataclasses.replace(
-                    action,
-                    status="failed",
-                    updated_at=_local_now(),
-                    detail=reap_detail,
-                )
+            updated = dataclasses.replace(
+                action,
+                status="failed",
+                updated_at=_local_now(),
+                detail=reap_detail,
+                reason_ref="",
+                stage_fact="not_started",
             )
+            self._write_action_unlocked(updated)
             # waiting 态未开始任何副作用：屏障随终态释放（§8.3）。
             for service in _barrier_services_for_target(action.target):
                 self.barriers.release(service, operation_id=action.action_id)
+            _emit_terminal_event(self, updated)
+
+    def reap_dead_waiting_action(self, action_id: str) -> None:
+        """Reconcile only this action, only on confirmed worker death.
+
+        Used by the release coordinator while awaiting its receipt. No age-only
+        override and no reaping of a potentially side-effecting running action.
+        """
+        with self.lease():
+            self._reap_stale_waiting_actions_unlocked(
+                action_id=action_id, confirmed_dead_only=True,
+            )
 
     def update_action(
         self,
@@ -1488,13 +1538,13 @@ class ManagedServiceDeploymentStore:
             action = self.read_action(action_id)
             if action is None:
                 raise FileNotFoundError(action_id)
-            detail_text, reason_ref = _durable_detail(self, detail)
+            detail_text, reason_ref = _transition_detail(self, action, status, detail)
             updated = dataclasses.replace(
                 action,
                 status=status,
                 updated_at=_local_now(),
                 detail=detail_text,
-                reason_ref=reason_ref or action.reason_ref,
+                reason_ref=reason_ref,
                 stage_fact=action.stage_fact if stage_fact is None else stage_fact,
                 verify_evidence=(
                     action.verify_evidence if verify_evidence is None else verify_evidence
@@ -4084,13 +4134,13 @@ def _mark_action(
     auto_verify_receipt: str | None = None,
 ) -> ServiceControlAction:
     with store.lease():
-        detail_text, reason_ref = _durable_detail(store, detail)
+        detail_text, reason_ref = _transition_detail(store, action, status, detail)
         updated = dataclasses.replace(
             action,
             status=status,  # type: ignore[arg-type]
             updated_at=_local_now(),
             detail=detail_text,
-            reason_ref=reason_ref or action.reason_ref,
+            reason_ref=reason_ref,
             stage_fact=action.stage_fact if stage_fact is None else stage_fact,
             verify_evidence=(
                 action.verify_evidence if verify_evidence is None else verify_evidence
@@ -4590,13 +4640,23 @@ def _verify_restart_targets(
 
 
 def _pid_dead(pid: int) -> bool:
-    """进程存活探测（signal 0）；pid 复用/他人进程视为存活（保守回退）。"""
+    """Signal 0 plus positive zombie evidence; unknown remains alive."""
     try:
         os.kill(pid, 0)
-        return False
     except ProcessLookupError:
         return True
     except PermissionError:
+        return False
+    # A detached child may be a zombie while its release coordinator is
+    # waiting for the terminal receipt. Signal 0 alone reports it as alive.
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "stat="],
+            capture_output=True, text=True, timeout=1.3, check=True,
+        )
+        states = result.stdout.split()
+        return len(states) == 1 and states[0].startswith("Z")
+    except (OSError, subprocess.SubprocessError):
         return False
 
 

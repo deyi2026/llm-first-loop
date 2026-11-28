@@ -171,6 +171,13 @@ def _await_action(
             return action
         if action.status == "failed":
             raise RuntimeError(f"action {action_id} failed; no automatic retry")
+        if action.status in sc._PRE_RESTART_STATUSES and action.worker_pid > 0:
+            # Reconcile a dead pre-restart worker rather than leave all
+            # admission barriers held until the next deployment request.
+            store.reap_dead_waiting_action(action_id)
+            current = store.read_action(action_id)
+            if current is not None and current.status == "failed":
+                raise RuntimeError(f"action {action_id} failed; no automatic retry")
         # verify_evidence_ready is nonterminal: a separate reviewer may still
         # acknowledge the evidence. Never treat it as succeeded or retry it.
         if time.monotonic() >= deadline:

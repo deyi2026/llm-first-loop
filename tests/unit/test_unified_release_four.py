@@ -49,6 +49,9 @@ class FakeStore:
     def read_action(self, action_id):
         return next((a for a in self.actions if a.action_id == action_id), None)
 
+    def reap_dead_waiting_action(self, action_id):
+        pass
+
     def set_action(self, action_id, **changes):
         self.actions = [dataclasses.replace(a, **changes) if a.action_id == action_id else a for a in self.actions]
 
