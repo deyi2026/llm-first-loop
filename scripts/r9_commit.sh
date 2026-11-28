@@ -12,12 +12,10 @@
 # 「镜像区 .git 由外部会话共享」，2026-11-10 镜像区取消（用户确认）后该前提消失，
 # 钩子化改由安装脚本承担（EVO 待办落地）。
 #
-# 提交队列（B3-PREP-06）：多代理/多会话并行提交的唯一串行化点——锁住机检/门禁/
-# 提交全段（write-tree 预检与 git commit 之间的 TOCTOU、ci_gate 读树与提交推进
-# 错位经队列消除）。锁 = <git-common-dir>/r9-commit.lock（旧主区与各 worktree 共享
-# 一把，跨 checkout 互斥）；排队语义 = 拿锁后若 HEAD 已被前移，新队头基线重跑
-# 机检/门禁，暂存触碰面与前驱重叠即中止（stale 暂存基线防线）。锁超时
-# R9_COMMIT_LOCK_TIMEOUT（默认 900s）+ trap 释放防死锁。
+# Each checkout serializes its own candidate preparation and test run. The
+# shared repository lock covers only the final exact-tree/HEAD CAS and commit.
+# Older wrappers holding the common lock remain compatible; --dev retains the
+# original full common-lock contract for its independent Host authorization.
 set -euo pipefail
 # A commit wrapper must reject inherited repository redirection, not silently
 # clear it: the caller might have intended a different index or object store.
@@ -150,9 +148,15 @@ done
 # 兜底链（沿 1f0c6e7 PY 回落链设计语言）：flock 二进制（Linux/CI）→ python fcntl
 # （macOS 无 flock；coproc 持锁 holder，EOF/kill/父亡孤儿自释三路释放）
 GATE_LOG=""
+HEARTBEAT_PID=""
 DEV_RECEIPT=""
+COMMIT_HOOKS=""
 LOCK_HOLDER_PID=""
-LOCK_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/r9-commit.lock"
+COMMON_LOCK_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/r9-commit.lock"
+WORKTREE_LOCK_FILE="$(git rev-parse --absolute-git-dir)/r9-worktree.lock"
+WORKTREE_LOCK_HOLDER_PID=""
+GLOBAL_LOCK_HOLDER_PID=""
+GLOBAL_LOCK_ACQUIRED=0
 LOCK_TIMEOUT="${R9_COMMIT_LOCK_TIMEOUT:-900}"
 BASE_HEAD="$(git rev-parse HEAD)"
 LOCK_PROG='import fcntl, os, sys, time
@@ -170,41 +174,75 @@ print("ACQUIRED", flush=True)
 ppid0 = os.getppid()
 while os.getppid() == ppid0:
     time.sleep(0.2)'
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$LOCK_FILE"
-  if ! flock -w "$LOCK_TIMEOUT" 9; then
-    echo "❌ 提交队列锁等待超时（${LOCK_TIMEOUT}s）——排查持锁进程；确认无残留后可删 ${LOCK_FILE}" >&2
-    exit 1
+r9_acquire_lock() {
+  local lock_file="$1" fd="$2" lock_tmp ack lock_ok deadline py_bin
+  LOCK_HOLDER_PID=""
+  if command -v flock >/dev/null 2>&1; then
+    if [ "$fd" -eq 8 ]; then exec 8>"$lock_file"; else exec 9>"$lock_file"; fi
+    if ! flock -w "$LOCK_TIMEOUT" "$fd"; then
+      echo "R9 lock timeout (${LOCK_TIMEOUT}s): $lock_file" >&2
+      return 1
+    fi
+    LOCK_MODE="flock(fd${fd})"
+  else
+    py_bin="$(command -v python3 || true)"
+    [ -n "$py_bin" ] || { echo "R9 lock requires flock or python3" >&2; return 1; }
+    lock_tmp="$(mktemp -d /tmp/r9lock.XXXXXX)"
+    ack="$lock_tmp/ack"
+    "$py_bin" -c "$LOCK_PROG" "$lock_file" "$LOCK_TIMEOUT" > "$ack" 2>&1 &
+    LOCK_HOLDER_PID=$!
+    lock_ok=""
+    deadline=$((SECONDS + LOCK_TIMEOUT + 5))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+      if grep -q '^ACQUIRED$' "$ack" 2>/dev/null; then lock_ok=1; break; fi
+      if grep -q '^TIMEOUT$' "$ack" 2>/dev/null; then break; fi
+      kill -0 "$LOCK_HOLDER_PID" 2>/dev/null || break
+      sleep 0.2
+    done
+    rm -rf "$lock_tmp"
+    if [ -z "$lock_ok" ]; then
+      echo "R9 lock timeout or holder failure: $lock_file" >&2
+      kill "$LOCK_HOLDER_PID" 2>/dev/null || true
+      wait "$LOCK_HOLDER_PID" 2>/dev/null || true
+      LOCK_HOLDER_PID=""
+      return 1
+    fi
+    LOCK_MODE="fcntl(pid=${LOCK_HOLDER_PID})"
   fi
-  LOCK_MODE="flock(fd9)"
-else
-  PY_BIN="$(command -v python3 || true)"
-  [ -n "$PY_BIN" ] || { echo "❌ 无 flock 且无 python3——锁兜底链不可用" >&2; exit 1; }
-  # bash 3.2 兼容（macOS 无 coproc）：ACK 文件轮询 + holder 孤儿再父自释
-  # （getppid 漂移 = 父进程已亡 → 内核级释放；trap kill 为正常路径显式释放）
-  LOCK_TMP="$(mktemp -d /tmp/r9lock.XXXXXX)"
-  ACK="$LOCK_TMP/ack"
-  "$PY_BIN" -c "$LOCK_PROG" "$LOCK_FILE" "$LOCK_TIMEOUT" > "$ACK" 2>&1 &
-  LOCK_HOLDER_PID=$!
-  LOCK_OK=""
-  while [ $SECONDS -lt $((LOCK_TIMEOUT + 5)) ]; do
-    if grep -q '^ACQUIRED$' "$ACK" 2>/dev/null; then LOCK_OK=1; break; fi
-    if grep -q '^TIMEOUT$' "$ACK" 2>/dev/null; then break; fi
-    kill -0 "$LOCK_HOLDER_PID" 2>/dev/null || { sleep 0.3; grep -q '^ACQUIRED$' "$ACK" 2>/dev/null && LOCK_OK=1; break; }
-    sleep 0.2
+  echo "R9 lock acquired ($(date +%H:%M:%S) · ${LOCK_MODE} @ ${lock_file})"
+}
+# Idempotent in both flock and fcntl modes; a second fcntl holder would
+# deadlock against the first. Dev keeps its original full-lock contract.
+r9_acquire_global_lock() {
+  if [ "$GLOBAL_LOCK_ACQUIRED" -eq 1 ]; then return 0; fi
+  r9_acquire_lock "$COMMON_LOCK_FILE" 9 || return 1
+  GLOBAL_LOCK_HOLDER_PID="$LOCK_HOLDER_PID"
+  LOCK_HOLDER_PID=""
+  GLOBAL_LOCK_ACQUIRED=1
+}
+r9_release_global_lock() {
+  if [ -n "$GLOBAL_LOCK_HOLDER_PID" ]; then
+    kill "$GLOBAL_LOCK_HOLDER_PID" 2>/dev/null || true
+    wait "$GLOBAL_LOCK_HOLDER_PID" 2>/dev/null || true
+    GLOBAL_LOCK_HOLDER_PID=""
+  fi
+  flock -u 9 2>/dev/null || true
+  GLOBAL_LOCK_ACQUIRED=0
+}
+r9_release_locks() {
+  local pid
+  r9_release_global_lock
+  for pid in "$WORKTREE_LOCK_HOLDER_PID" "$LOCK_HOLDER_PID"; do
+    if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
   done
-  if [ -z "$LOCK_OK" ]; then
-    grep -q '^TIMEOUT$' "$ACK" 2>/dev/null && echo "❌ 提交队列锁等待超时（${LOCK_TIMEOUT}s）——排查持锁进程；确认无残留后可删 ${LOCK_FILE}" >&2 \
-      || echo "❌ 锁 holder 异常退出（未获锁）" >&2
-    kill "$LOCK_HOLDER_PID" 2>/dev/null || true
-    rm -rf "$LOCK_TMP"
-    exit 1
-  fi
-  rm -rf "$LOCK_TMP"
-  LOCK_MODE="fcntl(pid=${LOCK_HOLDER_PID})"
-fi
-echo "🔒 提交队列锁已获取（$(date +%H:%M:%S) · ${LOCK_MODE} @ ${LOCK_FILE}）"
-trap 'if [ -n "${LOCK_HOLDER_PID:-}" ]; then kill "$LOCK_HOLDER_PID" 2>/dev/null || true; fi; flock -u 9 2>/dev/null || true; if [ -n "${GATE_LOG:-}" ]; then rm -f "$GATE_LOG"; fi' EXIT
+  flock -u 8 2>/dev/null || true
+}
+trap 'r9_release_locks' EXIT
+# Both paths serialize the same worktree, always before the common lock.
+r9_acquire_lock "$WORKTREE_LOCK_FILE" 8
+WORKTREE_LOCK_HOLDER_PID="$LOCK_HOLDER_PID"
+LOCK_HOLDER_PID=""
+if [ "$DEV_MODE" -eq 1 ]; then r9_acquire_global_lock; fi
 
 # 队头 ff 再检（排队语义）：等待期间他人已提交（HEAD ≠ 取锁前观测基线）→ 在新
 # 队头基线重跑机检/门禁；暂存触碰面与前驱提交重叠 = stale 暂存基线 → 中止人工处置
@@ -220,8 +258,18 @@ fi
 
 # [1/3] 机检：对 staged 树合成临时提交对象预检（write-tree/commit-tree 均不
 #       移动引用、不留仓库中间态；悬挂对象由 GC 自然回收）
+HEAD_REF="$(git symbolic-ref -q HEAD || true)"
 TREE="$(git write-tree)"
-PROBE="$(printf '%s\n' "$MSG" | git commit-tree "$TREE" -p HEAD)"
+# The pre-lock whitelist can become stale while waiting. Recheck the exact
+# candidate tree, not the mutable index, under the checkout lock.
+if [ -n "${R9_STAGED_ALLOW:-}" ]; then
+  if [ -n "$(comm -23 <(git diff --name-only "$HEAD_NOW" "$TREE" | sort -u) \
+      <(printf '%s\n' "$R9_STAGED_ALLOW" | sed '/^[[:space:]]*$/d' | sort -u))" ]; then
+    echo "[R9_CANDIDATE_STALE] staged paths changed outside the allowed scope" >&2
+    exit 1
+  fi
+fi
+PROBE="$(printf '%s\n' "$MSG" | git commit-tree "$TREE" -p "$HEAD_NOW")"
 CHECK="scripts/r9_commit_check.sh"
 [ -f "$CHECK" ] || CHECK="r9_commit_check.sh"
 bash "$CHECK" "$PROBE"
@@ -235,7 +283,7 @@ bash "$CHECK" "$PROBE"
 #    = 未知失败形态（xdist worker crash 等）→ 拒绝放行（不留空集漏洞）。
 # 豁免机制不变：registry = tests/guards/external_red_registry.json（PROBE 态即提交态，
 # registry 随提交原子生效）；node id 引号定界精确匹配；清单外任何红中止。
-# Gate 0 日志归档：GATE_LOG 不再即弃，归档 /tmp/r9_gate_last.log（失败指纹审计面）。
+# Gate receipts use unique paths unless the caller explicitly supplies one.
 REGISTRY="tests/guards/external_red_registry.json"
 FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
 # PROBE checkout must live under a trusted (non-world-writable) ancestor:
@@ -262,23 +310,57 @@ mkdir -p "$R9_PROBE_BASE"
 PROBE_WT="$(mktemp -d "$R9_PROBE_BASE/r9probe.XXXXXX")"
 # Git lists physical paths (e.g. /private/tmp on macOS), not symlink aliases.
 PROBE_WT="$(cd "$PROBE_WT" && pwd -P)"
+r9_stop_heartbeat() {
+  if [ -n "${HEARTBEAT_PID:-}" ]; then
+    kill "$HEARTBEAT_PID" 2>/dev/null || true
+    wait "$HEARTBEAT_PID" 2>/dev/null || true
+    HEARTBEAT_PID=""
+  fi
+}
+r9_archive_receipt() {
+  local destination="$1" temporary
+  temporary="$(mktemp "${destination}.XXXXXX")" || return 1
+  if ! cp "$GATE_LOG" "$temporary" || ! mv -f "$temporary" "$destination"; then
+    rm -f "$temporary" || true
+    return 1
+  fi
+}
 r9_cleanup_exit() {
   local result="$1"
-  if [ -n "${LOCK_HOLDER_PID:-}" ]; then kill "$LOCK_HOLDER_PID" 2>/dev/null || true; fi
-  flock -u 9 2>/dev/null || true
+  r9_stop_heartbeat
+  r9_release_global_lock
+  if [ -n "${COMMIT_HOOKS:-}" ]; then rm -rf "$COMMIT_HOOKS"; fi
   if [ -n "${PROBE_WT:-}" ]; then
     if ! r9_cleanup_probe "$PROBE_WT"; then
       if [ "$result" -eq 0 ]; then result=1; fi
     fi
   fi
   if [ -n "${GATE_LOG:-}" ]; then
-    if ! cp "$GATE_LOG" "${R9_GATE_RECEIPT_FILE:-/tmp/r9_gate_last.log}"; then
+    # One authoritative last receipt per worktree; atomic replacement avoids
+    # partial readers. Keep the legacy global last-completed alias for tooling,
+    # but never use it as candidate-specific evidence. Explicit paths are kept.
+    local receipt="${R9_GATE_RECEIPT_FILE:-$(git rev-parse --absolute-git-dir)/r9_gate_last.log}"
+    local archived=0
+    if [ -n "${R9_GATE_RECEIPT_FILE:-}" ]; then
+      # Preserve caller-supplied destination semantics (symlink/device/FIFO,
+      # existing file permissions) from the original wrapper.
+      cp "$GATE_LOG" "$receipt" && archived=1
+    else
+      r9_archive_receipt "$receipt" && archived=1
+    fi
+    if [ "$archived" -eq 0 ]; then
       echo "R9 gate receipt archive failed: $GATE_LOG" >&2
       if [ "$result" -eq 0 ]; then result=1; fi
+    else
+      echo "R9 gate receipt: $receipt"
+      if [ -z "${R9_GATE_RECEIPT_FILE:-}" ]; then
+        r9_archive_receipt /tmp/r9_gate_last.log || echo "R9 legacy receipt alias unavailable" >&2
+      fi
     fi
-    rm -f "$GATE_LOG" || true
+    rm -f "$GATE_LOG" "$GATE_LOG.fails" || true
   fi
   if [ -n "${DEV_RECEIPT:-}" ]; then rm -f "$DEV_RECEIPT" || true; fi
+  r9_release_locks
   exit "$result"
 }
 trap 'r9_cleanup_exit $?' EXIT
@@ -298,6 +380,72 @@ PYEOF
     exit 1
   fi
 fi
+
+r9_assert_candidate() {
+  if [ "$(git rev-parse HEAD)" != "$HEAD_NOW" ] ||
+     [ "$(git symbolic-ref -q HEAD || true)" != "$HEAD_REF" ] ||
+     [ "$(git write-tree)" != "$TREE" ]; then
+    echo "[R9_CANDIDATE_STALE] HEAD/ref/index changed during isolated gate; refusing commit" >&2
+    return 1
+  fi
+}
+# Keep native git commit on the real branch/worktree. A command-local
+# reference-transaction hook checks the exact object BEFORE Git publishes
+# the ref, while forwarding every existing executable hook unchanged in
+# its original cwd/argv. No persistent hooksPath change or manual ref update.
+r9_publish_checked_commit() {
+  local original_hooks
+  r9_assert_candidate || return 1
+  original_hooks="$(git rev-parse --path-format=absolute --git-path hooks)" || return 1
+  COMMIT_HOOKS="$(mktemp -d "$R9_PROBE_BASE/r9hooks.XXXXXX")" || return 1
+  python3 - "$original_hooks" "$COMMIT_HOOKS" "$HEAD_NOW" "$HEAD_REF" "$TREE" "$CHECK" <<'R9_HOOKS_PY' || return 1
+import os, pathlib, re, shlex, subprocess, sys
+original, target = map(pathlib.Path, sys.argv[1:3])
+base, ref, tree, check = sys.argv[3:]
+version = re.search(r"git version (\d+)\.(\d+)", subprocess.check_output(["git", "--version"], text=True))
+if not version or tuple(map(int, version.groups())) < (2, 29):
+    sys.exit("R9 requires Git reference-transaction support (>=2.29)")
+for hook in original.iterdir() if original.is_dir() else ():
+    if hook.name == "reference-transaction" or not hook.is_file() or not os.access(hook, os.X_OK):
+        continue
+    wrapper = target / hook.name
+    wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(str(hook)) + ' "$@"\n')
+    wrapper.chmod(0o700)
+original_ref = original / "reference-transaction"
+if not original_ref.is_file() or not os.access(original_ref, os.X_OK):
+    original_ref = None
+hook = target / "reference-transaction"
+hook.write_text("#!/usr/bin/env python3\n" + f"BASE={base!r}\nREF={ref!r}\nTREE={tree!r}\nCHECK={check!r}\nORIGINAL={str(original_ref) if original_ref else ''!r}\n" + '''import subprocess, sys
+payload = sys.stdin.buffer.read()
+phase = sys.argv[1]
+if ORIGINAL:
+    result = subprocess.run([ORIGINAL, phase], input=payload)
+    if result.returncode:
+        sys.exit(result.returncode)
+if phase == "prepared":
+    def git(*args):
+        return subprocess.check_output(["git", *args], text=True).strip()
+    for line in payload.decode("utf-8", "surrogateescape").splitlines():
+        old, new, name = line.split(" ", 2)
+        if name != "HEAD" and not name.startswith("refs/heads/"):
+            continue
+        current = subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], text=True, capture_output=True).stdout.strip()
+        if (name not in (REF or "HEAD", "HEAD") or current != REF or old != BASE
+                or git("rev-parse", new + "^{tree}") != TREE
+                or git("rev-list", "--parents", "-n", "1", new).split() != [new, BASE]):
+            sys.exit("[R9_CANDIDATE_STALE] hook changed candidate tree/parent/ref; original ref untouched")
+        subprocess.run(["bash", CHECK, new], check=True)
+''')
+hook.chmod(0o700)
+R9_HOOKS_PY
+  r9_assert_candidate || return 1
+  git -c core.hooksPath="$COMMIT_HOOKS" commit -m "$MSG" || return 1
+  if [ "$(git rev-parse HEAD^{tree})" != "$TREE" ] ||
+     [ "$(git rev-parse HEAD^)" != "$HEAD_NOW" ]; then
+    echo "[R9_CANDIDATE_STALE] unexpected native commit identity" >&2
+    return 1
+  fi
+}
 
 # Dev-only local commit: same global lock, exact staged PROBE, fixture
 # verification, machine checks, staged scan and Git hooks. No R9 receipt,
@@ -343,18 +491,60 @@ sys.exit(0 if ok else 1)
   [[ "$(git write-tree)" == "$TREE" && "$(git rev-parse HEAD)" == "$HEAD_NOW" &&
      -z "$(git diff --name-only)" ]] ||
     { echo "[DEV_COMMIT_DISABLED] candidate changed after Host consumption" >&2; exit 78; }
-  git commit -m "$MSG"
-  [[ "$(git rev-parse HEAD^{tree})" == "$TREE" &&
-     "$(git rev-parse HEAD^)" == "$HEAD_NOW" ]] ||
-    { echo "[DEV_COMMIT_DISABLED] committed tree/parent mismatch; quarantine branch" >&2; exit 78; }
-  bash "$CHECK" HEAD
+  r9_publish_checked_commit || exit 78
   echo "[DEV_COMMIT_ONLY] Local commit created; no R9, Host review, push or release qualification."
   exit 0
 fi
 
 GATE_LOG="$(mktemp /tmp/r9_gate.XXXXXX)"
 GATE_EXIT=0
-(cd "$PROBE_WT" && bash scripts/ci_gate.sh) > "$GATE_LOG" 2>&1 || GATE_EXIT=$?
+# Low-frequency heartbeat on the job stream, separate from the parsed gate
+# receipt. Only sample descendants of this wrapper; no extra Web polling.
+python3 -u - "$$" "$GATE_LOG" <<'R9_HEARTBEAT' &
+import datetime, os, subprocess, sys, time
+root, log = int(sys.argv[1]), sys.argv[2]
+started = time.monotonic()
+while os.getppid() == root:
+    time.sleep(30)
+    if os.getppid() != root:
+        break
+    try:
+        rows = subprocess.check_output(
+            ["ps", "-axo", "pid=,ppid=,pcpu=,rss="], text=True, timeout=3
+        ).splitlines()
+        procs = {}
+        for row in rows:
+            pid, parent, cpu, rss = row.split()
+            procs[int(pid)] = (int(parent), float(cpu), int(rss))
+        owned = {root}
+        while True:
+            more = {pid for pid, (parent, _, _) in procs.items() if parent in owned}
+            if more <= owned:
+                break
+            owned.update(more)
+        cpu = sum(procs[p][1] for p in owned if p in procs)
+        rss = sum(procs[p][2] for p in owned if p in procs) / 1024
+        st = os.stat(log)
+        activity = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%H:%M:%S")
+        print(f"\n[R9_PROGRESS] elapsed={int(time.monotonic()-started)}s "
+              f"cpu_sum={cpu:.1f}% rss_sum={rss:.0f}MiB last_log={activity} "
+              f"log_bytes={st.st_size}", flush=True)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print(f"\n[R9_PROGRESS] elapsed={int(time.monotonic()-started)}s metrics=unavailable", flush=True)
+R9_HEARTBEAT
+HEARTBEAT_PID=$!
+# Stream the same bytes to the JobRegistry and the durable receipt. Preserve
+# both exit statuses: a failed log writer is an infrastructure failure.
+set +e
+(cd "$PROBE_WT" && bash scripts/ci_gate.sh) 2>&1 | tee "$GATE_LOG"
+GATE_STATUS=("${PIPESTATUS[@]}")
+set -e
+r9_stop_heartbeat
+GATE_EXIT="${GATE_STATUS[0]}"
+if [ "${GATE_STATUS[1]}" -ne 0 ] || [ "$GATE_EXIT" -eq 125 ]; then
+  echo "R9 gate logging infrastructure failed" >&2
+  exit 125
+fi
 # PY 解析：PROBE 检出无 .venv → ci_gate 内部回落链取主 worktree .venv；PYTHONPATH 已由 ci_gate 前置 $ROOT/src（=PROBE 树）
 
 if [ "$GATE_EXIT" -eq 0 ]; then
@@ -396,7 +586,8 @@ fi
 
 # [3/3] 提交（机检+门禁双绿后，安全扫描拦截）
 # 安全扫描（--staged：暂存区敏感/私密/错误文件硬拦截；2026-08-16 机制沿用）
-bash scripts/git_security_scan.sh
-git commit -m "$MSG"
-bash "$CHECK" HEAD
+r9_acquire_global_lock
+r9_assert_candidate
+bash scripts/git_security_scan.sh --staged
+r9_publish_checked_commit
 echo "✅ R9 提交完成（机检 + 门禁 + 提交三步全绿）"

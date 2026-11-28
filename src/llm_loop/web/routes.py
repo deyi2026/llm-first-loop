@@ -4930,10 +4930,8 @@ def cancel_session_schedule(session_id: str, sid: str, request: Request) -> Resp
 @router.get("/api/v1/sessions/{session_id}/continuity")
 def session_continuity_status(session_id: str, request: Request) -> Response:
     """Expose restart-continuity facts without model text/reasoning content."""
-    from llm_loop.core.interruption_resume import (
-        open_execution_facts,
-        select_open_checkpoint_events,
-    )
+    from .continuity_view import continuity_facts
+    from .session_stats_cache import continuity_projection_for_engine
 
     engine = _engine_from(request)
     if not engine.session.exists(session_id):
@@ -4947,45 +4945,17 @@ def session_continuity_status(session_id: str, request: Request) -> Response:
             content={"available": False, "open": False, "reason": "event_store_unavailable"}
         )
     try:
-        events = list(getattr(estore, "read_cached", estore.read)(session_id) or [])
+        # Cache only the scalar view under the durable history revision. Eight
+        # polling sessions must not thrash the two-entry full-event cache.
+        facts = continuity_projection_for_engine(engine).compute_and_store(
+            engine, session_id, lambda: continuity_facts(estore, session_id),
+        )
     except Exception as exc:  # noqa: BLE001 - status is read-only/fail-open
         return UTF8JSONResponse(
             status_code=500,
             content={"available": False, "open": False, "reason": type(exc).__name__},
         )
-    last_run_end = max(
-        (pos for pos, event in enumerate(events) if str(getattr(event, "type", "")) == "run.end"),
-        default=-1,
-    )
-    open_events = events[last_run_end + 1 :]
-    has_open_run_fact = any(
-        str(getattr(event, "type", "")) == "request.meta"
-        or str(getattr(event, "type", "")) == "llm.partial_checkpoint"
-        or str(getattr(event, "type", "")).startswith("tool.execution.")
-        or str(getattr(event, "type", "")).startswith("external.execution.")
-        for event in open_events
-    )
-    if not has_open_run_fact:
-        return UTF8JSONResponse(content={"available": True, "open": False})
-    model_checkpoint, latest_checkpoint = select_open_checkpoint_events(open_events)
-    mechanical = open_execution_facts(events, after_pos=last_run_end)
-    chosen = model_checkpoint or latest_checkpoint
-    payload = dict(getattr(chosen, "payload", None) or {}) if chosen is not None else {}
-    return UTF8JSONResponse(
-        content={
-            "available": True,
-            "open": bool(chosen is not None or mechanical),
-            "source": (
-                "open_stream_checkpoint" if chosen is not None else "open_execution_state"
-            ),
-            "provider": str(payload.get("provider") or ""),
-            "model": str(payload.get("model") or ""),
-            "text_chars": int(payload.get("text_chars") or 0),
-            "reasoning_chars": int(payload.get("reasoning_chars") or 0),
-            "checkpoint_seq": int(getattr(chosen, "seq", 0) or 0) if chosen is not None else 0,
-            "mechanical_execution": mechanical,
-        }
-    )
+    return UTF8JSONResponse(content=facts)
 
 
 @router.get("/api/v1/sessions/{session_id}/durable-recovery")

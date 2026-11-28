@@ -32,6 +32,26 @@ _CALIB_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "calib"
 collect_ignore: list[str] = []
 
 
+@pytest.hookimpl(optionalhook=True, tryfirst=True)
+def pytest_xdist_make_scheduler(config, log):
+    """Keep file affinity except for independently isolated heavy push-batch cases."""
+    if config.getoption("dist") != "loadfile":
+        return None
+    from xdist.scheduler.loadfile import LoadFileScheduling
+
+    class _BalancedLoadFileScheduling(LoadFileScheduling):
+        def _split_scope(self, nodeid: str) -> str:
+            file, _, case = nodeid.partition("::")
+            if (file == "tests/unit/test_review_host_admission.py"
+                    and case.startswith("test_push_batch_")):
+                # Each case creates its own Git repository and Host admission
+                # instance. Do not split other modules or change node IDs.
+                return nodeid
+            return super()._split_scope(nodeid)
+
+    return _BalancedLoadFileScheduling(config, log)
+
+
 
 def _inside_any_repo(path: Path) -> bool:
     """``path`` 或任一祖先目录里有 ``.git``（dir 或 worktree 的 file）→ 在仓库内。"""
