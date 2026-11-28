@@ -540,3 +540,32 @@ def test_commit_event_without_durable_parent_receipt_message_does_not_settle(tmp
         tool_message=receipt,
     )
     assert runner.topology_snapshot(child)["settlement_state"] == "uncollected"
+
+
+def test_display_settlement_does_not_mutate_collection_or_read_full_parent(tmp_path, monkeypatch):
+    events = EventStore(tmp_path / "events", enabled=True)
+    store = SessionStore(tmp_path / "sessions", event_store=events)
+    runner = SubAgentRunner(llm=_NoopLLM(), registry=ToolRegistry(), session_store=store)  # type: ignore[arg-type]
+    parent = "parent-display-only"
+    child, generation, result_id = _terminal_child(runner, parent)
+    binding = {"child_id": child, "parent_id": parent, "generation": generation, "result_id": result_id}
+    receipt = {"tool_name": "subagent_result", "tool_call_id": "display-call",
+               "metadata": {"subagent_settlement": binding}}
+    commit = {"tool_name": "subagent_result", "tool_call_id": "display-call"}
+    events.append(parent, "message.appended", receipt)
+    original = events.read
+
+    def no_parent_replay(session_id):
+        assert session_id != parent, "Web display must not replay the full parent log"
+        return original(session_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(events, "read", no_parent_replay)
+        assert runner.topology_display_snapshot(child)["settlement_state"] == "uncollected"
+        events.append(parent, "tool.execution.receipt_committed", commit)
+        assert runner.topology_display_snapshot(child)["settlement_state"] == "collected"
+        assert runner._handles[child].collected is False
+        assert parent not in events._read_cache
+    # Authoritative path still performs its original proof and collection mutation.
+    assert runner.topology_snapshot(child)["settlement_state"] == "collected"
+    assert runner._handles[child].collected is True

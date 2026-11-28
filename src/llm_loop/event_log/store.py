@@ -25,7 +25,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED, Event, serialize_event
-from llm_loop.event_log.usage_projection import UsageEventProjection
+from llm_loop.event_log.usage_projection import (
+    SegmentEventProjection,
+    SettlementEventProjection,
+    UsageEventProjection,
+)
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -114,6 +118,7 @@ class EventStore:
         self._retraction_cache_max_sessions = 16
         self._retraction_cache_max_bytes = 1024 * 1024
         self._usage_projection = UsageEventProjection()
+        self._settlement_projection = SettlementEventProjection()
 
     def set_rotate_manager(self, manager: Any | None) -> None:
         """接线滚动管理器（P1-1：append/run 末自动检查滚动；None 解除接线）."""
@@ -625,6 +630,7 @@ class EventStore:
 
     def _invalidate_read_cache(self, session_id: str) -> None:
         self._usage_projection.invalidate(session_id)
+        self._settlement_projection.invalidate(session_id)
         with self._read_cache_lock:
             self._read_cache.pop(session_id, None)
             self._retraction_cache.pop(session_id, None)
@@ -711,6 +717,15 @@ class EventStore:
         The canonical replay remains the fallback for unstable/unknown layouts.
         This projection is for display statistics, never an authorization proof.
         """
+        return self._read_projected_events(session_id, self._usage_projection)
+
+    def read_settlement_events_for_display(self, session_id: str) -> list[Event]:
+        """Read only receipt/commit events; never a settlement authorization proof."""
+        return self._read_projected_events(session_id, self._settlement_projection)
+
+    def _read_projected_events(
+        self, session_id: str, projection: SegmentEventProjection,
+    ) -> list[Event]:
         session_id = _validate_session_id(session_id)
         with self._read_cache_build_lock(session_id):
             # One bounded retry handles a concurrent append/rotation without
@@ -722,13 +737,13 @@ class EventStore:
                 try:
                     paths = (self._all_segment_paths(session_id)
                              if self._is_multi_segment(session_id) else [self._path(session_id)])
-                    events = self._usage_projection.read(session_id, paths, self._parse_line)
+                    events = projection.read(session_id, paths, self._parse_line)
                     if before == self.history_source_stamp(session_id):
                         return events
                 except (OSError, ValueError):
                     continue
             return [event for event in self.read(session_id)
-                    if self._usage_projection.includes(event.type)]
+                    if projection.accepts(event)]
 
     def read_message_retractions(self, session_id: str) -> list[Event]:
         """Read exact retraction declarations for Web pages without full replay.

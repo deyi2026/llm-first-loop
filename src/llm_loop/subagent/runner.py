@@ -575,7 +575,13 @@ class SubAgentRunner:
             self._cache_durable_topology(state)
         return state
 
-    def topology_snapshot(self, child_session_id: str) -> dict[str, object] | None:
+    def topology_display_snapshot(self, child_session_id: str) -> dict[str, object] | None:
+        """Web display only; do not mutate authoritative collection state."""
+        return self.topology_snapshot(child_session_id, display_only=True)
+
+    def topology_snapshot(
+        self, child_session_id: str, *, display_only: bool = False,
+    ) -> dict[str, object] | None:
         """Return mechanical topology/ownership/settlement facts without reviving work."""
         sid = str(child_session_id or "").strip()
         if not sid:
@@ -601,16 +607,18 @@ class SubAgentRunner:
                 return None
 
         result_record = self._delivery_journal.result(sid, generation) if terminal else None
+        settlement_check = (self._delivery_journal.settlement_committed_for_display
+                            if display_only else self._delivery_journal.settlement_committed)
         durable_settled = bool(
             result_record is not None
-            and self._delivery_journal.settlement_committed(
+            and settlement_check(
                 child_id=sid,
                 parent_id=parent_id,
                 generation=generation,
                 result_id=result_record.result_id,
             )
         )
-        if handle is not None and durable_settled and not collected:
+        if not display_only and handle is not None and durable_settled and not collected:
             with self._children_guard:
                 current = self._handles.get(sid)
                 if current is not None and current.generation == generation:
