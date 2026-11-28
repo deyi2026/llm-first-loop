@@ -205,3 +205,43 @@ def test_heartbeat_fail_open_without_path(tmp_path: Path) -> None:
     # admission_heartbeat_path 默认 None：不落盘也不抛错
     plane._write_admission_heartbeat("idle", None, 0)
     assert not (tmp_path / "runtime").exists()
+
+
+def test_admitted_worker_refreshes_draining_heartbeat_without_rescan(tmp_path: Path, monkeypatch) -> None:
+    journal = _journal(tmp_path)
+    hb_path = tmp_path / "runtime" / "learning_admission.json"
+    plane = _mk_plane(tmp_path, journal, heartbeat_path=hb_path)
+    plane._hb_queued_hint = 2
+    plane._write_admission_heartbeat("blocked", "service_barrier:old", 2)
+    monkeypatch.setattr(plane, "foreground_busy", lambda: False)
+
+    def unexpected_scan():
+        raise AssertionError("in-flight heartbeat must not scan journal")
+
+    monkeypatch.setattr(journal, "runnable_jobs", unexpected_scan)
+    observed = []
+
+    class Worker(threading.Thread):
+        joins = 0
+
+        def start(self):
+            observed.append(json.loads(hb_path.read_text()))
+
+        def join(self, timeout=None):
+            self.joins += 1
+            if self.joins == 1:
+                # Simulate a long provider call without a wall-clock sleep.
+                plane._hb_last_write -= 21
+            else:
+                observed.append(json.loads(hb_path.read_text()))
+
+        def is_alive(self):
+            return self.joins < 2
+
+    assert plane._wait_for_learning_worker(Worker()) is False
+    assert len(observed) == 2
+    assert all(row["state"] == "draining" and row["reason"] == "" for row in observed)
+    assert observed[1]["ts"] >= observed[0]["ts"]
+    assert observed[1]["since"] == observed[0]["since"]
+    assert observed[1]["queued"] == 2
+    assert plane._hb_last_write == observed[1]["ts"]
