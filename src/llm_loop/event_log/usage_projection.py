@@ -1,7 +1,7 @@
-"""Small, revision-keyed projection of usage events for Web display.
+"""Small, revision-keyed projections of selected events for Web display.
 
 Sealed event segments are reused even when an active segment grows. Only
-accounting events are decoded/retained; canonical event files remain untouched.
+matching events are decoded/retained; canonical event files remain untouched.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ _TYPES = frozenset({
     "request.usage", "provider.transport.opened",
     "provider.transport.settled", "provider.transport.orphaned",
 })
-_MARKERS = tuple(sorted(_TYPES))
 _Stamp = tuple[int, int, int, int, int]
 _Entry = tuple[_Stamp, int, tuple[Event, ...]]
 
@@ -25,8 +24,11 @@ def _stamp(st: os.stat_result) -> _Stamp:
     return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
 
 
-class UsageEventProjection:
+class SegmentEventProjection:
     """Bounded segment cache; caller verifies the whole source layout."""
+
+    _types: frozenset[str] = frozenset()
+    _markers: tuple[str, ...] = ()
 
     def __init__(self, max_segments: int = 128, max_bytes: int = 2 * 1024 * 1024) -> None:
         self._cache: OrderedDict[tuple[str, str], _Entry] = OrderedDict()
@@ -35,9 +37,13 @@ class UsageEventProjection:
         self._max_bytes = max_bytes
         self._bytes = 0
 
-    @staticmethod
-    def includes(event_type: str) -> bool:
-        return event_type in _TYPES
+    @classmethod
+    def includes(cls, event_type: str) -> bool:
+        return event_type in cls._types
+
+    @classmethod
+    def accepts(cls, event: Event) -> bool:
+        return cls.includes(event.type)
 
     def invalidate(self, session_id: str) -> None:
         with self._lock:
@@ -75,24 +81,43 @@ class UsageEventProjection:
                     self._bytes -= self._cache.popitem(last=False)[1][1]
         return events
 
-    @staticmethod
+    @classmethod
     def _scan(
-        path: str, before: _Stamp, parse: Callable[[str], Event | None],
+        cls, path: str, before: _Stamp, parse: Callable[[str], Event | None],
     ) -> tuple[tuple[Event, ...], int]:
         events: list[Event] = []
         retained = 0
         with open(path, encoding="utf-8") as source:
             if _stamp(os.fstat(source.fileno())) != before:
-                raise OSError("usage source changed before read")
+                raise OSError("projection source changed before read")
             for raw in source:
                 # ASCII event types may be literal or Unicode-escaped in valid JSON.
                 # False positives are parsed and discarded; no matching event is lost.
-                if "\\u" not in raw and not any(marker in raw for marker in _MARKERS):
+                if "\\u" not in raw and not any(marker in raw for marker in cls._markers):
                     continue
                 event = parse(raw.strip())
-                if event is not None and event.type in _TYPES:
+                if event is not None and cls.accepts(event):
                     events.append(event)
                     retained += len(raw.encode("utf-8"))
             if _stamp(os.fstat(source.fileno())) != before:
-                raise OSError("usage source changed during read")
+                raise OSError("projection source changed during read")
         return tuple(events), retained
+
+
+class UsageEventProjection(SegmentEventProjection):
+    """Accounting-only Web display projection."""
+
+    _types = _TYPES
+    _markers = tuple(sorted(_TYPES))
+
+
+class SettlementEventProjection(SegmentEventProjection):
+    """Only parent subagent_result receipts and WAL commits, for display."""
+
+    _types = frozenset({"message.appended", "tool.execution.receipt_committed"})
+    _markers = ("subagent_result",)
+
+    @classmethod
+    def accepts(cls, event: Event) -> bool:
+        return (cls.includes(event.type) and isinstance(event.payload, dict)
+                and event.payload.get("tool_name") == "subagent_result")

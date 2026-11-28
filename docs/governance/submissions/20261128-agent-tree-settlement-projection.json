@@ -1,0 +1,34 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261128-agent-tree-settlement-projection",
+  "summary": "Measured post-Gen461 Web Agent tree hotspot: one coalesced builder still replays large parent logs for settlement display. Reuse bounded segment projections; do not change collection authority or restart production.",
+  "components": [
+    {
+      "component_id": "display-only-settlement-projection",
+      "paths": [
+        "src/llm_loop/core/subagent_delivery.py",
+        "src/llm_loop/event_log/store.py",
+        "src/llm_loop/event_log/usage_projection.py",
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/web/fs_tree.py",
+        "tests/unit/test_subagent_settlement.py",
+        "tests/unit/test_usage_event_projection.py",
+        "tests/web/test_subagent_lineage_surface.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing EventStore segment projection, SubAgentDeliveryJournal and Web Agent tree.",
+      "disposition": "Reuse stable segment identity stamps and bounded caches; decode only subagent_result receipt/commit rows, fold exact child/parent/generation/result binding and commit order. Separate display cache from authoritative settlement; Web projection cannot set handle.collected. Canonical read fallback for unstable/unknown layouts.",
+      "evidence": [
+        "Two production stack samples after Gen461 show one builder in topology_snapshot -> settlement_committed -> EventStore.read_cached -> read -> _parse_line. Agent tree timeout at 8s under natural workload.",
+        "Final directed regression 80 passed including architecture ratchet; Ruff and diffcheck PASS. Tests cover escaped tool name, cross-segment receipt/commit, append, same-tail replacement, deletion, no full parent replay and no display collection mutation.",
+        "Synthetic 41.7MB/5002 events: two decoded rows, 537 retained bytes; 1/4/8 concurrent readers cold max 46.6/46.85/47.09ms vs canonical cold 41.7ms; warm 0.11–0.15ms; append 9.11–9.27ms. No real Run or production latency claim.",
+        "Read-only inactive real 79.28MB/45679 events: full fold 357.24ms vs display 163.98ms, equal empty binding sets. Positive binding equivalence covered by synthetic regression.",
+        "First original R9 stopped at Pyright (6 new and 3 historical touched-file diagnostics); explicit callable signatures and sequence typing corrected without changing runtime behavior or diagnostic baselines. Final targeted Pyright two files 0 errors, 0 warnings; 80 directed regressions passed again."
+      ],
+      "verification_level": "Targeted tests passed; independent review, original full R9, remote CI and actual 1/4/8 Run and desktop/mobile acceptance pending.",
+      "model_evidence_veto_recovery_exit": "Original settlement_committed and settle_committed_receipt remain authoritative. No new persistent schema, source mutation, permission change, or automatic collection. Display cache bounded and invalidated by source identity/size/mtime/ctime; unknown layout falls back.",
+      "rollback_route": "Protected revert of isolated source and tests; no migration or runtime data changes."
+    }
+  ],
+  "declarations": []
+}

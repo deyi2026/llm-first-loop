@@ -34,8 +34,9 @@ import shutil
 import stat
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -892,6 +893,9 @@ async def agents_tree(request: Request) -> JSONResponse:
 
 def _build_agents_tree(engine: Any) -> _AgentsTreeResult:
     topology = getattr(engine, "subagent_runner", None)
+    snapshot = getattr(topology, "topology_display_snapshot", None)
+    if not callable(snapshot):
+        snapshot = getattr(topology, "topology_snapshot", None)
     try:
         metas = engine.session.list_sessions()
     except Exception as exc:  # noqa: BLE001
@@ -916,10 +920,10 @@ def _build_agents_tree(engine: Any) -> _AgentsTreeResult:
             # 恢复，对全部会话执行 = 0.25-5.7s/请求（随日志增长）。根会话
             # （无 parent 且非 subagent_ 前缀）的 facts 本来就是 None——只对
             # 子代理候选调用，输出零变化。
-            if topology is not None and (is_subagent or parent_id):
+            if callable(snapshot) and (is_subagent or parent_id):
                 # 以 topology 事实源为权威：非 runner 子会话（如 fork 分支）自然返回
                 # None → 不附着 activity；不依赖 sid 前缀做二次推断。
-                facts = topology.topology_snapshot(sid)
+                facts = cast(Callable[[str], dict[str, object] | None], snapshot)(sid)
                 if facts:
                     node["activity"] = "running" if facts.get("local_active") else "inactive"
                     node["outcome"] = str(facts.get("outcome") or "")
