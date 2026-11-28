@@ -14,6 +14,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import marshal
 import os
 import re
 import shlex
@@ -1030,6 +1031,52 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     if "full_test" in results:
         return "full_test"
     return None
+
+
+class _ReviewKindMismatchError(ValueError):
+    """Carry the classification observed at the actual admission decision."""
+
+    def __init__(self, requested: str, classified: str | None) -> None:
+        super().__init__("review_kind_command_mismatch")
+        self.requested = requested if requested in {"full_test", "git_push"} else "invalid"
+        self.classified = classified
+
+
+def _require_review_kind(kind: str, command: str) -> None:
+    classified = classify_host_shell(command) if kind in {"full_test", "git_push"} else None
+    if kind not in {"full_test", "git_push"} or classified != kind:
+        raise _ReviewKindMismatchError(kind, classified)
+
+
+def _review_runtime_identity() -> dict[str, Any]:
+    """Best-effort diagnostics only; never a source of review authority."""
+    result: dict[str, Any] = {"runtime_pid": os.getpid(), "runtime_checkout_head": ""}
+    code = getattr(classify_host_shell, "__code__", None)
+    result["classifier_code_sha256"] = _digest(marshal.dumps(code)) if code is not None else ""
+    try:
+        root = Path(__file__).resolve().parents[3]
+        proc = subprocess.run(
+            ["git", "--no-replace-objects", "-C", str(root), "rev-parse", "--show-toplevel", "HEAD"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        lines = proc.stdout.splitlines()
+        if proc.returncode == 0 and len(lines) == 2 and Path(lines[0]).resolve() == root:
+            result["runtime_checkout_head"] = lines[1]
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+        pass
+    return result
+
+
+def _review_kind_diagnostics(exc: _ReviewKindMismatchError, command: str) -> dict[str, Any]:
+    # The rejected workdir is not yet validated: never read a candidate file
+    # merely to explain a kind mismatch. Report the trusted runtime pin only.
+    return {
+        "requested_kind": exc.requested,
+        "classified_kind": exc.classified,
+        "canonical_r9_command": command.strip(" \t") == "bash scripts/ci_gate.sh",
+        "official_r9_gate_sha256": _OFFICIAL_R9_GATE_SHA256,
+        **_review_runtime_identity(),
+    }
 
 
 def _data_payload_hint(command: str) -> str:
@@ -4219,8 +4266,7 @@ class HostReviewAdmission:
             # 拒绝回执据此如实不给分批计划（不伪造）。
             return sha, f"article_publish:{target_name}", text, "", {}, []
         push_extra: dict[str, Any] = {}
-        if kind not in {"full_test", "git_push"} or classify_host_shell(command) != kind:
-            raise ValueError("review_kind_command_mismatch")
+        _require_review_kind(kind, command)
         if not workdir:
             raise ValueError("workdir_required")
         # Multiple shell segments can hide a cd, refspec override or a second
@@ -4516,6 +4562,20 @@ class HostReviewAdmission:
             derived = self._derive_full_test_from_push(parent, workdir, command)
             if derived is not None:
                 return derived
+        if isinstance(exc, _ReviewKindMismatchError):
+            diagnostics = _review_kind_diagnostics(exc, command)
+            self._audit(parent, "review_admission_kind_mismatch", diagnostics)
+            return {"accepted": False, "reason": str(exc), "diagnostics": diagnostics}
+        if str(exc).startswith("git_state_too_large"):
+            return {
+                "accepted": False, "reason": str(exc),
+                "detail": (
+                    "Use a dedicated candidate worktree and index containing all intended changes; "
+                    "preserve other lanes and knowledge assets. If the candidate itself exceeds "
+                    "the limit, split the actual change into independently reviewable candidates. "
+                    "The material limit is unchanged; no review was issued."
+                ),
+            }
         return {"accepted": False, "reason": str(exc)}
 
     def _freeze_record(

@@ -1029,6 +1029,7 @@ def test_committed_non_runtime_monster_over_400kb_still_refused(tmp_path: Path) 
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
     assert str(blocked["reason"]).startswith("git_state_too_large")
+    assert "dedicated candidate worktree" in blocked["detail"]
     assert runner.started == 0
 
 
@@ -4628,6 +4629,97 @@ def test_assert_anchor_contained_by_head_unit(tmp_path: Path) -> None:
         rha._assert_anchor_contained_by_head(repo, tip)  # HEAD=feature（旧基），锚=tip
     assert "review_base_behind_main_rebase_first" in str(ei.value)
     rha._assert_anchor_contained_by_head(repo, old)  # old 是 HEAD 祖先 → 放行
+
+
+def test_r9_kind_mismatch_reports_actual_classifier_and_gate(tmp_path: Path, monkeypatch) -> None:
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    calls = []
+
+    def live_classifier(command):
+        calls.append(command)
+        return None
+
+    monkeypatch.setattr(rha, "classify_host_shell", live_classifier)
+    denied = host.start("author-1", "full_test", workdir=str(repo), command="bash scripts/ci_gate.sh")
+    assert denied["accepted"] is False
+    assert denied["reason"] == "review_kind_command_mismatch"
+    assert calls == ["bash scripts/ci_gate.sh"]  # report the decision, not a second classification
+    diag = denied["diagnostics"]
+    assert diag["requested_kind"] == "full_test" and diag["classified_kind"] is None
+    assert diag["canonical_r9_command"] is True
+    assert "candidate_r9_gate_sha256" not in diag  # unvalidated workdir is not read
+    assert diag["official_r9_gate_sha256"] == rha._OFFICIAL_R9_GATE_SHA256
+    assert len(diag["classifier_code_sha256"]) == 64 and diag["runtime_pid"] > 0
+    assert runner.started == 0
+
+
+def test_review_admission_tool_preserves_canonical_r9_kind(tmp_path: Path) -> None:
+    from llm_loop.core.run_context import current_session_id
+
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    token = current_session_id.set("author-1")
+    try:
+        result = rha.ReviewAdmissionTool(host).execute(
+            action="start", kind="full_test", workdir=str(repo), command="bash scripts/ci_gate.sh"
+        )
+    finally:
+        current_session_id.reset(token)
+    receipt = json.loads(result.content)
+    assert receipt["accepted"] is True, receipt
+    assert runner.started == 1
+
+
+def test_kind_mismatch_diagnostics_do_not_echo_command(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    command = "git push origin private-ref-should-not-echo"
+    denied = host.start("author-1", "full_test", workdir=str(repo), command=command)
+    assert denied["accepted"] is False
+    assert denied["diagnostics"]["classified_kind"] == "git_push"
+    assert denied["diagnostics"]["canonical_r9_command"] is False
+    assert "private-ref-should-not-echo" not in json.dumps(denied)
+    assert runner.started == 0
+
+
+def test_linked_candidate_review_ignores_other_index_without_omitting_own_changes(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    roles = repo / "model_roles.py"
+    roles.write_text("role = 'reviewer'\n")
+    gate = repo / "scripts" / "ci_gate.sh"
+    gate.parent.mkdir()
+    gate.write_bytes((Path(__file__).resolve().parents[2] / "scripts" / "ci_gate.sh").read_bytes())
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "baseline files"], check=True)
+    candidate = tmp_path / "candidate"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "candidate", str(candidate)], check=True)
+    roles.unlink()
+    cards = repo / "data" / "methods"
+    cards.mkdir(parents=True)
+    for i in range(250):
+        (cards / f"card-{i}.md").write_text("OTHER_LANE_CARD\n" * 20)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    original = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"])
+    assert len(original.splitlines()) == 251
+    assert (candidate / "model_roles.py").is_file()
+    assert not subprocess.check_output(["git", "-C", str(candidate), "status", "--porcelain"])
+    (candidate / "example.py").write_text("x = 37  # OWN_CANDIDATE_CHANGE\n")
+    host = HostReviewAdmission(reviewer_models_raw=TEST_REVIEWER_MODELS)
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    receipt = host.start("author-1", "full_test", workdir=str(candidate), command="bash scripts/ci_gate.sh")
+    assert receipt["accepted"] is True, receipt
+    assert "OWN_CANDIDATE_CHANGE" in runner.task and "OTHER_LANE_CARD" not in runner.task
+    assert host.check_shell("author-1", "bash scripts/ci_gate.sh", str(candidate)).allowed
+    assert not host.check_shell("author-1", "git push origin main", str(candidate)).allowed
+    assert subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"]) == original
 
 
 def test_direct_official_r9_does_not_require_or_mint_review(tmp_path: Path) -> None:
