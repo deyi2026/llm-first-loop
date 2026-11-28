@@ -100,3 +100,13 @@ def projection_for_engine(engine: Any) -> SessionStatsProjection:
             projection = SessionStatsProjection()
             engine._web_session_stats_projection = projection
         return projection
+
+
+def continuity_projection_for_engine(engine: Any) -> SessionStatsProjection:
+    """Separate bounded continuity cache of scalars and mechanical identities/states."""
+    with _PROJECTIONS_LOCK:
+        projection = getattr(engine, "_web_session_continuity_projection", None)
+        if projection is None:
+            projection = SessionStatsProjection(max_sessions=32)
+            engine._web_session_continuity_projection = projection
+        return projection

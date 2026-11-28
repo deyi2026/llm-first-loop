@@ -190,6 +190,7 @@ class TestWsTranscription:
 
 
 class TestRealMlxAudioProbe:
+    @pytest.mark.real_llm
     def test_probe_real_service_if_running(self):
         try:
             import httpx

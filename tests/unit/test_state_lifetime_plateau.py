@@ -7,6 +7,8 @@ import threading
 import tracemalloc
 from types import SimpleNamespace
 
+import pytest
+
 import llm_loop.core.session as session_mod
 import llm_loop.llm.client as llm_client
 import llm_loop.workspace.store as workspace_store_mod
@@ -19,6 +21,14 @@ from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.job_registry import JobRegistry
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.store import WorkspaceStore
+
+
+def _assert_traced_growth(before: int, after: int) -> None:
+    # Preserve the exact 256 KiB gate; collect attribution only on failure.
+    growth = after - before
+    if growth >= 256 * 1024:
+        largest = tracemalloc.take_snapshot().statistics("lineno")[:8]
+        pytest.fail(f"traced growth={growth} bytes (limit=262144); top allocations={largest}")
 
 
 class _FakeProc:
@@ -150,6 +160,7 @@ def test_session_meta_cache_is_bounded_even_when_listing_many_durable_sessions(
         assert len(session_mod._SESSION_META_CACHE) <= 8  # noqa: SLF001
 
 
+@pytest.mark.serial_perf
 def test_100_1k_10k_durable_sessions_grow_on_disk_while_ram_caches_plateau(
     tmp_path, monkeypatch
 ) -> None:
@@ -189,12 +200,11 @@ def test_100_1k_10k_durable_sessions_grow_on_disk_while_ram_caches_plateau(
                 )
             assert disk_sessions == i
             current_bytes[i] = tracemalloc.get_traced_memory()[0]
+        # By 1K both reconstructible caches are at capacity. 9K more identities
+        # must not recreate the Python 3.13 pathlib retention regression.
+        _assert_traced_growth(current_bytes[1_000], current_bytes[10_000])
     finally:
         tracemalloc.stop()
-
-    # By 1K both reconstructible caches are at capacity.  9K more durable identities
-    # must not recreate the Python 3.13 pathlib high-cardinality retention regression.
-    assert current_bytes[10_000] - current_bytes[1_000] < 256 * 1024
 
 
 def test_engine_retires_per_session_runtime_hints_with_run_state_lru(build_test_engine) -> None:
@@ -213,6 +223,7 @@ def test_engine_retires_per_session_runtime_hints_with_run_state_lru(build_test_
     assert len(getattr(engine, "_last_request_msg_count_by_session", {})) <= 8  # noqa: SLF001
 
 
+@pytest.mark.serial_perf
 def test_100_1k_10k_ephemeral_state_plateaus(tmp_path, monkeypatch, capsys) -> None:
     """P4 main gate: fixed active window must not retain all historical session/job state."""
 
@@ -298,15 +309,13 @@ def test_100_1k_10k_ephemeral_state_plateaus(tmp_path, monkeypatch, capsys) -> N
                 assert len(identities._identity_verified) <= 32  # noqa: SLF001
                 assert len(subagents._durable_topology) <= 32  # noqa: SLF001
                 assert threading.active_count() <= baseline_threads + 1
+        # RSS is diagnostic only; the original traced-memory threshold remains.
+        _assert_traced_growth(
+            int(checkpoints[1_000]["tracemalloc_current"] or 0),
+            int(checkpoints[10_000]["tracemalloc_current"] or 0),
+        )
     finally:
         tracemalloc.stop()
-
-    # Once all mechanical caches have hit capacity by 1K, 9K more identities must not
-    # produce material traced-memory growth.  RSS is recorded for diagnosis only because
-    # allocator high-water behavior is platform dependent.
-    assert int(checkpoints[10_000]["tracemalloc_current"] or 0) - int(
-        checkpoints[1_000]["tracemalloc_current"] or 0
-    ) < 256 * 1024
     print({"p4_plateau": checkpoints})
     captured = capsys.readouterr().out
     assert "p4_plateau" in captured

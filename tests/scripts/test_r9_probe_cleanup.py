@@ -75,7 +75,7 @@ def test_exit_trap_reports_cleanup_failure_without_hiding_original_failure(
     )[0] + "\n}\n"
     proc = subprocess.run(
         ["bash", "-euo", "pipefail", "-c",
-         function + 'PROBE_WT=owned\nr9_cleanup_probe() { return 1; }\n'
+         function + 'PROBE_WT=owned\nr9_stop_heartbeat() { :; }\nr9_release_locks() { :; }\nr9_release_global_lock() { :; }\nr9_cleanup_probe() { return 1; }\n'
          + 'trap \'r9_cleanup_exit $?\' EXIT\nexit "$1"\n',
          "exit-test", str(original_status)],
         text=True, capture_output=True, timeout=10,

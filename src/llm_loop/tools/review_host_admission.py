@@ -3294,7 +3294,7 @@ def _full_test_target_for_command(workdir: str, command: str) -> tuple[str, str]
 
 # Pin the deployed policy's official gate bytes, not a candidate-writable Git ref.
 # If the gate changes, the old strict admission remains until the new pin is reviewed.
-_OFFICIAL_R9_GATE_SHA256 = "f0474dc361b9fe2cc5b4b1a5ce98988e4bf45a526c85ea64dac824bdbd744e14"
+_OFFICIAL_R9_GATE_SHA256 = "4d345899573b717e4b385be6007c303721a376ef311e392fcdf615bcd6c4949e"
 
 
 def _direct_r9_check_evidence(workdir: str, command: str) -> dict[str, str] | None:

@@ -61,6 +61,79 @@ fi
 PY_BIN="$(cd "$(dirname "$(command -v "$PY")")" && pwd -P)"
 export PATH="$PY_BIN:$PATH"
 
+# Two cooperating gates may progress on one repository. Timing-sensitive
+# phases are exclusive. Only dedicated holders open the lock files; test
+# descendants cannot inherit them, and holders exit if the gate dies.
+CI_RESOURCE_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -z "$CI_RESOURCE_DIR" ]; then CI_RESOURCE_DIR="$ROOT/data/.ci-test-home"; fi
+mkdir -p "$CI_RESOURCE_DIR"
+CI_LOCK_PID=""
+CI_LOCK_ACK=""
+CI_SLOT_PID=""
+CI_PHASE_PID=""
+ci_release_holder() {
+  if [ -n "$1" ]; then kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; fi
+}
+ci_release_resources() {
+  ci_release_holder "$CI_LOCK_PID"
+  ci_release_holder "$CI_PHASE_PID"
+  ci_release_holder "$CI_SLOT_PID"
+  if [ -n "$CI_LOCK_ACK" ]; then rm -f "$CI_LOCK_ACK"; fi
+}
+trap ci_release_resources EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+ci_acquire_holder() {
+  local mode="$1"
+  shift
+  CI_LOCK_ACK="$(mktemp /tmp/r9-resource.XXXXXX)"
+  python3 -u - "$$" "$mode" "$@" > "$CI_LOCK_ACK" 2>&1 <<'CI_LOCK_PY' &
+import fcntl, os, sys, time
+parent, mode = int(sys.argv[1]), sys.argv[2]
+files = [open(path, "a+") for path in sys.argv[3:]]
+lock = fcntl.LOCK_SH if mode == "shared" else fcntl.LOCK_EX
+deadline = time.monotonic() + 3600
+while os.getppid() == parent:
+    for file in files:
+        try:
+            fcntl.flock(file.fileno(), lock | fcntl.LOCK_NB)
+        except BlockingIOError:
+            continue
+        print("ACQUIRED", flush=True)
+        while os.getppid() == parent:
+            time.sleep(0.2)
+        sys.exit(0)
+    if time.monotonic() >= deadline:
+        sys.exit("CI gate resource timeout")
+    time.sleep(0.25)
+CI_LOCK_PY
+  CI_LOCK_PID=$!
+  while kill -0 "$CI_LOCK_PID" 2>/dev/null; do
+    if grep -q '^ACQUIRED$' "$CI_LOCK_ACK"; then
+      rm -f "$CI_LOCK_ACK"
+      CI_LOCK_ACK=""
+      return 0
+    fi
+    sleep 0.2
+  done
+  cat "$CI_LOCK_ACK" >&2
+  return 1
+}
+ci_acquire_holder exclusive "$CI_RESOURCE_DIR/r9-gate-slot-1.lock" "$CI_RESOURCE_DIR/r9-gate-slot-2.lock"
+CI_SLOT_PID="$CI_LOCK_PID"
+CI_LOCK_PID=""
+ci_resource_phase() {
+  ci_release_holder "$CI_PHASE_PID"
+  CI_PHASE_PID=""
+  echo "[R9_RESOURCE] waiting for $1 phase"
+  ci_acquire_holder "$1" "$CI_RESOURCE_DIR/r9-gate-resource.lock"
+  CI_PHASE_PID="$CI_LOCK_PID"
+  CI_LOCK_PID=""
+  echo "[R9_RESOURCE] acquired $1 phase"
+}
+ci_resource_phase shared
+
 echo "═══ [1/5] Ruff 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══"
 # 2026-10-08 CI contract: immutable gen201 baseline, every full-tree error visible.
 # Fail on any new fingerprint/additional occurrence; all modified Python files
@@ -179,6 +252,7 @@ echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (parallel subset only
 #   ② 被排除的用例在此分别串行补跑——只排不跑 = 静默丢失覆盖，故失败即阻断。
 # 注意：命令行 -m 覆盖 addopts 的 -m，条件必须写全，否则 real_llm 会被收进来。
 # 位置：放在并行全量之前 = 便宜且高信号的补集先跑，红了不必等整轮全量。
+ci_resource_phase exclusive
 echo "── serial_signal 串行补跑（并行集合的补集；物理信号时序敏感，失败即阻断）──"
 # exit 5 = 一条都没收集到：说明 marker 集合与门禁假设已不符（改名/删除/marker 失效），
 # 按 RULE-AI-30 fail-closed 处理——不把它当作「没有 serial 用例，所以通过」。
@@ -196,12 +270,18 @@ fi
 # measured latency without changing the code path. Thresholds remain unchanged.
 echo "── serial_perf 串行性能门（隔离 xdist CPU 竞争，阈值不降级）──"
 SERIAL_PERF_RC=0
-"$PY" -m pytest -m "not real_llm and serial_perf" -q || SERIAL_PERF_RC=$?
+"$PY" -m pytest -m "not real_llm and serial_perf" --ignore=tests/unit/test_state_lifetime_plateau.py -q || SERIAL_PERF_RC=$?
 if [[ "$SERIAL_PERF_RC" -eq 5 ]]; then
   echo "❌ serial_perf 选择集为空：性能门未执行，按 fail-closed 阻断" >&2
   exit 1
 fi
 [[ "$SERIAL_PERF_RC" -eq 0 ]] || exit "$SERIAL_PERF_RC"
+# tracemalloc is process-global: use a fresh process, not a long-lived xdist
+# worker with unrelated background allocations. Same 10K workload/threshold.
+echo "── isolated memory plateau gate (fresh process) ──"
+"$PY" -m pytest tests/unit/test_state_lifetime_plateau.py -m "not real_llm and serial_perf" -q
+
+ci_resource_phase shared
 
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 # 2026-10-23（P1 出口判据③ CI 红数对账）：产出 junitxml 供红数对账脚本消费。
@@ -211,10 +291,21 @@ GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_se
 # 后续每次运行都挂（2026-10-23 14:01 实测：2 个 ci_gate 结论行测试因此变红）。
 # 改为"独立临时目录 + 固定文件名"，跨平台且可反复运行。
 GATE_TMP="$(mktemp -d /tmp/ci_gate.XXXXXX)"; GATE_XML="$GATE_TMP/report.xml"
-if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
-  cat "$GATE_OUT"
+run_logged() {
+  local log="$1"; shift
+  local statuses
+  "$@" 2>&1 | tee "$log"
+  statuses=("${PIPESTATUS[@]}")
+  if [ "${statuses[1]}" -ne 0 ]; then
+    echo "CI gate log writer failed: $log" >&2
+    return 125
+  fi
+  return "${statuses[0]}"
+}
+if run_logged "$GATE_OUT" "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_XML"; then
   echo "（xdist 全量绿）"
 else
+  [ "$?" -ne 125 ] || exit 125
   # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——仍红 = 真回归（阻断）。
   # 2026-11-10 加固（判别力缺口，用户授权）：serial 绿**不再**单独构成放行依据。
   # 串行复核把并发负载整个移除，而被移除的负载本身可能就是红的诱因：`--dist loadfile`
@@ -230,17 +321,14 @@ else
   fail_files="$({ grep '^FAILED ' "$GATE_OUT" || true; grep '^ERROR ' "$GATE_OUT" || true; } \
     | sed -E 's/^(FAILED|ERROR) //' | cut -d: -f1 | sort -u)"
   if [ -z "$fail_files" ]; then
-    cat "$GATE_OUT"; rm -f "$GATE_OUT" "$GATE_SER" "$GATE_XML"; exit 1
+    rm -f "$GATE_OUT" "$GATE_SER" "$GATE_XML"; exit 1
   fi
   n_files="$(echo "$fail_files" | wc -l | tr -d ' ')"
   echo "── xdist 红（${n_files} 文件）→ serial 单点复核（D-B2-09 降级流程）──"
-  cat "$GATE_OUT"
-  if "$PY" -m pytest $fail_files -q --junitxml="$GATE_SER.xml" >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
-    cat "$GATE_SER"
+  if run_logged "$GATE_SER" "$PY" -m pytest $fail_files -q --junitxml="$GATE_SER.xml"; then  # shellcheck disable=SC2086
     echo "── serial 复核绿 → 并行同构复跑（保持原 xdist 条件；串行绿不构成放行依据）──"
     GATE_RETRY_XML="$GATE_TMP/retry.xml"; GATE_RETRY_OUT="$GATE_TMP/retry.log"
-    if "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_RETRY_XML" >"$GATE_RETRY_OUT" 2>&1; then
-      cat "$GATE_RETRY_OUT"
+    if run_logged "$GATE_RETRY_OUT" "$PY" -m pytest --dist loadfile -n auto -q -m "not real_llm and not serial_signal and not serial_perf" --junitxml="$GATE_RETRY_XML"; then
       if [[ "$MODE" == "--release" ]]; then
         echo "❌ Release requires a clean parallel result; first-round failure retained" >&2
         echo "$fail_files" >&2
@@ -259,14 +347,14 @@ else
       echo "$fail_files"
       echo "   首轮红清单落盘：$GATE_FLAKY_MANIFEST"
     else
-      cat "$GATE_RETRY_OUT"
+      [ "$?" -ne 125 ] || exit 125
       echo "❌ 并行复跑仍红：串行单跑绿不足以证明改动无害（负载相关回归形态），阻断" >&2
       echo "   首轮红文件清单：" >&2
       echo "$fail_files" >&2
       exit 1
     fi
   else
-    cat "$GATE_SER"
+    [ "$?" -ne 125 ] || exit 125
     # 2026-10-23（P1 出口判据③）：真回归（serial 复现红）→ 先做红数对账。
     #   * 红项全部已登记（存量债）→ 呈现归因后放行（本次提交未引入新红）
     #   * 出现未登记新红 → 阻断（超出登记项）

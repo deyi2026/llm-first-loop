@@ -1,0 +1,178 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261128-r9-performance-delivery",
+  "summary": "R9 performance delivery on isolated worktree: cross-gate CI resource coordination, parallelized observable candidate validation, memory gate isolation for session stats, web product-surface updates, and Host admission pin sync to the new official gate bytes (f0474dc3 -> 4d345899). Full R9 ci_gate chain EXIT=0 on commit 5fb50e5b53736ed036925be47ad2120709f315e0 (parallel set plus serial-signal recheck), git security scan pass, tree clean, candidate diff exactly the 13 declared paths. Independent reviews PASS: full_test candidate 8354ff88 (glm/glm-5.3-flash, child subagent_62a14e04e497) and git_push candidate 43ede3ca (child subagent_01fef5fbde27).",
+  "components": [
+    {
+      "component_id": "r9-ci-gate-resource-coordination",
+      "declaration_id": "r9-gate-resource-coordination-control",
+      "paths": [
+        "scripts/ci_gate.sh",
+        "tests/scripts/test_r9_probe_cleanup.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "R9 official CI gate (scripts/ci_gate.sh) and probe lifecycle cleanup tests.",
+      "disposition": "Add cross-gate resource coordination so concurrent R9 gate runs serialize a shared phase instead of racing, and harden probe cleanup so interrupted probes leave no stale artifacts. Gate bytes change; the Host admission pin was synced to the new sha in the same candidate (see host-admission-pin-sync component).",
+      "evidence": [
+        "R9 job job-cf9a5029457449a69bff full chain EXIT=0 on 5fb50e5b53736ed036925be47ad2120709f315e0: ruff, env-pin declaration gate, pyright, tier0 precheck, full parallel set, serial-signal recheck all green; git_security_scan pass on 12 files.",
+        "Gate log shows [R9_RESOURCE] waiting for shared phase then acquired, with r9-worktree.lock and r9-commit.lock fcntl acquisition lines; no other gate run overlapped during the final EXIT=0 run.",
+        "Independent full_test review PASS: candidate 8354ff88abff0ac4f9d24c04a9f10d5eb5bcc6933c490576b5ffcaee4dd9a132, reviewer glm/glm-5.3-flash, child subagent_62a14e04e497, artifact_reviewed=true, tree scope."
+      ],
+      "verification_level": "Full R9 ci_gate chain EXIT=0 plus independent review PASS on the integrated candidate; production acceptance pending post-deploy.",
+      "model_evidence_veto_recovery_exit": "Gate coordination uses the existing lock directory and fcntl pattern with bounded waiting; on stall the gate fails closed with a visible wait log instead of passing.",
+      "rollback_route": "Protected revert of the gate coordination hunks and pin sync restores the previous official gate and pin together; no data migration."
+    },
+    {
+      "component_id": "r9-parallel-observable-validation",
+      "declaration_id": "r9-commit-parallel-validation-control",
+      "paths": [
+        "scripts/r9_commit.sh",
+        "tests/unit/test_r9_parallel_gate.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "R9 managed commit gate (scripts/r9_commit.sh) and its parallel-gate regression tests.",
+      "disposition": "Parallelize the observable candidate validation stage and keep the five-rule pre-commit checks, staged-allowlist verification, ancestry enforcement and CI red-count reconciliation unchanged.",
+      "evidence": [
+        "R9 job job-cf9a5029457449a69bff: r9_commit_check PASS with 12 files, five-rule checks green, ancestry enforced against delivery_base 1a64aa2e; CI red-count reconciliation passed (registered reds 0, observed reds 0); full gate chain EXIT=0 after commit.",
+        "An earlier run (job-729660972995438ea5a5) exposed an admission pin gap with 2 failing admission tests; root cause attributed to the pin, fixed in this candidate, and both tests now pass serially (2 passed in 1.80s, re-verified after main alignment)."
+      ],
+      "verification_level": "Full R9 chain EXIT=0 on integrated candidate including the parallel stage; production acceptance pending post-deploy.",
+      "model_evidence_veto_recovery_exit": "Pass/fail criteria unchanged; a failing parallel stage fails the commit gate closed and the serial-signal recheck still reruns the sensitive subset.",
+      "rollback_route": "Protected revert of the parallelization hunks; the single-commit gate remains revertible without state migration."
+    },
+    {
+      "component_id": "memory-gate-isolation",
+      "paths": [
+        "src/llm_loop/web/session_stats_cache.py",
+        "tests/unit/test_state_lifetime_plateau.py",
+        "tests/realtime/test_local_voice_stack_transport.py",
+        "tests/conftest.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Web session statistics cache and state lifetime test plumbing.",
+      "disposition": "Isolate memory gates so session statistics caching no longer shares gate state across unrelated test/realtime scopes; conftest plumbing adjusted accordingly. No change to settlement truth or persistence schemas.",
+      "evidence": [
+        "Included in the full R9 chain EXIT=0 on 5fb50e5b53736ed036925be47ad2120709f315e0 (parallel set plus serial-signal recheck) and covered by independent review candidate 8354ff88."
+      ],
+      "verification_level": "Covered by full R9 chain EXIT=0 and independent tree-scope review; production acceptance pending post-deploy.",
+      "model_evidence_veto_recovery_exit": "Cache isolation is scope-local; no authority, ownership or settlement behavior introduced.",
+      "rollback_route": "Protected revert of cache isolation hunks and conftest plumbing; no data migration."
+    },
+    {
+      "component_id": "web-product-surface",
+      "paths": [
+        "src/llm_loop/web/continuity_view.py",
+        "src/llm_loop/web/routes.py",
+        "tests/web/test_product_surface.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Web continuity view and routes product surface.",
+      "disposition": "Observable product-surface updates to continuity view and routes with regression coverage; read-only projection surfaces, no new authority.",
+      "evidence": [
+        "Included in the full R9 chain EXIT=0 on 5fb50e5b53736ed036925be47ad2120709f315e0 and covered by independent review candidate 8354ff88."
+      ],
+      "verification_level": "Covered by full R9 chain EXIT=0 and independent tree-scope review; production acceptance pending post-deploy.",
+      "model_evidence_veto_recovery_exit": "No execution or settlement authority; view-layer only.",
+      "rollback_route": "Protected revert of view/route hunks; no data migration."
+    },
+    {
+      "component_id": "host-admission-pin-sync",
+      "declaration_id": "host-admission-official-gate-pin-replace",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py",
+        "docs/governance/submissions/20261128-r9-performance-delivery.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host review admission (direct official R9 gate recognition).",
+      "disposition": "Sync the official R9 gate pin to the new gate bytes sha 4d345899573b717e4b385be6007c303721a376ef311e392fcdf615bcd6c4949e, per the designed rule that a new pin lands only through review; this submission is that reviewed landing.",
+      "evidence": [
+        "Pin gap root-caused from job-729660972995438ea5a5 (2 failing admission tests: candidate gate 4d345899 vs pinned f0474dc3); after sync both tests pass (2 passed in 1.80s serially, re-verified post-merge alignment).",
+        "HEAD baseline probe confirmed both admission tests green before the candidate, excluding pre-existing reds.",
+        "Full_test independent review PASS child subagent_62a14e04e497 (candidate 8354ff88, glm/glm-5.3-flash); git_push independent review PASS child subagent_01fef5fbde27 (candidate 43ede3ca)."
+      ],
+      "verification_level": "Pin-recognization tests green on the integrated candidate; full R9 chain EXIT=0; production acceptance pending post-deploy.",
+      "model_evidence_veto_recovery_exit": "Pin change is byte-exact to the reviewed gate script; strict admission remains fail-closed for any further gate change until a new pin is reviewed.",
+      "rollback_route": "Protected revert restores pin f0474dc3 together with reverting gate bytes; admission behavior returns to prior official recognition."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "r9-gate-resource-coordination-control",
+      "g1": {
+        "necessity": "Concurrent R9 gate runs race shared probe workspaces and commit locks; without a shared phase the parallelized validation stage this delivery introduces could corrupt a concurrent gate's probe cache or produce a false CI verdict. Coordination is what makes the gate result trustworthy under concurrency."
+      },
+      "g2": {
+        "authority_owner": "Host-owned R9 gate infrastructure (scripts/ci_gate.sh), executed only inside the managed R9 commit flow gated by Host-signed review admission and the staged allowlist.",
+        "relationship": "reuse",
+        "non_duplication": "Reuses the existing worktree lock directory and fcntl locking pattern (r9-worktree.lock, r9-commit.lock); no new lock authority, daemon or scheduler is introduced and no existing gate rule is duplicated."
+      },
+      "g3": {
+        "model_evidence": [
+          "R9 job job-cf9a5029457449a69bff full chain EXIT=0 on 5fb50e5b53736ed036925be47ad2120709f315e0 including [R9_RESOURCE] shared-phase wait/acquire and fcntl lock acquisition lines.",
+          "Probe cleanup regression tests (tests/scripts/test_r9_probe_cleanup.py) green in the same run.",
+          "Independent full_test review PASS candidate 8354ff88 (glm/glm-5.3-flash, child subagent_62a14e04e497, tree scope)."
+        ],
+        "recovery_or_reason": "The shared-phase wait is bounded; on timeout or lock failure the gate fails closed with the wait log retained in r9_gate_last.log instead of emitting a pass."
+      },
+      "g4": {
+        "rollback": "Protected revert of the coordination hunks restores prior serial gate behavior; locks are advisory files under the git dir and need no migration.",
+        "verification": [
+          "Full R9 ci_gate chain EXIT=0 on the integrated candidate.",
+          "Independent tree-scope review PASS covering the gate script bytes."
+        ]
+      }
+    },
+    {
+      "declaration_id": "r9-commit-parallel-validation-control",
+      "g1": {
+        "necessity": "The commit gate's serial recheck dominated wall-clock time; keeping full validation enforceable within practical budgets requires parallelizing the observable validation stage, otherwise the gate invites pressure to weaken what it runs."
+      },
+      "g2": {
+        "authority_owner": "Host-owned managed commit flow (scripts/r9_commit.sh) under R9_STAGED_ALLOW allowlist and Host-signed review admission; five-rule pre-commit checks remain mandatory before any commit is created.",
+        "relationship": "reuse",
+        "non_duplication": "Pass/fail criteria, staged-allowlist verification, ancestry enforcement and red-count reconciliation are unchanged; parallelization only reschedules observable validation, so no second gate or authority is created."
+      },
+      "g3": {
+        "model_evidence": [
+          "R9 job job-cf9a5029457449a69bff: r9_commit_check PASS (12 files, five rules), red-count reconciliation 0 registered / 0 observed new reds, chain EXIT=0.",
+          "Earlier job-729660972995438ea5a5 produced 2 failing admission tests attributed to the pin gap, not to the parallel stage; both tests green after the pin fix (2 passed 1.80s serially).",
+          "tests/unit/test_r9_parallel_gate.py green in the same run."
+        ],
+        "recovery_or_reason": "A failing parallel stage fails the commit gate closed and triggers rollback of the staged commit attempt; the serial-signal recheck independently reruns the sensitive subset."
+      },
+      "g4": {
+        "rollback": "Protected revert of the parallelization hunks; the single-commit gate remains revertible and no persisted state is created.",
+        "verification": [
+          "Full R9 chain EXIT=0 including the parallel stage on the integrated candidate.",
+          "Independent tree-scope review PASS covering the commit gate script bytes."
+        ]
+      }
+    },
+    {
+      "declaration_id": "host-admission-official-gate-pin-replace",
+      "g1": {
+        "necessity": "Direct official R9 recognition pins exact gate bytes; the official gate script changes in this candidate, so without a reviewed pin sync the strict admission rejects the new official gate, the direct-official flow fails closed and its two admission tests stay red."
+      },
+      "g2": {
+        "authority_owner": "Host review admission module (src/llm_loop/tools/review_host_admission.py); the in-code rule requires the new pin to land only through review, and this submission documents that reviewed landing.",
+        "relationship": "replace",
+        "non_duplication": "Replaces only the pinned sha constant f0474dc361b9fe2cc5b4b1a5ce98988e4bf45a526c85ea64dac824bdbd744e14 with 4d345899573b717e4b385be6007c303721a376ef311e392fcdf615bcd6c4949e tracking the reviewed gate bytes; recognition logic, fail-closed behavior and all other admission authorities are unchanged."
+      },
+      "g3": {
+        "model_evidence": [
+          "Pin gap root-caused from job-729660972995438ea5a5 with the two failing tests named in the CI log; both tests pass after the pin sync (2 passed 1.80s serially, re-verified after main alignment).",
+          "Full_test independent review PASS child subagent_62a14e04e497, candidate 8354ff88, reviewer glm/glm-5.3-flash, artifact_reviewed=true.",
+          "Git_push independent review PASS child subagent_01fef5fbde27, candidate 43ede3ca, same reviewer model."
+        ],
+        "recovery_or_reason": "Recognition stays byte-exact: any further gate change keeps strict admission fail-closed until a new pin is reviewed; no open-ended acceptance is introduced."
+      },
+      "g4": {
+        "rollback": "Protected revert restores pin f0474dc3 together with reverting the gate bytes, returning admission to the prior official recognition.",
+        "verification": [
+          "Both admission tests green on the integrated candidate and on the HEAD baseline probe.",
+          "Full R9 ci_gate chain EXIT=0 with the synced pin."
+        ]
+      }
+    }
+  ]
+}

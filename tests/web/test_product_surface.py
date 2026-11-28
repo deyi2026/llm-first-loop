@@ -155,3 +155,75 @@ def test_capability_manifest_reports_false_when_route_missing(build_test_engine)
         assert caps["attachments"] is True
     finally:
         routes_mod._CAPABILITY_ROUTES["jobs"] = original
+
+
+def test_continuity_poll_eight_sessions_reuses_scalar_projection(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    engine, _ = build_test_engine([])
+    events = EventStore(tmp_path / "continuity-eight", enabled=True)
+    engine.session._event_store = events
+    sessions = [engine.session.create() for _ in range(8)]
+    for sid in sessions:
+        events.append(sid, "request.meta", {"model": "m"})
+        events.append(sid, "llm.partial_checkpoint", {"text_chars": 1})
+    original = events.read_cached
+    calls = []
+
+    def counted(sid):
+        calls.append(sid)
+        return original(sid)
+
+    monkeypatch.setattr(events, "read_cached", counted)
+    client = _client(engine)
+    for _ in range(3):
+        for sid in sessions:
+            response = client.get(f"/api/v1/sessions/{sid}/continuity")
+            assert response.status_code == 200 and response.json()["open"] is True
+    assert calls == sessions
+    events.append(sessions[0], "run.end", {})
+    assert client.get(f"/api/v1/sessions/{sessions[0]}/continuity").json()["open"] is False
+    assert calls == [*sessions, sessions[0]]
+
+
+def test_continuity_mechanical_cache_excludes_payloads_and_bounds_rows(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    from llm_loop.web import continuity_view
+    from llm_loop.web.session_stats_cache import continuity_projection_for_engine
+
+    engine, _ = build_test_engine([])
+    events = EventStore(tmp_path / "continuity-mechanical", enabled=True)
+    engine.session._event_store = events
+    sid = engine.session.create()
+    events.append(sid, "request.meta", {"model": "m"})
+    calls = []
+
+    def projected(*args, **kwargs):
+        calls.append(1)
+        return {
+            "tool_executions": [
+                {"execution_id": str(i), "round": i, "tool_call_id": "call",
+                 "tool_name": "test", "state": "started_outcome_unknown",
+                 "auto_reexecuted": False, "output": "private payload"}
+                for i in range(12)
+            ],
+            "external_executions": [
+                {"job_id": "job", "executor": "test", "state": "launched_without_terminal",
+                 "cancel_requested": False, "auto_reclaim": False, "output": {"large": "payload"}}
+            ],
+            "unexpected": {"payload": "must not retain"},
+        }
+
+    monkeypatch.setattr(continuity_view, "open_execution_facts", projected)
+    client = _client(engine)
+    first = client.get(f"/api/v1/sessions/{sid}/continuity").json()
+    second = client.get(f"/api/v1/sessions/{sid}/continuity").json()
+    assert first == second and calls == [1]
+    mechanical = first["mechanical_execution"]
+    assert set(mechanical) == {"tool_executions", "external_executions"}
+    assert len(mechanical["tool_executions"]) == 8
+    assert mechanical["tool_executions"][0]["execution_id"] == "4"
+    assert all("output" not in row for rows in mechanical.values() for row in rows)
+    cached = continuity_projection_for_engine(engine).get_valid(engine, sid)
+    assert cached is not None and cached["mechanical_execution"] == mechanical
