@@ -1,0 +1,27 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261128-r9-admission-diagnostics",
+  "summary": "R9 admission mismatch observability and linked candidate isolation regression; reuse PR155 parallel gate without changing review authority, official gate bytes, material limits or release qualification.",
+  "components": [
+    {
+      "component_id": "review-admission-denial-observability",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_review_host_admission.py",
+        "docs/governance/submissions/20261128-r9-admission-diagnostics.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Existing Host review admission and official R9 gate",
+      "disposition": "Report the exact classification at the rejection decision, canonical command flag, loaded classifier code digest, runtime PID and checkout HEAD (best effort), and deployed official gate pin; audit without echoing the command or reading an unvalidated candidate path. Give bounded material refusal a worktree isolation remediation. No new allow path or material exemption.",
+      "evidence": [
+        "Incident: shared checkout had 437 changes including 242 knowledge assets, staged deletion of model_roles.py and Git isolation guard; deployed and origin/main 1bea6c377 include PR155, shared local main 1a64aa2e5 is stale. Both source classifiers returned full_test; historical live mismatch cause not proven.",
+        "Final focused regression: 7 passed, including tool entry, actual mismatch classification (one evaluation), no command echo, official gate pin, linked worktree with 250 staged foreign cards and staged role deletion, candidate own material, and existing oversize refusal. Ruff and git diff --check passed.",
+        "PR155 already provides per-worktree lock, isolated probe and two-slot gate resource coordination. This change does not duplicate those controls."
+      ],
+      "verification_level": "Focused tests and Ruff passed; independent review, original full R9, remote CI, deployment and live acceptance pending.",
+      "model_evidence_veto_recovery_exit": "No new control decision or authority; all previous deny conditions and exact official gate pin remain. Diagnostics are evidence only and cannot mint a permit. No data migration.",
+      "rollback_route": "Protected revert of the three declared paths and next coordinated service deployment; no persistent schema change."
+    }
+  ],
+  "declarations": []
+}
